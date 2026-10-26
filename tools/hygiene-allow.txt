@@ -3,3 +3,5 @@
 tests/test_redact.cpp
 # Percent-encoding of a fake Xtream login ("u@x" / "p+/ &") in request URLs.
 tests/sources/test_xtream.cpp
+# Upstream comment in the vendored TS proxy: an example query, no value.
+vendor/legacy/src/proxyts.c

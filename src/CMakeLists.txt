@@ -21,6 +21,7 @@ add_executable(marigold
   platform/stdout_capture.cpp
   platform/storage.cpp
   platform/text.cpp
+  platform/ts_proxy.cpp
   platform/video.cpp
   platform/window.cpp
 )
