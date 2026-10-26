@@ -39,6 +39,12 @@ inline bool cacheFresh(time::Seconds modified, time::Seconds now, bool empty) {
 // Biggest first (the page's DMA ranking order).
 std::vector<Market> parseMarkets(std::string_view wikitext);
 
+// Marigold: every US market (Nielsen DMAs, biggest first) built in, for when
+// the list page can't be read and nothing is saved, so "Where do you watch?"
+// never comes up empty. No template names: station call signs then come
+// from the station directory (fallbackCallsigns).
+const std::vector<Market>& builtinMarkets();
+
 // When the list page can't be read: cities from the station directory,
 // sorted by name.
 std::vector<Market> fallbackMarkets(const std::vector<guide::Station>& stations);

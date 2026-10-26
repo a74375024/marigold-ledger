@@ -1138,7 +1138,12 @@ void Store::loadMarkets(std::function<void(TvMarkets)> done) {
           // An old saved list beats none.
           if (auto saved = catalog::markets::fromJson(text)) *list = std::move(*saved);
         }
-        if (list->empty()) *list = catalog::markets::fallbackMarkets(*stations);
+        if (list->empty()) {
+          // Offline, or the page changed: the built-in list of every market.
+          MLOG_W("lineup", "market list page unavailable; using the built-in list");
+          *list = catalog::markets::builtinMarkets();
+        }
+        (void)stations;
         if (list->empty()) {
           result->problem = "Couldn't load the list of TV markets. Check the connection and try again, or skip local stations.";
           return;
