@@ -159,10 +159,11 @@ LogoSpec spec(std::string_view name, const std::optional<std::string>& core, boo
       return out;
     }
   }
-  if (!provider.empty()) add(provider, "provider");
+  // The provider's logo always comes last: it is usually the worst.
   if (iptvOrg) {
     if (auto outside = iptvOrg->url(epgID, name)) add(*outside, "public database");
   }
+  if (!provider.empty()) add(provider, "provider");
   out.style = LogoSpec::Style::named;
   out.isWest = isWest;
   return out;

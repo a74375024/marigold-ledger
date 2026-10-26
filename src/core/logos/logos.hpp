@@ -18,7 +18,7 @@
 namespace marigold::logos {
 
 // iptv-org channel database logos, for national channels with no curated
-// logo and no provider logo. Only US channels with PNG or JPEG logos are
+// logo (tried before the provider's). Only US channels with PNG or JPEG logos are
 // kept, by guide id ("cnn.us", lower-cased) and by catalog core key.
 class IptvOrgIndex {
  public:

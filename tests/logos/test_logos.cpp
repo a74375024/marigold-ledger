@@ -122,8 +122,10 @@ TEST_CASE("iptv-org index from the two CSV files") {
 
   LogoSpec named = spec("Dream TV", std::nullopt, false, false, std::nullopt, std::nullopt,
                         "https://example.invalid/p.png", std::nullopt, std::nullopt, &index);
-  CHECK(named.urls == std::vector<std::string>{"https://example.invalid/p.png",
-                                               "https://example.invalid/main.png"});
+  // The provider's logo last, after the public database's.
+  CHECK(named.urls == std::vector<std::string>{"https://example.invalid/main.png",
+                                               "https://example.invalid/p.png"});
+  CHECK(named.sources == std::vector<std::string>{"public database", "provider"});
 
   CHECK_FALSE(IptvOrgIndex::build("name\nx\n", logos, 0));                     // columns missing
   CHECK_FALSE(IptvOrgIndex::build("id,name,country\nA.uk,A,UK\n", logos, 0));  // nothing in the US
