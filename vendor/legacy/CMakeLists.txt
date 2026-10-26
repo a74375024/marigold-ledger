@@ -6,6 +6,7 @@ add_library(legacy STATIC
   src/js.c
   src/lsregistro.c
   src/ponteiro.c
+  src/proxyts.c
   src/rede.c
   src/redeurl.c
   src/video.c
