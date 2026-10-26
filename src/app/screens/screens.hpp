@@ -27,6 +27,17 @@ std::unique_ptr<Screen> makeAccounts(App& app, bool firstRun);
 std::unique_ptr<Screen> makeLineupSetup(App& app);
 // Sources for a channel (red key).
 std::unique_ptr<Screen> makeSources(App& app, const std::string& entryId);
+// Live Events: the board (Live Events tab). `pickTab` gets the guide tab to
+// show when the board closes (0 My Lineup, 1 Favorites, 2 Recent).
+std::unique_ptr<Screen> makeEventsBoard(App& app, std::function<void(int)> pickTab);
+// A game's detail card (upcoming, finished or not watchable).
+std::unique_ptr<Screen> makeEventDetail(App& app, const std::string& eventId);
+// Every channel and feed for one game.
+std::unique_ptr<Screen> makeWhereToWatch(App& app, const std::string& eventId);
+// Left in the player while watching a game: that sport's games.
+std::unique_ptr<Screen> makeEventGuide(App& app);
+// My Sports setup: leagues, favourite teams, review.
+std::unique_ptr<Screen> makeMySports(App& app);
 // The M0 diagnostics screen (Options › Help).
 std::unique_ptr<Screen> makeDiagnostics(App& app);
 

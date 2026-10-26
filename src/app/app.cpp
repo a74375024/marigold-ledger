@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include "app/playback.hpp"
+#include "app/screens/screens.hpp"
 #include "app/store/store.hpp"
 #include "core/util/log.hpp"
 #include "entrada_texto.h"
@@ -69,6 +70,22 @@ void App::suspend() {
 void App::dispatch(const KeyEvent& k) {
   Screen* top = nav_.top();
   dirty_ = true;
+  // A reminder card takes OK (watch) and Back (dismiss) while it shows.
+  if (const auto& due = store_->dueReminder()) {
+    if (k.key == Key::Ok) {
+      std::string id = due->channelId;
+      store_->dismissReminder();
+      if (playback_->tune(id)) {
+        playback_->setFull();
+        nav_.push(makePlayer(*this));
+      }
+      return;
+    }
+    if (k.key == Key::Back) {
+      store_->dismissReminder();
+      return;
+    }
+  }
   if (!top) return;
   bool used = top->key(k);
   if (!used && k.key == Key::Back) {
@@ -193,12 +210,35 @@ void App::drawToast(ui::Ctx& c) {
               ui::Align::Center);
 }
 
+void App::drawReminder(ui::Ctx& c) {
+  const auto& due = store_->dueReminder();
+  if (!due) return;
+  // The card hides itself after 15 s.
+  if (ms_ - store_->dueReminderAt() > 15000) {
+    store_->dismissReminder();
+    return;
+  }
+  ui::Rect r{gfx::kLayoutWidth - 80 - 760, 60, 760, 250};
+  c.g.fill(r, ui::theme::hex(0x1C1F25, 0.97f), ui::theme::kPanelRadius);
+  ui::label(c, "STARTING NOW", r.x + 36, r.y + 30, ui::Weight::Bold, 18, ui::theme::hex(ui::theme::kWatching));
+  ui::label(c, due->title, r.x + 36, r.y + 62, ui::Weight::Bold, 30, ui::theme::white(), r.w - 72);
+  ui::label(c, due->channelName, r.x + 36, r.y + 106, ui::Weight::Regular, 22, ui::theme::white(0.7f), r.w - 72);
+  std::string watch = "Watch on " + due->channelName;
+  float w = ui::chipWidth(c, watch, 22) + 40;
+  ui::Rect b{r.x + 36, r.y + 156, std::min(w, r.w - 280), 60};
+  c.g.fill(b, ui::theme::white(), 30);
+  ui::labelIn(c, watch, {b.x + 20, b.y, b.w - 40, b.h}, ui::Weight::Bold, 22, ui::theme::black(), ui::Align::Center);
+  ui::label(c, "OK watches \xc2\xb7 Back dismisses", b.x + b.w + 24, b.y + 18, ui::Weight::Regular, 18,
+            ui::theme::white(0.55f));
+}
+
 void App::frame() {
   hits_.clear();
   ui::Ctx c{g_, t_, logos_.get(), time::now(), ms_, &zone_, &hits_, pointerShown_};
   g_.beginFrame(ui::theme::hex(ui::theme::kBackground));
   nav_.draw(c);
   drawToast(c);
+  drawReminder(c);
   logos_->frame();
   window_.swap();
 }
@@ -211,6 +251,7 @@ void App::run() {
     // Failover runs whatever is on top (a panel over the player too).
     if (playback_->tick(ms_)) animating = true;
     if (!toast_.empty()) animating = animating || ms_ < toastUntil_ + 50;
+    if (store_->dueReminder()) animating = true;
     bool okHeld = okDown_ && !okLongSent_;
     // Idle: sleep until an event, a worker result or the next clock minute.
     int timeout = animating ? 0 : okHeld ? 50 : dirty_ ? 0 : 500;

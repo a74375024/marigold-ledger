@@ -1,0 +1,39 @@
+--- upstream/src/proxyts.h
++++ vendor/legacy/src/proxyts.h
+@@ -20,6 +20,9 @@
+ #ifndef NV_PROXYTS_H
+ #define NV_PROXYTS_H
+ #include <stddef.h>
++#ifdef __cplusplus
++extern "C" {
++#endif
+ 
+ // 1 nesta plataforma (webOS, .tpk e Mac; nao no navegador nem no Android).
+ int  proxyts_disponivel(void);
+@@ -28,11 +31,13 @@
+ int  proxyts_url(const char *fonte, char *saida, size_t n);
+ // Encerra a sessao em curso (troca de canal, saida do player).
+ void proxyts_parar(void);
+-// A FONTE MARCADA "nvproxy:<url>" (como resolverCanalXtream monta a lista)
+-// vira a URL local de uma sessao nova; qualquer outra fonte encerra a sessao em
+-// curso e volta como veio. Chamar logo antes de cada video_tocar.
+-#define PROXYTS_PREFIXO "nvproxy:"
+-const char *proxyts_resolver(const char *url, char *buf, size_t n);
++// marigold: sobe o servidor local ja (proxyts_url sobe na primeira sessao).
++// 1 = ouvindo em 127.0.0.1.
++int  proxyts_iniciar(void);
++// marigold: a opcao "Resolucao principal" (livetv_regras.h: 0 Automatica, 1 4K,
++// 2 1080p, 3 720p, 4 SD) que escolhe a variante da playlist mestre; no lugar
++// do ajustes_livetv_resolucao do Legacy. Vale para a proxima proxyts_url.
++void proxyts_definir_resolucao(int opcao);
+ // 1 quando `url` e uma URL deste proxy.
+ int  proxyts_e_url(const char *url);
+ // CABECALHOS DA PROXIMA SESSAO (#283): as linhas "Nome: valor" que o addon
+@@ -48,4 +53,7 @@
+ // e nao arquivo progressivo (.mp4/.mkv). Puro, testavel em qualquer alvo.
+ int  proxyts_candidata(const char *url, int mp4);
+ 
++#ifdef __cplusplus
++}
++#endif
+ #endif

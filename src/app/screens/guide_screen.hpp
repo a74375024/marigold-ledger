@@ -66,6 +66,7 @@ class GuideScreen : public Screen {
   void openSources();
   void openSearch();
   void openLineupSetup();
+  void openEvents();
   void digit(int d);
   void requestVisibleListings();
 

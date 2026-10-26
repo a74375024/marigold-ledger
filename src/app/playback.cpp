@@ -5,63 +5,148 @@
 #include "app/app.hpp"
 #include "app/store/store.hpp"
 #include "core/util/log.hpp"
+#include "core/util/strings.hpp"
 
 namespace marigold::app {
 namespace {
-constexpr uint32_t kFirstFrameMs = 20000;
+
+playback::FeedKind kindOf(const Feed& f) {
+  if (f.needsOpen) return playback::FeedKind::Emby;
+  if (str::startsWith(f.channelId, "xt:")) return playback::FeedKind::Xtream;
+  return playback::FeedKind::Playlist;
 }
 
-bool Playback::tune(const std::string& entryId, const std::vector<std::string>& flip) {
+// HLS feeds go through the local TS proxy (Legacy #158: the TV's HLS engine
+// stays mute on some live channels that play at once as continuous TS).
+bool looksHls(const std::string& url) {
+  std::string lower = str::lowerAscii(url);
+  std::string path = lower.substr(0, lower.find('?'));
+  return str::endsWith(path, ".m3u8") || str::endsWith(path, ".m3u");
+}
+
+}  // namespace
+
+Playback::Playback(App& app) : app_(app) {
+  if (!proxy_.start()) MLOG_W("play", "TS proxy unavailable; HLS feeds play directly");
+}
+
+void Playback::rememberGame() {
+  // Leaving or switching a game: its source starts it next time (6 h).
+  if (entry_.empty() || feeds_.empty() || !app_.store().isEvent(entry_)) return;
+  size_t i = rec_.feedIndex();
+  if (i < feeds_.size()) app_.store().noteEventFeed(entry_, feeds_[i].channelId, ready());
+}
+
+bool Playback::begin(const std::string& entryId, std::vector<Feed> feeds, const std::vector<std::string>& flip) {
   if (!flip.empty()) flip_ = flip;
-  if (entryId == entry_ && !failed_) return true;
-  std::vector<Feed> feeds = app_.store().feeds(entryId);
   if (feeds.empty()) {
     MLOG_W("play", "no feeds for this channel");
     return false;
   }
+  rememberGame();
   entry_ = entryId;
   feeds_ = std::move(feeds);
-  tried_ = 0;
+  failMessage_.clear();
   tunedAt_ = app_.ms();
-  switchedAt_ = 0;
   if (full_) watched();
-  return start(0);
+  std::vector<playback::FeedInfo> infos;
+  for (const Feed& f : feeds_) infos.push_back({f.channelId, kindOf(f)});
+  apply(rec_.tune(app_.ms(), std::move(infos)));
+  return true;
 }
 
-bool Playback::start(size_t feed) {
-  if (feed >= feeds_.size()) return false;
-  feed_ = feed;
-  ready_ = false;
-  failed_ = false;
-  feedAt_ = app_.ms();
-  ++tried_;
-  ++attempt_;
-  const Feed& f = feeds_[feed];
-  MLOG_I("play", "feed %zu of %zu (%s)", feed + 1, feeds_.size(), f.label.c_str());
-  app_.video().setWindow(window());
-  if (f.needsOpen) {
-    // Emby / Jellyfin open the stream on the server first; a newer tune
-    // makes this one moot.
-    uint64_t attempt = attempt_;
-    app_.store().open(f, [this, attempt](std::optional<Feed> opened) {
-      if (attempt != attempt_ || entry_.empty()) return;
-      if (!opened) {
-        openFailed_ = true;
-        return;
-      }
-      feeds_[feed_] = *opened;
-      app_.video().play(opened->url, opened->headers, opened->loadMode);
-    });
-    return true;
-  }
-  app_.store().closeStream();
-  return app_.video().play(f.url, f.headers, f.loadMode);
+bool Playback::tune(const std::string& entryId, const std::vector<std::string>& flip) {
+  if (!flip.empty()) flip_ = flip;
+  if (entryId == entry_ && !failed()) return true;
+  return begin(entryId, app_.store().feeds(entryId), flip);
+}
+
+bool Playback::tuneEventVia(const std::string& eventId, const std::string& via, const std::vector<std::string>& flip) {
+  return begin(eventId, app_.store().eventFeeds(eventId, via), flip);
 }
 
 bool Playback::useFeed(size_t index) {
   if (index >= feeds_.size()) return false;
-  tried_ = 0;
-  return start(index);
+  apply(rec_.pick(app_.ms(), index));
+  return true;
+}
+
+void Playback::stop() {
+  if (entry_.empty()) return;
+  rememberGame();
+  apply(rec_.stop(app_.ms()));
+  app_.video().stop();
+  app_.store().closeStream();
+  proxy_.stop();
+  entry_.clear();
+  feeds_.clear();
+}
+
+void Playback::apply(const playback::Actions& actions) {
+  for (const playback::Action& a : actions) {
+    switch (a.kind) {
+      case playback::Action::Kind::Play:
+      case playback::Action::Kind::Reconnect:
+        playFeed(a.feed, a.token);
+        break;
+      case playback::Action::Kind::CloseStream:
+        app_.store().closeStream();
+        proxy_.stop();
+        break;
+      case playback::Action::Kind::GiveUp:
+        app_.video().stop();
+        failMessage_ = a.text;
+        MLOG_W("play", "gave up: %s", playback::safeMessage(a.text).c_str());
+        break;
+      case playback::Action::Kind::Note:
+        app_.invalidate();
+        break;
+      case playback::Action::Kind::Toast:
+        if (full_) app_.toast(a.text, true);
+        break;
+      case playback::Action::Kind::RecordFeed:
+        if (a.feed < feeds_.size()) app_.store().recordFeed(feeds_[a.feed].channelId, a.worked);
+        break;
+      case playback::Action::Kind::Log:
+        MLOG_I("play", "%s %s", a.text.c_str(), playback::safeMessage(a.detail).c_str());
+        break;
+    }
+  }
+}
+
+void Playback::playFeed(size_t index, uint64_t token) {
+  if (index >= feeds_.size()) return;
+  sawPicture_ = sawBuffering_ = sawFailed_ = sawEnded_ = false;
+  const Feed& f = feeds_[index];
+  MLOG_I("play", "feed %zu of %zu (%s)", index + 1, feeds_.size(), f.label.c_str());
+  app_.video().setWindow(window());
+  if (f.needsOpen) {
+    // Emby / Jellyfin open the stream on the server first. Every open
+    // reports back exactly once; a superseded one is closed again.
+    app_.store().open(f, [this, token, index](std::optional<Feed> opened) {
+      uint32_t now = app_.ms();
+      if (!opened) {
+        apply(rec_.openFailed(now, token, "The server couldn't open this channel."));
+        return;
+      }
+      if (rec_.isCurrent(token) && index < feeds_.size()) {
+        feeds_[index] = *opened;
+        app_.video().play(opened->url, opened->headers, opened->loadMode);
+      }
+      apply(rec_.streamHanded(now, token));
+    });
+    return;
+  }
+  std::string url = f.url, headers = f.headers;
+  if (looksHls(url)) {
+    std::string local = proxy_.localUrl(url, headers);
+    if (!local.empty()) {
+      url = local;
+      headers.clear();  // the proxy sends them to the source
+    }
+  }
+  app_.video().play(url, headers, f.loadMode);
+  apply(rec_.streamHanded(app_.ms(), token));
 }
 
 void Playback::watched() {
@@ -69,17 +154,6 @@ void Playback::watched() {
   if (!lastWatched_.empty()) previous_ = lastWatched_;
   lastWatched_ = entry_;
   app_.store().noteWatched(entry_);
-}
-
-void Playback::stop() {
-  if (entry_.empty()) return;
-  ++attempt_;
-  app_.video().stop();
-  app_.store().closeStream();
-  entry_.clear();
-  feeds_.clear();
-  ready_ = false;
-  failed_ = false;
 }
 
 std::string Playback::flip(int step) {
@@ -100,14 +174,6 @@ std::string Playback::previous() {
   return target;
 }
 
-void Playback::setFull() {
-  bool changed = !full_;
-  full_ = true;
-  watched();
-  app_.video().setWindow(window());
-  if (changed) scheduleReapply();
-}
-
 gfx::Rect Playback::window() const {
   return full_ ? gfx::Rect{0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight} : corner_;
 }
@@ -120,6 +186,14 @@ void Playback::scheduleReapply() {
   reapplyAt_[1] = now + 1200;
   reapplyAt_[2] = now + 3000;
   reapplyOnReady_ = true;
+}
+
+void Playback::setFull() {
+  bool changed = !full_;
+  full_ = true;
+  watched();
+  app_.video().setWindow(window());
+  if (changed) scheduleReapply();
 }
 
 void Playback::setCorner(gfx::Rect r) {
@@ -135,37 +209,39 @@ void Playback::setCorner(gfx::Rect r) {
 bool Playback::tick(uint32_t ms) {
   if (entry_.empty()) return false;
   platform::VideoState s = app_.video().state();
-  if (!ready_ && (s.playing || s.decoderSeen)) {
-    ready_ = true;
-    app_.store().recordFeed(feeds_[feed_].channelId, true);
+  // Report changes of the player's flags only.
+  bool picture = s.playing || s.decoderSeen;
+  if (picture && !sawPicture_) {
+    sawPicture_ = true;
+    apply(rec_.firstFrame(ms));
     if (reapplyOnReady_) {
       reapplyOnReady_ = false;
       app_.video().reapplyWindow(window());
     }
   }
+  bool buffering = s.bufferingMs > 0;
+  if (buffering != sawBuffering_) {
+    sawBuffering_ = buffering;
+    apply(buffering ? rec_.bufferingStarted(ms) : rec_.bufferingEnded(ms));
+  }
+  if (s.failed && !sawFailed_) {
+    sawFailed_ = true;
+    apply(rec_.playerError(ms, s.error));
+  }
+  if (s.ended && !sawEnded_) {
+    sawEnded_ = true;
+    apply(rec_.ended(ms));
+  }
+  if (sawPicture_) apply(rec_.position(ms, s.position, s.bufferEnd));
+  apply(rec_.tick(ms));
   for (uint32_t& at : reapplyAt_) {
     if (at && ms >= at) {
       at = 0;
       app_.video().reapplyWindow(window());
     }
   }
-  bool stuck = !ready_ && ms - feedAt_ > kFirstFrameMs;
-  bool broken = s.failed || openFailed_;
-  if ((broken || stuck) && !failed_) {
-    openFailed_ = false;
-    app_.store().recordFeed(feeds_[feed_].channelId, false);
-    // Next feed of the same channel; after a full round, give up.
-    if (tried_ < feeds_.size()) {
-      MLOG_W("play", "feed %zu %s; trying the next one", feed_ + 1, broken ? "failed" : "showed nothing");
-      switchedAt_ = ms;
-      start((feed_ + 1) % feeds_.size());
-    } else {
-      failed_ = true;
-      app_.video().stop();
-    }
-  }
   bool reapplying = reapplyAt_[0] || reapplyAt_[1] || reapplyAt_[2];
-  return (!ready_ && !failed_) || reapplying;
+  return (!ready() && !failed()) || reapplying || !note().empty();
 }
 
 }  // namespace marigold::app

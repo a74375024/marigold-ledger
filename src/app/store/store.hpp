@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -16,6 +17,7 @@
 #include <string>
 #include <vector>
 
+#include "app/store/events_model.hpp"
 #include "app/store/model.hpp"
 
 namespace marigold {
@@ -32,6 +34,13 @@ struct Saved;
 namespace sources {
 struct Account;
 }
+namespace sports {
+struct MySportsPrefs;
+struct SportsTeam;
+namespace schedule {
+struct Context;
+}
+}  // namespace sports
 }  // namespace marigold
 
 namespace marigold::app {
@@ -81,8 +90,17 @@ struct AccountForm {
   std::string guideUrl;  // optional XMLTV link (M3U)
 };
 
+// A reminder that just came due: the card in the corner.
+struct DueReminder {
+  std::string channelId, channelName, title;
+  time::Seconds start = 0;
+};
+
 struct Settings {
   bool previewChannels = true;  // the guide corner plays the focused channel
+  bool scheduleEnabled = true;  // Live Events: game schedule and scores
+  bool showUnwatchable = true;  // games not in my channels
+  bool showScores = true;
   bool allChannelsTab = false;
   bool preferTS = true;         // Xtream: MPEG-TS rather than HLS
   bool fillMissingListings = true;  // outside guides for channels without one
@@ -119,6 +137,8 @@ class Store {
   void toggleLineup(const std::string& entryId);
   void noteWatched(const std::string& entryId);
 
+  // The guide entry a raw provider channel belongs to ("" when none).
+  std::string entryOfChannel(const std::string& channelId) const;
   // Feeds for an entry, best first ("Always start with" honoured).
   std::vector<Feed> feeds(const std::string& entryId) const;
   // Emby: asks the server to open a feed (needsOpen); `done` gets it with
@@ -145,6 +165,36 @@ class Store {
   std::vector<CategorySummary> categories(const catalog::LineupPrefs& draft) const;
   void buildLineup(catalog::LineupPrefs draft);
   static std::string marketName(const std::string& code);
+
+  // Live Events. The board snapshot; scores refresh only while at least one
+  // screen holds it open (board, event guide).
+  std::shared_ptr<const EventsBoard> events() const { return events_; }
+  void eventsOpen(bool open);
+  bool isEvent(const std::string& id) const;
+  const EventTile* eventTile(const std::string& id) const;
+  WhereToWatch whereToWatch(const std::string& eventId) const;
+  // A provider feed family's feeds (raw channel ids, by number).
+  std::vector<std::string> familyFeeds(const std::string& familyId) const;
+  // The games Up/Down flips through when watching `eventId`.
+  std::vector<std::string> eventFlipList(const std::string& eventId) const;
+  // Feeds for a game with the source `via` (entry or raw channel) first.
+  std::vector<Feed> eventFeeds(const std::string& eventId, const std::string& via) const;
+  bool hasReminder(const std::string& id) const;
+  bool toggleReminder(const std::string& id);  // true = now set
+  // Leaving or switching a game: remember the source used (6 hours).
+  void noteEventFeed(const std::string& eventId, const std::string& channelId, bool sawPicture);
+  const std::optional<DueReminder>& dueReminder() const { return dueReminder_; }
+  uint32_t dueReminderAt() const { return dueReminderAt_; }
+  void dismissReminder();
+  // My Sports.
+  const sports::MySportsPrefs& mySports() const;
+  void setMySports(const sports::MySportsPrefs& prefs);
+  std::vector<sports::SportsTeam> teamsOf(const std::string& leagueShort) const;
+  void requestRosters(const std::set<std::string>& leagueShorts);
+  void releaseRosters();
+  // League (or other sport) id -> provider events that look like it.
+  std::map<std::string, int> sportSuggestions() const;
+  void refreshSchedule();
 
   const Settings& settings() const { return settings_; }
   void setSettings(const Settings& s);
@@ -190,6 +240,19 @@ class Store {
   void runOutsideGuide();
   void publishChannels();
   void publishListings();
+  double reliabilityOf(const std::string& channelId) const;
+  std::vector<std::string> versionsOf(const std::string& id) const;
+  std::vector<Feed> feedsFor(const std::vector<std::string>& rawIds) const;
+  std::vector<std::string> eventBackups(const std::string& entryId) const;
+  // Live Events (store_events.cpp).
+  void loadEvents();
+  void eventsTick(uint32_t ms);
+  void rebuildEvents();
+  void buildBoard();
+  void pumpSchedule(uint32_t ms);
+  void pumpScores(uint32_t ms);
+  void saveEvents();
+  sports::schedule::Context scheduleContext() const;
 
   App& app_;
   std::unique_ptr<Impl> impl_;
@@ -198,6 +261,10 @@ class Store {
   StoreStatus status_;
   Settings settings_;
   std::shared_ptr<OpenStream> openStream_;
+  std::shared_ptr<const EventsBoard> events_ = std::make_shared<EventsBoard>();
+  int eventsOpen_ = 0;
+  std::optional<DueReminder> dueReminder_;
+  uint32_t dueReminderAt_ = 0;
 };
 
 }  // namespace marigold::app

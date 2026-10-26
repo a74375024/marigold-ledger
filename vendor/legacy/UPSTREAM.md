@@ -25,6 +25,8 @@ and update the pinned commit above.
 | `video.c`, `video.h`, `video_modo.c`, `video_escala.h` | webOS player over LS2 (`com.webos.media`), video plane attach | Live-only: keeps LS2 registration, the libAcb plane (webOS 2-4) and SDL exported window (5+), load payloads (modes 0 and 2), event parsing, pipeline-death reload, HTTP headers, window and source crop, screensaver hold, audio tracks. Drops Dolby Vision, DTS, MKV probing, subtitles, seeking, speed, cache boost and the VOD reconnect machine |
 | `lsregistro.c/.h`, `webosver.c/.h`, `app_id.h`, `mediaurl.h` | LS2 registration backoff, webOS version, ids | App id `org.marigold.app`, LS2 client `com.webos.media.client.marigold` |
 | `livestall.h` | live stall watchdog | other-platform branches removed |
+| `proxyts.c/.h` | local HLS→continuous TS proxy on 127.0.0.1, one session, 16 MiB ring | Per-segment cap 16 MiB instead of 48; the `ajustes_livetv_resolucao` extern became a per-session option (`proxyts_definir_resolucao`); `proxyts_iniciar` starts the server early; the 302 header buffer holds the whole source; `proxyts_resolver` and the `nvproxy:` prefix (Legacy's source lists) dropped; `MARIGOLD_PROXYTS_PURO` leaves only the playlist and MPEG-TS code for host tests |
+| `livetv_regras.h` | live TV rules | only the resolution option ↔ height pair the proxy uses; source types, name base, guide search and diagnostics dropped |
 | `rede.c/.h`, `rede_pedido.inc`, `redeurl.c`, `negcache.h/.inc`, `addonurl.h` | HTTP over the TV's libcurl (dlopen) | Drops the TMDB host fallback, the Discord raw TLS socket and the DTS range reader; own user agent and `MARIGOLD_REDE_*` env names |
 | `js.c/.h` | tolerant JSON reader | none |
 | `dados.c/.h` | data folder, atomic writes | `.marigold` folder names; disk-space accounting (`espaco.inc`) removed |
@@ -52,6 +54,9 @@ SDL_ttf text uploads, and `sdlcompat.h`.
 - `rede.c` still turns TLS certificate checks off (upstream does, because the
   TV CA store is old). The plan is to ship a CA bundle and verify by default
   once Marigold makes HTTPS requests (M1).
-- Not yet vendored, planned: `proxyts.c` (M2), `xtream.c`, `xtepg.c`,
+- `proxyts.c` fetches playlists and segments through `rede.c`'s older
+  wrappers (`rede_baixar_trecho_st`, `rede_baixar_bin_medido_controle`), which
+  leave certificate checks off, like the TV's own player does for stream links.
+- Not yet vendored, planned: `xtream.c`, `xtepg.c`,
   `xmltv.c`, `ltv.c`, `m3u_parse.c`, `idcanal.c` (M1), `jpegrapido.c`,
   `webp.c` (M1 logos).

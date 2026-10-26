@@ -18,7 +18,6 @@ namespace theme = ui::theme;
 
 constexpr uint32_t kBannerDelayMs = 1500;
 constexpr uint32_t kBannerMs = 6000;
-constexpr uint32_t kNoteMs = 5000;
 constexpr uint32_t kDigitsMs = 1500;
 
 class PlayerScreen : public Screen {
@@ -57,7 +56,8 @@ class PlayerScreen : public Screen {
       }
       case Key::Left:
         if (!p.failed()) {
-          app_.nav().push(makeMiniGuide(app_));
+          // Watching a game from Live Events: the event guide.
+          app_.nav().push(app_.store().isEvent(p.entry()) ? makeEventGuide(app_) : makeMiniGuide(app_));
           return true;
         }
         [[fallthrough]];
@@ -119,7 +119,7 @@ class PlayerScreen : public Screen {
       else flipped(p.tune(target) ? target : std::string());
     }
     bool bannerAnim = ms < bannerUntil_ + 50;
-    bool note = p.switchedAt() && ms - p.switchedAt() < kNoteMs + 50;
+    bool note = !p.note().empty();
     return opening || bannerAnim || note || !digits_.empty();
   }
 
@@ -127,14 +127,18 @@ class PlayerScreen : public Screen {
     Playback& p = app_.playback();
     auto ch = app_.store().channels();
     const GuideChannel* g = ch->find(p.entry());
+    if (!g) {
+      // A game: show the channel it plays on.
+      if (!p.feeds().empty()) g = ch->find(app_.store().entryOfChannel(p.feeds()[std::min(p.feedIndex(), p.feeds().size() - 1)].channelId));
+    }
     if (p.ready() && !p.failed()) {
       c.g.hole({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight});
     } else {
       drawTuning(c, g);
     }
     if (bannerVisible() && p.ready()) drawBanner(c, g);
-    if (p.switchedAt() && c.ms - p.switchedAt() < kNoteMs) {
-      std::string note = "Switched to a backup feed";
+    if (!p.note().empty()) {
+      const std::string& note = p.note();
       float w = ui::textWidth(c, note, Weight::Medium, 20) + 48;
       Rect r{gfx::kLayoutWidth - 80 - w, 50, w, 48};
       c.g.fill(r, theme::black(0.7f), 24);
@@ -155,6 +159,16 @@ class PlayerScreen : public Screen {
   }
   void flipped(const std::string& id) {
     if (id.empty()) return;
+    // Games: "2 / 5 · Rams at Seahawks".
+    if (app_.store().isEvent(id)) {
+      const std::vector<std::string>& list = app_.playback().flipList();
+      auto it = std::find(list.begin(), list.end(), id);
+      const EventTile* t = app_.store().eventTile(id);
+      if (it != list.end() && t)
+        app_.toast(std::to_string(it - list.begin() + 1) + " / " + std::to_string(list.size()) + " \xc2\xb7 " +
+                       (t->heroTitle.empty() ? t->title : t->heroTitle),
+                   true);
+    }
     showBanner();
     bannerFrom_ = app_.ms() + kBannerDelayMs;
     bannerUntil_ = bannerFrom_ + kBannerMs;
@@ -197,8 +211,9 @@ class PlayerScreen : public Screen {
     if (l) ui::label(c, l->title, x, y, Weight::Bold, 60, theme::white(), 1500);
     y += 90;
     if (p.failed()) {
-      ui::label(c, "None of its feeds answered. OK tries again; Back returns to the guide.", x, y,
-                Weight::Regular, 28, theme::white(0.7f));
+      std::string why = p.failMessage().empty() ? "None of its feeds answered." : p.failMessage();
+      ui::paragraph(c, why + " OK tries again; Back returns to the guide.", x, y, 1400, Weight::Regular, 28,
+                    theme::white(0.7f), 2);
     } else {
       ui::spinner(c, x + 20, y + 20, 18);
     }
