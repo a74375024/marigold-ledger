@@ -65,6 +65,9 @@ struct LogoSpec {
   };
 
   std::vector<std::string> urls;
+  // Where each of `urls` comes from: "logo set", "provider", "public
+  // database" (for the channel report; never a link).
+  std::vector<std::string> sources;
   Style style = Style::named;
   // Style::local only.
   std::string callsign;
@@ -78,6 +81,10 @@ struct LogoSpec {
            isWest == o.isWest && subtitle == o.subtitle;
   }
 };
+
+// The library's national logo file for a channel name ("MTV2" ->
+// "mtv-2-us.png"), when it has one.
+std::optional<std::string> logoSetFile(std::string_view name);
 
 // Logos for a guide row. National channels whose logo is curated show the
 // logo alone; locals show a logo with the call sign and "FOX 2"; anything

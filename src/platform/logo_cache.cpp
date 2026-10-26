@@ -51,6 +51,7 @@ bool writeFileAtomic(const std::string& path, const std::string& data) {
 
 struct LogoCache::Result {
   std::optional<px::Image> image;
+  px::Tone tone = px::Tone::normal;
   bool onDisk = false;
 };
 
@@ -96,6 +97,18 @@ Texture LogoCache::get(const std::string& url) {
   return e.state == State::Ready ? e.tex : Texture{};
 }
 
+std::string LogoCache::status(const std::string& url) const {
+  auto it = entries_.find(url);
+  if (it == entries_.end()) return "not drawn yet";
+  switch (it->second.state) {
+    case State::Ready: return "shown";
+    case State::Failed: return "failed";
+    case State::Loading: return "loading";
+    case State::Wanted: return "waiting";
+  }
+  return "";
+}
+
 void LogoCache::frame() {
   ++frame_;
   if (inFlight_ >= kMaxInFlight) return;
@@ -135,6 +148,7 @@ void LogoCache::start(const std::string& url) {
         if (!readFile(path, bytes)) return;
         r->onDisk = true;
         r->image = image::decode(bytes, kMaxW, kMaxH);
+        if (r->image) r->tone = px::toneOf(*r->image);
         if (!r->image) unlink(path.c_str());  // corrupt: fetch it again
         else utime(path.c_str(), nullptr);    // freshen for the disk LRU
       },
@@ -162,6 +176,7 @@ void LogoCache::fetch(const std::string& key, std::shared_ptr<Result> r, size_t 
   q.afterTransfer = [r, path](http::Response& resp) {
     if (!resp.ok || resp.status != 200) return;
     r->image = image::decode(resp.body, kMaxW, kMaxH);
+    if (r->image) r->tone = px::toneOf(*r->image);
     if (r->image) writeFileAtomic(path, resp.body);
     resp.body.clear();
     resp.body.shrink_to_fit();
@@ -189,7 +204,7 @@ void LogoCache::finish(const std::string& url, const std::shared_ptr<Result>& r)
     e.retryAt = time::now() + kRetryAfterS;
     return;
   }
-  upload(e, *r->image);
+  upload(e, *r->image, r->tone);
   e.state = State::Ready;
   evict();
   if (writtenSinceTrim_ > diskBudget_ / 4) {
@@ -198,7 +213,7 @@ void LogoCache::finish(const std::string& url, const std::shared_ptr<Result>& r)
   }
 }
 
-void LogoCache::upload(Entry& e, const px::Image& im) {
+void LogoCache::upload(Entry& e, const px::Image& im, px::Tone tone) {
   if (!e.tex.id) glGenTextures(1, &e.tex.id);
   glBindTexture(GL_TEXTURE_2D, e.tex.id);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -208,6 +223,7 @@ void LogoCache::upload(Entry& e, const px::Image& im) {
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, im.w, im.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, im.rgba.data());
   e.tex.w = im.w;
   e.tex.h = im.h;
+  e.tex.tone = tone;
   bytes_ -= e.bytes;
   e.bytes = im.rgba.size();
   bytes_ += e.bytes;

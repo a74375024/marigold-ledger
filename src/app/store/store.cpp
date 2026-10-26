@@ -2447,6 +2447,7 @@ void Store::publishChannels() {
         ei ? ei->callsign : std::nullopt, ei ? ei->virtualNumber : std::nullopt, e.imageUrl,
         member ? member->epgId : std::nullopt, cat, m.iptvOrg.get());
     g.logoUrl = logos::LogoCache::chain(spec.urls);
+    g.logoSources = str::join(spec.sources, ", ");
     g.subtitle = spec.subtitle.value_or(catalog::genreTitle(cat));
     switch (spec.style) {
       case logos::LogoSpec::Style::local:

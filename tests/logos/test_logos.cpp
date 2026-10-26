@@ -141,3 +141,35 @@ TEST_CASE("CSV rows: quotes, doubled quotes, CRLF, line breaks in fields") {
   CHECK(csvRows("\"open") == std::vector<std::vector<std::string>>{{"open"}});
   CHECK(csvRows("ab\"c,d\"e\n") == std::vector<std::vector<std::string>>{{"abc,de"}});
 }
+
+TEST_CASE("spec: national channels the tables miss, by name in the same library") {
+  CHECK(logoSetFile("MTV2") == std::string("mtv-2-us.png"));
+  CHECK(logoSetFile("FOX WEATHER") == std::string("fox-weather-us.png"));
+  CHECK(logoSetFile("Cinemax Hits HD") == std::string("cinemax-hits-us.png"));
+  CHECK(logoSetFile("LAW & CRIME") == std::string("law-and-crime-network-us.png"));
+  CHECK(logoSetFile("MGM+ HITS") == std::string("mgm-plus-hits-us.png"));
+  CHECK(logoSetFile("HEROES & ICONS") == std::string("heroes-and-icons-us.png"));
+  CHECK(logoSetFile("The Cowboy Channel") == std::string("cowboy-channel-us.png"));
+  CHECK(logoSetFile("Hallmark Family") == std::string("hallmark-family-us.png"));
+  CHECK_FALSE(logoSetFile("Confess by Nosey"));
+  CHECK_FALSE(logoSetFile("HD"));
+  CHECK_FALSE(logoSetFile(""));
+
+  const std::string provider = "https://example.invalid/p.png";
+  LogoSpec mtv2 = spec("MTV2", std::nullopt, false, false, std::nullopt, std::nullopt, provider, std::nullopt,
+                       LineupCategory::music, nullptr);
+  CHECK(mtv2.style == LogoSpec::Style::logoOnly);
+  CHECK(mtv2.urls == std::vector<std::string>{base("mtv-2-us.png"), provider});
+  // A core network with no curated logo also finds it by name.
+  LogoSpec hallmark = spec("Hallmark Family", std::string("Hallmark Family"), false, false, std::nullopt,
+                           std::nullopt, "", std::nullopt, LineupCategory::entertainment, nullptr);
+  CHECK(hallmark.urls == std::vector<std::string>{base("hallmark-family-us.png")});
+  // Not for other countries' channels or locals.
+  LogoSpec abroad = spec("MTV2", std::nullopt, false, false, std::nullopt, std::nullopt, "", std::nullopt,
+                         LineupCategory::international, nullptr);
+  CHECK(abroad.urls.empty());
+  // Curated tables still come first.
+  CHECK(spec("CNN", std::string("CNN"), false, false, std::nullopt, std::nullopt, "", std::nullopt,
+             LineupCategory::news, nullptr)
+            .urls.front() == base(coreLogos().at("CNN")));
+}

@@ -113,7 +113,7 @@ const std::unordered_map<std::string, std::string>& coreLogos() {
       {"TeenNick", "teen-nick-us.png"},
       {"Tennis Channel", "tennis-channel-us.png"},
       {"The Movie Channel", "the-movie-channel-us.png"},
-      {"The Weather Channel", "weather-channel-hd-us.png"},
+      {"The Weather Channel", "weather-channel-us.png"},
       {"Travel Channel", "travel-channel-us.png"},
       {"USA Network", "usa-us.png"},
       {"Universal Kids", "universal-kids-us.png"},

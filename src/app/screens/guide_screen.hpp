@@ -21,6 +21,7 @@ class GuideScreen : public Screen {
   bool tick(uint32_t ms) override;
   void hover(int id) override;
   void shown() override;
+  bool keepsPreview() const override { return true; }
 
   // Window presets from the time menu.
   void setWindow(time::Seconds start);

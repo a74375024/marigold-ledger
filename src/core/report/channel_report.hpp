@@ -100,6 +100,9 @@ struct ChannelReportInput {
   const std::set<std::string>* providerCountries = nullptr;
   // Account display names by server id.
   const std::map<std::string, std::string>* providerNames = nullptr;
+  // Each entry's logo: where its logos come from ("logo set, provider") and
+  // whether one is on screen ("shown", "failed"...), by entry id.
+  const std::unordered_map<std::string, std::pair<std::string, std::string>>* logos = nullptr;
   // The station directory (tvOS read it from the outside guide's cache).
   const guide::StationsByNetwork* stations = nullptr;
 

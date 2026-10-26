@@ -36,6 +36,10 @@ Requests: race drivers and results only for race weekends you can watch
 |---|---|---|
 | M3U guide | An M3U playlist with a guide link (url-tvg, or typed in) | Its channels get listings within a few minutes |
 | Logos | All Channels | More national channels show logos; a broken logo falls back to the next one |
+| More logos | My Lineup: MTV2, Fuse, Revolt, Fox Weather, Cinemax and Starz channels, NBA TV, Tennis Channel, The Weather Channel | Their own logos, alone in the cell like the national networks |
+| White logos | Focus a channel whose logo is white (on the white focused cell) | A dark version of the logo; part-white logos sit on a small dark plate |
+| Logo report | Export Channel Report | logo_sources ("logo set, provider") and logo_status ("shown", "failed") per channel |
+| Preview and Live Events | A preview playing in the guide, then the yellow key | The preview stops; back in the guide it starts again |
 | Edit My Lineup | Options › Edit My Lineup | Added by you / Removed by you / My Lineup; removing and adding back work |
 | Countries | Options › Countries & Languages | Checking a country adds its channels to All Channels and Live Events |
 | Guide Listings | Options › Guide Listings | Provider guide status, outside listings toggles and files, Refresh |

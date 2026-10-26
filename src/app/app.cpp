@@ -270,7 +270,15 @@ void App::run() {
     if (pool_.pump() > 0) dirty_ = true;
     if (store_->tick(ms_)) dirty_ = true;
     video_.pump();
-    if (nav_.settle()) dirty_ = true;
+    if (nav_.settle()) {
+      dirty_ = true;
+      // A corner preview belongs to the guide: a full screen over it (Live
+      // Events, search, setup) ends it; side panels leave it playing.
+      if (playback_->active() && !playback_->full()) {
+        const Screen* under = nav_.topOpaque();
+        if (!under || !under->keepsPreview()) playback_->stop();
+      }
+    }
     time::Seconds minute = time::now() / 60;
     if (minute != lastMinute_) {
       lastMinute_ = minute;

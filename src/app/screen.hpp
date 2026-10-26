@@ -39,6 +39,9 @@ class Screen {
   // then draws every frame instead of waiting for events).
   virtual bool tick(uint32_t /*ms*/) { return false; }
   virtual bool opaque() const { return true; }
+  // A corner preview may keep playing under this screen (the guide). Under
+  // any other full screen it stops.
+  virtual bool keepsPreview() const { return false; }
   // Pushed or uncovered again.
   virtual void shown() {}
   // Raw SDL events before the app's own handling (the diagnostics screen).
@@ -57,6 +60,8 @@ class Navigator {
   void popTo(const Screen* s);  // pops everything above s
   void replaceAll(std::unique_ptr<Screen> s);
   Screen* top() const { return stack_.empty() ? nullptr : stack_.back().get(); }
+  // The topmost opaque screen: what fills the screen under any panels.
+  const Screen* topOpaque() const;
   bool empty() const { return stack_.empty(); }
   size_t size() const { return stack_.size(); }
 

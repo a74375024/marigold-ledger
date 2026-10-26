@@ -25,6 +25,7 @@ namespace marigold::logos {
 struct Texture {
   unsigned id = 0;  // 0 = not ready
   int w = 0, h = 0;
+  px::Tone tone = px::Tone::normal;  // how it reads on a light background
 };
 
 class LogoCache {
@@ -50,6 +51,9 @@ class LogoCache {
   void abandonLoads();
 
   size_t textureBytes() const { return bytes_; }
+  // For the channel report: "shown", "failed", "loading", "waiting" (asked
+  // for, not started) or "not drawn yet".
+  std::string status(const std::string& url) const;
 
   // Largest logo kept, in pixels (fits the hero; rows draw it smaller).
   static constexpr int kMaxW = 320, kMaxH = 180;
@@ -69,7 +73,7 @@ class LogoCache {
   void start(const std::string& url);
   void fetch(const std::string& key, std::shared_ptr<Result> r, size_t index);
   void finish(const std::string& url, const std::shared_ptr<Result>& r);
-  void upload(Entry& e, const px::Image& im);
+  void upload(Entry& e, const px::Image& im, px::Tone tone);
   void evict();
   void trimDisk();
   std::string fileFor(const std::string& url) const;

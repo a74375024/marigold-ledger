@@ -52,8 +52,17 @@ void logo(Ctx& c, const std::string& url, const std::string& fallback, Rect r, b
   if (tex.id && tex.w > 0 && tex.h > 0) {
     float s = std::min(r.w / static_cast<float>(tex.w), r.h / static_cast<float>(tex.h));
     float w = std::round(static_cast<float>(tex.w) * s), h = std::round(static_cast<float>(tex.h) * s);
-    c.g.image(tex.id, {std::round(r.x + (r.w - w) * 0.5f), std::round(r.y + (r.h - h) * 0.5f), w, h},
-              opacity);
+    Rect at{std::round(r.x + (r.w - w) * 0.5f), std::round(r.y + (r.h - h) * 0.5f), w, h};
+    if (onLight && tex.tone == px::Tone::light) {
+      // White on a white cell: drawn as a dark silhouette.
+      c.g.textureAlpha(tex.id, at, theme::black(0.85f * opacity));
+      return;
+    }
+    if (onLight && tex.tone == px::Tone::mixed) {
+      // Partly white: on a small dark plate, colours kept.
+      c.g.fill({at.x - 6, at.y - 4, at.w + 12, at.h + 8}, theme::hex(theme::kBackground, opacity), 8);
+    }
+    c.g.image(tex.id, at, opacity);
     return;
   }
   if (fallback.empty()) return;

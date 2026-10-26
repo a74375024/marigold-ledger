@@ -93,4 +93,23 @@ Image trimTransparent(Image src, uint8_t threshold) {
   return out;
 }
 
+Tone toneOf(const Image& im) {
+  if (im.empty()) return Tone::normal;
+  size_t total = static_cast<size_t>(im.w) * static_cast<size_t>(im.h);
+  size_t visible = 0, light = 0, clear = 0;
+  for (size_t i = 0; i < total; ++i) {
+    const uint8_t* p = &im.rgba[i * 4];
+    if (p[3] < 32) ++clear;
+    if (p[3] < 128) continue;
+    ++visible;
+    uint8_t lo = std::min({p[0], p[1], p[2]}), hi = std::max({p[0], p[1], p[2]});
+    if (lo >= 200 && hi - lo <= 40) ++light;
+  }
+  // Mostly opaque: the logo brings its own background.
+  if (visible == 0 || clear * 100 < total * 8) return Tone::normal;
+  if (light * 100 >= visible * 75) return Tone::light;
+  if (light * 100 >= visible * 25) return Tone::mixed;
+  return Tone::normal;
+}
+
 }  // namespace marigold::px

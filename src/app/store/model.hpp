@@ -32,6 +32,8 @@ struct GuideChannel {
   // In All Channels' countries (or in My Lineup / a favorite). Another
   // country's sports channels are kept for Live Events only.
   bool browsable = true;
+  // Where logoUrl's links come from ("logo set, provider"), for the report.
+  std::string logoSources;
   bool radio = false;
   Style style = Style::Named;
 };

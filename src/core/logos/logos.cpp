@@ -1,10 +1,13 @@
 #include "core/logos/logos.hpp"
 
 #include <algorithm>
+#include <set>
+#include <unordered_set>
 
 #include "core/catalog/catalog.hpp"
 #include "core/logos/table.hpp"
 #include "core/util/json.hpp"
+#include "core/util/rx.hpp"
 #include "core/util/strings.hpp"
 
 namespace marigold::logos {
@@ -32,7 +35,55 @@ json::Value stringMap(const std::unordered_map<std::string, std::string>& m) {
   return o;
 }
 
+// "MTV2" -> "mtv2", "mtv-2"; "LAW & CRIME" -> "law-and-crime", then with
+// "-network" etc.: the file names the library might use for a channel name.
+std::vector<std::string> logoSetKeys(std::string_view name) {
+  static const std::set<std::string> kDrop = {"hd",  "fhd", "uhd",   "sd",    "4k",    "8k",   "hevc",
+                                              "raw", "vip", "60fps", "50fps", "1080p", "720p", "east",
+                                              "feed", "alt", "backup", "us",  "usa"};
+  std::string lowered = str::replaceAll(
+      str::replaceAll(str::replaceAll(str::lower(name), "&", " and "), "+", " plus "), "'", "");
+  std::vector<std::string> tokens;
+  std::string token;
+  auto flush = [&] {
+    if (!token.empty() && !kDrop.count(token)) tokens.push_back(token);
+    token.clear();
+  };
+  for (char c : lowered) {
+    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) token += c;
+    else flush();
+  }
+  flush();
+  std::vector<std::string> out;
+  if (tokens.empty()) return out;
+  auto add = [&out](std::string key) {
+    if (!key.empty() && std::find(out.begin(), out.end(), key) == out.end()) out.push_back(std::move(key));
+  };
+  std::string base = str::join(tokens, "-");
+  add(base);
+  if (tokens.size() > 1 && tokens.front() == "the")
+    add(str::join(std::vector<std::string>(tokens.begin() + 1, tokens.end()), "-"));
+  // A number joined to a word: "mtv2" -> "mtv-2".
+  std::vector<std::string> split;
+  for (const std::string& t : tokens) split.push_back(rx::replace(t, "([a-z])([0-9])", "$1-$2"));
+  add(str::join(split, "-"));
+  for (const char* word : {"channel", "network", "tv"}) {
+    add(base + "-" + word);
+    if (tokens.size() > 1 && tokens.back() == word)
+      add(str::join(std::vector<std::string>(tokens.begin(), tokens.end() - 1), "-"));
+  }
+  return out;
+}
+
 }  // namespace
+
+std::optional<std::string> logoSetFile(std::string_view name) {
+  static const std::unordered_set<std::string_view> kNames(logoSetNames().begin(), logoSetNames().end());
+  for (const std::string& key : logoSetKeys(name)) {
+    if (kNames.count(key)) return key + "-us.png";
+  }
+  return std::nullopt;
+}
 
 LogoSpec spec(std::string_view name, const std::optional<std::string>& core, bool isWest,
               bool isLocal, const std::optional<std::string>& callsign,
@@ -41,6 +92,10 @@ LogoSpec spec(std::string_view name, const std::optional<std::string>& core, boo
               std::optional<catalog::LineupCategory> category, const IptvOrgIndex* iptvOrg) {
   auto url = [](const std::string& file) { return std::string(kLogoBase) + file; };
   LogoSpec out;
+  auto add = [&out](std::string link, const char* from) {
+    out.urls.push_back(std::move(link));
+    out.sources.push_back(from);
+  };
   if (category) out.subtitle = std::string(catalog::genreTitle(*category));
 
   if (isLocal && callsign) {
@@ -49,7 +104,7 @@ LogoSpec spec(std::string_view name, const std::optional<std::string>& core, boo
     // backgrounds), then the station's, then the provider's.
     if (network) {
       auto file = networkLogos().find(*network);
-      if (file != networkLogos().end()) out.urls.push_back(url(file->second));
+      if (file != networkLogos().end()) add(url(file->second), "logo set");
     }
     static const std::map<std::string, std::string> kNone;
     auto stationIt = stationLogos().find(str::lower(*callsign));
@@ -61,8 +116,8 @@ LogoSpec spec(std::string_view name, const std::optional<std::string>& core, boo
       if (byNetwork != stations.end()) file = &byNetwork->second;
     }
     if (!file && stations.size() == 1) file = &stations.begin()->second;
-    if (file) out.urls.push_back(url(*file));
-    if (!provider.empty()) out.urls.push_back(provider);
+    if (file) add(url(*file), "logo set");
+    if (!provider.empty()) add(provider, "provider");
     std::vector<std::string> parts;
     if (network) parts.push_back(displayNetwork(*network));
     if (virtualNumber) parts.push_back(std::to_string(*virtualNumber));
@@ -77,8 +132,8 @@ LogoSpec spec(std::string_view name, const std::optional<std::string>& core, boo
   if (core) {
     auto file = coreLogos().find(*core);
     if (file != coreLogos().end()) {
-      out.urls.push_back(url(file->second));
-      if (!provider.empty()) out.urls.push_back(provider);
+      add(url(file->second), "logo set");
+      if (!provider.empty()) add(provider, "provider");
       out.style = LogoSpec::Style::logoOnly;
       out.isWest = isWest;
       return out;
@@ -89,12 +144,24 @@ LogoSpec spec(std::string_view name, const std::optional<std::string>& core, boo
   if (category == catalog::LineupCategory::local) {
     if (auto network = catalog::networkWord(name)) {
       auto file = networkLogos().find(*network);
-      if (file != networkLogos().end()) out.urls.push_back(url(file->second));
+      if (file != networkLogos().end()) add(url(file->second), "logo set");
     }
   }
-  if (!provider.empty()) out.urls.push_back(provider);
+  // Marigold: a national channel the tables don't cover, by its name in the
+  // same library ("MTV2", "Fox Weather", "Cinemax Hits"): shown like the
+  // curated ones, the provider's logo behind it.
+  if (category != catalog::LineupCategory::local && category != catalog::LineupCategory::international) {
+    if (auto file = logoSetFile(name)) {
+      add(url(*file), "logo set");
+      if (!provider.empty()) add(provider, "provider");
+      out.style = LogoSpec::Style::logoOnly;
+      out.isWest = isWest;
+      return out;
+    }
+  }
+  if (!provider.empty()) add(provider, "provider");
   if (iptvOrg) {
-    if (auto outside = iptvOrg->url(epgID, name)) out.urls.push_back(*outside);
+    if (auto outside = iptvOrg->url(epgID, name)) add(*outside, "public database");
   }
   out.style = LogoSpec::Style::named;
   out.isWest = isWest;

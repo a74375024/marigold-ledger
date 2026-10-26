@@ -25,4 +25,11 @@ Image shrinkToFit(Image src, int maxW, int maxH);
 // margins, which makes them look small next to their neighbours).
 Image trimTransparent(Image src, uint8_t threshold = 8);
 
+// How a logo reads on a light background. Light: white or pale grey shapes
+// on transparency (gone on a white cell); Mixed: a fair share of such
+// shapes next to colour; Normal: anything else, including logos on their own
+// solid box.
+enum class Tone : uint8_t { normal, light, mixed };
+Tone toneOf(const Image& image);
+
 }  // namespace marigold::px

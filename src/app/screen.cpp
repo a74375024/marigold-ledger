@@ -50,6 +50,12 @@ bool Navigator::settle() {
   return changed;
 }
 
+const Screen* Navigator::topOpaque() const {
+  for (auto it = stack_.rbegin(); it != stack_.rend(); ++it)
+    if ((*it)->opaque()) return it->get();
+  return stack_.empty() ? nullptr : stack_.front().get();
+}
+
 void Navigator::draw(ui::Ctx& c) {
   if (stack_.empty()) return;
   size_t first = stack_.size() - 1;

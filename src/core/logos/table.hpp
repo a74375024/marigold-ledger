@@ -6,7 +6,9 @@
 
 #include <map>
 #include <string>
+#include <string_view>
 #include <unordered_map>
+#include <vector>
 
 namespace marigold::logos {
 
@@ -19,5 +21,8 @@ const std::unordered_map<std::string, std::string>& networkLogos();
 // Station call sign (lower-case) -> files keyed by network word ("" when the
 // file name has none).
 const std::unordered_map<std::string, std::map<std::string, std::string>>& stationLogos();
+// Every national logo in the library, by file name without "-us.png"
+// ("mtv-2", "fox-weather"), for channels the tables above don't cover.
+const std::vector<std::string_view>& logoSetNames();
 
 }  // namespace marigold::logos

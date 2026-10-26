@@ -318,6 +318,7 @@ void Store::buildChannelReport(std::function<void(std::shared_ptr<std::string>)>
     std::map<std::string, std::string> outsideNotes, providerNotes, names;
     std::map<std::string, guide::provider::Status> providerStates;
     guide::StationsByNetwork stations;
+    std::unordered_map<std::string, std::pair<std::string, std::string>> logos;
     std::vector<std::string> privateWords;
     time::Seconds now = 0, windowStart = 0;
     time::Zone zone = time::Zone::device();
@@ -372,6 +373,10 @@ void Store::buildChannelReport(std::function<void(std::shared_ptr<std::string>)>
     job->providerStates[source] = st;
   }
   job->stations = guide::groupByNetwork(*m.stations);
+  for (const GuideChannel& g : channels_->all) {
+    std::string status = g.logoUrl.empty() ? "no logo" : app_.logos().status(g.logoUrl);
+    job->logos[g.id] = {g.logoSources.empty() ? "none" : g.logoSources, status};
+  }
   job->now = now;
   job->windowStart = windowStart();
   job->zone = app_.zone();
@@ -394,6 +399,7 @@ void Store::buildChannelReport(std::function<void(std::shared_ptr<std::string>)>
         in.providerCountries = &job->countries;
         in.providerNames = &job->names;
         in.stations = &job->stations;
+        in.logos = &job->logos;
         in.now = job->now;
         in.windowStart = job->windowStart;
         in.zone = job->zone;

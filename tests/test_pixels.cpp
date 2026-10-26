@@ -64,3 +64,40 @@ TEST_CASE("trimTransparent removes empty margins") {
   CHECK(out.h == 2);
   CHECK(trimTransparent(solid(2, 2, 0, 0, 0, 0)).w == 2);
 }
+
+namespace {
+
+// A w x h image: `shape` pixels (from the top) in `rgb`, `extra` more in
+// `rgb2`, the rest transparent (or `fill` when given).
+marigold::px::Image toneImage(int shape, uint32_t rgb, int extra = 0, uint32_t rgb2 = 0, int opaqueRest = -1) {
+  marigold::px::Image im;
+  im.w = 10;
+  im.h = 10;
+  im.rgba.assign(400, 0);
+  for (int i = 0; i < 100; ++i) {
+    uint32_t c = 0;
+    uint8_t a = 0;
+    if (i < shape) c = rgb, a = 255;
+    else if (i < shape + extra) c = rgb2, a = 255;
+    else if (opaqueRest >= 0) c = static_cast<uint32_t>(opaqueRest), a = 255;
+    im.rgba[static_cast<size_t>(i) * 4] = static_cast<uint8_t>(c >> 16);
+    im.rgba[static_cast<size_t>(i) * 4 + 1] = static_cast<uint8_t>(c >> 8);
+    im.rgba[static_cast<size_t>(i) * 4 + 2] = static_cast<uint8_t>(c);
+    im.rgba[static_cast<size_t>(i) * 4 + 3] = a;
+  }
+  return im;
+}
+
+}  // namespace
+
+TEST_CASE("logo tone: white shapes vanish on a white cell, colour and solid boxes don't") {
+  using marigold::px::Tone;
+  using marigold::px::toneOf;
+  CHECK(toneOf(toneImage(40, 0xFFFFFF)) == Tone::light);              // white on transparency
+  CHECK(toneOf(toneImage(40, 0xE6E6EA)) == Tone::light);              // pale grey too
+  CHECK(toneOf(toneImage(20, 0xFFFFFF, 20, 0xD0021B)) == Tone::mixed);  // white words, red mark
+  CHECK(toneOf(toneImage(40, 0x1E5BC6)) == Tone::normal);             // coloured
+  CHECK(toneOf(toneImage(40, 0xFFFF00)) == Tone::normal);             // bright yellow is colour
+  CHECK(toneOf(toneImage(40, 0xFFFFFF, 0, 0, 0x0A2A6B)) == Tone::normal);  // white on its own blue box
+  CHECK(toneOf(marigold::px::Image{}) == Tone::normal);
+}

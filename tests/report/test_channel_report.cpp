@@ -113,6 +113,7 @@ struct Fixture {
   // What the report reads: the lists above, shared.
   mutable std::unordered_map<std::string, std::shared_ptr<const std::vector<Program>>> sharedPrograms;
   mutable marigold::guide::SharedPrograms sharedOutside, sharedProvider;
+  std::unordered_map<std::string, std::pair<std::string, std::string>> logos;
   std::map<std::string, std::string> outsideNotes, providerNotes, names;
   std::map<std::string, provider::Status> providerStates;
   std::set<std::string> countries{"US"};
@@ -134,6 +135,7 @@ struct Fixture {
     in.outsideMatches = &sharedOutside;
     in.outsideNotes = &outsideNotes;
     in.providerMatches = &sharedProvider;
+    in.logos = &logos;
     in.providerNotes = &providerNotes;
     in.providerStates = &providerStates;
     in.providerCountries = &countries;
@@ -228,9 +230,9 @@ Fixture sample() {
 
 TEST_CASE("channel report: header") {
   const auto& columns = channelReportColumns();
-  CHECK(columns.size() == 36);
+  CHECK(columns.size() == 38);
   CHECK(columns.front() == "number");
-  CHECK(columns.back() == "outside_listings_end");
+  CHECK(columns.back() == "logo_status");
   std::string csv = channelReportCSV(ChannelReportInput());
   CHECK(csv ==
         "number,name,group,tags,hidden_group,favorite,callsign_in_name,station_lookup,match_key,"
@@ -239,19 +241,22 @@ TEST_CASE("channel report: header") {
         "provider_guide,provider_guide_programs_next_3h,kind,market,core_network,scope,"
         "server_genre_tagged_next_3h,outside_genre_tagged_next_3h,"
         "provider_guide_genre_tagged_next_3h,now_genres,now_subtitle,now_description,"
-        "outside_listings_end\n");
+        "outside_listings_end,logo_sources,logo_status\n");
 }
 
 TEST_CASE("channel report: one row per channel with the Swift rules") {
   Fixture f = sample();
+  for (const auto& e : f.catalog.entries) f.logos[e.id] = {"logo set, provider", "shown"};
   std::string csv = channelReportCSV(f.input());
   auto rows = parseCsv(csv);
   REQUIRE(rows.size() == 6);
-  for (const auto& r : rows) CHECK(r.size() == 36);
+  for (const auto& r : rows) CHECK(r.size() == 38);
   CHECK(csv.back() == '\n');
 
   auto nbc = rowFor(rows, "US: NBC 4 WNBC");
   CHECK(nbc["number"] == "104");
+  CHECK(nbc["logo_sources"] == "logo set, provider");
+  CHECK(nbc["logo_status"] == "shown");
   CHECK(nbc["group"] == "US| Locals");
   CHECK(nbc["tags"] == "US Locals | HD");
   CHECK(nbc["hidden_group"] == "");

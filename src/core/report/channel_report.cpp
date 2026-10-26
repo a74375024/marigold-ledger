@@ -194,7 +194,7 @@ const std::vector<std::string>& channelReportColumns() {
       "kind", "market", "core_network", "scope",
       "server_genre_tagged_next_3h", "outside_genre_tagged_next_3h",
       "provider_guide_genre_tagged_next_3h", "now_genres",
-      "now_subtitle", "now_description", "outside_listings_end"};
+      "now_subtitle", "now_description", "outside_listings_end", "logo_sources", "logo_status"};
   return kColumns;
 }
 
@@ -320,6 +320,7 @@ std::string channelReportCSV(const ChannelReportInput& in,
     }
 
     const std::string* provider = find(in.providerNames, channel.serverId);
+    const std::pair<std::string, std::string>* logo = entryId ? find(in.logos, *entryId) : nullptr;
     const std::string empty;
     std::vector<std::string> row = {
         cell(channel.number.value_or("")),
@@ -358,6 +359,8 @@ std::string channelReportCSV(const ChannelReportInput& in,
         cell(now && now->episodeTitle ? *now->episodeTitle : empty),
         cell(nowDescription),
         cell(listingsEnd),
+        cell(logo ? logo->first : empty),
+        cell(logo ? logo->second : empty),
     };
     out += str::join(row, ",");
     out += '\n';
