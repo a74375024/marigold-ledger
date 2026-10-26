@@ -137,6 +137,7 @@ struct Settings {
   bool preferTS = true;         // Xtream: MPEG-TS rather than HLS
   bool fillMissingListings = true;  // outside guides for channels without one
   bool clock24 = false;
+  bool playerTipsShown = false;  // the one-time "Getting around" card in the player
   std::set<std::string> guideShards;  // outside listings to use; empty = the defaults
 };
 

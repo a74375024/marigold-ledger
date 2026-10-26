@@ -11,6 +11,8 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -72,6 +74,23 @@ class Playback {
   // The small note at the top right ("Reconnecting…"); empty = none.
   const std::string& note() const { return rec_.note(); }
   uint32_t tunedAt() const { return tunedAt_; }
+  // Why a feed last failed this session ("no picture after 20 s", "stopped
+  // after 4 s"), with when; nothing when it worked since.
+  struct FeedProblem {
+    time::Seconds at = 0;
+    std::string why;
+  };
+  std::optional<FeedProblem> feedProblem(const std::string& channelId) const;
+  // A backup took over by itself (the corner card): the feed that stopped
+  // and the one now playing, and when (ms).
+  struct BackupNotice {
+    size_t from = 0, to = 0;
+    uint32_t at = 0;
+  };
+  const std::optional<BackupNotice>& backupNotice() const { return backup_; }
+  void dismissBackupNotice() { backup_.reset(); }
+  // This tune has shown a picture (a feed switch then reads "Switching to…").
+  bool hadPicture() const { return hadPicture_; }
   // Options › Help › Export Playback Log.
   const report::PlaybackLog& log() const { return log_; }
   void clearLog() { log_.clear(); }
@@ -105,7 +124,12 @@ class Playback {
   bool viaProxy_ = false;
   size_t playingFeed_ = 0;
   std::set<std::string> proxyFailed_;
-  bool camera_ = false;  // a race camera is playing (not the game's own source)
+  bool camera_ = false;
+  bool hadPicture_ = false;
+  uint32_t pictureAt_ = 0;   // ms the current feed's picture came up
+  size_t lastFailed_ = 0;
+  std::optional<BackupNotice> backup_;
+  std::map<std::string, FeedProblem> problems_;  // by raw channel id  // a race camera is playing (not the game's own source)
   report::PlaybackLog log_;
   int session_ = 0;
   uint64_t logSaved_ = 0;

@@ -227,6 +227,7 @@ Store::Store(App& app) : app_(app), impl_(std::make_unique<Impl>()) {
       settings_.showUnwatchable = (*v)["showUnwatchable"].asBool(true);
       settings_.showScores = (*v)["showScores"].asBool(true);
       settings_.clock24 = (*v)["clock24"].asBool(false);
+      settings_.playerTipsShown = (*v)["playerTipsShown"].asBool(false);
       settings_.guideShards = stringSet((*v)["guideShards"]);
     }
   }
@@ -328,6 +329,7 @@ void Store::setSettings(const Settings& s) {
   v.set("showUnwatchable", s.showUnwatchable);
   v.set("showScores", s.showScores);
   v.set("clock24", s.clock24);
+  v.set("playerTipsShown", s.playerTipsShown);
   if (!s.guideShards.empty())
     v.set("guideShards", stringArray(std::vector<std::string>(s.guideShards.begin(), s.guideShards.end())));
   impl_->ev.boardDirty = true;
@@ -2153,6 +2155,7 @@ std::vector<Feed> Store::feedsFor(const std::vector<std::string>& members) const
       static const char* kQuality[] = {"SD", "HD", "FHD", "4K"};
       int q = std::clamp(t->second.quality, 0, 3);
       parts.push_back(kQuality[q]);
+      f.quality = kQuality[q];
       if (t->second.isWest) parts.push_back("West feed");
     }
     parts.push_back(redact(account->displayName));

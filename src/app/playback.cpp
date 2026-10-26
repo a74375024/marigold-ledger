@@ -76,6 +76,12 @@ void Playback::saveLog(uint32_t ms) {
       nullptr, http::Priority::Background);
 }
 
+std::optional<Playback::FeedProblem> Playback::feedProblem(const std::string& channelId) const {
+  auto it = problems_.find(channelId);
+  if (it == problems_.end()) return std::nullopt;
+  return it->second;
+}
+
 std::string Playback::playingChannel() const {
   size_t i = rec_.feedIndex();
   return entry_.empty() || i >= feeds_.size() ? std::string() : feeds_[i].channelId;
@@ -105,6 +111,8 @@ bool Playback::begin(const std::string& entryId, std::vector<Feed> feeds, const 
   }
   rememberGame();
   camera_ = false;
+  hadPicture_ = false;
+  backup_.reset();
   entry_ = entryId;
   feeds_ = std::move(feeds);
   session_ = log_.newSession();
@@ -167,10 +175,29 @@ void Playback::apply(const playback::Actions& actions) {
         app_.invalidate();
         break;
       case playback::Action::Kind::Toast:
-        if (full_) app_.toast(a.text, true);
+        // A backup's picture came up: the corner card says what happened.
+        if (full_ && hadPicture_) backup_ = BackupNotice{lastFailed_, rec_.feedIndex(), app_.ms()};
+        else if (full_) app_.toast(a.text, true);
         break;
       case playback::Action::Kind::RecordFeed:
-        if (a.feed < feeds_.size()) app_.store().recordFeed(feeds_[a.feed].channelId, a.worked);
+        if (a.feed < feeds_.size()) {
+          const std::string& id = feeds_[a.feed].channelId;
+          app_.store().recordFeed(id, a.worked);
+          if (a.worked) {
+            problems_.erase(id);
+          } else {
+            lastFailed_ = a.feed;
+            std::string why = "no picture after 20 s";
+            if (sawPicture_ && pictureAt_) {
+              uint32_t ran = (app_.ms() - pictureAt_) / 1000;
+              why = ran >= 120 ? "stopped after " + std::to_string(ran / 60) + " min"
+                               : "stopped after " + std::to_string(std::max<uint32_t>(1, ran)) + " s";
+            } else if (sawFailed_) {
+              why = "the server answered with an error";
+            }
+            problems_[id] = FeedProblem{time::now(), why};
+          }
+        }
         break;
       case playback::Action::Kind::Log: {
         MLOG_I("play", "%s %s", a.text.c_str(), playback::safeMessage(a.detail).c_str());
@@ -307,6 +334,8 @@ bool Playback::tick(uint32_t ms) {
   bool picture = s.playing || s.decoderSeen;
   if (picture && !sawPicture_) {
     sawPicture_ = true;
+    hadPicture_ = true;
+    pictureAt_ = ms;
     apply(rec_.firstFrame(ms));
     if (reapplyOnReady_) {
       reapplyOnReady_ = false;

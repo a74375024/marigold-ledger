@@ -93,6 +93,7 @@ struct Feed {
   std::string url;        // secret
   std::string headers;    // "Name: value" lines, secret
   std::string label;      // "FHD · West feed · <account name>" (safe to show)
+  std::string quality;    // "FHD", for the feed chip
   int loadMode = 0;
   // Emby: the server opens the stream first (store().resolve()).
   bool needsOpen = false;

@@ -25,12 +25,16 @@ class PanelScreen : public Screen {
   void rebuild();
   // Extra keys before the panel's own (colour keys, Left to step out).
   std::function<bool(const KeyEvent&)> onKey;
+  // Rebuild the rows once a second (rows that show live state).
+  bool liveRows = false;
+  bool tick(uint32_t ms) override;
 
  private:
   Side side_;
   float width_;
   std::function<void(ui::ListPanel&)> build_;
   ui::ListPanel panel_;
+  uint32_t rebuiltAt_ = 0;
 };
 
 }  // namespace marigold::app

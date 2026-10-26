@@ -19,6 +19,13 @@ void PanelScreen::rebuild() {
 
 void PanelScreen::shown() { rebuild(); }
 
+bool PanelScreen::tick(uint32_t ms) {
+  if (!liveRows || ms - rebuiltAt_ < 1000) return false;
+  rebuiltAt_ = ms;
+  rebuild();
+  return true;
+}
+
 bool PanelScreen::key(const KeyEvent& e) {
   if (onKey && onKey(e)) return true;
   if (e.key == Key::Ok && e.longPress) {
