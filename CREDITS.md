@@ -18,3 +18,10 @@ The Nuvio name and branding belong to their owners and are not used here.
 - Source: https://github.com/doctest/doctest, v2.4.11
 - Licence: MIT, Copyright (c) 2016-2023 Viktor Kirilov
 - Used in `tests/third_party/doctest.h` (host tests only, not in the app)
+
+## QR Code generator library
+
+- Source: https://github.com/nayuki/QR-Code-generator, v1.8.0 (`cpp/`, unchanged)
+- Licence: MIT, Copyright (c) Project Nayuki
+- Used in `vendor/qrcodegen/` (licence in `vendor/qrcodegen/LICENSE`) for the
+  QR code on the Help export screen
