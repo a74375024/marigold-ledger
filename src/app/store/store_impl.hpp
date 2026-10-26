@@ -181,6 +181,9 @@ struct Store::Impl {
 
   // Shared with workers.
   std::shared_ptr<std::atomic<bool>> playingFull = std::make_shared<std::atomic<bool>>(false);
+  // Foreground jobs running now (loading the saved lists, the channel sort):
+  // guide builds wait for them, so the memory peaks never add up.
+  std::shared_ptr<std::atomic<int>> foregroundJobs = std::make_shared<std::atomic<int>>(0);
   std::shared_ptr<std::atomic<bool>> stopJobs = std::make_shared<std::atomic<bool>>(false);
 
   uint64_t publishVersion = 0;

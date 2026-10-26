@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <set>
 #include <unordered_set>
@@ -38,6 +39,7 @@
 #include "core/sources/xtream.hpp"
 #include "core/util/gunzip.hpp"
 #include "core/util/json.hpp"
+#include "core/util/json_doc.hpp"
 #include "core/util/log.hpp"
 #include "core/util/memory.hpp"
 #include "core/util/redact.hpp"
@@ -105,6 +107,18 @@ std::optional<std::string> wikitext(http::Client& pool, const std::string& title
 // Waits while full screen video plays (big downloads).
 struct GuideReadStateLite {
   std::shared_ptr<std::atomic<bool>> playing, stop;
+};
+
+// Counts a foreground job while it runs on a worker (see foregroundJobs).
+class Foreground {
+ public:
+  explicit Foreground(std::shared_ptr<std::atomic<int>> count) : count_(std::move(count)) { ++*count_; }
+  ~Foreground() { --*count_; }
+  Foreground(const Foreground&) = delete;
+  Foreground& operator=(const Foreground&) = delete;
+
+ private:
+  std::shared_ptr<std::atomic<int>> count_;
 };
 
 // Accounts with a full guide file: Xtream's xmltv.php, or an M3U guide link.
@@ -184,6 +198,27 @@ bool writeFileAtomic(const std::string& path, const std::string& data, bool secr
     if (!f) return false;
   }
   if (secret) chmod(tmp.c_str(), 0600);
+  return std::rename(tmp.c_str(), path.c_str()) == 0;
+}
+
+// Writes a file a piece at a time (`write` sends its chunks to the sink),
+// next to `path`, and renames it into place.
+bool writeFileStreaming(const std::string& path, const std::function<bool(const json::Writer::Sink&)>& write) {
+  std::string tmp = path + ".tmp";
+  bool ok;
+  {
+    std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+    if (!f) return false;
+    ok = write([&f](std::string_view chunk) {
+      f.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+      return static_cast<bool>(f);
+    });
+    ok = ok && static_cast<bool>(f);
+  }
+  if (!ok) {
+    std::remove(tmp.c_str());
+    return false;
+  }
   return std::rename(tmp.c_str(), path.c_str()) == 0;
 }
 
@@ -577,10 +612,12 @@ void Store::load(bool force) {
     std::string path = app_.storage().path(catalog::cache::fileName(signature, catalog::cache::Part::first));
     std::string fullPath = app_.storage().path(catalog::cache::fileName(signature, catalog::cache::Part::full));
     auto saved = std::make_shared<std::optional<catalog::cache::Saved>>();
+    auto foreground = m.foregroundJobs;
     app_.pool().post(
-        [path, saved, signature] {
-          std::string text;
-          if (readFile(path, text)) *saved = catalog::cache::fromJson(text, signature);
+        [path, saved, signature, foreground] {
+          Foreground busy(foreground);
+          std::ifstream in(path, std::ios::binary);
+          if (in) *saved = catalog::cache::readSaved(in, signature);
         },
         [this, gen, saved, fullPath, signature] {
           if (gen != impl_->generation) return;
@@ -590,9 +627,10 @@ void Store::load(bool force) {
             // Then the full saved list.
             auto full = std::make_shared<std::optional<catalog::cache::Saved>>();
             app_.pool().post(
-                [fullPath, full, signature] {
-                  std::string text;
-                  if (readFile(fullPath, text)) *full = catalog::cache::fromJson(text, signature);
+                [fullPath, full, signature, foreground = impl_->foregroundJobs] {
+                  Foreground busy(foreground);
+                  std::ifstream in(fullPath, std::ios::binary);
+                  if (in) *full = catalog::cache::readSaved(in, signature);
                 },
                 [this, gen, full] {
                   if (gen != impl_->generation || !*full || !impl_->partial) return;
@@ -612,6 +650,7 @@ void Store::installSaved(catalog::cache::Saved saved, bool partial) {
   Impl& m = *impl_;
   for (const auto& [source, formats] : saved.xtreamFormats) m.runs[source].formats = formats;
   m.channelsLoadedAt = saved.savedAt;
+  if (!partial) m.listFingerprint = saved.fingerprint;
   installCatalog(std::make_shared<std::vector<Channel>>(std::move(saved.channels)),
                  std::make_shared<CatalogResult>(std::move(saved.catalog)), partial);
   status_.phase = StoreStatus::Phase::Ready;
@@ -803,11 +842,13 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
   auto print = std::make_shared<uint64_t>(0);
   auto unchanged = std::make_shared<bool>(false);
   app_.pool().post(
-      [merged, old, oldCatalog, result, renamedCount, now, stations, wanted, cut, lastPrint, print, unchanged] {
+      [merged, old, oldCatalog, result, renamedCount, now, stations, wanted, cut, lastPrint, print, unchanged,
+       foreground = m.foregroundJobs] {
+        Foreground busy(foreground);
         std::vector<Channel> list = std::move(*merged);
-        // The same download as last time (the usual case every half hour):
-        // nothing to sort again.
-        *print = catalog::fingerprint(list);
+        // The same download (and countries) as the list on screen, from
+        // this run or saved by the last one: nothing to sort again.
+        *print = catalog::fingerprint(list, wanted);
         if (lastPrint && *print == lastPrint) {
           *unchanged = true;
           return;
@@ -847,6 +888,8 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
           MLOG_I("store", "refresh: the channel list is unchanged");
           status_.problem = str::join(problems, "\n");
           status_.line.clear();
+          if (!mm.stationsFresh) fetchStations();
+          fetchLogoIndex();
           afterBigJob("channel list checked");
           return;
         }
@@ -1038,13 +1081,22 @@ void Store::installCatalog(std::shared_ptr<const std::vector<Channel>> list, std
 void Store::saveCatalog() {
   Impl& m = *impl_;
   if (m.partial || m.channels->empty()) return;
-  catalog::cache::Saved saved;
-  saved.signature = m.signature;
-  saved.savedAt = m.channelsLoadedAt ? m.channelsLoadedAt : time::now();
-  saved.channels = *m.channels;
-  saved.catalog = *m.catalog;
+  // The live list and catalog are shared with the writer, not copied, and
+  // written a piece at a time.
+  struct Job {
+    std::shared_ptr<const std::vector<Channel>> channels;
+    std::shared_ptr<const CatalogResult> catalog;
+    std::map<std::string, std::vector<std::string>> formats;
+    catalog::cache::SavedRef ref;
+  };
+  auto job = std::make_shared<Job>();
+  job->channels = m.channels;
+  job->catalog = m.catalog;
   for (const auto& [source, run] : m.runs)
-    if (!run.formats.empty()) saved.xtreamFormats[source] = run.formats;
+    if (!run.formats.empty()) job->formats[source] = run.formats;
+  job->ref.signature = m.signature;
+  job->ref.savedAt = m.channelsLoadedAt ? m.channelsLoadedAt : time::now();
+  job->ref.fingerprint = m.listFingerprint;
   std::set<std::string> first(m.lineup.lineupIDs.begin(), m.lineup.lineupIDs.end());
   for (const Channel& e : m.lineup.browseEntries) {
     if (first.size() > 400) break;
@@ -1054,18 +1106,32 @@ void Store::saveCatalog() {
   for (const std::string& r : m.recents) first.insert(r);
   std::set<std::string> families;
   for (const auto& f : m.catalog->families) families.insert(f.id);
-  std::string dir = app_.storage().dir();
   std::string firstPath = app_.storage().path(catalog::cache::fileName(m.signature, catalog::cache::Part::first));
   std::string fullPath = app_.storage().path(catalog::cache::fileName(m.signature, catalog::cache::Part::full));
-  auto box = std::make_shared<catalog::cache::Saved>(std::move(saved));
   app_.pool().post(
-      [box, first, families, firstPath, fullPath] {
-        std::string full = catalog::cache::toJson(*box);
-        std::string part = catalog::cache::toJson(catalog::cache::firstPart(*box, first, families));
-        writeFileAtomic(firstPath, part);
-        writeFileAtomic(fullPath, full);
-        MLOG_I("store", "saved channel list: first screen %s, full %s", catalog::sizeText(static_cast<int64_t>(part.size())).c_str(),
-               catalog::sizeText(static_cast<int64_t>(full.size())).c_str());
+      [job, first, families, firstPath, fullPath] {
+        job->ref.channels = job->channels.get();
+        job->ref.catalog = job->catalog.get();
+        job->ref.xtreamFormats = &job->formats;
+        int64_t partBytes = 0, fullBytes = 0;
+        {
+          catalog::cache::Saved part = catalog::cache::firstPart(job->ref, first, families);
+          part.fingerprint = 0;  // only the full list can skip a sort
+          writeFileStreaming(firstPath, [&](const json::Writer::Sink& sink) {
+            return catalog::cache::writeSaved(catalog::cache::ref(part), [&](std::string_view c) {
+              partBytes += static_cast<int64_t>(c.size());
+              return sink(c);
+            });
+          });
+        }
+        writeFileStreaming(fullPath, [&](const json::Writer::Sink& sink) {
+          return catalog::cache::writeSaved(job->ref, [&](std::string_view c) {
+            fullBytes += static_cast<int64_t>(c.size());
+            return sink(c);
+          });
+        });
+        MLOG_I("store", "saved channel list: first screen %s, full %s", catalog::sizeText(partBytes).c_str(),
+               catalog::sizeText(fullBytes).c_str());
       },
       nullptr, http::Priority::Background);
 }
@@ -1780,14 +1846,16 @@ void Store::readSavedListings() {
   std::string outsidePath = app_.storage().path(guide::savedFileName(m.signature));
   uint64_t gen = m.generation;
   app_.pool().post(
-      [box, keys, outsidePath] {
+      [box, keys, outsidePath, foreground = m.foregroundJobs] {
+        Foreground busy(foreground);
+        // Read a piece at a time: the files run to several MB.
         for (const auto& [key, path] : keys) {
-          std::string text;
-          if (!readFile(path, text)) continue;
-          if (auto s = guide::provider::savedFromJson(text)) box->provider[key] = std::move(*s);
+          std::ifstream in(path, std::ios::binary);
+          if (!in) continue;
+          if (auto s = guide::provider::readSaved(in)) box->provider[key] = std::move(*s);
         }
-        std::string text;
-        if (readFile(outsidePath, text)) box->outside = guide::savedFromJson(text);
+        std::ifstream in(outsidePath, std::ios::binary);
+        if (in) box->outside = guide::readSaved(in);
       },
       [this, gen, box] {
         Impl& mm = *impl_;
@@ -1853,10 +1921,15 @@ namespace {
 // calling (pool) thread. Big files wait while full screen video plays.
 struct GuideReadState {
   std::shared_ptr<std::atomic<bool>> playing, stop;
+  std::shared_ptr<std::atomic<int>> foreground;
 };
 
+// Guide reads wait while video plays full screen (it needs the CPU), up to
+// 5 minutes, and while a foreground job holds a lot of memory (the saved
+// lists loading, the channel sort), up to 3 minutes.
 void waitForPlayback(const GuideReadState& st) {
   for (int i = 0; i < 600 && st.playing->load() && !st.stop->load(); ++i) usleep(500000);
+  for (int i = 0; i < 360 && st.foreground->load() > 0 && !st.stop->load(); ++i) usleep(500000);
 }
 
 }  // namespace
@@ -1904,7 +1977,7 @@ void Store::runProviderGuide() {
   m.providerRunning = true;
   auto results = std::make_shared<std::vector<std::pair<std::string, guide::provider::Outcome>>>();
   auto shared = std::make_shared<std::vector<Job>>(std::move(jobs));
-  GuideReadState st{m.playingFull, m.stopJobs};
+  GuideReadState st{m.playingFull, m.stopJobs, m.foregroundJobs};
   http::Client& pool = app_.pool();
   std::string dir = app_.storage().dir();
   platform::Storage* storage = &app_.storage();
@@ -1950,7 +2023,8 @@ void Store::runProviderGuide() {
           };
           guide::provider::Outcome o = guide::provider::build(j.channels, time::now(), read);
           if (o.kind == guide::provider::Outcome::Kind::built) {
-            writeFileAtomic(storage->path(guide::provider::savedFileName(j.key)), guide::provider::toJson(o.saved));
+            writeFileStreaming(storage->path(guide::provider::savedFileName(j.key)),
+                               [&o](const json::Writer::Sink& sink) { return guide::provider::writeSaved(o.saved, sink); });
           }
           results->push_back({j.key, std::move(o)});
         }
@@ -2014,12 +2088,13 @@ void Store::runOutsideGuide() {
   std::string guideDir = app_.storage().path("guides");
   mkdir(guideDir.c_str(), 0700);
   std::string savedPath = app_.storage().path(guide::savedFileName(m.signature));
-  GuideReadState st{m.playingFull, m.stopJobs};
+  GuideReadState st{m.playingFull, m.stopJobs, m.foregroundJobs};
   http::Client& pool = app_.pool();
   uint64_t gen = m.generation;
   auto newSaved = std::make_shared<std::optional<guide::Saved>>();
   app_.pool().post(
       [snapshot, shards, previous, built, guideDir, savedPath, st, &pool, newSaved, stations = m.stations] {
+        waitForPlayback(st);
         guide::BuildIO io;
         io.cancelled = [st] { return st.stop->load(); };
         io.fetch = [&pool, guideDir, st](const guide::Source& source, const std::optional<std::string>& etag,
@@ -2123,7 +2198,7 @@ void Store::runOutsideGuide() {
           s.nextCheck = built->nextCheck;
           s.targetsKey = built->targetsKey;
           s.detailVersion = guide::kDetailVersion;
-          writeFileAtomic(savedPath, guide::toJson(s));
+          writeFileStreaming(savedPath, [&s](const json::Writer::Sink& sink) { return guide::writeSaved(s, sink); });
           *newSaved = std::move(s);
         }
       },

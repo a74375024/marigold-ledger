@@ -51,10 +51,10 @@ class XmltvReader : private xml::Handler {
   // several guide channels takes the one with the most listings; low-power
   // repeaters ("KGO-LD") only win when the main station isn't listed, and a
   // feed of its own beats one derived from another (West from East).
-  std::map<std::string, SourceResult::Entry> result() const;
+  std::map<std::string, SourceResult::Entry> result();
   // result() plus counts and the horizon median (seconds is left 0 for the
   // caller to fill in).
-  SourceResult sourceResult() const;
+  SourceResult sourceResult();
 
   int guideChannelCount() const { return guideChannels_; }
   int programmeCount() const { return programmes_; }

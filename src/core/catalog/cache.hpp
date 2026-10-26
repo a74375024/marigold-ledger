@@ -6,6 +6,8 @@
 // the caller does the file I/O (atomically, in a cache folder it may lose).
 #pragma once
 
+#include <iosfwd>
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <set>
@@ -16,6 +18,7 @@
 #include "core/catalog/types.hpp"
 #include "core/model/channel.hpp"
 #include "core/util/json.hpp"
+#include "core/util/json_doc.hpp"
 #include "core/util/time.hpp"
 
 namespace marigold::catalog::cache {
@@ -33,6 +36,9 @@ struct Saved {
   std::vector<Channel> channels;
   CatalogResult catalog;
   std::map<std::string, std::vector<std::string>> xtreamFormats;
+  // catalog::fingerprint() of the download this list was sorted from (0:
+  // not known): a launch whose download matches needs no new sort.
+  uint64_t fingerprint = 0;
 };
 
 // "catalog-<fnv-1a of signature, hex>-<first|full>.json": a stable name per
@@ -44,9 +50,27 @@ std::string toJson(const Saved& saved);
 // for another signature.
 std::optional<Saved> fromJson(std::string_view text, std::string_view signature);
 
+// The same a piece at a time (the full list runs to tens of MB). SavedRef
+// points at the parts instead of holding them, so the app's live list and
+// catalog are written without a copy.
+struct SavedRef {
+  int version = kVersion;
+  std::string signature;
+  time::Seconds savedAt = 0;
+  const std::vector<Channel>* channels = nullptr;
+  const CatalogResult* catalog = nullptr;
+  const std::map<std::string, std::vector<std::string>>* xtreamFormats = nullptr;
+  uint64_t fingerprint = 0;
+};
+SavedRef ref(const Saved& saved);
+bool writeSaved(const SavedRef& saved, const json::Writer::Sink& sink);
+std::optional<Saved> readSaved(std::istream& in, std::string_view signature);
+
 // The first-screen subset: those entries and families, their channels, and
 // the events of those families.
 Saved firstPart(const Saved& saved, const std::set<std::string>& firstEntryIDs,
+                const std::set<std::string>& firstFamilyIDs);
+Saved firstPart(const SavedRef& saved, const std::set<std::string>& firstEntryIDs,
                 const std::set<std::string>& firstFamilyIDs);
 
 // The pieces, for other caches.

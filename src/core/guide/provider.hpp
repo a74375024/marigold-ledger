@@ -41,6 +41,9 @@ struct Saved {
 
 std::string toJson(const Saved& saved);
 std::optional<Saved> savedFromJson(std::string_view text);
+// The same, a piece at a time.
+bool writeSaved(const Saved& saved, const json::Writer::Sink& sink);
+std::optional<Saved> readSaved(std::istream& in);
 
 struct Status {
   enum class Kind { updating, ready, unavailable, failed };

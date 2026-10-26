@@ -73,7 +73,7 @@ GroupRank countryRank(const std::set<std::string>& wanted) {
   };
 }
 
-uint64_t fingerprint(const std::vector<Channel>& channels) {
+uint64_t fingerprint(const std::vector<Channel>& channels, const std::set<std::string>& also) {
   uint64_t h = 0xcbf29ce484222325ull;
   auto mix = [&h](unsigned char c) { h = (h ^ c) * 0x100000001b3ull; };
   auto text = [&mix](const std::string& t) {
@@ -100,6 +100,7 @@ uint64_t fingerprint(const std::vector<Channel>& channels) {
     opt(c.epgId);
     mix(0xfe);
   }
+  for (const std::string& a : also) text(a);
   return h;
 }
 

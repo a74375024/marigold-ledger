@@ -1,6 +1,8 @@
 #include "core/catalog/cache.hpp"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 
 #include "core/util/strings.hpp"
 
@@ -261,50 +263,191 @@ std::optional<CatalogResult> catalogFromJson(const json::Value& v) {
   return r;
 }
 
-std::string toJson(const Saved& saved) {
-  json::Value v = json::Value::object();
-  v.set("version", saved.version);
-  v.set("signature", saved.signature);
-  v.set("savedAt", saved.savedAt);
-  json::Value channels = json::Value::array();
-  for (const Channel& c : saved.channels) channels.push(toJson(c));
-  v.set("channels", channels);
-  v.set("catalog", toJson(saved.catalog));
-  json::Value formats = json::Value::object();
-  for (const auto& [k, list] : saved.xtreamFormats) formats.set(k, strings(list));
-  v.set("xtreamFormats", formats);
-  return json::write(v);
+SavedRef ref(const Saved& saved) {
+  SavedRef r;
+  r.version = saved.version;
+  r.signature = saved.signature;
+  r.savedAt = saved.savedAt;
+  r.channels = &saved.channels;
+  r.catalog = &saved.catalog;
+  r.xtreamFormats = &saved.xtreamFormats;
+  r.fingerprint = saved.fingerprint;
+  return r;
 }
 
-std::optional<Saved> fromJson(std::string_view text, std::string_view signature) {
-  auto parsed = json::parse(text);
-  if (!parsed || !parsed->isObject()) return std::nullopt;
-  const json::Value& v = *parsed;
-  if (v["version"].asInt(-1) != kVersion || v["signature"].asString() != signature)
-    return std::nullopt;
+namespace {
+
+// An unordered map's entries in key order (json::Value objects are sorted).
+template <typename Map>
+std::vector<const typename Map::value_type*> sortedEntries(const Map& map) {
+  std::vector<const typename Map::value_type*> out;
+  out.reserve(map.size());
+  for (const auto& item : map) out.push_back(&item);
+  std::sort(out.begin(), out.end(), [](const auto* a, const auto* b) { return a->first < b->first; });
+  return out;
+}
+
+}  // namespace
+
+bool writeSaved(const SavedRef& saved, const json::Writer::Sink& sink) {
+  static const std::vector<Channel> kNoChannels;
+  static const CatalogResult kNoCatalog;
+  static const std::map<std::string, std::vector<std::string>> kNoFormats;
+  const std::vector<Channel>& channels = saved.channels ? *saved.channels : kNoChannels;
+  const CatalogResult& catalog = saved.catalog ? *saved.catalog : kNoCatalog;
+  const auto& formats = saved.xtreamFormats ? *saved.xtreamFormats : kNoFormats;
+  // Keys in sorted order: the bytes json::write() gave for the whole tree.
+  json::Writer w(sink);
+  w.beginObject();
+  w.key("catalog");
+  w.beginObject();
+  w.key("entries");
+  w.beginArray();
+  for (const EntryInfo& e : catalog.entries) w.value(toJson(e));
+  w.endArray();
+  w.key("entryOf");
+  w.beginObject();
+  for (const auto* item : sortedEntries(catalog.entryOf)) {
+    w.key(item->first);
+    w.value(item->second);
+  }
+  w.endObject();
+  w.key("events");
+  w.beginArray();
+  for (const LiveEvent& e : catalog.events) w.value(toJson(e));
+  w.endArray();
+  w.key("families");
+  w.beginArray();
+  for (const EventFamily& f : catalog.families) w.value(toJson(f));
+  w.endArray();
+  w.key("traits");
+  w.beginObject();
+  for (const auto* item : sortedEntries(catalog.traits)) {
+    w.key(item->first);
+    w.value(toJson(item->second));
+  }
+  w.endObject();
+  w.endObject();
+  w.key("channels");
+  w.beginArray();
+  for (const Channel& c : channels) w.value(toJson(c));
+  w.endArray();
+  if (saved.fingerprint) {
+    // As hex text: a JSON number holds only 53 bits.
+    char hex[17];
+    std::snprintf(hex, sizeof hex, "%016llx", static_cast<unsigned long long>(saved.fingerprint));
+    w.key("fingerprint");
+    w.value(std::string(hex));
+  }
+  w.key("savedAt");
+  w.value(saved.savedAt);
+  w.key("signature");
+  w.value(saved.signature);
+  w.key("version");
+  w.value(saved.version);
+  w.key("xtreamFormats");
+  w.beginObject();
+  for (const auto& [k, list] : formats) {
+    w.key(k);
+    w.value(strings(list));
+  }
+  w.endObject();
+  w.endObject();
+  return w.finish();
+}
+
+std::string toJson(const Saved& saved) {
+  std::string out;
+  writeSaved(ref(saved), [&out](std::string_view chunk) {
+    out.append(chunk.data(), chunk.size());
+    return true;
+  });
+  return out;
+}
+
+namespace {
+
+template <typename Feed>
+std::optional<Saved> readSavedWith(const Feed& feed, std::string_view signature) {
   Saved s;
+  bool bad = false;
+  int version = -1;
+  std::string savedSignature;
+  json::DocumentReader reader(
+      {"channels", "catalog.entries", "catalog.entryOf", "catalog.events", "catalog.families", "catalog.traits"},
+      [&](const std::string& key, json::Value&& v) {
+        if (key == "version") version = static_cast<int>(v.asInt(-1));
+        else if (key == "signature") savedSignature = v.asString();
+        else if (key == "savedAt") s.savedAt = v.asInt();
+        else if (key == "fingerprint") s.fingerprint = std::strtoull(v.asString().c_str(), nullptr, 16);
+        else if (key == "xtreamFormats")
+          for (const auto& [k, list] : v.fields()) s.xtreamFormats[k] = stringsFrom(list);
+        return true;
+      },
+      [&](const std::string& key, const std::string& member, json::Value&& v) {
+        if (key == "channels") {
+          auto c = channelFromJson(v);
+          if (!c) bad = true;
+          else s.channels.push_back(std::move(*c));
+          return !bad;
+        }
+        CatalogResult& r = s.catalog;
+        if (key == "catalog.traits") {
+          auto t = traitsFromJson(v);
+          if (!t) bad = true;
+          else r.traits.emplace(member, std::move(*t));
+        } else if (key == "catalog.entries") {
+          auto e = entryFromJson(v);
+          if (!e) bad = true;
+          else r.entries.push_back(std::move(*e));
+        } else if (key == "catalog.entryOf") {
+          r.entryOf.emplace(member, v.asString());
+        } else if (key == "catalog.families") {
+          auto f = familyFromJson(v);
+          if (!f) bad = true;
+          else r.families.push_back(std::move(*f));
+        } else if (key == "catalog.events") {
+          auto e = eventFromJson(v);
+          if (!e) bad = true;
+          else r.events.push_back(std::move(*e));
+        }
+        return !bad;
+      });
+  if (!feed(reader) || !reader.finish() || bad) return std::nullopt;
+  if (version != kVersion || savedSignature != signature) return std::nullopt;
   s.version = kVersion;
   s.signature = std::string(signature);
-  s.savedAt = v["savedAt"].asInt();
-  for (const json::Value& item : v["channels"].items()) {
-    auto c = channelFromJson(item);
-    if (!c) return std::nullopt;
-    s.channels.push_back(std::move(*c));
-  }
-  auto catalog = catalogFromJson(v["catalog"]);
-  if (!catalog) return std::nullopt;
-  s.catalog = std::move(*catalog);
-  for (const auto& [k, list] : v["xtreamFormats"].fields()) s.xtreamFormats[k] = stringsFrom(list);
   return s;
+}
+
+}  // namespace
+
+std::optional<Saved> fromJson(std::string_view text, std::string_view signature) {
+  return readSavedWith([text](json::DocumentReader& r) { return r.feed(text); }, signature);
+}
+
+std::optional<Saved> readSaved(std::istream& in, std::string_view signature) {
+  return readSavedWith([&in](json::DocumentReader& r) { return json::feedAll(in, r); }, signature);
 }
 
 Saved firstPart(const Saved& saved, const std::set<std::string>& firstEntryIDs,
                 const std::set<std::string>& firstFamilyIDs) {
+  return firstPart(ref(saved), firstEntryIDs, firstFamilyIDs);
+}
+
+Saved firstPart(const SavedRef& ref, const std::set<std::string>& firstEntryIDs,
+                const std::set<std::string>& firstFamilyIDs) {
+  static const std::vector<Channel> kNoChannels;
+  static const CatalogResult kNoCatalog;
+  struct {
+    const std::vector<Channel>& channels;
+    const CatalogResult& catalog;
+  } saved{ref.channels ? *ref.channels : kNoChannels, ref.catalog ? *ref.catalog : kNoCatalog};
   Saved first;
-  first.version = saved.version;
-  first.signature = saved.signature;
-  first.savedAt = saved.savedAt;
-  first.xtreamFormats = saved.xtreamFormats;
+  first.version = ref.version;
+  first.signature = ref.signature;
+  first.savedAt = ref.savedAt;
+  if (ref.xtreamFormats) first.xtreamFormats = *ref.xtreamFormats;
   std::set<std::string> keep;
   for (const EntryInfo& e : saved.catalog.entries) {
     if (!firstEntryIDs.count(e.id)) continue;

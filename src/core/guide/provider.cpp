@@ -1,6 +1,7 @@
 #include "core/guide/provider.hpp"
 
 #include <algorithm>
+#include <unordered_map>
 
 #include "core/util/json.hpp"
 #include "core/util/rx.hpp"
@@ -8,34 +9,84 @@
 
 namespace marigold::guide::provider {
 
-std::string toJson(const Saved& saved) {
-  json::Value v = json::Value::object();
-  v.set("built", saved.built);
-  v.set("channelCount", saved.channelCount);
-  guide::setPrograms(v, saved.programs);
-  json::Value notes = json::Value::object();
-  for (const auto& [k, n] : saved.notes) notes.set(k, n);
-  v.set("notes", notes);
-  v.set("guideChannels", saved.guideChannels);
-  v.set("guideProgrammes", saved.guideProgrammes);
-  v.set("bytes", saved.bytes);
-  return json::write(v);
+bool writeSaved(const Saved& saved, const json::Writer::Sink& sink) {
+  // Keys in sorted order: the bytes json::write() gave for the whole tree.
+  json::Writer w(sink);
+  w.beginObject();
+  w.key("built");
+  w.value(saved.built);
+  w.key("bytes");
+  w.value(saved.bytes);
+  w.key("channelCount");
+  w.value(saved.channelCount);
+  w.key("guideChannels");
+  w.value(saved.guideChannels);
+  w.key("guideProgrammes");
+  w.value(saved.guideProgrammes);
+  ListIndex index = writeLists(w, saved.programs);
+  w.key("notes");
+  w.beginObject();
+  for (const auto& [k, note] : saved.notes) {
+    w.key(k);
+    w.value(note);
+  }
+  w.endObject();
+  writePrograms(w, saved.programs, index);
+  w.endObject();
+  return w.finish();
 }
 
-std::optional<Saved> savedFromJson(std::string_view text) {
-  auto parsed = json::parse(text);
-  if (!parsed || !parsed->isObject()) return std::nullopt;
-  const json::Value& v = *parsed;
-  if (!v["built"].isNumber() || !v["programs"].isObject()) return std::nullopt;
+std::string toJson(const Saved& saved) {
+  std::string out;
+  writeSaved(saved, [&out](std::string_view chunk) {
+    out.append(chunk.data(), chunk.size());
+    return true;
+  });
+  return out;
+}
+
+namespace {
+
+template <typename Feed>
+std::optional<Saved> readSavedWith(const Feed& feed) {
   Saved s;
-  s.built = v["built"].asInt();
-  s.channelCount = static_cast<int>(v["channelCount"].asInt());
-  s.programs = sharedProgramsFromJson(v);
-  for (const auto& [k, n] : v["notes"].fields()) s.notes[k] = n.asString();
-  s.guideChannels = static_cast<int>(v["guideChannels"].asInt());
-  s.guideProgrammes = static_cast<int>(v["guideProgrammes"].asInt());
-  s.bytes = v["bytes"].asInt();
+  bool builtOk = false;
+  ProgramsReader programs;
+  json::DocumentReader reader(
+      {"lists", "programs", "notes"},
+      [&](const std::string& key, json::Value&& v) {
+        if (key == "built") {
+          builtOk = v.isNumber();
+          s.built = v.asInt();
+        } else if (key == "channelCount") {
+          s.channelCount = static_cast<int>(v.asInt());
+        } else if (key == "guideChannels") {
+          s.guideChannels = static_cast<int>(v.asInt());
+        } else if (key == "guideProgrammes") {
+          s.guideProgrammes = static_cast<int>(v.asInt());
+        } else if (key == "bytes") {
+          s.bytes = v.asInt();
+        }
+        return true;
+      },
+      [&](const std::string& key, const std::string& member, json::Value&& v) {
+        if (key == "notes") s.notes[member] = v.asString();
+        else programs.part(key, member, std::move(v));
+        return true;
+      });
+  if (!feed(reader) || !reader.finish() || !builtOk || !programs.sawPrograms()) return std::nullopt;
+  s.programs = programs.take();
   return s;
+}
+
+}  // namespace
+
+std::optional<Saved> savedFromJson(std::string_view text) {
+  return readSavedWith([text](json::DocumentReader& r) { return r.feed(text); });
+}
+
+std::optional<Saved> readSaved(std::istream& in) {
+  return readSavedWith([&in](json::DocumentReader& r) { return json::feedAll(in, r); });
 }
 
 std::optional<std::string> countryPrefix(const std::optional<std::string>& group) {
@@ -129,14 +180,27 @@ Outcome build(const std::vector<Channel>& channels, time::Seconds nowSec, const 
   out.kind = Outcome::Kind::built;
   out.saved.built = nowSec;
   out.saved.channelCount = static_cast<int>(channels.size());
-  ProgramsById programs;
+  // Channels with the same guide id share one list, sorted once.
+  auto byStart = [](const RawProgram& a, const RawProgram& b) { return a.s < b.s; };
+  std::unordered_map<const void*, Schedule> sorted;
+  SharedPrograms programs;
   for (auto& [channelID, entry] : found->programs) {
-    std::vector<RawProgram> sorted = std::move(entry.programs);
-    std::stable_sort(sorted.begin(), sorted.end(),
-                     [](const RawProgram& a, const RawProgram& b) { return a.s < b.s; });
-    programs[channelID] = std::move(sorted);
+    if (!entry.programs) continue;
+    Schedule& list = sorted[entry.programs.get()];
+    if (!list) {
+      if (std::is_sorted(entry.programs->begin(), entry.programs->end(), byStart)) {
+        list = entry.programs;
+      } else {
+        std::vector<RawProgram> copy = *entry.programs;
+        std::stable_sort(copy.begin(), copy.end(), byStart);
+        list = std::make_shared<const std::vector<RawProgram>>(std::move(copy));
+      }
+    }
+    programs[channelID] = list;
     out.saved.notes[channelID] = "Provider guide: " + entry.note;
   }
+  found->programs.clear();
+  sorted.clear();
   out.saved.programs = share(std::move(programs));
   out.saved.guideChannels = found->guideChannels;
   out.saved.guideProgrammes = found->programmes;

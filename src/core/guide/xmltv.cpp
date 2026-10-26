@@ -207,7 +207,7 @@ void XmltvReader::endElement(std::string_view element) {
   collecting_ = false;
 }
 
-std::map<std::string, SourceResult::Entry> XmltvReader::result() const {
+std::map<std::string, SourceResult::Entry> XmltvReader::result() {
   std::map<std::string, SourceResult::Entry> byUser;
   if (!keep_) return byUser;
   auto nameOf = [&](const std::string& id) -> const std::string& {
@@ -219,40 +219,59 @@ std::map<std::string, SourceResult::Entry> XmltvReader::result() const {
     std::string text = str::upper((it == keepNames_.end() ? std::string() : it->second) + " " + id);
     return rx::test("-(LD|LP|CD|CA)\\b", text);
   };
-  std::unordered_map<std::string, int> bestScore;
-  // Swift walks a dictionary (hash order) and keeps the first of equal
-  // scores; here guide ids go in sorted order.
+  // Pass 1: winners (same scoring as before), without copying anything.
+  struct Win { const std::string* xmltv; int shift; std::string how; int score; };
+  std::unordered_map<std::string, Win> best;
   for (const auto& [xmltvID, users] : *keep_) {
     auto programs = found_.find(xmltvID);
     if (programs == found_.end() || programs->second.empty()) continue;
     int base = static_cast<int>(programs->second.size()) + (isLowPower(xmltvID) ? 0 : 100000);
     for (const Match& user : users) {
       int score = base + (user.shift == 0 ? 1000000 : 0);
-      auto best = bestScore.find(user.id);
-      if (best != bestScore.end() && score <= best->second) continue;
-      bestScore[user.id] = score;
-      SourceResult::Entry entry;
-      entry.programs = programs->second;
-      if (user.shift != 0) {
-        for (RawProgram& p : entry.programs) p.s += user.shift;
-      }
-      entry.note = nameOf(xmltvID) + " (" + user.how + ")";
-      byUser[user.id] = std::move(entry);
+      auto it = best.find(user.id);
+      if (it != best.end() && score <= it->second.score) continue;
+      best[user.id] = Win{&xmltvID, user.shift, user.how, score};
     }
   }
+  // Pass 2: each used guide channel becomes one schedule (moved, not
+  // copied); a shifted feed gets one shifted copy per (channel, shift).
+  std::map<std::pair<const std::string*, int>, Schedule> made;
+  for (auto& [userID, win] : best) {
+    Schedule& sched = made[{win.xmltv, 0}];
+    if (!sched) {
+      auto& list = found_[*win.xmltv];
+      list.shrink_to_fit();
+      sched = std::make_shared<const std::vector<RawProgram>>(std::move(list));
+    }
+    Schedule use = sched;
+    if (win.shift != 0) {
+      Schedule& shifted = made[{win.xmltv, win.shift}];
+      if (!shifted) {
+        std::vector<RawProgram> copy = *sched;
+        for (RawProgram& p : copy) p.s += win.shift;
+        shifted = std::make_shared<const std::vector<RawProgram>>(std::move(copy));
+      }
+      use = shifted;
+    }
+    SourceResult::Entry entry;
+    entry.programs = std::move(use);
+    entry.note = nameOf(*win.xmltv) + " (" + win.how + ")";
+    byUser[userID] = std::move(entry);
+  }
+  found_.clear();  // losers go now
   return byUser;
 }
 
-SourceResult XmltvReader::sourceResult() const {
+SourceResult XmltvReader::sourceResult() {
   SourceResult out;
   out.programs = result();
   out.guideChannels = guideChannels_;
   out.programmes = programmes_;
   std::vector<int> ends;
   for (const auto& [id, entry] : out.programs) {
-    if (entry.programs.empty()) continue;
-    int end = entry.programs.front().end();
-    for (const RawProgram& p : entry.programs) end = std::max(end, p.end());
+    if (!entry.programs || entry.programs->empty()) continue;
+    int end = entry.programs->front().end();
+    for (const RawProgram& p : *entry.programs) end = std::max(end, p.end());
     ends.push_back(end);
   }
   std::sort(ends.begin(), ends.end());

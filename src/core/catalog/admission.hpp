@@ -42,6 +42,7 @@ GroupRank countryRank(const std::set<std::string>& wanted);
 
 // A hash of everything a channel list holds (order included): the same
 // download gives the same value, so an unchanged list needs no new sort.
-uint64_t fingerprint(const std::vector<Channel>& channels);
+// `also`: more that decides the sort (the countries admission keeps).
+uint64_t fingerprint(const std::vector<Channel>& channels, const std::set<std::string>& also = {});
 
 }  // namespace marigold::catalog

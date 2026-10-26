@@ -1,10 +1,12 @@
 // Outside guide: sources, matching by call sign vs name, clock-shift
 // learning, merging, programmes, saved state and the whole build.
 #include <map>
+#include <sstream>
 
 #include "core/guide/genre.hpp"
 #include "core/guide/outside.hpp"
 #include "core/guide/xmltv.hpp"
+
 #include "doctest.h"
 
 using namespace marigold;
@@ -225,10 +227,45 @@ TEST_CASE("saved listings: JSON, file name, when to rebuild") {
   CHECK((*back->programs.at("c1"))[0].st == std::string("Part 1"));
   CHECK_FALSE((*back->programs.at("c1"))[1].st);
   CHECK(back->programs.at("c2").get() == back->programs.at("c1").get());  // written once, shared again
-  CHECK(*back->programs.at("c3") == *back->programs.at("c1"));
+  CHECK(back->programs.at("c3").get() == back->programs.at("c1").get());  // equal lists: one on reading
   CHECK(back->sources->at("us-national") == state);
   CHECK(back->notes->at("c1") == "US national: Dream (by name)");
-  CHECK(toJson(*back) == toJson(saved));
+  CHECK(toJson(*savedFromJson(toJson(*back))) == toJson(*back));
+
+  // Written a piece at a time, the bytes are those of the whole tree.
+  json::Value dom = json::Value::object();
+  dom.set("built", saved.built);
+  json::Value shardList = json::Value::array();
+  for (const std::string& sh : saved.shards) shardList.push(sh);
+  dom.set("shards", shardList);
+  dom.set("channelCount", saved.channelCount);
+  json::Value lists = json::Value::array();
+  for (const Schedule& list : {saved.programs.at("c1"), saved.programs.at("c3")}) {
+    json::Value a = json::Value::array();
+    for (const RawProgram& p : *list) a.push(toJson(p));
+    lists.push(a);
+  }
+  dom.set("lists", lists);
+  json::Value index = json::Value::object();
+  index.set("c1", 0);
+  index.set("c2", 0);
+  index.set("c3", 1);
+  dom.set("programs", index);
+  json::Value notes = json::Value::object();
+  notes.set("c1", "US national: Dream (by name)");
+  dom.set("notes", notes);
+  json::Value sources = json::Value::object();
+  sources.set(state.id, toJson(state));
+  dom.set("sources", sources);
+  dom.set("nextCheck", *saved.nextCheck);
+  dom.set("targetsKey", *saved.targetsKey);
+  dom.set("detailVersion", *saved.detailVersion);
+  CHECK(toJson(saved) == json::write(dom));
+  // Read from a stream, the same.
+  std::istringstream in(toJson(saved));
+  auto streamed = readSaved(in);
+  REQUIRE(streamed);
+  CHECK(toJson(*streamed) == toJson(*back));
   CHECK_FALSE(savedFromJson("{}"));
   CHECK(savedFileName("Profile 1/xt:9") == "listings-Profile_1_xt_9.json");
   CHECK(savedFileName(std::string(100, 'a')).size() == std::string("listings-.json").size() + 80);

@@ -78,8 +78,8 @@ TEST_CASE("XMLTV: matched channels, window, flags, descriptions") {
   REQUIRE(whole.programs.count("u-sports"));
   const auto& sports = whole.programs.at("u-sports");
   CHECK(sports.note == "Dream Sports HD (by name)");
-  REQUIRE(sports.programs.size() == 3);
-  const RawProgram& match = sports.programs[0];
+  REQUIRE(sports.programs->size() == 3);
+  const RawProgram& match = (*sports.programs)[0];
   CHECK(match.t == "Tom & Jerry Match");
   CHECK(match.s == kNow);
   CHECK(match.m == 120);
@@ -87,23 +87,23 @@ TEST_CASE("XMLTV: matched channels, window, flags, descriptions") {
   REQUIRE(match.d);
   CHECK(match.d->size() == 199 + 3);  // 199 characters and "…"
   CHECK(match.f == (genre::kSports | 16));
-  const RawProgram& late = sports.programs[1];
+  const RawProgram& late = (*sports.programs)[1];
   CHECK(late.t == "Late Show");
   CHECK_FALSE(late.d);  // not on soon and not sports: description dropped
   CHECK(late.f == 32);
-  const RawProgram& soon = sports.programs[2];
+  const RawProgram& soon = (*sports.programs)[2];
   CHECK(soon.d == std::string("Kept"));
   CHECK(soon.f == 32);
 
   // CDATA titles count; categories give the movie flag.
   REQUIRE(whole.programs.count("u-movies"));
-  CHECK(whole.programs.at("u-movies").programs.size() == 1);
-  CHECK(whole.programs.at("u-movies").programs[0].t == "Feature");
-  CHECK(whole.programs.at("u-movies").programs[0].f == genre::kMovie);
+  CHECK(whole.programs.at("u-movies").programs->size() == 1);
+  CHECK((*whole.programs.at("u-movies").programs)[0].t == "Feature");
+  CHECK((*whole.programs.at("u-movies").programs)[0].f == genre::kMovie);
   // The East feed stands in for the West one, three hours later.
   REQUIRE(whole.programs.count("u-movies-west"));
   const auto& west = whole.programs.at("u-movies-west");
-  CHECK(west.programs[0].s == kNow + 180);
+  CHECK((*west.programs)[0].s == kNow + 180);
   CHECK(west.note == "Movie Box (by name, West feed 3 h later)");
 
   // The main station beats its low-power repeater, despite fewer listings;
@@ -112,9 +112,9 @@ TEST_CASE("XMLTV: matched channels, window, flags, descriptions") {
   REQUIRE(whole.programs.count("u-local"));
   const auto& local = whole.programs.at("u-local");
   CHECK(local.note == "KAAA-DT ABC 7 (by call sign KAAA)");
-  REQUIRE(local.programs.size() == 1);
-  CHECK(local.programs[0].f == genre::kSports);
-  CHECK(local.programs[0].d == std::string("At the stadium, later"));
+  REQUIRE(local.programs->size() == 1);
+  CHECK((*local.programs)[0].f == genre::kSports);
+  CHECK((*local.programs)[0].d == std::string("At the stadium, later"));
 
   CHECK_FALSE(whole.programs.count("u-late"));
   CHECK(whole.programs.size() == 4);
@@ -131,12 +131,12 @@ TEST_CASE("XMLTV: matched channels, window, flags, descriptions") {
     for (const auto& [id, entry] : whole.programs) {
       const auto& other = r.programs.at(id);
       CHECK(other.note == entry.note);
-      REQUIRE(other.programs.size() == entry.programs.size());
-      for (size_t i = 0; i < entry.programs.size(); ++i) {
-        CHECK(other.programs[i].t == entry.programs[i].t);
-        CHECK(other.programs[i].s == entry.programs[i].s);
-        CHECK(other.programs[i].d == entry.programs[i].d);
-        CHECK(other.programs[i].f == entry.programs[i].f);
+      REQUIRE(other.programs->size() == entry.programs->size());
+      for (size_t i = 0; i < entry.programs->size(); ++i) {
+        CHECK((*other.programs)[i].t == (*entry.programs)[i].t);
+        CHECK((*other.programs)[i].s == (*entry.programs)[i].s);
+        CHECK((*other.programs)[i].d == (*entry.programs)[i].d);
+        CHECK((*other.programs)[i].f == (*entry.programs)[i].f);
       }
     }
   }
@@ -147,7 +147,7 @@ TEST_CASE("XMLTV: a repeater wins only when the main station isn't listed") {
   b.channel("kaaa-ld.us", {"KAAA-LD"}).programme("kaaa-ld.us", kNow, 30, "Repeater");
   SourceResult r = readAll(b.done(), 64);
   REQUIRE(r.programs.count("u-local"));
-  CHECK(r.programs.at("u-local").programs[0].t == "Repeater");
+  CHECK((*r.programs.at("u-local").programs)[0].t == "Repeater");
 }
 
 TEST_CASE("XMLTV: a West feed of its own beats one derived from East") {
@@ -158,9 +158,9 @@ TEST_CASE("XMLTV: a West feed of its own beats one derived from East") {
       .programme("movie.us", kNow + 60, 60, "East 2")
       .programme("moviewest.us", kNow, 60, "Own West");
   SourceResult r = readAll(b.done(), 5);
-  CHECK(r.programs.at("u-movies-west").programs.size() == 1);
-  CHECK(r.programs.at("u-movies-west").programs[0].t == "Own West");
-  CHECK(r.programs.at("u-movies").programs.size() == 2);
+  CHECK(r.programs.at("u-movies-west").programs->size() == 1);
+  CHECK((*r.programs.at("u-movies-west").programs)[0].t == "Own West");
+  CHECK(r.programs.at("u-movies").programs->size() == 2);
 }
 
 TEST_CASE("XMLTV: exact ids for a provider's own guide") {
@@ -177,7 +177,7 @@ TEST_CASE("XMLTV: exact ids for a provider's own guide") {
   reader.finish();
   auto result = reader.result();
   REQUIRE(result.size() == 2);
-  CHECK(result.at("p1").programs.size() == 2000);
+  CHECK(result.at("p1").programs->size() == 2000);
   CHECK(result.at("p1").note == "Dream (by guide id)");
   CHECK(reader.guideChannelCount() == 2);
   CHECK(reader.programmeCount() == 4000);

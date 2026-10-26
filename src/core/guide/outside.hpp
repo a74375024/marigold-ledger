@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <iosfwd>
 #include <map>
 #include <memory>
 #include <optional>
@@ -23,6 +24,7 @@
 #include "core/guide/names.hpp"
 #include "core/model/channel.hpp"
 #include "core/util/json.hpp"
+#include "core/util/json_doc.hpp"
 #include "core/util/time.hpp"
 
 namespace marigold::guide {
@@ -110,6 +112,7 @@ using Schedule = std::shared_ptr<const std::vector<RawProgram>>;
 using SharedPrograms = std::map<std::string, Schedule>;
 // Identical lists become one.
 SharedPrograms share(ProgramsById&& programs);
+SharedPrograms share(SharedPrograms&& programs);
 
 // A user channel a guide channel stands for. `shift`: minutes added to its
 // times (a West feed made from the East one: +180).
@@ -175,14 +178,34 @@ json::Value toJson(const RawProgram& p);
 std::optional<RawProgram> rawProgramFromJson(const json::Value& v);
 json::Value toJson(const ProgramsById& programs);
 ProgramsById programsFromJson(const json::Value& v);
-// Into `v`: "programs" (channel id -> index) and "lists" (each distinct list
-// once). Reading also takes the older "programs" (channel id -> list).
-void setPrograms(json::Value& v, const SharedPrograms& programs);
+// Saved listings write each distinct list once: "lists" (the lists) and,
+// later in key order, "programs" (channel id -> index into "lists").
+// writeLists returns the index writePrograms needs.
+using ListIndex = std::unordered_map<const std::vector<RawProgram>*, int>;
+ListIndex writeLists(json::Writer& w, const SharedPrograms& programs);
+void writePrograms(json::Writer& w, const SharedPrograms& programs, const ListIndex& index);
+// Reads them back from a json::DocumentReader with "lists" and "programs"
+// streamed; also takes the older "programs" (channel id -> list).
+class ProgramsReader {
+ public:
+  void part(const std::string& key, const std::string& member, json::Value&& value);
+  // The lists, equal ones shared; true when "programs" was seen.
+  SharedPrograms take();
+  bool sawPrograms() const { return sawPrograms_; }
+
+ private:
+  std::vector<Schedule> lists_;
+  SharedPrograms programs_;
+  bool sawPrograms_ = false;
+};
 SharedPrograms sharedProgramsFromJson(const json::Value& v);
 json::Value toJson(const SourceState& s);
 std::optional<SourceState> sourceStateFromJson(const json::Value& v);
 std::string toJson(const Saved& saved);
 std::optional<Saved> savedFromJson(std::string_view text);
+// The same, a piece at a time (the file is written and read in chunks).
+bool writeSaved(const Saved& saved, const json::Writer::Sink& sink);
+std::optional<Saved> readSaved(std::istream& in);
 // "listings-<signature, alphanumerics only, 80 max>.json"
 std::string savedFileName(std::string_view signature);
 
@@ -230,6 +253,8 @@ struct LearnedShift {
 // its own keeps it.
 LearnedShift learnShift(const ProgramsById& reference, const ProgramsById& candidate,
                         int sample = 800);
+LearnedShift learnShift(const SharedPrograms& reference, const SharedPrograms& candidate,
+                        int sample = 800);
 
 // Adds `extra` programmes that don't overlap `base` by more than 5 minutes.
 std::vector<RawProgram> mergePrograms(const std::vector<RawProgram>& base,
@@ -251,7 +276,7 @@ struct Window {
 // One source's matches from a file (XMLTVReader.SourceResult).
 struct SourceResult {
   struct Entry {
-    std::vector<RawProgram> programs;
+    Schedule programs;
     std::string note;
   };
   std::map<std::string, Entry> programs;  // user channel id

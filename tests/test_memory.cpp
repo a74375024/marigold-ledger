@@ -10,5 +10,6 @@ TEST_CASE("memory: a reading of this process, and how it reads") {
   CHECK(memory::describe({212 * 1024, 340 * 1024}) == "212 MB (peak 340 MB)");
   CHECK(memory::describe({1536, 0}) == "2 MB");
   CHECK(memory::describe({}).empty());
+  memory::configure();
   memory::release();  // never fails
 }

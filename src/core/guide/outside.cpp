@@ -15,6 +15,11 @@ namespace {
 
 constexpr int64_t kNoEnd = INT64_MIN / 4;  // Swift's Int.min for "no listings"
 
+Schedule makeSchedule(std::vector<RawProgram>&& v) {
+  v.shrink_to_fit();
+  return std::make_shared<const std::vector<RawProgram>>(std::move(v));
+}
+
 int64_t lastEnd(const std::vector<RawProgram>* list) {
   if (!list || list->empty()) return kNoEnd;
   int64_t best = kNoEnd;
@@ -93,12 +98,6 @@ std::optional<double> optDouble(const json::Value& v, const char* key) {
 std::optional<bool> optBool(const json::Value& v, const char* key) {
   if (!v[key].isBool()) return std::nullopt;
   return v[key].asBool();
-}
-
-json::Value stringMap(const std::map<std::string, std::string>& m) {
-  json::Value o = json::Value::object();
-  for (const auto& [k, v] : m) o.set(k, v);
-  return o;
 }
 
 }  // namespace
@@ -285,34 +284,40 @@ ProgramsById programsFromJson(const json::Value& v) {
   return out;
 }
 
+namespace {
+
+// A hash of a list's contents, for finding equal lists.
+uint64_t contentHash(const std::vector<RawProgram>& list) {
+  uint64_t h = 0xcbf29ce484222325ull;
+  auto mix = [&h](uint64_t x) { h = (h ^ x) * 0x100000001b3ull; };
+  auto text = [&mix](const std::string& t) {
+    for (char c : t) mix(static_cast<unsigned char>(c));
+    mix(0xff);
+  };
+  for (const RawProgram& p : list) {
+    mix(static_cast<uint32_t>(p.s));
+    mix(static_cast<uint32_t>(p.m));
+    mix(static_cast<uint32_t>(p.f));
+    text(p.t);
+    text(p.st.value_or(""));
+    text(p.d.value_or(""));
+  }
+  return h;
+}
+
+}  // namespace
+
 SharedPrograms share(ProgramsById&& programs) {
   // Lists by a hash of their contents; equal ones share the first.
-  auto hashOf = [](const std::vector<RawProgram>& list) {
-    uint64_t h = 0xcbf29ce484222325ull;
-    auto mix = [&h](uint64_t x) { h = (h ^ x) * 0x100000001b3ull; };
-    auto text = [&mix](const std::string& t) {
-      for (char c : t) mix(static_cast<unsigned char>(c));
-      mix(0xff);
-    };
-    for (const RawProgram& p : list) {
-      mix(static_cast<uint32_t>(p.s));
-      mix(static_cast<uint32_t>(p.m));
-      mix(static_cast<uint32_t>(p.f));
-      text(p.t);
-      text(p.st.value_or(""));
-      text(p.d.value_or(""));
-    }
-    return h;
-  };
   std::unordered_map<uint64_t, std::vector<Schedule>> seen;
   SharedPrograms out;
   for (auto& [id, list] : programs) {
-    std::vector<Schedule>& bucket = seen[hashOf(list)];
+    std::vector<Schedule>& bucket = seen[contentHash(list)];
     Schedule found;
     for (const Schedule& s : bucket)
       if (*s == list) found = s;
     if (!found) {
-      found = std::make_shared<const std::vector<RawProgram>>(std::move(list));
+      found = makeSchedule(std::move(list));
       bucket.push_back(found);
     }
     out.emplace(id, std::move(found));
@@ -321,43 +326,94 @@ SharedPrograms share(ProgramsById&& programs) {
   return out;
 }
 
-void setPrograms(json::Value& v, const SharedPrograms& programs) {
-  std::unordered_map<const std::vector<RawProgram>*, int> index;
-  json::Value lists = json::Value::array();
-  json::Value byId = json::Value::object();
+SharedPrograms share(SharedPrograms&& programs) {
+  // Each distinct list is hashed once; equal contents then collapse to one.
+  std::unordered_map<const std::vector<RawProgram>*, Schedule> canonical;
+  std::unordered_map<uint64_t, std::vector<Schedule>> seen;
+  for (auto& [id, schedule] : programs) {
+    if (!schedule) continue;
+    auto known = canonical.find(schedule.get());
+    if (known != canonical.end()) {
+      schedule = known->second;
+      continue;
+    }
+    std::vector<Schedule>& bucket = seen[contentHash(*schedule)];
+    Schedule found;
+    for (const Schedule& b : bucket)
+      if (*b == *schedule) found = b;
+    if (!found) {
+      found = schedule;
+      bucket.push_back(found);
+    }
+    canonical.emplace(schedule.get(), found);
+    schedule = found;
+  }
+  return std::move(programs);
+}
+
+ListIndex writeLists(json::Writer& w, const SharedPrograms& programs) {
+  ListIndex index;
+  w.key("lists");
+  w.beginArray();
+  for (const auto& [id, list] : programs) {
+    if (!list || index.count(list.get())) continue;
+    index.emplace(list.get(), static_cast<int>(index.size()));
+    json::Value a = json::Value::array();
+    for (const RawProgram& p : *list) a.push(toJson(p));
+    w.value(a);
+  }
+  w.endArray();
+  return index;
+}
+
+void writePrograms(json::Writer& w, const SharedPrograms& programs, const ListIndex& index) {
+  w.key("programs");
+  w.beginObject();
   for (const auto& [id, list] : programs) {
     if (!list) continue;
-    auto it = index.find(list.get());
-    if (it == index.end()) {
-      it = index.emplace(list.get(), static_cast<int>(index.size())).first;
-      json::Value a = json::Value::array();
-      for (const RawProgram& p : *list) a.push(toJson(p));
-      lists.push(std::move(a));
-    }
-    byId.set(id, it->second);
+    w.key(id);
+    w.value(index.at(list.get()));
   }
-  v.set("programs", std::move(byId));
-  v.set("lists", std::move(lists));
+  w.endObject();
+}
+
+namespace {
+
+Schedule listFromJson(const json::Value& list) {
+  std::vector<RawProgram> programs;
+  programs.reserve(list.size());
+  for (const json::Value& item : list.items()) {
+    if (auto p = rawProgramFromJson(item)) programs.push_back(std::move(*p));
+  }
+  return makeSchedule(std::move(programs));
+}
+
+}  // namespace
+
+void ProgramsReader::part(const std::string& key, const std::string& member, json::Value&& value) {
+  if (key == "lists") {
+    lists_.push_back(listFromJson(value));
+  } else if (key == "programs") {
+    sawPrograms_ = true;
+    if (value.isNumber()) {
+      int64_t i = value.asInt();
+      if (i >= 0 && i < static_cast<int64_t>(lists_.size())) programs_.emplace(member, lists_[static_cast<size_t>(i)]);
+    } else if (value.isArray()) {
+      programs_.emplace(member, listFromJson(value));  // the older layout
+    }
+  }
+}
+
+SharedPrograms ProgramsReader::take() {
+  lists_.clear();
+  return share(std::move(programs_));
 }
 
 SharedPrograms sharedProgramsFromJson(const json::Value& v) {
-  const json::Value& lists = v["lists"];
-  if (!lists.isArray()) return share(programsFromJson(v["programs"]));  // the older layout
-  std::vector<Schedule> read;
-  for (const json::Value& list : lists.items()) {
-    std::vector<RawProgram> programs;
-    for (const json::Value& item : list.items()) {
-      if (auto p = rawProgramFromJson(item)) programs.push_back(std::move(*p));
-    }
-    read.push_back(std::make_shared<const std::vector<RawProgram>>(std::move(programs)));
-  }
-  SharedPrograms out;
-  for (const auto& [id, at] : v["programs"].fields()) {
-    if (!at.isNumber()) continue;
-    int64_t i = at.asInt();
-    if (i >= 0 && i < static_cast<int64_t>(read.size())) out.emplace(id, read[static_cast<size_t>(i)]);
-  }
-  return out;
+  ProgramsReader reader;
+  for (const json::Value& list : v["lists"].items()) reader.part("lists", "", json::Value(list));
+  for (const auto& [id, item] : v["programs"].fields()) reader.part("programs", id, json::Value(item));
+  return reader.take();
 }
 
 json::Value toJson(const SourceState& s) {
@@ -409,54 +465,123 @@ std::optional<SourceState> sourceStateFromJson(const json::Value& v) {
   return s;
 }
 
-std::string toJson(const Saved& saved) {
-  json::Value v = json::Value::object();
-  v.set("built", saved.built);
-  json::Value shardList = json::Value::array();
-  for (const std::string& s : saved.shards) shardList.push(s);
-  v.set("shards", shardList);
-  v.set("channelCount", saved.channelCount);
-  setPrograms(v, saved.programs);
-  if (saved.notes) v.set("notes", stringMap(*saved.notes));
-  if (saved.sources) {
-    json::Value o = json::Value::object();
-    for (const auto& [id, state] : *saved.sources) o.set(id, toJson(state));
-    v.set("sources", o);
+bool writeSaved(const Saved& saved, const json::Writer::Sink& sink) {
+  // Keys in sorted order: the bytes json::write() gave for the whole tree.
+  json::Writer w(sink);
+  w.beginObject();
+  w.key("built");
+  w.value(saved.built);
+  w.key("channelCount");
+  w.value(saved.channelCount);
+  if (saved.detailVersion) {
+    w.key("detailVersion");
+    w.value(*saved.detailVersion);
   }
-  if (saved.nextCheck) v.set("nextCheck", *saved.nextCheck);
-  setOpt(v, "targetsKey", saved.targetsKey);
-  setOpt(v, "detailVersion", saved.detailVersion);
-  return json::write(v);
+  ListIndex index = writeLists(w, saved.programs);
+  if (saved.nextCheck) {
+    w.key("nextCheck");
+    w.value(*saved.nextCheck);
+  }
+  if (saved.notes) {
+    w.key("notes");
+    w.beginObject();
+    for (const auto& [k, note] : *saved.notes) {
+      w.key(k);
+      w.value(note);
+    }
+    w.endObject();
+  }
+  writePrograms(w, saved.programs, index);
+  w.key("shards");
+  w.beginArray();
+  for (const std::string& shard : saved.shards) w.value(shard);
+  w.endArray();
+  if (saved.sources) {
+    w.key("sources");
+    w.beginObject();
+    for (const auto& [id, state] : *saved.sources) {
+      w.key(id);
+      w.value(toJson(state));
+    }
+    w.endObject();
+  }
+  if (saved.targetsKey) {
+    w.key("targetsKey");
+    w.value(*saved.targetsKey);
+  }
+  w.endObject();
+  return w.finish();
 }
 
-std::optional<Saved> savedFromJson(std::string_view text) {
-  auto parsed = json::parse(text);
-  if (!parsed || !parsed->isObject()) return std::nullopt;
-  const json::Value& v = *parsed;
-  if (!v["built"].isNumber() || !v["shards"].isArray() || !v["programs"].isObject()) {
-    return std::nullopt;
-  }
+std::string toJson(const Saved& saved) {
+  std::string out;
+  writeSaved(saved, [&out](std::string_view chunk) {
+    out.append(chunk.data(), chunk.size());
+    return true;
+  });
+  return out;
+}
+
+namespace {
+
+// Feeds a DocumentReader from `feed` and builds the Saved.
+template <typename Feed>
+std::optional<Saved> readSavedWith(const Feed& feed) {
   Saved s;
-  s.built = v["built"].asInt();
-  for (const json::Value& item : v["shards"].items()) s.shards.push_back(item.asString());
-  s.channelCount = static_cast<int>(v["channelCount"].asInt());
-  s.programs = sharedProgramsFromJson(v);
-  if (v["notes"].isObject()) {
-    std::map<std::string, std::string> notes;
-    for (const auto& [k, n] : v["notes"].fields()) notes[k] = n.asString();
-    s.notes = std::move(notes);
-  }
-  if (v["sources"].isObject()) {
-    std::map<std::string, SourceState> states;
-    for (const auto& [k, item] : v["sources"].fields()) {
-      if (auto state = sourceStateFromJson(item)) states[k] = std::move(*state);
-    }
-    s.sources = std::move(states);
-  }
-  s.nextCheck = optInt64(v, "nextCheck");
-  s.targetsKey = optString(v, "targetsKey");
-  s.detailVersion = optInt(v, "detailVersion");
+  bool builtOk = false, shardsOk = false;
+  ProgramsReader programs;
+  std::map<std::string, std::string> notes;
+  bool sawNotes = false;
+  json::DocumentReader reader(
+      {"lists", "programs", "notes"},
+      [&](const std::string& key, json::Value&& v) {
+        if (key == "built") {
+          builtOk = v.isNumber();
+          s.built = v.asInt();
+        } else if (key == "shards") {
+          shardsOk = v.isArray();
+          for (const json::Value& item : v.items()) s.shards.push_back(item.asString());
+        } else if (key == "channelCount") {
+          s.channelCount = static_cast<int>(v.asInt());
+        } else if (key == "sources" && v.isObject()) {
+          std::map<std::string, SourceState> states;
+          for (const auto& [k, item] : v.fields()) {
+            if (auto state = sourceStateFromJson(item)) states[k] = std::move(*state);
+          }
+          s.sources = std::move(states);
+        } else if (key == "nextCheck" && v.isNumber()) {
+          s.nextCheck = v.asInt();
+        } else if (key == "targetsKey" && v.isString()) {
+          s.targetsKey = v.asString();
+        } else if (key == "detailVersion" && v.isNumber()) {
+          s.detailVersion = static_cast<int>(v.asInt());
+        }
+        return true;
+      },
+      [&](const std::string& key, const std::string& member, json::Value&& v) {
+        if (key == "notes") {
+          sawNotes = true;
+          notes[member] = v.asString();
+        } else {
+          programs.part(key, member, std::move(v));
+        }
+        return true;
+      });
+  if (!feed(reader) || !reader.finish()) return std::nullopt;
+  if (!builtOk || !shardsOk || !programs.sawPrograms()) return std::nullopt;
+  s.programs = programs.take();
+  if (sawNotes) s.notes = std::move(notes);
   return s;
+}
+
+}  // namespace
+
+std::optional<Saved> savedFromJson(std::string_view text) {
+  return readSavedWith([text](json::DocumentReader& r) { return r.feed(text); });
+}
+
+std::optional<Saved> readSaved(std::istream& in) {
+  return readSavedWith([&in](json::DocumentReader& r) { return feedAll(in, r); });
 }
 
 std::string savedFileName(std::string_view signature) {
@@ -611,7 +736,16 @@ std::vector<Match> Targets::matches(const std::vector<std::string>& names, std::
 
 // MARK: Merging
 
-LearnedShift learnShift(const ProgramsById& reference, const ProgramsById& candidate, int sample) {
+namespace {
+
+const std::vector<RawProgram>& listOf(const std::vector<RawProgram>& list) { return list; }
+const std::vector<RawProgram>& listOf(const Schedule& list) {
+  static const std::vector<RawProgram> kNone;
+  return list ? *list : kNone;
+}
+
+template <typename Map>
+LearnedShift learnShiftIn(const Map& reference, const Map& candidate, int sample) {
   auto key = [](const std::string& title) {
     std::string lowered = rx::replace(str::lower(title), "^(live|new)[: ]+", "");
     return prefixCodePoints(str::join(letterNumberTokens(lowered), ""), 12);
@@ -620,13 +754,14 @@ LearnedShift learnShift(const ProgramsById& reference, const ProgramsById& candi
   std::map<std::string, int> perChannel;
   int checked = 0;
   // Swift walks a dictionary (hash order); here channels go in id order.
-  for (const auto& [channel, programs] : candidate) {
+  for (const auto& [channel, candidateList] : candidate) {
+    const std::vector<RawProgram>& programs = listOf(candidateList);
     auto refIt = reference.find(channel);
-    if (refIt == reference.end() || refIt->second.empty()) continue;
+    if (refIt == reference.end() || listOf(refIt->second).empty()) continue;
     checked += 1;
     if (checked > sample) break;
     std::unordered_map<std::string, int> refCount, refStart, candCount;
-    for (const RawProgram& p : refIt->second) {
+    for (const RawProgram& p : listOf(refIt->second)) {
       std::string k = key(p.t);
       refCount[k] += 1;
       refStart[k] = p.s;
@@ -684,6 +819,16 @@ LearnedShift learnShift(const ProgramsById& reference, const ProgramsById& candi
   out.note = "learned " + std::to_string(top.first) + " h from " + std::to_string(top.second) +
              " channels (" + summary + ")";
   return out;
+}
+
+}  // namespace
+
+LearnedShift learnShift(const ProgramsById& reference, const ProgramsById& candidate, int sample) {
+  return learnShiftIn(reference, candidate, sample);
+}
+
+LearnedShift learnShift(const SharedPrograms& reference, const SharedPrograms& candidate, int sample) {
+  return learnShiftIn(reference, candidate, sample);
 }
 
 std::vector<RawProgram> mergePrograms(const std::vector<RawProgram>& base,
@@ -764,7 +909,7 @@ BuildResult build(const std::vector<Channel>& channels, const std::set<std::stri
       channels, needsStationDirectory(on) ? stations : std::vector<Station>());
   std::string key = targetsKey(channels, on);
 
-  ProgramsById merged;
+  SharedPrograms merged;
   std::map<std::string, std::string> notes;
   std::vector<std::string> problems;
   std::map<std::string, SourceState> states;
@@ -844,12 +989,22 @@ BuildResult build(const std::vector<Channel>& channels, const std::set<std::stri
   bool reuse = unchanged && previous && previous->targetsKey == key &&
                previous->detailVersion.value_or(1) >= kDetailVersion;
   if (reuse) {
+    std::unordered_map<const void*, Schedule> memo;
     for (const auto& [id, list] : previous->programs) {
-      std::vector<RawProgram> kept;
-      for (const RawProgram& p : *list) {
-        if (p.end() > window.low) kept.push_back(p);
+      if (!list) continue;
+      auto m = memo.find(list.get());
+      if (m == memo.end()) {
+        Schedule out;
+        if (std::all_of(list->begin(), list->end(), [&](const RawProgram& p) { return p.end() > window.low; })) {
+          out = list;
+        } else {
+          std::vector<RawProgram> kept;
+          for (const RawProgram& p : *list) if (p.end() > window.low) kept.push_back(p);
+          if (!kept.empty()) out = makeSchedule(std::move(kept));
+        }
+        m = memo.emplace(list.get(), out).first;
       }
-      if (!kept.empty()) merged[id] = std::move(kept);
+      if (m->second) merged[id] = m->second;
     }
     notes = previous->notes.value_or(std::map<std::string, std::string>());
     log.push_back("guide main sources unchanged: saved listings reused (" + count(merged.size()) +
@@ -869,11 +1024,22 @@ BuildResult build(const std::vector<Channel>& channels, const std::set<std::stri
         continue;
       }
       const SourceResult& found = *read.result;
+      std::map<std::pair<const void*, const void*>, Schedule> memo;
       for (const auto& [channelID, entry] : found.programs) {
         auto existing = merged.find(channelID);
-        merged[channelID] =
-            mergePrograms(existing == merged.end() ? std::vector<RawProgram>() : existing->second,
-                          entry.programs);
+        const Schedule* base = existing == merged.end() ? nullptr : &existing->second;
+        std::pair<const void*, const void*> mk{base ? base->get() : nullptr, entry.programs.get()};
+        auto m = memo.find(mk);
+        if (m == memo.end()) {
+          Schedule out;
+          auto byStart = [](const RawProgram& a, const RawProgram& b) { return a.s < b.s; };
+          if (!base && std::is_sorted(entry.programs->begin(), entry.programs->end(), byStart))
+            out = entry.programs;  // what mergePrograms({}, x) gives: x, sorted
+          else
+            out = makeSchedule(mergePrograms(base ? **base : std::vector<RawProgram>(), *entry.programs));
+          m = memo.emplace(mk, std::move(out)).first;
+        }
+        merged[channelID] = m->second;
         addNote(channelID, source.name + ": " + entry.note);
       }
       SourceState value = state(source);
@@ -892,16 +1058,25 @@ BuildResult build(const std::vector<Channel>& channels, const std::set<std::stri
     // a channel's new end is kept.
     if (previous) {
       int kept = 0;
+      std::map<std::pair<const void*, const void*>, Schedule> memo;
       for (const auto& [id, old] : previous->programs) {
+        if (!old) continue;
         auto current = merged.find(id);
-        int64_t newEnd = lastEnd(current == merged.end() ? nullptr : &current->second);
-        std::vector<RawProgram> extra;
-        for (const RawProgram& p : *old) {
-          if (p.s + 5 >= newEnd && p.end() > now && p.s < window.high) extra.push_back(p);
+        const std::vector<RawProgram>* cur = current == merged.end() ? nullptr : current->second.get();
+        std::pair<const void*, const void*> mk{cur, old.get()};
+        auto m = memo.find(mk);
+        if (m == memo.end()) {
+          int64_t newEnd = lastEnd(cur);
+          std::vector<RawProgram> extra;
+          for (const RawProgram& p : *old) {
+            if (p.s + 5 >= newEnd && p.end() > now && p.s < window.high) extra.push_back(p);
+          }
+          Schedule out;
+          if (!extra.empty()) out = makeSchedule(mergePrograms(cur ? *cur : std::vector<RawProgram>(), extra));
+          m = memo.emplace(mk, std::move(out)).first;
         }
-        if (extra.empty()) continue;
-        merged[id] = mergePrograms(
-            current == merged.end() ? std::vector<RawProgram>() : current->second, extra);
+        if (!m->second) continue;
+        merged[id] = m->second;
         kept += 1;
       }
       if (kept > 0) {
@@ -965,44 +1140,61 @@ BuildResult build(const std::vector<Channel>& channels, const std::set<std::stri
         failure = read.error.empty() ? "unreadable" : read.error;
       } else {
         const SourceResult& found = *read.result;
-        ProgramsById programsById;
-        for (const auto& [id, entry] : found.programs) programsById[id] = entry.programs;
+        SharedPrograms candidates;
+        for (const auto& [id, entry] : found.programs)
+          if (entry.programs) candidates[id] = entry.programs;
         std::map<std::string, int> perChannel;
         if (source.calibrate) {
-          LearnedShift learned = learnShift(merged, programsById);
+          LearnedShift learned = learnShift(merged, candidates);
           int shift = learned.shift ? *learned.shift : value.shift.value_or(source.assumedShift);
           value.shift = shift;
           value.shiftNote =
               learned.note + (learned.shift ? "" : "; using " + std::to_string(shift / 60) + " h");
           perChannel = learned.perChannel;
-          ProgramsById moved;
-          for (const auto& [id, list] : programsById) {
+          // One moved copy per list and shift (the feeds of a channel share it).
+          std::map<std::pair<const void*, int>, Schedule> movedLists;
+          SharedPrograms moved;
+          for (const auto& [id, list] : candidates) {
             auto own = perChannel.find(id);
             int delta = own != perChannel.end() ? own->second : shift;
-            std::vector<RawProgram> out;
-            for (const RawProgram& p : list) {
-              int s = p.s - delta;
-              if (!(s + p.m > window.low && s < window.high)) continue;
-              RawProgram q = p;
-              q.s = s;
-              out.push_back(std::move(q));
+            std::pair<const void*, int> listShift{list.get(), delta};
+            auto made = movedLists.find(listShift);
+            if (made == movedLists.end()) {
+              std::vector<RawProgram> out;
+              for (const RawProgram& p : *list) {
+                int s = p.s - delta;
+                if (!(s + p.m > window.low && s < window.high)) continue;
+                RawProgram q = p;
+                q.s = s;
+                out.push_back(std::move(q));
+              }
+              made = movedLists.emplace(listShift, out.empty() ? nullptr : makeSchedule(std::move(out))).first;
             }
-            if (!out.empty()) moved[id] = std::move(out);
+            if (made->second) moved[id] = made->second;
           }
-          programsById = std::move(moved);
+          candidates = std::move(moved);
           log.push_back("guide " + source.name + " clock: " + value.shiftNote.value_or(""));
         }
         int extended = 0;
         std::string tag = source.name + ":";
-        for (const auto& [channelID, list] : programsById) {
+        // Merged once per (current list, backup list); null when it adds
+        // nothing worth having.
+        std::map<std::pair<const void*, const void*>, Schedule> merges;
+        for (const auto& [channelID, list] : candidates) {
           auto current = merged.find(channelID);
           const std::vector<RawProgram>* base =
-              current == merged.end() ? nullptr : &current->second;
-          int64_t before = lastEnd(base);
-          std::vector<RawProgram> after =
-              mergePrograms(base ? *base : std::vector<RawProgram>(), list);
-          if (!(lastEnd(&after) > before + 30)) continue;
-          merged[channelID] = std::move(after);
+              current == merged.end() ? nullptr : current->second.get();
+          std::pair<const void*, const void*> pair{base, list.get()};
+          auto made = merges.find(pair);
+          if (made == merges.end()) {
+            int64_t before = lastEnd(base);
+            std::vector<RawProgram> after =
+                mergePrograms(base ? *base : std::vector<RawProgram>(), *list);
+            Schedule better = lastEnd(&after) > before + 30 ? makeSchedule(std::move(after)) : nullptr;
+            made = merges.emplace(pair, std::move(better)).first;
+          }
+          if (!made->second) continue;
+          merged[channelID] = made->second;
           extended += 1;
           auto entry = found.programs.find(channelID);
           if (entry != found.programs.end()) {
@@ -1014,7 +1206,7 @@ BuildResult build(const std::vector<Channel>& channels, const std::set<std::stri
           }
         }
         value.guideChannels = found.guideChannels;
-        value.matched = static_cast<int>(programsById.size());
+        value.matched = static_cast<int>(candidates.size());
         int appliedShift = value.shift.value_or(0);
         if (found.horizonMedian)
           value.horizonMedian = *found.horizonMedian - appliedShift;
@@ -1032,7 +1224,7 @@ BuildResult build(const std::vector<Channel>& channels, const std::set<std::stri
                           : fetched.status == 0 ? "saved copy"
                                                 : "downloaded";
         log.push_back("guide " + source.name + ": " + how + " " + mb(fetched.bytes) + " MB, " +
-                      count(programsById.size()) + " of your channels, extended " +
+                      count(candidates.size()) + " of your channels, extended " +
                       std::to_string(extended) + " now, fills " + std::to_string(fills) +
                       " in all, read in " + std::to_string(static_cast<int64_t>(found.seconds)) +
                       " s");
@@ -1057,7 +1249,7 @@ BuildResult build(const std::vector<Channel>& channels, const std::set<std::stri
   result.nextCheck = nowSec + (retry ? kStaleRetry : kRefreshAge);
   size_t ahead = 0;
   for (const auto& [id, list] : merged) {
-    int64_t end = list.empty() ? 0 : lastEnd(&list);
+    int64_t end = !list || list->empty() ? 0 : lastEnd(list.get());
     if (end > now + kShortHorizon) ++ahead;
   }
   std::string done = "guide update done in " +

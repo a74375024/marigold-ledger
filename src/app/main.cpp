@@ -12,6 +12,7 @@
 #include "app/store/store.hpp"
 #include "app_id.h"
 #include "core/util/log.hpp"
+#include "core/util/memory.hpp"
 #include "platform/gfx.hpp"
 #include "platform/stdout_capture.hpp"
 #include "platform/storage.hpp"
@@ -44,6 +45,7 @@ int main(int argc, char** argv) {
   (void)argc;
   (void)argv;
   using namespace marigold;
+  memory::configure();  // before any thread starts
   // Data files (accounts, caches, logs) are the app's only.
   umask(077);
   // Numbers with a dot, always: JSON payloads are built with printf.

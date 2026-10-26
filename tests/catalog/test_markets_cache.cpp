@@ -1,5 +1,7 @@
 // Markets from wikitext, the saved catalog's JSON and first-screen subset,
 // and whole-group admission.
+#include <sstream>
+
 #include "catalog/helpers.hpp"
 #include "core/catalog/admission.hpp"
 #include "core/catalog/cache.hpp"
@@ -130,7 +132,37 @@ TEST_CASE("catalog cache: JSON round trip, version and signature checks") {
   CHECK(back->catalog.entryOf == saved.catalog.entryOf);
   CHECK(back->xtreamFormats == saved.xtreamFormats);
   CHECK(cache::toJson(*back) == text);
+  // Written a piece at a time: the bytes of the whole tree.
+  json::Value dom = json::Value::object();
+  dom.set("version", saved.version);
+  dom.set("signature", saved.signature);
+  dom.set("savedAt", saved.savedAt);
+  json::Value channelList = json::Value::array();
+  for (const Channel& c : saved.channels) channelList.push(cache::toJson(c));
+  dom.set("channels", channelList);
+  dom.set("catalog", cache::toJson(saved.catalog));
+  json::Value formats = json::Value::object();
+  json::Value tsList = json::Value::array();
+  tsList.push("ts");
+  tsList.push("m3u8");
+  formats.set("xt:1", tsList);
+  dom.set("xtreamFormats", formats);
+  CHECK(text == json::write(dom));
+  // Read from a stream, the same list.
+  std::istringstream in(text);
+  auto streamed = cache::readSaved(in, saved.signature);
+  REQUIRE(streamed);
+  CHECK(cache::toJson(*streamed) == text);
+  std::istringstream other(text);
+  CHECK_FALSE(cache::readSaved(other, "another profile"));
+  CHECK_FALSE(cache::fromJson(text.substr(0, text.size() / 2), saved.signature));  // cut short
   CHECK_FALSE(cache::fromJson(text, "another profile"));
+  CHECK(back->fingerprint == 0);
+  // The download's fingerprint, all 64 bits.
+  saved.fingerprint = 0xfedcba9876543210ull;
+  auto printed = cache::fromJson(cache::toJson(saved), saved.signature);
+  REQUIRE(printed);
+  CHECK(printed->fingerprint == 0xfedcba9876543210ull);
   CHECK_FALSE(cache::fromJson("{\"version\": 2}", saved.signature));
   CHECK_FALSE(cache::fromJson("[]", saved.signature));
 

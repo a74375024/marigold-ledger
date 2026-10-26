@@ -76,4 +76,6 @@ Requests: race drivers and results only for race weekends you can watch
 | Reading | Options › Help | "Memory in use: 212 MB (peak 340 MB)" above the version |
 | Log | Use the app for an hour, then Export Playback Log | "memory" lines every 5 minutes, before each tune, and after "channels sorted", "listings merged", "outside listings built", "provider guide built", "channel list checked" |
 | Half-hourly refresh | Leave the guide open past 30 minutes | "channel list checked" (nothing sorted again) when the provider's list hasn't changed; memory stays level |
+| Unchanged launch | Quit and reopen the app (the provider's list unchanged) | "channel list checked" rather than "channels sorted" after the download; the first screen opens as fast as before |
+| Startup memory | Export the playback log after a launch | The "memory" lines after loading and the guide builds stay well under the earlier peaks |
 | No restarts | A long session browsing and watching | No "restart to free up memory" |

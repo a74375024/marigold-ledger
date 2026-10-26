@@ -31,6 +31,12 @@ std::string describe(const Reading& r) {
   return out;
 }
 
+void configure() {
+#if defined(__GLIBC__)
+  mallopt(M_ARENA_MAX, 2);
+#endif
+}
+
 void release() {
 #if defined(__GLIBC__)
   malloc_trim(0);
