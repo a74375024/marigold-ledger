@@ -442,6 +442,24 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
     entry.country = traits.country;
     entry.virtualNumber = virtualNumber(entry.name);
     entry.kind = traits.kind;
+    // Marigold: the copies decide together, not the first one. A channel the
+    // provider also lists under Roku, Pluto, Tubi... is free streaming even
+    // when its first copy sits in a catch-all group ("US| AT&T"); a premium
+    // channel never is, whatever group a copy turns up in.
+    if (!traits.core && !traits.callsign && traits.category != LineupCategory::local) {
+      if (premiumName(entry.name)) {
+        if (entry.kind == ChannelKind::fast) {
+          entry.kind = ChannelKind::channel;
+          auto regular = std::find_if(ranked.begin(), ranked.end(),
+                                      [](const Ranked& r) { return r.traits->kind != ChannelKind::fast; });
+          entry.category = regular != ranked.end() ? regular->traits->category : LineupCategory::movies;
+        }
+      } else if (entry.kind == ChannelKind::channel &&
+                 std::any_of(ranked.begin(), ranked.end(), [](const Ranked& r) { return freeStreamingCopy(*r.channel); })) {
+        entry.kind = ChannelKind::fast;
+        entry.category = LineupCategory::free;
+      }
+    }
     entry.market = traits.market;
     entry.core = traits.core;
     entry.scope = traits.scope;
@@ -759,6 +777,21 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
 }
 
 // MARK: Classification
+
+bool freeStreamingCopy(const Channel& channel) {
+  // Prime, Netflix and Peacock are left out: their groups mix in paid
+  // channels (HBO Latino, MGM+), so a copy there says nothing.
+  std::string group = groupOf(channel);
+  return rx::test("\\b(roku|tubi|pluto|samsung|plex|xumo|vizio|local now|distro|stirr|free tv|fast)\\b", group, true) ||
+         (hasAnyOf(channel.name, "(:") &&
+          rx::test("^\\s*\\((pluto[^)]*|rk|roku|tubi|samsung[^)]*|plex|xumo)\\)|^\\s*(rk|pluto|roku|tubi|samsung|plex|xumo)[^:]{0,8}:",
+                   channel.name, true));
+}
+
+bool premiumName(std::string_view name) {
+  return rx::test("\\b(hbo|cinemax|showtime|starz|epix)\\b|\\bmgm ?(\\+|plus)|\\bamc ?(\\+|plus)|\\bparamount ?(\\+|plus)",
+                  name, true);
+}
 
 bool isEventGroup(std::string_view group) {
   return rx::test(

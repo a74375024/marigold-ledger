@@ -75,6 +75,11 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context =
 
 // Provider groups (lower-cased) that hold event slots rather than channels.
 bool isEventGroup(std::string_view group);
+// A copy in a free streaming app's group (Roku, Pluto, Tubi, Samsung TV
+// Plus, Plex, Xumo...) or named like one ("RK: ...", "(Pluto TV) ...").
+bool freeStreamingCopy(const Channel& channel);
+// HBO, Cinemax, Showtime, Starz, Epix, MGM+, AMC+, Paramount+.
+bool premiumName(std::string_view name);
 // Provider groups (any case) for sports: event slots, pay-per-view, sports
 // channels ("UK| SKY SPORTS", "DE| SOCCER PPV", "CA| TSN+", "SE| HOCKEY").
 bool sportsGroup(std::string_view group);

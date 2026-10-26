@@ -248,3 +248,45 @@ TEST_CASE("channel list fingerprint: same list, same value; any change, another"
   logo[0].imageUrl = "logo";
   CHECK(fingerprint(logo) != first);
 }
+
+TEST_CASE("free streaming: decided by all of a channel's copies, premium channels never") {
+  std::vector<Channel> list = {
+      // A free streaming channel whose first copy is in a catch-all group.
+      channel("fc1", "AT&T: 50 CENT ACTION", "US| AT&T"), channel("fc2", "RK: 50 CENT ACTION", "US| ROKU"),
+      channel("fc3", "TUBI: 50 CENT ACTION", "US| TUBI"),
+      // Premium, with a copy under Roku and one under Prime: stays a channel.
+      channel("mg1", "AT&T: MGM+ HITS", "US| AT&T"), channel("mg2", "RK: MGM+ HITS", "US| ROKU"),
+      channel("hb1", "PRIME: HBO LATINO", "US| PRIME"), channel("hb2", "AT&T: HBO LATINO", "US| AT&T"),
+      // A copy under Prime alone says nothing.
+      channel("tb1", "AT&T: TBN", "US| AT&T"), channel("tb2", "PRIME: TBN", "US| PRIME"),
+      // National networks are never free streaming.
+      channel("cn1", "US: CNN", "US| NEWS"), channel("cn2", "PLUTO: CNN", "US| PLUTO TV")};
+  std::vector<Channel> annotated = catalog::annotated(list);
+  CatalogResult cat = build(annotated, utc(2026, 10, 26, 18, 0));
+  auto entryOf = [&](const std::string& id) -> const EntryInfo& {
+    const std::string& e = cat.entryOf.at("xt:1|" + id);
+    return *std::find_if(cat.entries.begin(), cat.entries.end(), [&](const EntryInfo& x) { return x.id == e; });
+  };
+  CHECK(entryOf("fc1").kind == ChannelKind::fast);
+  CHECK(entryOf("fc1").category == LineupCategory::free);
+  CHECK(entryOf("fc1").members.size() == 3);
+  CHECK(entryOf("mg1").kind == ChannelKind::channel);
+  CHECK(entryOf("hb1").kind == ChannelKind::channel);
+  CHECK(entryOf("hb1").category != LineupCategory::free);
+  CHECK(entryOf("tb1").kind == ChannelKind::channel);
+  CHECK(entryOf("cn1").kind == ChannelKind::channel);
+  CHECK(entryOf("cn1").core == std::string("CNN"));
+
+  // With free streaming off, My Lineup leaves 50 Cent Action out.
+  LineupInput in;
+  in.infos = cat.entries;
+  in.channels = annotated;
+  for (size_t i = 0; i < annotated.size(); ++i) in.indexByID[annotated[i].id] = i;
+  in.prefs.configured = true;
+  in.prefs.categories.erase(LineupCategory::free);
+  in.prefs.requireGuide = false;
+  in.otherGroup = "Other";
+  LineupOutput out = lineup(in);
+  CHECK_FALSE(out.lineupIDs.count(entryOf("fc1").id));
+  CHECK(out.lineupIDs.count(entryOf("cn1").id));
+}
