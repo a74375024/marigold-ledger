@@ -1,3 +1,5 @@
 # Files allowed to contain fake credential parameters (redaction tests).
 # Stream-shaped links are allowed anywhere only on the reserved .invalid domain.
 tests/test_redact.cpp
+# Percent-encoding of a fake Xtream login ("u@x" / "p+/ &") in request URLs.
+tests/sources/test_xtream.cpp

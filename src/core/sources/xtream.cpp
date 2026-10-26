@@ -63,8 +63,7 @@ Result<Client> Client::make(const Account& account) {
 // The login goes first, then the call's own parameters sorted by name, as
 // the Swift builds them.
 Request Client::get(std::vector<std::pair<std::string, std::string>> query) const {
-  std::string url = base_ + "/player_api.php?username=" + percentEncode(account_.userName) +
-                    "&password=" + percentEncode(account_.password);
+  std::string url = base_ + std::string(kApiPath) + "?" + loginQuery();
   std::string rest = queryString(std::move(query));
   if (!rest.empty()) url += "&" + rest;
   Request r;
@@ -132,9 +131,11 @@ std::vector<Program> Client::parseShortEpg(int status, std::string_view body, co
   return out;
 }
 
-std::string Client::guideURL() const {
-  return base_ + "/xmltv.php?username=" + percentEncode(account_.userName) +
-         "&password=" + percentEncode(account_.password);
+std::string Client::guideURL() const { return base_ + std::string(kGuidePath) + "?" + loginQuery(); }
+
+// "username=<user>&password=<password>", both percent-encoded. Secret.
+std::string Client::loginQuery() const {
+  return "username=" + percentEncode(account_.userName) + "&password=" + percentEncode(account_.password);
 }
 
 std::optional<std::string> Client::streamURL(std::string_view streamId, const std::vector<std::string>& formats,

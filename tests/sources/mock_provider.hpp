@@ -242,7 +242,8 @@ class Provider {
   void m3uChunks(size_t chunkSize, bool crlf, Emit&& emit) const {
     Chunker<Emit> out(chunkSize, emit);
     const char* nl = crlf ? "\r\n" : "\n";
-    out.add("#EXTM3U url-tvg=\"" + std::string(kHost) + "/xmltv.php?username=" + std::string(kUser) +
+    // The guide link carries the (fake) login, like real playlists' do.
+    out.add("#EXTM3U url-tvg=\"http://mock.example.invalid:8080/xmltv.php?username=" + std::string(kUser) +
             "&password=" + std::string(kPass) + "\" tvg-shift=\"0\"");
     out.add(nl);
     for (size_t i = 0; i < count_; ++i) {

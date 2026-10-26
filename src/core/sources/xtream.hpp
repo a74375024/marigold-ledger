@@ -27,6 +27,9 @@ constexpr int kTimeoutSeconds = 45;
 constexpr int kShortEpgLimit = 10;
 // Sent with every request (the Swift app sends "Mozilla/5.0 (Apple TV) NuvioTV").
 constexpr std::string_view kUserAgent = "Mozilla/5.0 (webOS; Linux) Marigold";
+// Player API and full guide, under the server address.
+constexpr std::string_view kApiPath = "/player_api.php";
+constexpr std::string_view kGuidePath = "/xmltv.php";
 
 struct AccountInfo {
   std::string status;  // "Active" when the panel doesn't say
@@ -91,6 +94,7 @@ class Client {
  private:
   Client(Account account, std::string base) : account_(std::move(account)), base_(std::move(base)) {}
   Request get(std::vector<std::pair<std::string, std::string>> query) const;
+  std::string loginQuery() const;
 
   Account account_;
   std::string base_;
