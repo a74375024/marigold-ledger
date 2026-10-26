@@ -7,9 +7,13 @@ if(NOT MARIGOLD_BUILD_NUMBER)
   set(MARIGOLD_BUILD_NUMBER "dev")
 endif()
 
+file(GLOB MARIGOLD_APP_SOURCES CONFIGURE_DEPENDS
+  ${CMAKE_CURRENT_SOURCE_DIR}/app/*.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/app/ui/*.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/app/store/*.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/app/screens/*.cpp)
 add_executable(marigold
-  app/main.cpp
-  app/test_screen.cpp
+  ${MARIGOLD_APP_SOURCES}
   platform/gfx.cpp
   platform/http.cpp
   platform/image.cpp
