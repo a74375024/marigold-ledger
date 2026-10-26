@@ -115,7 +115,7 @@ Line counts below are upstream `wc -l`.
 |---|---|---|---|
 | `video.c` / `video.h` | 3990 / 562 | LS2 to `com.webos.media` (uMS), plane via libAcb (webOS ≤4) or SDL exported window (5+), events, audio tracks, screensaver hold | Drop the DV guard, DTS state and subtitle code (1–224), MKV probe and credits (1977–2282), the DTS/DV path (2884–3254), DV/MKV API (3571–3740), subtitles (3777–3903), playback speed (3904–3948), DolbyHdrInfo, moviebuffer and cacheboost. Keep the plane, events, `tocar`, reconnect, headers, lean live payload (modo 2), stop, window/crop, audio choice and shutdown. About 2.4k lines remain |
 | `video_modo.c`, `video_escala.h`, `video_reconexao.h` | 7 / 43 / 147 | live load mode, dest-rect scaling, reconnect state | none |
-| `lsregistro.c/.h`, `webosver.c/.h`, `app_id.h`, `mediaurl.h` | 109 / 278 / 17 / 18 | LS2 register backoff, webOS version, app and bus ids | rename the ids |
+| `lsregistro.c/.h`, `webosver.c/.h`, `app_id.h`, `mediaurl.h` | 109 / 278 / 17 / 18 | LS2 register backoff, webOS version, app and bus ids | rename the ids to `org.marigold.app` |
 | `livestall.h` | 172 | stall watchdog (pure) | none |
 | `proxyts.c/.h` | 789 / 51 | local HLS→continuous TS proxy, one session, 16 MiB ring | Lower the per-segment cap from 48 MiB to 8 MiB. Replace the `ajustes_livetv_resolucao` extern with a parameter |
 | `livetv_regras.h`, `ts_sonda.h` | 233 / 151 | resolution and name rules; TS probe (PAT/PMT, scrambling) | none |
@@ -306,13 +306,13 @@ Multiview is out of scope: the TV has one hardware decoder, and providers cap st
 - `CREDITS.md` names Legacy's author and links the upstream repo. It is added in the same commit as the first copied file.
 - It also lists the IJG notice for the jpeg62 headers, the font licences (Inter Display OFL; DroidSansFallback Apache-2.0) and, if used, PCRE2 (BSD) and doctest (MIT).
 
-## 11. Open questions
+## 11. Compatibility, name and install
 
-1. **LG model and webOS version, and whether the TV is rooted.** These decide:
-   - the plane path (libAcb on webOS ≤4, exported window on 5+);
-   - the SDL version (2.0.2–2.0.5);
-   - Homebrew Channel versus Developer Mode.
-   - Legacy has only proven video on a rooted 2019 model. On a non-rooted TV the LS2 role is untested and may show a black picture.
-2. The feasibility note with Addenda 1–3 is not in any branch of the tvOS repo, so this plan could not check against it.
-3. **M3U accounts.** tvOS has none, but Legacy's parser is cheap to keep. Do you want them in M1?
-4. **The app id and the name shown on the TV.** The proposal is a neutral id, `org.marigold.ledger`, and a title you choose.
+- **Compatibility matches Legacy.** One `.ipk` for every webOS version Legacy runs on:
+  - webOS 4 (measured by Legacy's author), 5 and later (2020–2024 sets, user reports), 3.x (tester reports) and 2.x (symbol dumps only);
+  - video uses libAcb on webOS 2–4 and SDL's exported window on 5 and later, picked at run time;
+  - `sdlcompat.h` covers the one SDL symbol webOS 3 lacks;
+  - the same armv7 softfp build, system libraries and `dlopen` rules as Legacy.
+- **Name:** the app is called Marigold on the TV. Its package id is `org.marigold.app`.
+- **Install:** both of Legacy's routes stay documented. The Homebrew Channel needs the repo to be public. Developer Mode works from day one.
+- **Open:** the feasibility note with Addenda 1–3 is not in any branch of the tvOS repo, so this plan could not check against it.
