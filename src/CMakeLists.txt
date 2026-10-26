@@ -17,6 +17,7 @@ add_executable(marigold
   platform/gfx.cpp
   platform/http.cpp
   platform/image.cpp
+  platform/lan_share.cpp
   platform/logo_cache.cpp
   platform/stdout_capture.cpp
   platform/storage.cpp
