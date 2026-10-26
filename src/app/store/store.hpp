@@ -212,6 +212,11 @@ class Store {
   void installSaved(catalog::cache::Saved saved, bool partial);
   void downloadChannels(uint64_t gen);
   void channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched>> parts);
+  void readStations();
+  void readLogoIndex();
+  void fetchLogoIndex();
+  void fetchStations();
+  void rebuildCatalog();
   void installCatalog(std::shared_ptr<const std::vector<Channel>> list,
                       std::shared_ptr<const catalog::CatalogResult> cat, bool partial);
   void saveCatalog();

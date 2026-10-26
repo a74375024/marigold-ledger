@@ -39,6 +39,8 @@ std::vector<Account> sample() {
   m.id = "pl.3";
   m.displayName = "";
   m.playlistUrl = "http://pl.example.invalid/get.php?type=m3u_plus&output=ts";
+  m.guideUrl = "http://guide.example.invalid/xmltv.php?k=1";
+  m.guideFromPlaylist = true;
   return {x, e, m};
 }
 
@@ -67,6 +69,8 @@ TEST_CASE("accounts: secrets stay out of the main JSON") {
   CHECK(enc.main.find("token") == std::string::npos);
   CHECK(enc.main.find("pl.example.invalid") == std::string::npos);
   CHECK(enc.main.find("get.php") == std::string::npos);
+  CHECK(enc.main.find("guide.example.invalid") == std::string::npos);
+  CHECK(enc.secrets.find("guide.example.invalid") != std::string::npos);
   CHECK(enc.secrets.find("t0k") != std::string::npos);
   CHECK(enc.secrets.find("pl.example.invalid") != std::string::npos);
   // The secrets document holds secrets only: no names or servers.
@@ -109,6 +113,8 @@ TEST_CASE("accounts: round trip") {
   CHECK(m.kind == AccountKind::M3U);
   CHECK(m.playlistUrl == "http://pl.example.invalid/get.php?type=m3u_plus&output=ts");
   CHECK(m.serverUrl.empty());
+  CHECK(m.guideUrl == "http://guide.example.invalid/xmltv.php?k=1");
+  CHECK(m.guideFromPlaylist);
 
   // Without the secrets file: accounts load, and need signing in again.
   Result<std::vector<Account>> bare = decodeAccounts(enc.main, "");

@@ -41,6 +41,7 @@
 #include "core/util/log.hpp"
 #include "core/util/redact.hpp"
 #include "core/util/strings.hpp"
+#include "platform/logo_cache.hpp"
 
 namespace marigold::app {
 namespace {
@@ -68,6 +69,8 @@ constexpr const char* kSettingsFile = "settings.json";
 constexpr const char* kListsFile = "lists.json";
 constexpr const char* kLineupFile = "lineup.json";
 constexpr const char* kM3uStreamsFile = "m3u-streams.json";  // secret
+constexpr const char* kStationsFile = "stations.json";
+constexpr const char* kLogoIndexFile = "logo-index.json";
 
 http::Request toHttp(const sources::Request& r, std::string tag, http::Priority p = http::Priority::Normal) {
   http::Request q;
@@ -92,6 +95,20 @@ std::string randomId() {
     std::fclose(f);
   }
   return str::hex64(str::fnv1a64(std::to_string(seed))).substr(0, 12);
+}
+
+// One Wikipedia page's wikitext, on a pool thread (station directory, markets).
+std::optional<std::string> wikitext(http::Client& pool, const std::string& title,
+                                    http::Priority priority = http::Priority::Visible);
+
+// Waits while full screen video plays (big downloads).
+struct GuideReadStateLite {
+  std::shared_ptr<std::atomic<bool>> playing, stop;
+};
+
+// Accounts with a full guide file: Xtream's xmltv.php, or an M3U guide link.
+bool hasGuideFile(const sources::Account& a) {
+  return a.kind == sources::AccountKind::Xtream || (a.kind == sources::AccountKind::M3U && !a.guideUrl.empty());
 }
 
 std::string hostOf(const std::string& url) {
@@ -215,6 +232,8 @@ Store::Store(App& app) : app_(app), impl_(std::make_unique<Impl>()) {
     if (settings_.preferTS) a.preferTS = true;
     m.runs[a.sourceId()];
   }
+  readStations();
+  readLogoIndex();
   loadEvents();
   MLOG_I("store", "%zu provider(s)", m.accounts.size());
   if (m.accounts.empty()) {
@@ -396,6 +415,7 @@ void Store::addAccount(const AccountForm& form, std::function<void(std::string)>
     case AccountForm::Kind::M3U: {
       a.kind = sources::AccountKind::M3U;
       a.playlistUrl = server;
+      a.guideUrl = std::string(str::trim(form.guideUrl));
       // Read just the start of the playlist to check it is one.
       auto parser = std::make_shared<sources::m3u::Parser>(a.id, [](Channel&&, sources::m3u::StreamInfo&&) { return true; });
       auto bytes = std::make_shared<size_t>(0);
@@ -409,7 +429,7 @@ void Store::addAccount(const AccountForm& form, std::function<void(std::string)>
         *bytes += c.size();
         return parser->feed(c) && *bytes < (256u << 10);
       };
-      app.pool().submit(std::move(q), [a, parser, finish](http::Response&& r) {
+      app.pool().submit(std::move(q), [a, parser, finish](http::Response&& r) mutable {
         if (!r.status) {
           finish(a, "Couldn't download the playlist (" + r.error + ")");
           return;
@@ -421,6 +441,10 @@ void Store::addAccount(const AccountForm& form, std::function<void(std::string)>
         if (!parser->header().sawExtM3u && parser->channels() == 0) {
           finish(a, "That link isn't an M3U playlist");
           return;
+        }
+        if (a.guideUrl.empty() && parser->header().guideUrl) {
+          a.guideUrl = *parser->header().guideUrl;
+          a.guideFromPlaylist = true;
         }
         finish(a, "");
       });
@@ -657,6 +681,7 @@ void Store::downloadChannels(uint64_t gen) {
             return;
           }
           if (auto err = parser->finish()) slot->problem = name + ": " + err->message;
+          slot->guideUrl = parser->header().guideUrl;
         };
         app_.pool().submit(std::move(q), [finished, i](http::Response&&) { finished(i); });
         break;
@@ -691,6 +716,12 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
       }
       for (auto& [id, info] : f.streams) m.m3uStreams[id] = std::move(info);
       f.streams.clear();
+      // The playlist's own guide link, unless one was typed in.
+      if (f.guideUrl && (a.guideUrl.empty() || a.guideFromPlaylist) && a.guideUrl != *f.guideUrl) {
+        a.guideUrl = *f.guideUrl;
+        a.guideFromPlaylist = true;
+        scheduleProvider(true);
+      }
     }
   }
   for (const std::string& p : problems) MLOG_W("store", "%s", p.c_str());
@@ -725,8 +756,9 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
   auto renamedCount = std::make_shared<long>(-1);
   status_.line = "Sorting " + std::to_string(total) + " channels\xe2\x80\xa6";
   time::Seconds now = time::now();
+  auto stations = m.stations;
   app_.pool().post(
-      [merged, old, oldCatalog, result, renamedCount, now] {
+      [merged, old, oldCatalog, result, renamedCount, now, stations] {
         std::vector<Channel> list = std::move(*merged);
         if (list.size() > catalog::kMaxChannels) {
           catalog::Admission adm = catalog::admitGroups(list, catalog::kMaxChannels);
@@ -744,7 +776,7 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
             return;
           }
         }
-        *result = {annotated, std::make_shared<CatalogResult>(catalog::build(*annotated, now))};
+        *result = {annotated, std::make_shared<CatalogResult>(catalog::build(*annotated, now, *stations))};
       },
       [this, gen, result, renamedCount, showing, problems] {
         if (gen != impl_->generation) return;
@@ -765,8 +797,157 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
           startGuides(wasEmpty);
         }
         saveCatalog();
+        if (!mm.stationsFresh) fetchStations();
+        fetchLogoIndex();
       },
       showing ? http::Priority::Background : http::Priority::Visible);
+}
+
+// ------------------------------------------------------------ station directory
+
+void Store::readStations() {
+  // Small (a few thousand stations): read before the first catalog build.
+  platform::Storage& st = app_.storage();
+  std::string path = st.path(kStationsFile);
+  struct stat sb;
+  if (stat(path.c_str(), &sb) != 0) return;
+  auto text = st.read(kStationsFile);
+  if (!text) return;
+  auto list = guide::stations::fromJson(*text);
+  if (!list) return;
+  impl_->stationsFresh = guide::stations::isFresh(sb.st_mtime, time::now(), list->empty());
+  impl_->stations = std::make_shared<std::vector<guide::Station>>(std::move(*list));
+  MLOG_I("store", "station directory: %zu stations%s", impl_->stations->size(), impl_->stationsFresh ? "" : " (old)");
+}
+
+void Store::fetchStations() {
+  Impl& m = *impl_;
+  time::Seconds now = time::now();
+  if (m.stationsFetching || m.stationsFresh || now - m.stationsTriedAt < 6 * 3600) return;
+  m.stationsFetching = true;
+  m.stationsTriedAt = now;
+  auto out = std::make_shared<std::vector<guide::Station>>();
+  http::Client& pool = app_.pool();
+  std::string path = app_.storage().path(kStationsFile);
+  auto stop = m.stopJobs;
+  app_.pool().post(
+      [out, &pool, path, stop] {
+        std::vector<std::pair<std::string, std::string>> texts;
+        bool first = true;
+        for (const guide::stations::Page& page : guide::stations::pages()) {
+          for (const std::string& title : page.titles) {
+            if (stop->load()) return;
+            if (!first) usleep(guide::stations::kRequestSpacingMs * 1000);
+            first = false;
+            if (auto text = wikitext(pool, title, http::Priority::Background)) {
+              texts.push_back({page.network, std::move(*text)});
+              break;
+            }
+          }
+        }
+        *out = guide::stations::collect(texts);
+        if (!out->empty()) writeFileAtomic(path, guide::stations::toJson(*out));
+      },
+      [this, out] {
+        Impl& mm = *impl_;
+        mm.stationsFetching = false;
+        if (out->empty()) {
+          MLOG_W("store", "station directory: couldn't read the affiliate lists");
+          return;
+        }
+        bool changed = *out != *mm.stations;
+        mm.stationsFresh = true;
+        mm.stations = out;
+        MLOG_I("store", "station directory: %zu stations", out->size());
+        if (!changed) return;
+        rebuildCatalog();
+        if (guide::needsStationDirectory(guide::defaultShards())) scheduleOutside(true);
+      },
+      http::Priority::Background);
+}
+
+// ------------------------------------------------------------ fallback logos
+
+void Store::readLogoIndex() {
+  std::string path = app_.storage().path(kLogoIndexFile);
+  auto box = std::make_shared<std::optional<logos::IptvOrgIndex::Saved>>();
+  app_.pool().post(
+      [path, box] {
+        std::string text;
+        if (readFile(path, text)) *box = logos::IptvOrgIndex::fromJson(text);
+      },
+      [this, box] {
+        if (!*box || impl_->iptvOrg) return;
+        impl_->iptvOrg = std::make_shared<logos::IptvOrgIndex>(std::move(**box));
+        impl_->channelsDirty = true;
+      },
+      http::Priority::Normal);
+}
+
+void Store::fetchLogoIndex() {
+  Impl& m = *impl_;
+  time::Seconds now = time::now();
+  if (m.iptvOrgFetching || now - m.iptvOrgTriedAt < 6 * 3600) return;
+  if (m.iptvOrg && !m.iptvOrg->needsRefresh(now)) return;
+  m.iptvOrgFetching = true;
+  m.iptvOrgTriedAt = now;
+  auto out = std::make_shared<std::optional<logos::IptvOrgIndex::Saved>>();
+  http::Client& pool = app_.pool();
+  std::string path = app_.storage().path(kLogoIndexFile);
+  GuideReadStateLite st{m.playingFull, m.stopJobs};
+  app_.pool().post(
+      [out, &pool, path, st] {
+        auto get = [&pool, st](const char* file) -> std::optional<std::string> {
+          for (int i = 0; i < 600 && st.playing->load() && !st.stop->load(); ++i) usleep(500000);
+          http::Request q;
+          q.url = std::string(logos::IptvOrgIndex::kBase) + file;
+          q.tag = "logo.index";
+          q.timeoutMs = 120000;
+          q.maxBytes = 48u << 20;
+          q.follow = true;
+          q.priority = http::Priority::Background;
+          http::Response r = pool.fetchNow(std::move(q));
+          if (!r.ok || r.status != 200) return std::nullopt;
+          return std::move(r.body);
+        };
+        auto channels = get(logos::IptvOrgIndex::kChannelsFile);
+        if (!channels || st.stop->load()) return;
+        auto logoList = get(logos::IptvOrgIndex::kLogosFile);
+        if (!logoList) return;
+        *out = logos::IptvOrgIndex::build(*channels, *logoList, time::now());
+        if (*out) writeFileAtomic(path, logos::IptvOrgIndex::toJson(**out));
+      },
+      [this, out] {
+        Impl& mm = *impl_;
+        mm.iptvOrgFetching = false;
+        if (!*out) {
+          MLOG_W("store", "fallback logos: couldn't load the index");
+          return;
+        }
+        MLOG_I("store", "fallback logos: %zu by id, %zu by name", (*out)->byID.size(), (*out)->byName.size());
+        mm.iptvOrg = std::make_shared<logos::IptvOrgIndex>(std::move(**out));
+        mm.channelsDirty = true;
+      },
+      http::Priority::Background);
+}
+
+// Classifies the current list again (the station directory changed).
+void Store::rebuildCatalog() {
+  Impl& m = *impl_;
+  if (m.partial || m.channels->empty() || m.loading) return;
+  auto list = m.channels;
+  auto stations = m.stations;
+  auto result = std::make_shared<std::shared_ptr<CatalogResult>>();
+  uint64_t gen = m.generation;
+  time::Seconds now = time::now();
+  app_.pool().post([list, stations, result, now] { *result = std::make_shared<CatalogResult>(catalog::build(*list, now, *stations)); },
+                   [this, gen, list, result] {
+                     if (gen != impl_->generation || list != impl_->channels || impl_->loading) return;
+                     installCatalog(list, *result, false);
+                     rebuildOutsidePrograms();
+                     saveCatalog();
+                   },
+                   http::Priority::Background);
 }
 
 void Store::installCatalog(std::shared_ptr<const std::vector<Channel>> list, std::shared_ptr<const CatalogResult> cat,
@@ -868,14 +1049,14 @@ catalog::LineupPrefs Store::lineupPrefs() const { return impl_->prefs; }
 namespace {
 
 // One Wikipedia page's wikitext, on a pool thread.
-std::optional<std::string> wikitext(http::Client& pool, const std::string& title) {
+std::optional<std::string> wikitext(http::Client& pool, const std::string& title, http::Priority priority) {
   http::Request q;
   q.url = guide::stations::wikiRequestUrl(title);
   q.headers.push_back("User-Agent: Marigold/0.1 (webOS TV; personal use)");
   q.tag = "wiki";
   q.timeoutMs = 60000;
   q.maxBytes = 8u << 20;
-  q.priority = http::Priority::Visible;
+  q.priority = priority;
   for (int attempt = 0; attempt < 3; ++attempt) {
     if (attempt > 0) usleep(static_cast<useconds_t>(attempt) * 2000000u);
     http::Response r = pool.fetchNow(q);
@@ -905,7 +1086,7 @@ void Store::loadMarkets(std::function<void(TvMarkets)> done) {
   auto list = std::make_shared<std::vector<catalog::markets::Market>>();
   http::Client& pool = app_.pool();
   app_.pool().post(
-      [path, names, result, list, &pool] {
+      [path, names, result, list, &pool, stations = m.stations] {
         struct stat st;
         std::string text;
         time::Seconds now = time::now();
@@ -922,6 +1103,7 @@ void Store::loadMarkets(std::function<void(TvMarkets)> done) {
           // An old saved list beats none.
           if (auto saved = catalog::markets::fromJson(text)) *list = std::move(*saved);
         }
+        if (list->empty()) *list = catalog::markets::fallbackMarkets(*stations);
         if (list->empty()) {
           result->problem = "Couldn't load the list of TV markets. Check the connection and try again, or skip local stations.";
           return;
@@ -951,7 +1133,7 @@ void Store::resolveMarkets(const std::vector<std::string>& names, const catalog:
   auto fetched = std::make_shared<std::map<std::string, catalog::MarketChoice>>();
   http::Client& pool = app_.pool();
   app_.pool().post(
-      [todo, fetched, &pool] {
+      [todo, fetched, &pool, stations = impl_->stations] {
         bool first = true;
         for (const auto& mk : todo) {
           catalog::MarketChoice choice;
@@ -964,6 +1146,7 @@ void Store::resolveMarkets(const std::vector<std::string>& names, const catalog:
             if (auto page = wikitext(pool, *mk.templateName))
               choice.callsigns = catalog::markets::callsignsInWikitext(*page);
           }
+          if (choice.callsigns.empty()) choice.callsigns = catalog::markets::fallbackCallsigns(mk, *stations);
           (*fetched)[mk.name] = std::move(choice);
         }
       },
@@ -1496,7 +1679,7 @@ void Store::readSavedListings() {
   auto box = std::make_shared<Read>();
   std::vector<std::pair<std::string, std::string>> keys;  // key, path
   for (const sources::Account& a : m.accounts) {
-    if (a.kind != sources::AccountKind::Xtream) continue;
+    if (!hasGuideFile(a)) continue;
     std::string key = guide::provider::cacheKey("default", a.sourceId());
     keys.push_back({key, app_.storage().path(guide::provider::savedFileName(key))});
   }
@@ -1540,7 +1723,7 @@ void Store::readSavedListings() {
 void Store::installProviderSaved() {
   Impl& m = *impl_;
   for (const sources::Account& a : m.accounts) {
-    if (a.kind != sources::AccountKind::Xtream) continue;
+    if (!hasGuideFile(a)) continue;
     std::string key = guide::provider::cacheKey("default", a.sourceId());
     auto it = m.providerSaved.find(key);
     if (it == m.providerSaved.end()) continue;
@@ -1591,19 +1774,25 @@ void Store::runProviderGuide() {
   if (m.providerRunning || m.partial || m.channels->empty()) return;
   struct Job {
     std::string sourceId, name, url, key;
+    bool insecure = false;
     std::vector<Channel> channels;
     const guide::provider::Saved* saved = nullptr;
   };
   std::vector<Job> jobs;
   std::set<std::string> countries = m.prefs.guideCountries();
   for (const sources::Account& a : m.accounts) {
-    if (a.kind != sources::AccountKind::Xtream) continue;
-    auto client = sources::xtream::Client::make(a);
-    if (!client) continue;
+    if (!hasGuideFile(a)) continue;
     Job j;
+    if (a.kind == sources::AccountKind::Xtream) {
+      auto client = sources::xtream::Client::make(a);
+      if (!client) continue;
+      j.url = client.value().guideURL();
+    } else {
+      j.url = a.guideUrl;
+      j.insecure = a.allowInsecureTLS;
+    }
     j.sourceId = a.sourceId();
     j.name = redact(a.displayName);
-    j.url = client.value().guideURL();
     j.key = guide::provider::cacheKey("default", j.sourceId);
     for (const Channel& c : *m.channels) {
       if (c.serverId != j.sourceId) continue;
@@ -1631,7 +1820,8 @@ void Store::runProviderGuide() {
         for (Job& j : *shared) {
           if (st.stop->load()) return;
           std::string url = j.url;
-          guide::provider::ReadExactFn read = [&pool, url, st](const auto& ids, guide::Window window,
+          bool insecure = j.insecure;
+          guide::provider::ReadExactFn read = [&pool, url, insecure, st](const auto& ids, guide::Window window,
                                                                  guide::provider::ReadFailure& failure)
               -> std::optional<guide::provider::ExactRead> {
             waitForPlayback(st);
@@ -1641,6 +1831,8 @@ void Store::runProviderGuide() {
             q.url = url;
             q.tag = "provider.guide";
             q.gunzip = true;
+            q.follow = true;
+            q.personalServer = insecure;
             q.timeoutMs = 300000;
             q.priority = http::Priority::Background;
             q.onChunk = [reader](std::string_view c) {
@@ -1730,7 +1922,7 @@ void Store::runOutsideGuide() {
   uint64_t gen = m.generation;
   auto newSaved = std::make_shared<std::optional<guide::Saved>>();
   app_.pool().post(
-      [snapshot, shards, previous, built, guideDir, savedPath, st, &pool, newSaved] {
+      [snapshot, shards, previous, built, guideDir, savedPath, st, &pool, newSaved, stations = m.stations] {
         guide::BuildIO io;
         io.cancelled = [st] { return st.stop->load(); };
         io.fetch = [&pool, guideDir, st](const guide::Source& source, const std::optional<std::string>& etag,
@@ -1822,7 +2014,7 @@ void Store::runOutsideGuide() {
           return out;
         };
         const guide::Saved* prev = *previous ? &**previous : nullptr;
-        *built = guide::build(*snapshot, shards, prev, {}, time::now(), io);
+        *built = guide::build(*snapshot, shards, prev, *stations, time::now(), io);
         if (!built->programs.empty()) {
           guide::Saved s;
           s.built = time::now();
@@ -2064,8 +2256,8 @@ void Store::publishChannels() {
     logos::LogoSpec spec = logos::spec(
         g.name, ei ? ei->core : std::nullopt, g.west, ei && cat == catalog::LineupCategory::local && ei->callsign,
         ei ? ei->callsign : std::nullopt, ei ? ei->virtualNumber : std::nullopt, e.imageUrl,
-        member ? member->epgId : std::nullopt, cat, nullptr);
-    g.logoUrl = spec.urls.empty() ? std::string() : spec.urls.front();
+        member ? member->epgId : std::nullopt, cat, m.iptvOrg.get());
+    g.logoUrl = logos::LogoCache::chain(spec.urls);
     g.subtitle = spec.subtitle.value_or(catalog::genreTitle(cat));
     switch (spec.style) {
       case logos::LogoSpec::Style::local:

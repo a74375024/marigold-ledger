@@ -46,6 +46,7 @@ bool Playback::begin(const std::string& entryId, std::vector<Feed> feeds, const 
   rememberGame();
   entry_ = entryId;
   feeds_ = std::move(feeds);
+  proxyFailed_.clear();
   failMessage_.clear();
   tunedAt_ = app_.ms();
   if (full_) watched();
@@ -117,6 +118,8 @@ void Playback::apply(const playback::Actions& actions) {
 void Playback::playFeed(size_t index, uint64_t token) {
   if (index >= feeds_.size()) return;
   sawPicture_ = sawBuffering_ = sawFailed_ = sawEnded_ = false;
+  viaProxy_ = false;
+  playingFeed_ = index;
   const Feed& f = feeds_[index];
   MLOG_I("play", "feed %zu of %zu (%s)", index + 1, feeds_.size(), f.label.c_str());
   app_.video().setWindow(window());
@@ -138,15 +141,32 @@ void Playback::playFeed(size_t index, uint64_t token) {
     return;
   }
   std::string url = f.url, headers = f.headers;
-  if (looksHls(url)) {
+  if (looksHls(url) && !proxyFailed_.count(f.channelId)) {
     std::string local = proxy_.localUrl(url, headers);
     if (!local.empty()) {
       url = local;
       headers.clear();  // the proxy sends them to the source
+      viaProxy_ = true;
     }
   }
   app_.video().play(url, headers, f.loadMode);
   apply(rec_.streamHanded(app_.ms(), token));
+}
+
+// The proxy's attempt failed before any picture: play the same feed once
+// directly, unless the proxy only redirected to it (that was the direct try).
+bool Playback::retryDirect() {
+  if (!viaProxy_ || playingFeed_ >= feeds_.size()) return false;
+  viaProxy_ = false;
+  bool redirected = proxy_.redirected();
+  const Feed& f = feeds_[playingFeed_];
+  proxyFailed_.insert(f.channelId);
+  proxy_.stop();
+  if (redirected) return false;
+  MLOG_I("play", "proxy didn't start this feed; playing it directly");
+  sawFailed_ = sawEnded_ = false;
+  app_.video().play(f.url, f.headers, f.loadMode);
+  return true;
 }
 
 void Playback::watched() {
@@ -224,6 +244,7 @@ bool Playback::tick(uint32_t ms) {
     sawBuffering_ = buffering;
     apply(buffering ? rec_.bufferingStarted(ms) : rec_.bufferingEnded(ms));
   }
+  if ((s.failed || s.ended) && !sawPicture_ && retryDirect()) return true;
   if (s.failed && !sawFailed_) {
     sawFailed_ = true;
     apply(rec_.playerError(ms, s.error));

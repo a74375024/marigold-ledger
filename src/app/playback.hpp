@@ -11,6 +11,7 @@
 #pragma once
 
 #include <cstdint>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -69,6 +70,7 @@ class Playback {
   bool begin(const std::string& entryId, std::vector<Feed> feeds, const std::vector<std::string>& flip);
   void apply(const playback::Actions& actions);
   void playFeed(size_t feed, uint64_t token);
+  bool retryDirect();
   void watched();
   void rememberGame();
   gfx::Rect window() const;
@@ -88,6 +90,11 @@ class Playback {
   bool reapplyOnReady_ = false;
   // Player flags seen last tick, to report changes only.
   bool sawPicture_ = false, sawBuffering_ = false, sawFailed_ = false, sawEnded_ = false;
+  // The current attempt went through the TS proxy; feeds (raw channel ids)
+  // the proxy failed on play directly for the rest of this tune.
+  bool viaProxy_ = false;
+  size_t playingFeed_ = 0;
+  std::set<std::string> proxyFailed_;
 };
 
 }  // namespace marigold::app

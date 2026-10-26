@@ -12,6 +12,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "core/util/pixels.hpp"
 
@@ -35,8 +36,11 @@ class LogoCache {
   LogoCache(const LogoCache&) = delete;
   LogoCache& operator=(const LogoCache&) = delete;
 
-  // UI thread. The texture when ready; otherwise marks it wanted.
+  // UI thread. The texture when ready; otherwise marks it wanted. `url` may
+  // list several links, one per line, tried in order until one loads (see
+  // chain()).
   Texture get(const std::string& url);
+  static std::string chain(const std::vector<std::string>& urls);
   // UI thread, once per frame, after drawing: starts the wanted loads.
   void frame();
   // Forgets failures (e.g. after the network comes back).
@@ -63,7 +67,7 @@ class LogoCache {
   struct Result;
 
   void start(const std::string& url);
-  void fetch(const std::string& url, std::shared_ptr<Result> r);
+  void fetch(const std::string& key, std::shared_ptr<Result> r, size_t index);
   void finish(const std::string& url, const std::shared_ptr<Result>& r);
   void upload(Entry& e, const px::Image& im);
   void evict();

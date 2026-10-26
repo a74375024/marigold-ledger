@@ -108,12 +108,14 @@ EncodedAccounts encodeAccounts(const std::vector<Account>& accounts) {
     if (a.expires) o.set("expires", static_cast<int64_t>(*a.expires));
     if (a.maxConnections) o.set("maxConnections", *a.maxConnections);
     if (a.lastChannelCount) o.set("lastChannelCount", *a.lastChannelCount);
+    if (a.guideFromPlaylist) o.set("guideFromPlaylist", true);
     list.push(o);
 
     json::Value s = json::Value::object();
     if (!a.password.empty()) s.set("password", a.password);
     if (!a.token.empty()) s.set("token", a.token);
     if (!a.playlistUrl.empty()) s.set("playlist", a.playlistUrl);
+    if (!a.guideUrl.empty()) s.set("guide", a.guideUrl);
     if (s.size() > 0) secrets.set(a.id, s);
   }
   json::Value main;
@@ -155,6 +157,8 @@ Result<std::vector<Account>> decodeAccounts(std::string_view main, std::string_v
     a.password = s["password"].asString();
     a.token = s["token"].asString();
     a.playlistUrl = s["playlist"].asString();
+    a.guideUrl = s["guide"].asString();
+    a.guideFromPlaylist = o["guideFromPlaylist"].asBool();
     out.push_back(std::move(a));
   }
   return out;

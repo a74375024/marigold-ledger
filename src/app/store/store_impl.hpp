@@ -19,6 +19,7 @@
 #include "core/catalog/work.hpp"
 #include "core/guide/outside.hpp"
 #include "core/guide/provider.hpp"
+#include "core/logos/logos.hpp"
 #include "core/model/channel.hpp"
 #include "core/sources/account.hpp"
 #include "core/sources/emby.hpp"
@@ -137,6 +138,14 @@ struct Store::Impl {
   bool savedListingsRead = false;
   std::string guideLine;  // status line of a running guide job
   std::vector<catalog::markets::Market> tvMarkets;  // last list loaded for the setup
+  // Station directory (Wikipedia affiliate lists, about monthly).
+  std::shared_ptr<const std::vector<guide::Station>> stations = std::make_shared<std::vector<guide::Station>>();
+  bool stationsFresh = false, stationsFetching = false;
+  time::Seconds stationsTriedAt = 0;
+  // Fallback logos for national channels (weekly).
+  std::shared_ptr<const logos::IptvOrgIndex> iptvOrg;
+  bool iptvOrgFetching = false;
+  time::Seconds iptvOrgTriedAt = 0;
 
   // Shared with workers.
   std::shared_ptr<std::atomic<bool>> playingFull = std::make_shared<std::atomic<bool>>(false);
@@ -157,6 +166,7 @@ struct Fetched {
   std::vector<Channel> channels;
   std::unordered_map<std::string, sources::m3u::StreamInfo> streams;
   std::vector<std::string> formats;
+  std::optional<std::string> guideUrl;  // M3U url-tvg
   std::optional<sources::Account> updated;
   std::string problem;
   bool done = false;

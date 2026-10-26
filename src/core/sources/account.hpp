@@ -44,6 +44,10 @@ struct Account {
   std::string password;     // Xtream
   std::string token;        // Emby / Jellyfin access token
   std::string playlistUrl;  // M3U link
+  // M3U: XMLTV guide link, typed in or read from the playlist's url-tvg
+  // (guideFromPlaylist). Can carry the login too.
+  std::string guideUrl;
+  bool guideFromPlaylist = false;
 
   // Channels from this account use this as their server id:
   // "xt:<id>", "jf:<id>" or "m3u:<id>".

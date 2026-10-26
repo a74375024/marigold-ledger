@@ -70,6 +70,16 @@ std::string LogoCache::fileFor(const std::string& url) const {
   return dir_ + "/" + str::hex64(str::fnv1a64(url));
 }
 
+std::string LogoCache::chain(const std::vector<std::string>& urls) {
+  std::string out;
+  for (const std::string& u : urls) {
+    if (u.empty() || u.find('\n') != std::string::npos) continue;
+    if (!out.empty()) out += '\n';
+    out += u;
+  }
+  return out;
+}
+
 Texture LogoCache::get(const std::string& url) {
   if (url.empty()) return {};
   auto it = entries_.find(url);
@@ -131,19 +141,24 @@ void LogoCache::start(const std::string& url) {
       [this, alive, epoch = epoch_, url, r] {
         if (alive.expired() || epoch != epoch_) return;
         if (r->image) finish(url, r);
-        else fetch(url, std::make_shared<Result>());
+        else fetch(url, std::make_shared<Result>(), 0);
       },
       http::Priority::Visible);
 }
 
-void LogoCache::fetch(const std::string& url, std::shared_ptr<Result> r) {
+void LogoCache::fetch(const std::string& key, std::shared_ptr<Result> r, size_t index) {
+  std::vector<std::string_view> links = str::split(key, '\n');
+  if (index >= links.size()) {
+    finish(key, r);
+    return;
+  }
   http::Request q;
-  q.url = url;
+  q.url = std::string(links[index]);
   q.timeoutMs = 15000;
   q.maxBytes = kMaxLogoBytes;
   q.tag = "logo";
   q.priority = http::Priority::Normal;
-  std::string path = fileFor(url);
+  std::string path = fileFor(key);
   q.afterTransfer = [r, path](http::Response& resp) {
     if (!resp.ok || resp.status != 200) return;
     r->image = image::decode(resp.body, kMaxW, kMaxH);
@@ -152,10 +167,15 @@ void LogoCache::fetch(const std::string& url, std::shared_ptr<Result> r) {
     resp.body.shrink_to_fit();
   };
   std::weak_ptr<bool> alive = alive_;
-  pool_.submit(std::move(q), [this, alive, epoch = epoch_, url, r](http::Response&& resp) {
+  bool more = index + 1 < links.size();
+  pool_.submit(std::move(q), [this, alive, epoch = epoch_, key, r, index, more](http::Response&& resp) {
     if (alive.expired() || epoch != epoch_) return;
     if (r->image) writtenSinceTrim_ += resp.bytes;
-    finish(url, r);
+    if (!r->image && more && !resp.cancelled) {
+      fetch(key, r, index + 1);  // the next logo in the list
+      return;
+    }
+    finish(key, r);
   });
 }
 
