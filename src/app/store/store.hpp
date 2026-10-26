@@ -96,6 +96,35 @@ struct DueReminder {
   time::Seconds start = 0;
 };
 
+// A provider group, for hiding it from All Channels.
+struct GroupSummary {
+  std::string name;
+  int count = 0;
+  bool hidden = false;
+};
+
+// Options › Guide Listings.
+struct GuideListingsStatus {
+  struct Provider {
+    std::string name, line;
+  };
+  std::vector<Provider> providers;  // full guide files (Xtream, M3U guide links)
+  bool providerRunning = false;
+  std::string outsideLine;
+  struct Shard {
+    std::string id, title, detail;
+    bool on = false;
+  };
+  std::vector<Shard> shards;
+  std::vector<std::string> sourceLines;  // one per listings file, no links
+};
+
+// A show in the loaded guide (search, other airings).
+struct ProgramHit {
+  std::string entryId;
+  Listing listing;
+};
+
 struct Settings {
   bool previewChannels = true;  // the guide corner plays the focused channel
   bool scheduleEnabled = true;  // Live Events: game schedule and scores
@@ -104,6 +133,8 @@ struct Settings {
   bool allChannelsTab = false;
   bool preferTS = true;         // Xtream: MPEG-TS rather than HLS
   bool fillMissingListings = true;  // outside guides for channels without one
+  bool clock24 = false;
+  std::set<std::string> guideShards;  // outside listings to use; empty = the defaults
 };
 
 class Store {
@@ -195,6 +226,30 @@ class Store {
   // League (or other sport) id -> provider events that look like it.
   std::map<std::string, int> sportSuggestions() const;
   void refreshSchedule();
+
+  // Options pages (store_options.cpp).
+  std::vector<GroupSummary> groups() const;
+  void setGroupHidden(const std::string& name, bool hidden);
+  void setLineupCountries(const std::set<std::string>& countries);
+  void refreshSuggestions();
+  // Home city for Live Events (only with more than one market).
+  std::string homeMarketName() const;
+  void cycleHomeMarket();
+  GuideListingsStatus guideListings() const;
+  void setGuideShard(const std::string& id, bool on);
+  void refreshListings();
+  std::set<std::string> guideShards() const;
+  // Remind Me on a show (reminders are shared with games).
+  bool hasShowReminder(const std::string& entryId, time::Seconds start) const;
+  bool toggleShowReminder(const std::string& entryId, const Listing& l);
+  // The same show later on any channel with loaded listings.
+  std::vector<ProgramHit> otherAirings(const std::string& entryId, const Listing& l) const;
+  // Search: games and shows on now and later (loaded listings).
+  std::vector<std::string> searchEvents(const std::string& query) const;
+  std::vector<ProgramHit> searchPrograms(const std::string& query) const;
+  // My Sports: asked once, the first time the board opens.
+  bool shouldPromptMySports() const;
+  void markMySportsPrompted();
 
   const Settings& settings() const { return settings_; }
   void setSettings(const Settings& s);

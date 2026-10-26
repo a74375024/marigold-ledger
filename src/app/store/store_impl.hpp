@@ -93,6 +93,7 @@ struct Store::Impl {
   std::vector<std::string> recents;  // entry ids, newest first
   std::map<std::string, std::string> pinned;  // entry id -> raw channel id
   std::map<std::string, std::vector<int>> reliability;  // source tag -> {worked, failed}
+  std::set<std::string> hiddenGroups;  // provider groups left out of All Channels
   catalog::LineupPrefs prefs;
 
   std::map<std::string, AccountRun> runs;  // by source id ("xt:..")
@@ -134,6 +135,7 @@ struct Store::Impl {
   uint32_t providerAt = 0, outsideAt = 0;  // scheduled start (ms), 0 = none
   bool providerForce = false, outsideForce = false;
   std::map<std::string, guide::provider::Saved> providerSaved;  // by cache key
+  std::map<std::string, std::string> providerProblems;          // by cache key, last failure
   std::optional<guide::Saved> outsideSaved;
   bool savedListingsRead = false;
   std::string guideLine;  // status line of a running guide job

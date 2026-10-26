@@ -203,11 +203,14 @@ Store::Store(App& app) : app_(app), impl_(std::make_unique<Impl>()) {
       settings_.scheduleEnabled = (*v)["scheduleEnabled"].asBool(true);
       settings_.showUnwatchable = (*v)["showUnwatchable"].asBool(true);
       settings_.showScores = (*v)["showScores"].asBool(true);
+      settings_.clock24 = (*v)["clock24"].asBool(false);
+      settings_.guideShards = stringSet((*v)["guideShards"]);
     }
   }
   if (auto text = st.read(kListsFile)) {
     if (auto v = json::parse(*text)) {
       m.favorites = stringSet((*v)["favorites"]);
+      m.hiddenGroups = stringSet((*v)["hiddenGroups"]);
       for (const json::Value& x : (*v)["recents"].items())
         if (x.isString()) m.recents.push_back(x.asString());
       for (const auto& [k, x] : (*v)["pinned"].fields()) m.pinned[k] = x.asString();
@@ -258,6 +261,7 @@ void Store::saveLists() {
   json::Value v = json::Value::object();
   v.set("favorites", stringArray(std::vector<std::string>(m.favorites.begin(), m.favorites.end())));
   v.set("recents", stringArray(m.recents));
+  v.set("hiddenGroups", stringArray(std::vector<std::string>(m.hiddenGroups.begin(), m.hiddenGroups.end())));
   json::Value pinned = json::Value::object();
   for (const auto& [k, x] : m.pinned) pinned.set(k, x);
   v.set("pinned", pinned);
@@ -300,6 +304,9 @@ void Store::setSettings(const Settings& s) {
   v.set("scheduleEnabled", s.scheduleEnabled);
   v.set("showUnwatchable", s.showUnwatchable);
   v.set("showScores", s.showScores);
+  v.set("clock24", s.clock24);
+  if (!s.guideShards.empty())
+    v.set("guideShards", stringArray(std::vector<std::string>(s.guideShards.begin(), s.guideShards.end())));
   impl_->ev.boardDirty = true;
   app_.storage().write(kSettingsFile, json::write(v, true));
   if (tsChanged) {
@@ -861,7 +868,7 @@ void Store::fetchStations() {
         MLOG_I("store", "station directory: %zu stations", out->size());
         if (!changed) return;
         rebuildCatalog();
-        if (guide::needsStationDirectory(guide::defaultShards())) scheduleOutside(true);
+        if (guide::needsStationDirectory(guideShards())) scheduleOutside(true);
       },
       http::Priority::Background);
 }
@@ -1869,8 +1876,10 @@ void Store::runProviderGuide() {
           if (outcome.kind == guide::provider::Outcome::Kind::built) {
             MLOG_I("guide", "provider guide: %zu channels matched", outcome.saved.programs.size());
             mm.providerSaved[key] = std::move(outcome.saved);
+            mm.providerProblems.erase(key);
           } else {
             MLOG_W("guide", "provider guide: %s", redact(outcome.message).c_str());
+            mm.providerProblems[key] = redact(outcome.message);
           }
         }
         installProviderSaved();
@@ -1902,7 +1911,7 @@ void Store::runOutsideGuide() {
     }
     snapshot->push_back(c);
   }
-  std::set<std::string> shards = guide::defaultShards();
+  std::set<std::string> shards = guideShards();
   const guide::Saved* saved = m.outsideSaved ? &*m.outsideSaved : nullptr;
   if (saved) {
     std::set<std::string> savedShards(saved->shards.begin(), saved->shards.end());
@@ -2243,6 +2252,8 @@ void Store::publishChannels() {
     g.section = catalog::genreTitle(cat);
     g.sectionRank = catalog::rank(cat);
     g.name = ei ? ei->name : e.displayName();
+    g.group = catalog::groupOf(e);
+    if (g.group.empty()) g.group = kOtherGroup;
     g.feeds = ei ? static_cast<int>(ei->members.size()) : 1;
     g.west = str::endsWith(e.id, "~west");
     g.inLineup = lo.lineupIDs.count(e.id) > 0;
@@ -2289,10 +2300,15 @@ void Store::publishChannels() {
   }
   for (const Channel& e : lo.browseEntries) {
     auto it = out->byId.find(e.id);
-    if (it != out->byId.end()) out->browse.push_back(it->second);
+    if (it == out->byId.end()) continue;
+    if (m.hiddenGroups.count(out->all[static_cast<size_t>(it->second)].group)) continue;
+    out->browse.push_back(it->second);
   }
-  for (size_t i = 0; i < out->all.size(); ++i)
+  out->every.reserve(out->all.size());
+  for (size_t i = 0; i < out->all.size(); ++i) {
+    out->every.push_back(static_cast<int>(i));
     if (out->all[i].favorite) out->favorites.push_back(static_cast<int>(i));
+  }
   for (const std::string& r : m.recents) {
     auto it = out->byId.find(r);
     if (it != out->byId.end()) out->recent.push_back(it->second);

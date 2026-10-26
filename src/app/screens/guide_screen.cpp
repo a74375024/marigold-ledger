@@ -141,7 +141,8 @@ const std::vector<int>& GuideScreen::tabRows() const {
     case Tab::Favorites: return ch_->favorites;
     case Tab::Recent: return ch_->recent;
     case Tab::Events: return kNone;  // the board is its own screen
-    case Tab::All: return ch_->browse;
+    // One provider group: hidden ones too (they are only left out of the list).
+    case Tab::All: return filter_ == Filter::Group ? ch_->every : ch_->browse;
   }
   return kNone;
 }
@@ -149,6 +150,7 @@ const std::vector<int>& GuideScreen::tabRows() const {
 bool GuideScreen::passesFilter(const GuideChannel& g) const {
   if (filter_ == Filter::None) return true;
   if (filter_ == Filter::Section) return g.section == filterSection_;
+  if (filter_ == Filter::Group) return g.group == filterSection_;
   uint8_t want = filter_ == Filter::SportsNow ? kGenreSports
                  : filter_ == Filter::NewsNow ? kGenreNews
                  : filter_ == Filter::MoviesNow ? kGenreMovie
@@ -432,8 +434,10 @@ void GuideScreen::longPress() {
   std::string id = g->id;
   App& app = app_;
   GuideScreen* self = this;
+  std::optional<Listing> later;
+  if (const Listing* l = focusedListing(); l && l->start > time::now() + 60) later = *l;
   auto panel = std::make_unique<PanelScreen>(app_, PanelScreen::Side::Trailing, 640.0f,
-                                             [&app, self, id](ui::ListPanel& p) {
+                                             [&app, self, id, later](ui::ListPanel& p) {
     auto ch = app.store().channels();
     const GuideChannel* c = ch->find(id);
     if (!c) return;
@@ -444,6 +448,13 @@ void GuideScreen::longPress() {
       self->watch(id);
     };
     p.items.push_back(watchItem);
+    if (later) {
+      bool set = app.store().hasShowReminder(id, later->start);
+      ui::PanelItem remind{ui::PanelItem::Kind::Action, set ? "Remove Reminder" : "Remind Me"};
+      remind.detail = later->title;
+      remind.select = [&app, id, l = *later] { app.store().toggleShowReminder(id, l); };
+      p.items.push_back(remind);
+    }
     ui::PanelItem lineup{ui::PanelItem::Kind::Action, c->inLineup ? "Remove from My Lineup" : "Add to My Lineup"};
     lineup.select = [&app, id] { app.store().toggleLineup(id); };
     p.items.push_back(lineup);
@@ -459,6 +470,17 @@ void GuideScreen::longPress() {
     ui::PanelItem fav{ui::PanelItem::Kind::Action, c->favorite ? "Remove from Favorites" : "Add to Favorites"};
     fav.select = [&app, id] { app.store().toggleFavorite(id); };
     p.items.push_back(fav);
+    if (self->tab_ == Tab::All && !c->group.empty()) {
+      ui::PanelItem hide{ui::PanelItem::Kind::Action, "Hide Group from All Channels"};
+      hide.detail = c->group;
+      std::string group = c->group;
+      hide.select = [&app, group] {
+        app.store().setGroupHidden(group, true);
+        app.nav().pop();
+        app.toast("Hidden. Options \xe2\x80\xba Provider groups shows it again");
+      };
+      p.items.push_back(hide);
+    }
   });
   app_.nav().push(std::move(panel));
 }
@@ -515,9 +537,9 @@ void GuideScreen::openFilter() {
     p.title = "Show";
     auto add = [&](const std::string& title, Filter f, const std::string& section, size_t count) {
       ui::PanelItem it{ui::PanelItem::Kind::Check, title};
-      it.on = self->filter_ == f && (f != Filter::Section || self->filterSection_ == section);
+      it.on = self->filter_ == f && ((f != Filter::Section && f != Filter::Group) || self->filterSection_ == section);
       it.value = std::to_string(count);
-      it.dot = f != Filter::None && f != Filter::Section;
+      it.dot = f != Filter::None && f != Filter::Section && f != Filter::Group;
       it.select = [&app, self, f, section] {
         self->filter_ = f;
         self->filterSection_ = section;
@@ -561,6 +583,20 @@ void GuideScreen::openFilter() {
     for (auto& [title, count] : sections) add(title, Filter::Section, title, count);
     self->filter_ = saved;
     self->filterSection_ = savedSection;
+    if (self->tab_ == Tab::All) {
+      std::vector<GroupSummary> groups = app.store().groups();
+      p.items.push_back(ui::PanelItem::header("PROVIDER GROUPS (" + std::to_string(groups.size()) + ")"));
+      for (const GroupSummary& g : groups) {
+        add(g.name, Filter::Group, g.name, static_cast<size_t>(g.count));
+        ui::PanelItem& it = p.items.back();
+        if (g.hidden) it.detail = "Hidden from All Channels";
+        std::string name = g.name;
+        bool hidden = g.hidden;
+        it.hold = [&app, name, hidden] { app.store().setGroupHidden(name, !hidden); };
+      }
+      p.items.push_back(ui::PanelItem::note(
+          "Hold OK on a group to hide it from All Channels. Hidden groups can still be opened here or found with Search."));
+    }
   }));
 }
 
@@ -1022,6 +1058,8 @@ void GuideScreen::drawHero(ui::Ctx& c) {
     if (on) bx += ui::chip(c, "LIVE", bx, y + 2, 18, theme::hex(theme::kLive), theme::white()) + 12;
     else bx += ui::chip(c, "LATER", bx, y + 2, 18, theme::white(0.6f), theme::white(0.85f), true) + 12;
     if (l->premiere) bx += ui::chip(c, "NEW", bx, y + 2, 18, theme::hex(theme::kNew), theme::white()) + 12;
+    if (!on && app_.store().hasShowReminder(g->id, l->start))
+      bx += ui::chip(c, "REMINDER SET", bx, y + 2, 18, theme::white(0.6f), theme::white(0.85f), true) + 12;
     std::string day = ui::dayWord(c, l->start);
     std::string when = (day.empty() ? "" : day + " \xc2\xb7 ") + ui::range(c, l->start, l->end, true);
     bx += ui::label(c, when, bx, y, Weight::Medium, 24, theme::white()) + 10;
@@ -1079,7 +1117,7 @@ void GuideScreen::drawTabs(ui::Ctx& c) {
     x += w + 44;
   }
   if (filter_ != Filter::None) {
-    std::string f = filter_ == Filter::Section ? filterSection_
+    std::string f = (filter_ == Filter::Section || filter_ == Filter::Group) ? filterSection_
                     : filter_ == Filter::SportsNow ? "Sports on now"
                     : filter_ == Filter::NewsNow ? "News on now"
                     : filter_ == Filter::MoviesNow ? "Movies on now"

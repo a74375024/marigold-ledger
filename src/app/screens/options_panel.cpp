@@ -1,16 +1,215 @@
-// Blue key: Options (tvOS Options panel, trailing, 760 wide).
+// Blue key: Options (tvOS Options panel, trailing, 760 wide), and its pages:
+// Edit My Lineup, Countries & Languages, provider groups and Guide Listings.
+#include <set>
+
 #include "app/app.hpp"
 #include "app/screens/panel_screen.hpp"
 #include "app/screens/screens.hpp"
 #include "app/store/store.hpp"
+#include "core/catalog/lineup.hpp"
+#include "core/sports/my_sports.hpp"
 
 namespace marigold::app {
+namespace {
+
+constexpr float kWidth = 760.0f;
+
+std::unique_ptr<PanelScreen> page(App& app, std::function<void(ui::ListPanel&)> build) {
+  return std::make_unique<PanelScreen>(app, PanelScreen::Side::Trailing, kWidth, std::move(build));
+}
+
+void toggleSetting(App& app, bool Settings::*field) {
+  Settings n = app.store().settings();
+  n.*field = !(n.*field);
+  app.store().setSettings(n);
+}
+
+ui::PanelItem settingToggle(App& app, std::string title, std::string detail, bool Settings::*field) {
+  ui::PanelItem it{ui::PanelItem::Kind::Toggle, std::move(title)};
+  it.detail = std::move(detail);
+  it.on = app.store().settings().*field;
+  it.select = [&app, field] { toggleSetting(app, field); };
+  return it;
+}
+
+std::string countriesSummary(const std::set<std::string>& countries) {
+  if (countries.size() == 1 && countries.count("US")) return "US English";
+  return std::to_string(countries.size()) + " selected";
+}
+
+// "San Francisco–Oakland–San Jose" -> "San Francisco".
+std::string shortMarket(const std::string& name) {
+  size_t cut = name.find("\xe2\x80\x93");
+  if (cut == std::string::npos) cut = name.find('-');
+  return cut == std::string::npos ? name : name.substr(0, cut);
+}
+
+// Changes to My Lineup after setup (LineupEditView): what was added or
+// removed by hand, refreshing the suggestions, and the lineup itself.
+std::unique_ptr<Screen> makeEditLineup(App& app) {
+  return page(app, [&app](ui::ListPanel& p) {
+    Store& s = app.store();
+    auto ch = s.channels();
+    catalog::LineupPrefs prefs = s.lineupPrefs();
+    p.subtitle = "OPTIONS";
+    p.title = "Edit My Lineup";
+    std::string markets;
+    for (const catalog::MarketChoice& m : prefs.markets) markets += (markets.empty() ? "" : ", ") + shortMarket(m.name);
+    ui::PanelItem market{ui::PanelItem::Kind::Note, "TV market: " + (markets.empty() ? std::string("None") : markets)};
+    p.items.push_back(market);
+    ui::PanelItem rebuild{ui::PanelItem::Kind::Action, "Refresh Suggestions"};
+    rebuild.detail = "Re-checks which channels have listings and picks up new ones. Your own changes are kept.";
+    rebuild.select = [&app] {
+      app.store().refreshSuggestions();
+      app.toast("Refreshing My Lineup");
+    };
+    p.items.push_back(rebuild);
+
+    auto row = [&](const std::string& id, bool add) {
+      const GuideChannel* g = ch->find(id);
+      if (!g) return;
+      ui::PanelItem it{ui::PanelItem::Kind::Action, g->name};
+      it.detail = g->section;
+      it.value = add ? "Add back" : "Remove";
+      it.select = [&app, id] { app.store().toggleLineup(id); };
+      p.items.push_back(it);
+    };
+    std::vector<std::string> added, removed;
+    for (const std::string& id : prefs.added)
+      if (ch->find(id)) added.push_back(id);
+    for (const std::string& id : prefs.removed)
+      if (ch->find(id)) removed.push_back(id);
+    p.items.push_back(ui::PanelItem::header("ADDED BY YOU (" + std::to_string(added.size()) + ")"));
+    if (added.empty()) p.items.push_back(ui::PanelItem::note("Hold OK on a channel in the guide to add it."));
+    for (const std::string& id : added) row(id, false);
+    p.items.push_back(ui::PanelItem::header("REMOVED BY YOU (" + std::to_string(removed.size()) + ")"));
+    for (const std::string& id : removed) row(id, true);
+    p.items.push_back(ui::PanelItem::header("MY LINEUP (" + std::to_string(ch->lineup.size()) + ")"));
+    for (int i : ch->lineup) row(ch->all[static_cast<size_t>(i)].id, false);
+  });
+}
+
+std::unique_ptr<Screen> makeCountries(App& app) {
+  // Sections as they were when the page opened, so rows don't jump.
+  auto atOpen = std::make_shared<std::set<std::string>>(app.store().lineupPrefs().countries);
+  return page(app, [&app, atOpen](ui::ListPanel& p) {
+    Store& s = app.store();
+    std::set<std::string> current = s.lineupPrefs().countries;
+    p.subtitle = "OPTIONS";
+    p.title = "Countries & Languages";
+    p.items.push_back(ui::PanelItem::note(
+        "Which channels My Lineup, All Channels and Live Events include. Everything else is still in Search."));
+    std::vector<MarketSummary> all = s.countries(current);
+    auto add = [&](const MarketSummary& m) {
+      ui::PanelItem it{ui::PanelItem::Kind::Check, m.name};
+      it.detail = std::to_string(m.count) + " channels";
+      it.on = current.count(m.code) > 0;
+      std::string code = m.code;
+      it.select = [&app, code] {
+        std::set<std::string> c = app.store().lineupPrefs().countries;
+        if (c.count(code)) {
+          if (c.size() <= 1) {
+            app.toast("Keep at least one");
+            return;
+          }
+          c.erase(code);
+        } else {
+          c.insert(code);
+        }
+        app.store().setLineupCountries(c);
+      };
+      p.items.push_back(it);
+    };
+    bool any = false;
+    for (const MarketSummary& m : all) {
+      if (!atOpen->count(m.code)) continue;
+      if (!any) p.items.push_back(ui::PanelItem::header("SELECTED"));
+      any = true;
+      add(m);
+    }
+    any = false;
+    for (const MarketSummary& m : all) {
+      if (atOpen->count(m.code)) continue;
+      if (!any) p.items.push_back(ui::PanelItem::header("MORE"));
+      any = true;
+      add(m);
+    }
+  });
+}
+
+std::unique_ptr<Screen> makeGroups(App& app) {
+  return page(app, [&app](ui::ListPanel& p) {
+    p.subtitle = "OPTIONS";
+    p.title = "Provider Groups";
+    p.items.push_back(ui::PanelItem::note(
+        "Unchecked groups are left out of All Channels. They can still be found with Search or the guide filter."));
+    for (const GroupSummary& g : app.store().groups()) {
+      ui::PanelItem it{ui::PanelItem::Kind::Check, g.name};
+      it.on = !g.hidden;
+      it.value = std::to_string(g.count);
+      std::string name = g.name;
+      bool hidden = g.hidden;
+      it.select = [&app, name, hidden] { app.store().setGroupHidden(name, !hidden); };
+      p.items.push_back(it);
+    }
+  });
+}
+
+std::unique_ptr<Screen> makeGuideListings(App& app) {
+  return page(app, [&app](ui::ListPanel& p) {
+    Store& s = app.store();
+    GuideListingsStatus st = s.guideListings();
+    p.subtitle = "OPTIONS";
+    p.title = "Guide Listings";
+    if (!st.providers.empty()) {
+      p.items.push_back(ui::PanelItem::header("YOUR PROVIDER'S GUIDE"));
+      for (const GuideListingsStatus::Provider& pr : st.providers) {
+        ui::PanelItem it{ui::PanelItem::Kind::Note, pr.name};
+        it.detail = pr.line;
+        p.items.push_back(it);
+      }
+      p.items.push_back(ui::PanelItem::note(
+          "The provider's guide file is downloaded about twice a day while Marigold is open (pausing while you "
+          "watch). It comes first; outside listings only fill channels it doesn't cover."));
+    }
+    p.items.push_back(ui::PanelItem::header("OUTSIDE LISTINGS"));
+    p.items.push_back(settingToggle(app, "Fill in missing listings",
+                                    "Free TV listings for channels your provider has no guide for",
+                                    &Settings::fillMissingListings));
+    p.items.push_back(ui::PanelItem::note(st.outsideLine));
+    if (s.settings().fillMissingListings) {
+      p.items.push_back(ui::PanelItem::header("LISTINGS TO USE"));
+      for (const GuideListingsStatus::Shard& sh : st.shards) {
+        ui::PanelItem it{ui::PanelItem::Kind::Toggle, sh.title};
+        it.detail = sh.detail;
+        it.on = sh.on;
+        std::string id = sh.id;
+        bool on = sh.on;
+        it.select = [&app, id, on] { app.store().setGuideShard(id, !on); };
+        p.items.push_back(it);
+      }
+      if (!st.sourceLines.empty()) {
+        p.items.push_back(ui::PanelItem::header("FILES"));
+        for (const std::string& line : st.sourceLines) p.items.push_back(ui::PanelItem::note(line));
+      }
+    }
+    ui::PanelItem refresh{ui::PanelItem::Kind::Action, "Refresh listings now"};
+    refresh.select = [&app] {
+      app.store().refreshListings();
+      app.toast("Refreshing listings");
+    };
+    p.items.push_back(refresh);
+  });
+}
+
+}  // namespace
 
 std::unique_ptr<Screen> makeOptions(App& app) {
-  return std::make_unique<PanelScreen>(app, PanelScreen::Side::Trailing, 760.0f, [&app](ui::ListPanel& p) {
+  return page(app, [&app](ui::ListPanel& p) {
     Store& s = app.store();
     Settings set = s.settings();
     auto ch = s.channels();
+    catalog::LineupPrefs prefs = s.lineupPrefs();
     p.title = "Options";
 
     p.items.push_back(ui::PanelItem::header("PROVIDERS"));
@@ -27,52 +226,55 @@ std::unique_ptr<Screen> makeOptions(App& app) {
     p.items.push_back(reload);
 
     p.items.push_back(ui::PanelItem::header("MY LINEUP"));
+    if (ch->lineupConfigured) {
+      ui::PanelItem edit{ui::PanelItem::Kind::Chevron, "Edit My Lineup"};
+      edit.value = std::to_string(ch->lineup.size()) + " channels";
+      edit.select = [&app] { app.nav().push(makeEditLineup(app)); };
+      p.items.push_back(edit);
+    }
+    ui::PanelItem countries{ui::PanelItem::Kind::Chevron, "Countries & Languages"};
+    countries.value = countriesSummary(prefs.countries);
+    countries.select = [&app] { app.nav().push(makeCountries(app)); };
+    p.items.push_back(countries);
     ui::PanelItem setup{ui::PanelItem::Kind::Chevron, ch->lineupConfigured ? "Set Up My Lineup Again" : "Set Up My Lineup"};
-    if (ch->lineupConfigured) setup.value = std::to_string(ch->lineup.size()) + " channels";
     setup.select = [&app] { app.nav().push(makeLineupSetup(app)); };
     p.items.push_back(setup);
-    ui::PanelItem allTab{ui::PanelItem::Kind::Toggle, "All Channels tab"};
-    allTab.on = set.allChannelsTab;
-    allTab.select = [&app] {
-      Settings n = app.store().settings();
-      n.allChannelsTab = !n.allChannelsTab;
-      app.store().setSettings(n);
-    };
-    p.items.push_back(allTab);
+    p.items.push_back(settingToggle(app, "All Channels tab", "Every channel in your countries", &Settings::allChannelsTab));
+    if (set.allChannelsTab) {
+      int hidden = 0;
+      for (const GroupSummary& g : s.groups()) hidden += g.hidden ? 1 : 0;
+      ui::PanelItem groups{ui::PanelItem::Kind::Chevron, "Provider groups"};
+      groups.value = hidden ? std::to_string(hidden) + " hidden" : "All shown";
+      groups.select = [&app] { app.nav().push(makeGroups(app)); };
+      p.items.push_back(groups);
+    }
 
     p.items.push_back(ui::PanelItem::header("GUIDE"));
-    ui::PanelItem preview{ui::PanelItem::Kind::Toggle, "Preview channels"};
-    preview.detail = "The corner plays the channel you rest on";
-    preview.on = set.previewChannels;
-    preview.select = [&app] {
-      Settings n = app.store().settings();
-      n.previewChannels = !n.previewChannels;
-      app.store().setSettings(n);
-    };
-    p.items.push_back(preview);
-    ui::PanelItem fill{ui::PanelItem::Kind::Toggle, "Fill in missing listings"};
-    fill.detail = "Outside guides for channels your provider has no listings for";
-    fill.on = set.fillMissingListings;
-    fill.select = [&app] {
-      Settings n = app.store().settings();
-      n.fillMissingListings = !n.fillMissingListings;
-      app.store().setSettings(n);
-    };
-    p.items.push_back(fill);
+    p.items.push_back(settingToggle(app, "Preview channels", "Rest on a channel to hear it in the corner",
+                                    &Settings::previewChannels));
+    ui::PanelItem listings{ui::PanelItem::Kind::Chevron, "Guide Listings"};
+    listings.select = [&app] { app.nav().push(makeGuideListings(app)); };
+    p.items.push_back(listings);
+    ui::PanelItem clock{ui::PanelItem::Kind::Chevron, "Clock"};
+    clock.value = set.clock24 ? "24 hours" : "12 hours";
+    clock.select = [&app] { toggleSetting(app, &Settings::clock24); };
+    p.items.push_back(clock);
 
     p.items.push_back(ui::PanelItem::header("LIVE EVENTS"));
     ui::PanelItem sports{ui::PanelItem::Kind::Chevron, "My Sports"};
+    sports.detail = "Leagues and favorite teams";
+    const sports::MySportsPrefs& my = s.mySports();
+    if (my.configured) sports.value = std::to_string(my.leagues.size()) + (my.leagues.size() == 1 ? " league" : " leagues");
     sports.select = [&app] { app.nav().push(makeMySports(app)); };
     p.items.push_back(sports);
-    ui::PanelItem schedule{ui::PanelItem::Kind::Toggle, "Game schedule"};
-    schedule.detail = "This week's games and where to watch them";
-    schedule.on = set.scheduleEnabled;
-    schedule.select = [&app] {
-      Settings n = app.store().settings();
-      n.scheduleEnabled = !n.scheduleEnabled;
-      app.store().setSettings(n);
-    };
-    p.items.push_back(schedule);
+    if (prefs.markets.size() > 1) {
+      ui::PanelItem home{ui::PanelItem::Kind::Chevron, "Home city"};
+      home.detail = "Its stations are listed first on games";
+      home.value = shortMarket(s.homeMarketName());
+      home.select = [&app] { app.store().cycleHomeMarket(); };
+      p.items.push_back(home);
+    }
+    p.items.push_back(settingToggle(app, "Game schedule", "Schedule, logos and TV networks", &Settings::scheduleEnabled));
     if (set.scheduleEnabled) {
       ui::PanelItem refresh{ui::PanelItem::Kind::Action, "Refresh schedule"};
       refresh.select = [&app] {
@@ -80,36 +282,17 @@ std::unique_ptr<Screen> makeOptions(App& app) {
         app.toast("Refreshing the schedule");
       };
       p.items.push_back(refresh);
-      ui::PanelItem unwatchable{ui::PanelItem::Kind::Toggle, "Games not in my channels"};
-      unwatchable.on = set.showUnwatchable;
-      unwatchable.select = [&app] {
-        Settings n = app.store().settings();
-        n.showUnwatchable = !n.showUnwatchable;
-        app.store().setSettings(n);
-      };
-      p.items.push_back(unwatchable);
-      ui::PanelItem scores{ui::PanelItem::Kind::Toggle, "Show scores"};
-      scores.on = set.showScores;
-      scores.select = [&app] {
-        Settings n = app.store().settings();
-        n.showScores = !n.showScores;
-        app.store().setSettings(n);
-      };
-      p.items.push_back(scores);
+      p.items.push_back(settingToggle(app, "Games not in my channels", "Show them dimmed at the end of each row",
+                                      &Settings::showUnwatchable));
+      p.items.push_back(settingToggle(app, "Show scores", "Off keeps live and final status, without numbers",
+                                      &Settings::showScores));
     }
 
     bool anyXtream = false;
     for (const AccountSummary& a : accounts) anyXtream = anyXtream || a.kind == "Xtream";
     if (anyXtream) {
       p.items.push_back(ui::PanelItem::header("PLAYBACK"));
-      ui::PanelItem ts{ui::PanelItem::Kind::Toggle, "Use MPEG-TS for Xtream"};
-      ts.on = set.preferTS;
-      ts.select = [&app] {
-        Settings n = app.store().settings();
-        n.preferTS = !n.preferTS;
-        app.store().setSettings(n);
-      };
-      p.items.push_back(ts);
+      p.items.push_back(settingToggle(app, "Use MPEG-TS for Xtream", "Try this if Xtream channels stutter", &Settings::preferTS));
     }
 
     p.items.push_back(ui::PanelItem::header("HELP"));

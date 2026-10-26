@@ -133,9 +133,13 @@ time::Civil local(const Ctx& c, time::Seconds t) {
 
 std::string clock(const Ctx& c, time::Seconds t, bool withPeriod) {
   time::Civil l = local(c, t);
+  char buf[24];
+  if (c.clock24) {
+    std::snprintf(buf, sizeof buf, "%02d:%02d", l.hour, l.minute);
+    return buf;
+  }
   int h = l.hour % 12;
   if (h == 0) h = 12;
-  char buf[24];
   if (withPeriod) std::snprintf(buf, sizeof buf, "%d:%02d %s", h, l.minute, l.hour < 12 ? "AM" : "PM");
   else std::snprintf(buf, sizeof buf, "%d:%02d", h, l.minute);
   return buf;

@@ -329,4 +329,15 @@ std::string hex64(uint64_t v) {
   return buf;
 }
 
+std::string groupedThousands(long long n) {
+  bool negative = n < 0;
+  unsigned long long v = negative ? 0ull - static_cast<unsigned long long>(n) : static_cast<unsigned long long>(n);
+  std::string digits = std::to_string(v), out;
+  for (size_t i = 0; i < digits.size(); ++i) {
+    if (i > 0 && (digits.size() - i) % 3 == 0) out += ',';
+    out += digits[i];
+  }
+  return negative ? "-" + out : out;
+}
+
 }  // namespace marigold::str

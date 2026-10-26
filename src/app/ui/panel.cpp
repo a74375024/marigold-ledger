@@ -5,10 +5,23 @@
 
 namespace marigold::ui {
 
-float ListPanel::rowHeight(const PanelItem& it) const {
+namespace {
+constexpr int kNoteLines = 6;
+constexpr int kNotePx = 18, kNoteTitlePx = 21;
+constexpr float kNoteLineH = 24;
+}  // namespace
+
+float ListPanel::rowHeight(Ctx& c, const PanelItem& it, float width) const {
   switch (it.kind) {
     case PanelItem::Kind::Header: return 52;
-    case PanelItem::Kind::Note: return 44;
+    case PanelItem::Kind::Note: {
+      // Notes wrap; a note with a detail is a title over its text.
+      Weight w = it.detail.empty() ? Weight::Regular : Weight::Bold;
+      int px = it.detail.empty() ? kNotePx : kNoteTitlePx;
+      size_t lines = c.t.wrap(it.title, w, px, width - 16, kNoteLines).size();
+      if (!it.detail.empty()) lines += c.t.wrap(it.detail, Weight::Regular, kNotePx, width - 16, kNoteLines).size();
+      return std::max(44.0f, static_cast<float>(lines) * kNoteLineH + 20);
+    }
     default: return it.detail.empty() ? theme::kPanelRowHeight : 84;
   }
 }
@@ -83,7 +96,7 @@ void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
   // Keep the focused row in view, with a row of context where possible.
   float total = 0, focusTop = 0, focusH = 0;
   for (size_t i = 0; i < items.size(); ++i) {
-    float h = rowHeight(items[i]) + 6;
+    float h = rowHeight(c, items[i], r.w) + 6;
     if (static_cast<int>(i) == focus_) {
       focusTop = total;
       focusH = h;
@@ -100,7 +113,7 @@ void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
   float ry = list.y - scroll_;
   for (size_t i = 0; i < items.size(); ++i) {
     const PanelItem& it = items[i];
-    float h = rowHeight(it);
+    float h = rowHeight(c, it, list.w);
     Rect row{list.x, ry, list.w, h};
     ry += h + 6;
     if (row.y + row.h < list.y || row.y > list.y + list.h) continue;
@@ -110,7 +123,18 @@ void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
       continue;
     }
     if (it.kind == PanelItem::Kind::Note) {
-      labelIn(c, it.title, {row.x + 8, row.y, row.w - 16, row.h}, Weight::Regular, 18, theme::white(0.6f));
+      float ny = row.y + 10;
+      if (it.detail.empty()) {
+        paragraph(c, it.title, row.x + 8, ny, row.w - 16, Weight::Regular, kNotePx, theme::white(0.6f), kNoteLines,
+                  kNoteLineH / kNotePx);
+      } else {
+        for (const std::string& line : c.t.wrap(it.title, Weight::Bold, kNoteTitlePx, row.w - 16, kNoteLines)) {
+          label(c, line, row.x + 8, ny, Weight::Bold, kNoteTitlePx, theme::white(0.9f));
+          ny += kNoteLineH;
+        }
+        paragraph(c, it.detail, row.x + 8, ny, row.w - 16, Weight::Regular, kNotePx, theme::white(0.6f), kNoteLines,
+                  kNoteLineH / kNotePx);
+      }
       continue;
     }
     c.hit(row, hitBase + static_cast<int>(i));

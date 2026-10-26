@@ -21,6 +21,15 @@ void PanelScreen::shown() { rebuild(); }
 
 bool PanelScreen::key(const KeyEvent& e) {
   if (onKey && onKey(e)) return true;
+  if (e.key == Key::Ok && e.longPress) {
+    int f = panel_.focused();
+    if (f >= 0 && f < static_cast<int>(panel_.items.size()) && panel_.items[static_cast<size_t>(f)].hold) {
+      auto hold = panel_.items[static_cast<size_t>(f)].hold;
+      hold();
+      rebuild();
+      return true;
+    }
+  }
   if (e.key == Key::Ok) {
     bool used = panel_.key(e.key);
     rebuild();

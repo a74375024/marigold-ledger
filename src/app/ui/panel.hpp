@@ -22,6 +22,7 @@ struct PanelItem {
   bool enabled = true;
   bool dot = false;    // red dot before the title (active filter, origin)
   std::function<void()> select;
+  std::function<void()> hold;  // OK held (optional)
 
   PanelItem() = default;
   PanelItem(Kind k, std::string t) : kind(k), title(std::move(t)) {}
@@ -55,7 +56,7 @@ class ListPanel {
   static constexpr int kHitBase = 1000;
 
  private:
-  float rowHeight(const PanelItem& it) const;
+  float rowHeight(Ctx& c, const PanelItem& it, float width) const;
   int focus_ = -1;
   float scroll_ = 0;
 };

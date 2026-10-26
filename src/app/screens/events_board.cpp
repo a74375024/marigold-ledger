@@ -42,17 +42,27 @@ class EventsBoardScreen : public Screen {
   EventsBoardScreen(App& app, std::function<void(int)> pickTab) : Screen(app), pickTab_(std::move(pickTab)) {
     app_.store().eventsOpen(true);
     refresh();
+    // Offer My Sports once, the first time Live Events opens.
+    if (app_.store().shouldPromptMySports()) {
+      app_.store().markMySportsPrompted();
+      promptAt_ = app_.ms() + 600;
+    }
   }
   ~EventsBoardScreen() override { app_.store().eventsOpen(false); }
 
   void shown() override { refresh(); }
 
-  bool tick(uint32_t) override {
+  bool tick(uint32_t ms) override {
+    if (promptAt_ && ms >= promptAt_) {
+      promptAt_ = 0;
+      app_.nav().push(makeMySports(app_));
+      return true;
+    }
     if (app_.store().events()->version != version_) {
       refresh();
       app_.invalidate();
     }
-    return board_->loading;
+    return board_->loading || promptAt_ != 0;
   }
 
   bool key(const KeyEvent& e) override {
@@ -479,6 +489,7 @@ class EventsBoardScreen : public Screen {
     }
   }
 
+  uint32_t promptAt_ = 0;
   std::function<void(int)> pickTab_;
   std::shared_ptr<const EventsBoard> board_;
   uint64_t version_ = ~0ull;

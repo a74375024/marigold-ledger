@@ -67,6 +67,7 @@ struct Ctx {
   const time::Zone* zone = nullptr;
   std::vector<HitRegion>* hits = nullptr;
   bool pointerActive = false;
+  bool clock24 = false;  // Options › Clock
 
   void hit(Rect r, int id) const {
     if (hits) hits->push_back({r, id});

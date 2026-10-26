@@ -31,7 +31,7 @@ class GuideScreen : public Screen {
  private:
   enum class Tab { Lineup, Favorites, Recent, Events, All };
   enum class Area { Tabs, Buttons, Time, Grid, Rail };
-  enum class Filter { None, SportsNow, NewsNow, MoviesNow, KidsNow, Section };
+  enum class Filter { None, SportsNow, NewsNow, MoviesNow, KidsNow, Section, Group };
   struct Line {
     enum class Kind { Header, Channel, Prompt } kind = Kind::Channel;
     int channel = -1;  // index into Channels::all

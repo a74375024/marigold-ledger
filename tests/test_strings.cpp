@@ -65,3 +65,12 @@ TEST_CASE("Program minutes is at least one") {
   p.end = 900;
   CHECK(p.minutes() == 1);
 }
+
+TEST_CASE("strings: grouped thousands") {
+  CHECK(marigold::str::groupedThousands(0) == "0");
+  CHECK(marigold::str::groupedThousands(999) == "999");
+  CHECK(marigold::str::groupedThousands(1240) == "1,240");
+  CHECK(marigold::str::groupedThousands(30000) == "30,000");
+  CHECK(marigold::str::groupedThousands(1234567) == "1,234,567");
+  CHECK(marigold::str::groupedThousands(-4500) == "-4,500");
+}

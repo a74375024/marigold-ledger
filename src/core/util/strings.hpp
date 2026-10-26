@@ -31,6 +31,8 @@ std::string replaceAll(std::string_view s, std::string_view from, std::string_vi
 // Strips accents from Latin letters ("Pacífico" -> "Pacifico", "Ñ" -> "N"),
 // like Swift's folding(options: .diacriticInsensitive). Other text is kept.
 std::string foldDiacritics(std::string_view s);
+// 12345 -> "12,345".
+std::string groupedThousands(long long n);
 
 // Number of UTF-8 code points.
 size_t utf8Length(std::string_view s);

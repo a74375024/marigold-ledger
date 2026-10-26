@@ -22,6 +22,7 @@ struct GuideChannel {
   std::string subtitle;  // "NBC 4" for locals, the category otherwise
   std::string logoUrl;
   std::string section;   // neighborhood title ("Local", "Sports"...)
+  std::string group;     // the provider's group
   int sectionRank = 0;   // guide order of the neighborhood
   std::optional<int> number;
   int feeds = 1;
@@ -50,6 +51,7 @@ struct Channels {
   std::vector<GuideChannel> all;      // every visible entry, guide order
   std::vector<int> lineup;            // My Lineup, guide order
   std::vector<int> browse;            // every channel not in a hidden group
+  std::vector<int> every;             // 0..all.size()-1 (a provider group, hidden ones too)
   std::vector<int> favorites;
   std::vector<int> recent;            // most recent first
   std::unordered_map<std::string, int> byId;

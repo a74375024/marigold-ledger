@@ -234,7 +234,7 @@ void App::drawReminder(ui::Ctx& c) {
 
 void App::frame() {
   hits_.clear();
-  ui::Ctx c{g_, t_, logos_.get(), time::now(), ms_, &zone_, &hits_, pointerShown_};
+  ui::Ctx c{g_, t_, logos_.get(), time::now(), ms_, &zone_, &hits_, pointerShown_, store_->settings().clock24};
   g_.beginFrame(ui::theme::hex(ui::theme::kBackground));
   nav_.draw(c);
   drawToast(c);
