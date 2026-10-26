@@ -154,6 +154,8 @@ bool isNationalish(std::string_view name) {
 // once by the caller.
 template <typename StationLike>
 std::string scopeFor(std::string_view display, StationLike stationLike) {
+  // A regional sports network: its home places ("regional:a|b").
+  if (auto places = regionalSportsPlaces(display)) return "regional:" + str::join(*places, "|");
   if (rx::test("^\\s*\\(?(nfl|nba|nhl|mlb|mls|wnba)\\)?\\s+(\\([A-Z]{2,4}\\)\\s+)?[A-Za-z]",
                display, true)) {
     return "team";
@@ -286,8 +288,12 @@ CallsignContext::CallsignContext(const std::vector<Channel>& channels,
     bool strong = contains(str::lower(group), "local") ||
                   rx::test("^\\s*USA?\\s*\\|\\s*(NBC|FOX|CBS|ABC|CW|PBS)\\b", group);
     std::optional<std::string> network = networkWord(channel.name);
+    // Marigold: also a sign that starts the name before its network
+    // ("WWOR MyNetworkTV 9", "KQED PBS 9").
+    std::string upper = str::upper(str::trimUnicode(channel.name));
     for (const CallsignCandidate& candidate : callsignCandidates(channel.name)) {
-      if (strong || (network && candidate.inParens)) known.insert(candidate.sign);
+      bool leads = network && candidate.sign.size() == 4 && str::startsWith(upper, candidate.sign + " ");
+      if (strong || (network && candidate.inParens) || leads) known.insert(candidate.sign);
       if (network) counts[candidate.sign][*network] += 3;
     }
   }
@@ -644,7 +650,11 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
   if (kind == ChannelKind::channel && !core && !familyKey && (!country || *country == "US")) {
     bool localGroup = contains(group, "local");
     std::vector<CallsignCandidate> candidates;
-    for (CallsignCandidate& c : callsignCandidates(name)) {
+    // Marigold: "WLS ABC 7", or "KGO" alone in a locals group.
+    bool shortOk = networkWord(name).has_value() ||
+                   (localGroup && rx::test("^\\s*[KW][A-Z]{2}\\s*$", name));
+    for (CallsignCandidate& c : callsignCandidates(name, shortOk)) {
+      if (c.sign.size() == 3 && !c.inParens && !context.known.count(c.sign)) continue;
       if (context.known.count(c.sign) || localGroup) candidates.push_back(std::move(c));
     }
     // The first written in parentheses, else the first.
@@ -712,6 +722,8 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
         category = LineupCategory::spanish;
       } else if (core) {
         category = core->category;
+      } else if (regionalSportsPlaces(display)) {
+        category = LineupCategory::sports;
       } else if (callsign || (str::startsWith(scope, "regional") && stationLike())) {
         category = LineupCategory::local;
       } else {
@@ -813,7 +825,7 @@ ChannelKind kindFor(std::string_view name, std::string_view lower, std::string_v
   return ChannelKind::channel;
 }
 
-std::vector<CallsignCandidate> callsignCandidates(std::string_view name) {
+std::vector<CallsignCandidate> callsignCandidates(std::string_view name, bool allowShort) {
   std::string up = str::upper(name);
   std::vector<CallsignCandidate> found;
   for (const rx::Match& m :
@@ -821,8 +833,11 @@ std::vector<CallsignCandidate> callsignCandidates(std::string_view name) {
     std::string sign(m.group(1));
     size_t at = static_cast<size_t>(m.group(1).data() - up.data());
     bool inParens = at > 0 && up[at - 1] == '(';
-    // Three-letter call signs (KGO, WGN) only in parentheses or with a suffix.
-    if (!(sign.size() == 4 || inParens || m.has(2))) continue;
+    // Three-letter call signs (KGO, WGN) only in parentheses or with a
+    // suffix, or when the caller vouches for them (a network word in the
+    // name, or the whole name in a locals group); the caller still needs the
+    // sign to be a known station.
+    if (!(sign.size() == 4 || inParens || m.has(2) || allowShort)) continue;
     bool seen = std::any_of(found.begin(), found.end(),
                             [&](const CallsignCandidate& c) { return c.sign == sign; });
     if (!seen) found.push_back({sign, inParens});

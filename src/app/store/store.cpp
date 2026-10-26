@@ -69,7 +69,7 @@ constexpr const char* kSettingsFile = "settings.json";
 constexpr const char* kListsFile = "lists.json";
 constexpr const char* kLineupFile = "lineup.json";
 constexpr const char* kM3uStreamsFile = "m3u-streams.json";  // secret
-constexpr const char* kStationsFile = "stations.json";
+constexpr const char* kStationsFile = "stations-v2.json";  // v2: two-city cells, MyNetworkTV
 constexpr const char* kLogoIndexFile = "logo-index.json";
 
 http::Request toHttp(const sources::Request& r, std::string tag, http::Priority p = http::Priority::Normal) {
@@ -1123,7 +1123,7 @@ std::optional<std::string> wikitext(http::Client& pool, const std::string& title
 
 void Store::loadMarkets(std::function<void(TvMarkets)> done) {
   Impl& m = *impl_;
-  std::string path = app_.storage().path("markets.json");
+  std::string path = app_.storage().path("markets-v2.json");  // v2: US markets only
   // Names the market suggestion reads: local-looking channels first (tvOS).
   auto names = std::make_shared<std::vector<std::string>>();
   for (const Channel& c : *m.channels) {

@@ -42,7 +42,8 @@ const std::vector<Page>& pages() {
        {"List of Fox television affiliates (by U.S. state)", "List of Fox television affiliates"}},
       {"CW", {"List of The CW affiliates", "List of The CW television affiliates (by U.S. state)"}},
       {"MYNETWORKTV",
-       {"List of MyNetworkTV affiliates (by U.S. state)", "List of MyNetworkTV affiliates"}},
+       // The list pages are gone (2026); the network's article lists its own stations.
+       {"List of MyNetworkTV affiliates (by U.S. state)", "List of MyNetworkTV affiliates", "MyNetworkTV"}},
       {"PBS", {"List of PBS member stations"}},
       {"TELEMUNDO",
        {"List of Telemundo affiliates (by U.S. state)", "List of Telemundo affiliates"}},
@@ -54,34 +55,47 @@ const std::vector<Page>& pages() {
 
 std::vector<Station> parse(std::string_view text, const std::string& network) {
   std::vector<Station> stations;
-  std::string city;
+  std::vector<std::string> cities;  // carried over to the next rows (rowspan)
   for (std::string_view row : splitOn(text, "\n|-")) {
     auto call = rx::first(kCallLink, row);
     if (!call) continue;
-    // The city: the first ordinary link before the call sign.
-    for (const rx::Match& link : rx::all(kAnyLink, row.substr(0, call->begin))) {
+    // The city: the first ordinary link before the call sign. Marigold:
+    // with every other city linked in the same cell ("Newark–New York
+    // City"), each its own entry.
+    std::string_view before = row.substr(0, call->begin);
+    std::vector<std::string> found;
+    size_t lineEnd = std::string_view::npos;
+    for (const rx::Match& link : rx::all(kAnyLink, before)) {
       std::string target(link.group(1));
       if (target.find(':') != std::string::npos || rx::test(kCallLink, "[[" + target + "]]")) {
         continue;
       }
+      size_t at = static_cast<size_t>(link.begin);
+      if (found.empty()) {
+        // The cell ends at the line's end or an inline "||" cell break.
+        lineEnd = std::min(before.find('\n', at), before.find("||", at));
+      } else if (lineEnd != std::string_view::npos && at > lineEnd) {
+        break;  // the next cell (the state)
+      }
       std::string label = link.has(2) ? std::string(link.group(2)) : target;
       size_t comma = label.find(',');
-      city = std::string(
-          str::trimUnicode(comma == std::string::npos ? label : label.substr(0, comma)));
-      break;
+      found.emplace_back(str::trimUnicode(comma == std::string::npos ? label : label.substr(0, comma)));
     }
+    if (!found.empty()) cities = std::move(found);
     std::string sign(call->group(1));
     size_t dash = sign.find('-');
     if (dash != std::string::npos) sign.resize(dash);
     std::string after = rx::replace(row.substr(call->end), "\\[\\[[^\\]]*\\]\\]", " ");
     std::string number;
     if (auto n = rx::first(kChannelNumber, after)) number = std::string(n->group(1));
-    std::vector<std::string> tokens;
-    for (std::string& t : letterNumberTokens(str::lower(city))) {
-      if (t != "city" && t != "the") tokens.push_back(std::move(t));
+    for (const std::string& city : cities) {
+      std::vector<std::string> tokens;
+      for (std::string& t : letterNumberTokens(str::lower(city))) {
+        if (t != "city" && t != "the") tokens.push_back(std::move(t));
+      }
+      if (tokens.empty()) continue;
+      stations.push_back({sign, network, std::move(tokens), number});
     }
-    if (tokens.empty()) continue;
-    stations.push_back({sign, network, std::move(tokens), number});
   }
   return stations;
 }
@@ -91,7 +105,8 @@ std::vector<Station> collect(const std::vector<std::pair<std::string, std::strin
   std::unordered_set<std::string> seen;
   for (const auto& [network, text] : pageTexts) {
     for (Station& station : parse(text, network)) {
-      if (seen.insert(station.callsign + "|" + network).second) out.push_back(std::move(station));
+      std::string city = str::join(station.cityTokens, " ");
+      if (seen.insert(station.callsign + "|" + network + "|" + city).second) out.push_back(std::move(station));
     }
   }
   return out;

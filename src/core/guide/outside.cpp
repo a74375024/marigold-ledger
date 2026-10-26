@@ -438,7 +438,9 @@ Targets::Targets(const std::vector<Channel>& channels, const std::vector<Station
   stationsByNetwork = groupByNetwork(stations);
   for (const Channel& channel : channels) {
     bool isLocal = str::lower(channel.group.value_or("")).find("local") != std::string::npos;
-    std::vector<std::string> signs = callsigns(channel.name, isLocal);
+    // Marigold: a network word in the name ("WLS ABC 7") vouches for its
+    // call sign as a locals group does.
+    std::vector<std::string> signs = callsigns(channel.name, isLocal || catalog::networkWord(channel.name).has_value());
     // A call sign written alone in capitals ("(US) (Prime) KAGS").
     if (signs.empty()) {
       if (auto sign = bareCallsign(channel.name)) signs = {*sign};

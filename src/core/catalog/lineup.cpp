@@ -272,7 +272,10 @@ bool suggests(const EntryInfo& entry, const LineupPrefs& prefs, bool hasGuide,
   // Regional channels (another city's locals, regional sports) only for their market.
   if (str::startsWith(entry.scope, "regional")) {
     std::string place = entry.scope.size() > 9 ? entry.scope.substr(9) : std::string();
-    bool here = prefs.marketPlaces().count(place) > 0 || (place == "?" && namesMarketCity());
+    // One place, or several ("regional:san francisco|sacramento").
+    std::set<std::string> places = prefs.marketPlaces();
+    bool here = place == "?" && namesMarketCity();
+    for (std::string_view p : str::split(place, '|')) here = here || places.count(std::string(p)) > 0;
     if (!here ||
         !on(entry.category == LineupCategory::local ? LineupCategory::local : entry.category)) {
       return false;

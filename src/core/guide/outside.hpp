@@ -81,7 +81,7 @@ constexpr int kShortHorizon = 12 * 60;
 constexpr time::Seconds kStaleRetry = 2 * 3600;
 // Sports descriptions kept for the whole window (2): older builds kept only
 // the next few hours', so they're rebuilt once.
-constexpr int kDetailVersion = 3;  // 3: national networks by any of their names
+constexpr int kDetailVersion = 4;  // 3: national networks by any of their names; 4: call signs with a network word
 
 // MARK: Data
 

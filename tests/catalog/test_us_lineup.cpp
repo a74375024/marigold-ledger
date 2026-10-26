@@ -10,6 +10,7 @@
 #include "core/catalog/catalog.hpp"
 #include "core/catalog/lineup.hpp"
 #include "core/catalog/work.hpp"
+#include "core/guide/names.hpp"
 #include "doctest.h"
 
 using namespace marigold;
@@ -103,4 +104,70 @@ TEST_CASE("US locals marked, cable channels not: the cable networks still join")
   extra.push_back(channel("l-nbc", "US: NBC 4 New York (WNBC)", "US| LOCALS", "m3u:p"));
   std::set<std::string> names = lineupNames(cable, extra);
   checkAll(cable, names);
+}
+
+namespace {
+
+// My Lineup for one market from a small list (stations from the directory).
+std::set<std::string> marketLineup(const std::vector<Channel>& list, const std::vector<guide::Station>& stations,
+                                   const MarketChoice& market, const std::set<std::string>& guideIds = {}) {
+  std::vector<Channel> annotated = catalog::annotated(list);
+  CatalogResult cat = build(annotated, utc(2026, 10, 26, 18, 0), stations);
+  LineupInput in;
+  in.infos = cat.entries;
+  in.channels = annotated;
+  for (size_t i = 0; i < annotated.size(); ++i) in.indexByID[annotated[i].id] = i;
+  in.prefs.configured = true;
+  in.prefs.markets = {market};
+  in.guideIDs = guideIds;
+  in.otherGroup = "Other";
+  LineupOutput out = lineup(in);
+  std::set<std::string> ids;
+  for (const std::string& e : out.lineupIDs) {
+    for (const EntryInfo& info : cat.entries)
+      if (info.id == e) ids.insert(info.members.begin(), info.members.end());
+  }
+  return ids;
+}
+
+}  // namespace
+
+TEST_CASE("regional sports networks join only their home market") {
+  std::vector<Channel> list = {channel("yes", "US: YES Network", "US| SPORTS"),
+                               channel("sny", "US: SNY", "US| SPORTS"),
+                               channel("msg", "MSG HD", "US| SPORTS"),
+                               channel("nbcsca", "US: NBC Sports California", "US| SPORTS"),
+                               channel("nbcsba", "US: NBC Sports Bay Area", "US| SPORTS"),
+                               channel("spec", "US: Spectrum SportsNet LA", "US| SPORTS"),
+                               channel("fdsocal", "US: FanDuel Sports Network SoCal", "US| SPORTS"),
+                               channel("marquee", "US: Marquee Sports Network", "US| SPORTS"),
+                               channel("chsn", "US: Chicago Sports Network", "US| SPORTS")};
+  auto ny = marketLineup(list, {}, {"New York", std::nullopt, {}});
+  CHECK(ny == std::set<std::string>{"xt:1|yes", "xt:1|sny", "xt:1|msg"});
+  auto la = marketLineup(list, {}, {"Los Angeles", std::nullopt, {}});
+  CHECK(la == std::set<std::string>{"xt:1|spec", "xt:1|fdsocal"});  // not NBC Sports California
+  auto sf = marketLineup(list, {}, {"San Francisco–Oakland–San Jose", std::nullopt, {}});
+  CHECK(sf == std::set<std::string>{"xt:1|nbcsca", "xt:1|nbcsba"});
+  auto chi = marketLineup(list, {}, {"Chicago", std::nullopt, {}});
+  CHECK(chi == std::set<std::string>{"xt:1|marquee", "xt:1|chsn"});
+}
+
+TEST_CASE("locals named by call sign and network, outside a locals group") {
+  // "WAAA ABC 7" style in a general group: three-letter signs the
+  // directory knows, and a sign before its network that it doesn't.
+  std::vector<guide::Station> stations = {{"KGO", "ABC", {"san", "francisco"}, "7"},
+                                          {"WLS", "ABC", {"chicago"}, "7"}};
+  std::vector<Channel> list = {channel("kgo", "KGO ABC 7", "Entertainment", "m3u:p"),
+                               channel("wls", "WLS ABC 7", "Entertainment", "m3u:p"),
+                               channel("wqqq", "WQQQ MyNetworkTV 9", "Entertainment", "m3u:p"),
+                               channel("espn", "ESPN", "Sports", "m3u:p")};
+  auto sf = marketLineup(list, stations, {"San Francisco–Oakland–San Jose", std::nullopt, {"KGO"}});
+  CHECK(sf.count("m3u:p|kgo"));
+  CHECK_FALSE(sf.count("m3u:p|wls"));
+  auto chi = marketLineup(list, stations, {"Chicago", std::nullopt, {"WLS"}});
+  CHECK(chi.count("m3u:p|wls"));
+  CHECK_FALSE(chi.count("m3u:p|kgo"));
+  auto ny = marketLineup(list, stations, {"New York", std::nullopt, {"WQQQ"}});
+  CHECK(ny.count("m3u:p|wqqq"));
+  CHECK(ny.count("m3u:p|espn"));
 }

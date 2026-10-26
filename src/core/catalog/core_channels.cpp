@@ -181,4 +181,107 @@ const std::string& regionPattern() {
   return kPattern;
 }
 
+// Regional sports networks and the markets they serve. Places are city
+// parts as MarketChoice::cityParts() gives them ("St. Louis" -> "louis").
+// Names are matched on whole words, as the start of the channel's name.
+std::optional<std::vector<std::string>> regionalSportsPlaces(std::string_view name) {
+  struct Network {
+    const char* name;
+    std::vector<std::string> places;
+  };
+  static const std::vector<Network> kNetworks = {
+      {"yes network", {"new york"}},
+      {"yes", {"new york"}},
+      {"msg", {"new york"}},
+      {"msg network", {"new york"}},
+      {"msg sportsnet", {"new york"}},
+      {"sny", {"new york"}},
+      {"sportsnet new york", {"new york"}},
+      {"spectrum sportsnet la", {"los angeles"}},
+      {"spectrum sportsnet", {"los angeles"}},
+      {"spectrum sports net", {"los angeles"}},
+      {"nbc sports bay area", {"san francisco", "oakland", "san jose"}},
+      {"nbc sports california", {"san francisco", "oakland", "san jose", "sacramento"}},
+      {"marquee sports network", {"chicago"}},
+      {"marquee", {"chicago"}},
+      {"chicago sports network", {"chicago"}},
+      {"chsn", {"chicago"}},
+      {"nbc sports chicago", {"chicago"}},
+      {"nesn", {"boston"}},
+      {"nbc sports boston", {"boston"}},
+      {"nbc sports philadelphia", {"philadelphia"}},
+      {"monumental sports network", {"washington"}},
+      {"monumental sports", {"washington"}},
+      {"nbc sports washington", {"washington"}},
+      {"root sports northwest", {"seattle", "portland"}},
+      {"root sports", {"seattle", "portland"}},
+      {"sportsnet pittsburgh", {"pittsburgh"}},
+      {"att sportsnet pittsburgh", {"pittsburgh"}},
+      {"altitude", {"denver"}},
+      {"altitude sports", {"denver"}},
+      {"space city home network", {"houston"}},
+      {"kjzz", {"salt lake city"}},
+  };
+  // FanDuel Sports Network (formerly Bally Sports) by region.
+  struct Region {
+    const char* word;
+    std::vector<std::string> places;
+  };
+  static const std::vector<Region> kRegions = {
+      {"socal", {"los angeles"}},          {"west", {"los angeles"}},
+      {"san diego", {"san diego"}},        {"arizona", {"phoenix"}},
+      {"detroit", {"detroit"}},            {"florida", {"miami", "orlando", "tampa"}},
+      {"sun", {"tampa", "orlando", "miami"}}, {"ohio", {"cleveland", "columbus", "cincinnati"}},
+      {"great lakes", {"cleveland"}},      {"midwest", {"louis", "kansas city"}},
+      {"north", {"minneapolis", "paul"}},  {"south", {"charlotte", "nashville", "memphis", "raleigh"}},
+      {"southeast", {"atlanta"}},          {"southwest", {"dallas", "fort worth"}},
+      {"wisconsin", {"milwaukee"}},        {"kansas city", {"kansas city"}},
+      {"oklahoma", {"oklahoma city", "tulsa"}}, {"new orleans", {"new orleans"}},
+      {"indiana", {"indianapolis"}},
+  };
+  // Lower case, letters and digits only, quality words dropped.
+  static const std::vector<std::string> kDrop = {"hd", "fhd", "uhd", "sd", "4k", "us", "usa", "east"};
+  std::string lowered;
+  for (char c : name) {
+    char l = static_cast<char>(c >= 'A' && c <= 'Z' ? c + 32 : c);
+    lowered += (l >= 'a' && l <= 'z') || (l >= '0' && l <= '9') ? l : ' ';
+  }
+  std::vector<std::string> words;
+  size_t i = 0;
+  while (i < lowered.size()) {
+    while (i < lowered.size() && lowered[i] == ' ') ++i;
+    size_t start = i;
+    while (i < lowered.size() && lowered[i] != ' ') ++i;
+    if (i > start) {
+      std::string w = lowered.substr(start, i - start);
+      if (std::find(kDrop.begin(), kDrop.end(), w) == kDrop.end()) words.push_back(w);
+    }
+  }
+  std::string key;
+  for (const std::string& w : words) key += (key.empty() ? "" : " ") + w;
+  auto startsWithWords = [&](const std::string& prefix) {
+    return key == prefix || key.rfind(prefix + " ", 0) == 0;
+  };
+  // Longest name first ("msg sportsnet" before "msg"); "yes" only alone.
+  const Network* best = nullptr;
+  for (const Network& n : kNetworks) {
+    std::string nm = n.name;
+    bool hit = nm == "yes" ? key == "yes" : startsWithWords(nm);
+    if (hit && (!best || nm.size() > std::string(best->name).size())) best = &n;
+  }
+  if (best) return best->places;
+  for (const char* brand : {"fanduel sports network", "fanduel sports", "bally sports"}) {
+    std::string b = brand;
+    if (!startsWithWords(b)) continue;
+    std::string rest = key.size() > b.size() ? key.substr(b.size() + 1) : std::string();
+    const Region* found = nullptr;
+    for (const Region& r : kRegions) {
+      std::string w = r.word;
+      if ((rest == w || rest.rfind(w + " ", 0) == 0) && (!found || w.size() > std::string(found->word).size())) found = &r;
+    }
+    if (found) return found->places;
+  }
+  return std::nullopt;
+}
+
 }  // namespace marigold::catalog

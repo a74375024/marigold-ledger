@@ -80,7 +80,7 @@ struct CallsignCandidate {
 };
 // Call sign candidates ("KTVU", "KGO" in parentheses, "KABC-DT") and whether
 // each was written in parentheses.
-std::vector<CallsignCandidate> callsignCandidates(std::string_view name);
+std::vector<CallsignCandidate> callsignCandidates(std::string_view name, bool allowShort = false);
 
 // The broadcast network named in a channel name, normalized ("TMO" ->
 // "TELEMUNDO", "MyNetworkTV" -> "MYTV", "IND" -> "INDEPENDENT").

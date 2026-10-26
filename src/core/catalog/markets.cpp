@@ -296,7 +296,9 @@ std::vector<Market> fallbackMarkets(const std::vector<guide::Station>& stations)
 std::vector<std::string> callsignsInWikitext(std::string_view wikitext) {
   std::vector<std::string> found;
   for (const rx::Match& m :
-       rx::all("\\[\\[\\s*([KW][A-Z]{2,3})(?:-(?:TV|DT|LD|CD|LP|CA))?\\s*(?:\\|[^\\]]*)?\\]\\]",
+       // Marigold: also "[[KQED (TV)|…]]" and "[[KMTP-TV#History|…]]" links.
+       rx::all("\\[\\[\\s*([KW][A-Z]{2,3})(?:-(?:TV|DT|LD|CD|LP|CA))?\\s*(?:\\([^)\\]|]*\\))?\\s*(?:#[^|\\]]*)?"
+               "\\s*(?:\\|[^\\]]*)?\\]\\]",
                wikitext)) {
     std::string sign(m.group(1));
     if (std::find(found.begin(), found.end(), sign) == found.end()) found.push_back(sign);

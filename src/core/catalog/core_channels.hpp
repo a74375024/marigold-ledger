@@ -9,7 +9,9 @@
 // to viewers in that market.
 #pragma once
 
+#include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -33,6 +35,10 @@ const std::vector<CoreChannel>& coreChannels();
 const std::unordered_map<std::string, CoreHit>& coreByAlias();
 
 const std::vector<std::string>& regionWords();
+// Marigold: a regional sports network's home places ("YES Network" ->
+// new york; "NBC Sports California" -> the Bay Area and Sacramento), as
+// city parts of the markets it serves; nullopt for anything else.
+std::optional<std::vector<std::string>> regionalSportsPlaces(std::string_view name);
 // One alternation, longest first ("new york" before "york"), group 1.
 const std::string& regionPattern();
 

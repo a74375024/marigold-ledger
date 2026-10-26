@@ -56,6 +56,9 @@ TEST_CASE("call signs in a market template, and the fallbacks") {
   auto signs =
       markets::callsignsInWikitext("[[KAAA-TV|KAAA]] [[KBBB]] [[ KAAA ]] [[WXYZ-LP|x]] [[KQ]]");
   CHECK(signs == std::vector<std::string>{"KAAA", "KBBB", "WXYZ"});
+  // Disambiguated and section links name stations too.
+  CHECK(markets::callsignsInWikitext("[[KQQQ (TV)|KQQQ]] [[WRRR (New Jersey)|WRRR]] [[KSSS-TV#History|KSSS]]") ==
+        std::vector<std::string>{"KQQQ", "WRRR", "KSSS"});
   std::vector<guide::Station> stations = {{"KAAA", "ABC", {"springfield"}, "5"},
                                           {"KBBB", "NBC", {"shelbyville"}, "2"},
                                           {"KCCC", "CBS", {"capital", "city"}, "9"},

@@ -328,6 +328,19 @@ TEST_CASE("station directory: rows, carried-over cities, channel numbers") {
                                    {"ABC", "|-\n[[Springfield]] [[KAAA]] 9"},
                                    {"NBC", "|-\n[[Springfield]] [[KAAA]] 9"}});
   CHECK(merged.size() == 5);  // KAAA/ABC once, KAAA/NBC again
+
+  // A cell naming two cities ("Newark–New York City"): an entry for each.
+  auto twin = stations::parse("|-\n| [[Newark, New Jersey|Newark]]-[[Sample City]]\n| rowspan=\"2\" | [[Some State]]\n"
+                              "! scope=\"row\" | [[WQQQ]]\n| 13 ||\n|}\n",
+                              "PBS");
+  REQUIRE(twin.size() == 2);
+  CHECK(twin[0].cityTokens == std::vector<std::string>{"newark"});
+  CHECK(twin[1].cityTokens == std::vector<std::string>{"sample"});
+  CHECK(twin[1].channelNumber == "13");
+  // The state in the next inline cell is not a city.
+  auto inline_ = stations::parse("|-\n| [[Buffalo, Some State|Buffalo]] || [[Some State]] || [[WRRR-TV|WRRR]] || 2\n", "NBC");
+  REQUIRE(inline_.size() == 1);
+  CHECK(inline_[0].cityTokens == std::vector<std::string>{"buffalo"});
   auto json = stations::toJson(merged);
   CHECK(stations::fromJson(json) == merged);
   CHECK_FALSE(stations::fromJson("{}"));
