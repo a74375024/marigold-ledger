@@ -108,8 +108,11 @@ std::optional<int> raceTarget(const ProviderEvent& event, const std::vector<int>
   std::optional<std::string> kind;
   if (isF1) kind = race_session::kindInTitle(normalized(event.title));
   // A guessed day isn't a time to go by (other races compare the clock).
-  std::optional<Seconds> start = event.guessed ? std::nullopt : event.start;
-  if (!kind && !start && !(maybeOther && event.start)) return std::nullopt;
+  // (A flag and a plain value rather than an optional: GCC -O2 misreads the
+  // optional as maybe uninitialized here.)
+  const bool hasStart = !event.guessed && event.start.has_value();
+  const Seconds startAt = hasStart ? *event.start : 0;
+  if (!kind && !hasStart && !(maybeOther && event.start)) return std::nullopt;
   std::set<std::string> titleWords;
   if (maybeOther) {
     for (const std::string& w : splitWords(norm)) titleWords.insert(w);
@@ -122,7 +125,7 @@ std::optional<int> raceTarget(const ProviderEvent& event, const std::vector<int>
   std::optional<std::pair<int, Seconds>> best, bestOther;
   for (int index : sessions) {
     const SportsGame& game = games[static_cast<size_t>(index)];
-    Seconds gap = start ? std::llabs(*start - game.start) : 0;
+    Seconds gap = hasStart ? std::llabs(startAt - game.start) : 0;
     if (game.leagueShort == "F1") {
       if (!isF1) continue;
       if (kind && !(game.cardKey && str::endsWith(*game.cardKey, "|" + *kind))) continue;
@@ -144,7 +147,7 @@ std::optional<int> raceTarget(const ProviderEvent& event, const std::vector<int>
         Seconds rem = full % 86'400;
         if (std::min(rem, 86'400 - rem) > 75 * 60 || full >= 36 * 3600) continue;
       } else {
-        if (!start || gap > 3 * 3600) continue;
+        if (!hasStart || gap > 3 * 3600) continue;
       }
       if (!bestOther || gap < bestOther->second) bestOther = std::make_pair(index, gap);
     }
