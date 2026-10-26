@@ -602,7 +602,12 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
   bool isWest = rx::test("\\b(west|pacific)\\b", lower);
   std::optional<std::string> country =
       countryFor(name, lower, rawGroup, group, str::startsWith(channel.serverId, "xt:"));
-  if (!country && context.unknownIsUS && latinScript(name)) country = "US";
+  if (!country && latinScript(name)) {
+    // Unmarked: US when the list marks hardly anything as US, or when the
+    // name is a US national network's ("ESPN", "HGTV"; marked locals with
+    // unmarked cable channels is a common provider layout).
+    if (context.unknownIsUS || coreMatch(cleanName(name))) country = "US";
+  }
   std::optional<std::string> market = country;
   if (country == std::string("US") && isSpanishUS(name, group)) market = "US-ES";
   std::string display = cleanName(name);
@@ -871,14 +876,18 @@ std::optional<CoreHit> coreMatch(std::string_view display) {
   const auto& byAlias = coreByAlias();
   auto hit = byAlias.find(key);
   if (hit != byAlias.end()) return hit->second;
-  // "NAT GEO WILD HD US": a leading / trailing US marker.
+  // "NAT GEO WILD HD US": a leading / trailing US marker. Marigold: only
+  // markers at the ends, one end then both, so the name's own "USA" stays
+  // ("USA Network US" -> "usa network"; tvOS dropped every "usa").
   std::vector<std::string> parts;
-  for (std::string_view t : str::split(key, ' ')) {
-    if (t != "us" && t != "usa") parts.emplace_back(t);
-  }
-  std::string trimmed = str::join(parts, " ");
-  if (trimmed != key && !trimmed.empty()) {
-    auto again = byAlias.find(trimmed);
+  for (std::string_view t : str::split(key, ' ')) parts.emplace_back(t);
+  auto marker = [](const std::string& t) { return t == "us" || t == "usa"; };
+  std::vector<std::vector<std::string>> tries;
+  if (parts.size() > 1 && marker(parts.back())) tries.emplace_back(parts.begin(), parts.end() - 1);
+  if (parts.size() > 1 && marker(parts.front())) tries.emplace_back(parts.begin() + 1, parts.end());
+  if (parts.size() > 2 && marker(parts.front()) && marker(parts.back())) tries.emplace_back(parts.begin() + 1, parts.end() - 1);
+  for (const auto& t : tries) {
+    auto again = byAlias.find(str::join(t, " "));
     if (again != byAlias.end()) return again->second;
   }
   return std::nullopt;
@@ -955,8 +964,10 @@ std::string cleanName(std::string_view name) {
   };
   static const Pattern kPatterns[] = {
       {"^\\s*(\\([A-Za-z0-9 ]{1,14}\\)\\s*)+", "("},          // (US) (A)
+      {"^\\s*\\|\\s*[A-Za-z]{2,3}\\s*\\|\\s*", "|"},          // |US|
       {"^\\s*(USA?|US|REG|MEX|MX|UK|CA)\\s*[:|]\\s*", ":|"},  // US: / USA |
-      {"^\\s*(USA?|US)\\s+", "Uu"},                           // US / USA
+      // US / USA, but not USA Network's own name.
+      {"^\\s*(USA?|US)\\s+(?!network\\b)", "Uu"},
       {"^\\s*\\[[^\\]]{1,30}\\]\\s*", "["},                   // [Denver]
       {"\\s*\\((A|H|D|S|P|SP|RK|GT|DZ|XV|F|X|Prime|SD|HD|FHD|UHD|4K|Backup)\\)", "("},
       {"\\s*\\(\\d{3,4}p[^)]*\\)", "("},  // (720p29 @ 3.2Mbps)

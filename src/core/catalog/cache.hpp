@@ -22,7 +22,7 @@ namespace marigold::catalog::cache {
 
 // 2: three-letter Xtream group codes read as countries ("USA|" is US).
 // 3: a too-small numbered family no longer leaves its channels as events.
-constexpr int kVersion = 4;
+constexpr int kVersion = 5;
 
 enum class Part { first, full };
 

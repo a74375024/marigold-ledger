@@ -263,3 +263,36 @@ TEST_CASE("SourceState line") {
   b.used = false;
   CHECK(b.line(time::Zone::utc()).find("standing by") != std::string::npos);
 }
+
+TEST_CASE("Targets: national networks under the guide's other names, and looser names") {
+  std::vector<Channel> channels = {
+      userChannel("tcm", "US: TCM"),
+      userChannel("hgtv", "US: HGTV HD"),
+      userChannel("hgtv-w", "US: HGTV West"),
+      userChannel("fox", "USA: Fox News"),
+      userChannel("up", "US: Up TV"),
+      userChannel("fyi", "US: FYI"),
+      userChannel("dream", "US: Dream Sports"),
+  };
+  Targets targets(channels, {});
+  // The core network table: every alias of a network.
+  auto tcm = targets.matches({"Turner Classic Movies HD"}, "Turner.Classic.Movies.HD.us2", false);
+  REQUIRE(tcm.size() == 1);
+  CHECK(tcm[0].id == "tcm");
+  CHECK(tcm[0].how == "by network TCM");
+  CHECK(targets.matches({"Fox News Channel HD"}, "x", false).at(0).id == "fox");
+  // East and West feeds stay apart.
+  auto hgtv = targets.matches({"Home and Garden Television HD"}, "x", false);
+  REQUIRE(hgtv.size() == 1);
+  CHECK(hgtv[0].id == "hgtv");
+  auto hgtvWest = targets.matches({"Home and Garden Television HD (Pacific)"}, "x", false);
+  REQUIRE(hgtvWest.size() == 1);
+  CHECK(hgtvWest[0].id == "hgtv-w");
+  // Looser names for other channels.
+  CHECK(targets.matches({"UPtv"}, "x", false).at(0).id == "up");
+  CHECK(targets.matches({"FYI Channel HD"}, "x", false).at(0).id == "fyi");
+  CHECK(targets.matches({"The Dream Sports Network"}, "x", false).at(0).id == "dream");
+  // No near misses.
+  CHECK(targets.matches({"Turner Sports"}, "x", false).empty());
+  CHECK(targets.matches({"Up North Live"}, "x", false).empty());
+}

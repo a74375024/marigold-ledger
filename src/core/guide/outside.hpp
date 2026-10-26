@@ -81,7 +81,7 @@ constexpr int kShortHorizon = 12 * 60;
 constexpr time::Seconds kStaleRetry = 2 * 3600;
 // Sports descriptions kept for the whole window (2): older builds kept only
 // the next few hours', so they're rebuilt once.
-constexpr int kDetailVersion = 2;
+constexpr int kDetailVersion = 3;  // 3: national networks by any of their names
 
 // MARK: Data
 
@@ -181,6 +181,11 @@ bool needsRebuild(const Saved* saved, const std::set<std::string>& shards, int c
 struct Targets {
   std::unordered_map<std::string, std::vector<std::string>> bySign;
   std::unordered_map<std::string, std::vector<std::string>> byName;
+  // Marigold: US national networks by their core name (every alias of a
+  // network lines up: "Turner Classic Movies HD" with "US: TCM"), and a
+  // looser name key ("Fox News Channel" / "Fox News", "UPtv" / "Up TV").
+  std::unordered_map<std::string, std::vector<std::string>> byCore;
+  std::unordered_map<std::string, std::vector<std::string>> byLoose;
   StationsByNetwork stationsByNetwork;
 
   Targets() = default;

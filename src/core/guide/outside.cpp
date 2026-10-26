@@ -5,6 +5,7 @@
 #include <cmath>
 #include <unordered_set>
 
+#include "core/catalog/catalog.hpp"
 #include "core/guide/genre.hpp"
 #include "core/util/rx.hpp"
 #include "core/util/strings.hpp"
@@ -414,6 +415,25 @@ bool needsRebuild(const Saved* saved, const std::set<std::string>& on, int chann
 
 // MARK: Matching
 
+namespace {
+
+// A network's core name, with "~west" for a West / Pacific feed.
+std::optional<std::string> coreKeyOf(const std::string& name) {
+  std::string clean = catalog::cleanName(name);
+  auto hit = catalog::coreMatch(clean);
+  if (!hit) return std::nullopt;
+  return catalog::coreKey(clean).west ? hit->name + "~west" : hit->name;
+}
+
+// normalize() without the words a guide adds or leaves out ("The Travel
+// Channel", "Smithsonian HD Network").
+std::string looseKey(const std::string& name) {
+  std::string s = rx::replace(str::lower(name), "\\b(the|channel|network|television)\\b", " ");
+  return normalize(s);
+}
+
+}  // namespace
+
 Targets::Targets(const std::vector<Channel>& channels, const std::vector<Station>& stations) {
   stationsByNetwork = groupByNetwork(stations);
   for (const Channel& channel : channels) {
@@ -442,6 +462,9 @@ Targets::Targets(const std::vector<Channel>& channels, const std::vector<Station
       std::string key = normalize(t);
       if (key.size() >= 2) byName[key].push_back(channel.id);
     }
+    if (auto core = coreKeyOf(channel.name)) byCore[*core].push_back(channel.id);
+    std::string loose = looseKey(channel.displayName());
+    if (loose.size() >= 2) byLoose[loose].push_back(channel.id);
   }
 }
 
@@ -477,6 +500,32 @@ std::vector<Match> Targets::matches(const std::vector<std::string>& names, std::
         for (const std::string& id : it->second) {
           found.push_back({id, "by name, West feed 3 h later", 180});
         }
+      }
+    }
+  }
+  if (!found.empty()) return found;
+  // A national network under another of its names.
+  for (const std::string& name : names) {
+    auto core = coreKeyOf(name);
+    if (!core) continue;
+    if (auto it = byCore.find(*core); it != byCore.end())
+      for (const std::string& id : it->second) found.push_back({id, "by network " + *core, 0});
+    if (deriveWest && !str::endsWith(*core, "~west")) {
+      if (auto it = byCore.find(*core + "~west"); it != byCore.end())
+        for (const std::string& id : it->second) found.push_back({id, "by network, West feed 3 h later", 180});
+    }
+    if (!found.empty()) return found;
+  }
+  // Last: the looser name ("UPtv" also tries "up").
+  for (const std::string& name : names) {
+    std::string key = looseKey(name);
+    if (key.size() < 2) continue;
+    std::vector<std::string> keys = {key};
+    if (key.size() >= 4 && str::endsWith(key, "tv")) keys.push_back(key.substr(0, key.size() - 2));
+    for (const std::string& k : keys) {
+      if (auto it = byLoose.find(k); it != byLoose.end()) {
+        for (const std::string& id : it->second) found.push_back({id, "by name", 0});
+        return found;
       }
     }
   }
