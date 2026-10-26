@@ -4,7 +4,7 @@
 
 #include <memory>
 #include <mutex>
-#include <unordered_map>
+#include <map>
 
 #include "core/util/log.hpp"
 
@@ -20,9 +20,17 @@ struct DataDeleter {
 using Code = std::unique_ptr<pcre2_code, CodeDeleter>;
 using Data = std::unique_ptr<pcre2_match_data, DataDeleter>;
 
+struct Entry {
+  Code code;           // nullptr = failed to compile
+  uint32_t pairs = 0;  // capture groups + 1
+};
+
+// Ordered maps with a transparent comparator: a lookup takes the pattern as
+// a string_view, so the hot path neither allocates nor hashes the (sometimes
+// kilobyte-long) pattern text.
 struct Cache {
   std::mutex mu;
-  std::unordered_map<std::string, Code> codes;  // nullptr = failed to compile
+  std::map<std::string, Entry, std::less<>> exact, caseless;
 };
 
 Cache& cache() {
@@ -30,43 +38,61 @@ Cache& cache() {
   return c;
 }
 
-// Compiled patterns live until exit; the returned pointer stays valid.
-const pcre2_code* compiled(std::string_view pattern, bool icase) {
-  std::string key(icase ? "i:" : "s:");
-  key += pattern;
+// Compiled patterns live until exit; the returned entry stays valid.
+const Entry& compiled(std::string_view pattern, bool icase) {
   Cache& c = cache();
   std::lock_guard<std::mutex> lock(c.mu);
-  auto it = c.codes.find(key);
-  if (it != c.codes.end()) return it->second.get();
+  auto& codes = icase ? c.caseless : c.exact;
+  auto it = codes.find(pattern);
+  if (it != codes.end()) return it->second;
   uint32_t options = PCRE2_UTF | PCRE2_UCP | PCRE2_MATCH_INVALID_UTF;
   if (icase) options |= PCRE2_CASELESS;
   int err = 0;
   PCRE2_SIZE offset = 0;
   pcre2_code* code = pcre2_compile(reinterpret_cast<PCRE2_SPTR>(pattern.data()), pattern.size(),
                                    options, &err, &offset, nullptr);
+  Entry entry;
   if (!code) {
     PCRE2_UCHAR msg[160];
     pcre2_get_error_message(err, msg, sizeof msg);
     MLOG_E("rx", "pattern does not compile at %zu: %s", static_cast<size_t>(offset),
            reinterpret_cast<const char*>(msg));
+  } else {
+    uint32_t groups = 0;
+    pcre2_pattern_info(code, PCRE2_INFO_CAPTURECOUNT, &groups);
+    entry.pairs = groups + 1;
   }
-  auto [pos, inserted] = c.codes.emplace(std::move(key), Code(code));
+  entry.code = Code(code);
+  auto [pos, inserted] = codes.emplace(std::string(pattern), std::move(entry));
   (void)inserted;
-  return pos->second.get();
+  return pos->second;
 }
 
-Data dataFor(const pcre2_code* code) {
-  return Data(pcre2_match_data_create_from_pattern(code, nullptr));
+// One match block per thread, reused across calls: PCRE2 keeps its
+// backtracking frames in it, so a fresh block per call cost a heap
+// allocation per match. Grown when a pattern has more groups.
+pcre2_match_data* scratch(uint32_t pairs) {
+  struct Holder {
+    Data data;
+    uint32_t pairs = 0;
+  };
+  thread_local Holder holder;
+  if (!holder.data || holder.pairs < pairs) {
+    holder.pairs = pairs < 16 ? 16 : pairs;
+    holder.data = Data(pcre2_match_data_create(holder.pairs, nullptr));
+  }
+  return holder.data.get();
 }
 
-// One match at `start`. Returns false at the end or on error.
-bool matchAt(const pcre2_code* code, pcre2_match_data* data, std::string_view text, size_t start,
+// One match at `start`. Returns false at the end or on error. Only the
+// pattern's own groups are read (the block may be larger).
+bool matchAt(const Entry& entry, pcre2_match_data* data, std::string_view text, size_t start,
              uint32_t flags, Match& out) {
-  int rc = pcre2_match(code, reinterpret_cast<PCRE2_SPTR>(text.data()), text.size(), start, flags,
-                       data, nullptr);
+  int rc = pcre2_match(entry.code.get(), reinterpret_cast<PCRE2_SPTR>(text.data()), text.size(),
+                       start, flags, data, nullptr);
   if (rc < 0) return false;
   PCRE2_SIZE* ov = pcre2_get_ovector_pointer(data);
-  uint32_t pairs = pcre2_get_ovector_count(data);
+  uint32_t pairs = entry.pairs;
   out.groups.assign(pairs, std::nullopt);
   for (uint32_t i = 0; i < pairs; ++i) {
     if (ov[2 * i] == PCRE2_UNSET) continue;
@@ -80,35 +106,33 @@ bool matchAt(const pcre2_code* code, pcre2_match_data* data, std::string_view te
 }  // namespace
 
 bool valid(std::string_view pattern, bool caseInsensitive) {
-  return compiled(pattern, caseInsensitive) != nullptr;
+  return compiled(pattern, caseInsensitive).code != nullptr;
 }
 
 bool test(std::string_view pattern, std::string_view text, bool caseInsensitive) {
-  const pcre2_code* code = compiled(pattern, caseInsensitive);
-  if (!code) return false;
-  Data data = dataFor(code);
-  return pcre2_match(code, reinterpret_cast<PCRE2_SPTR>(text.data()), text.size(), 0, 0,
-                     data.get(), nullptr) >= 0;
+  const Entry& entry = compiled(pattern, caseInsensitive);
+  if (!entry.code) return false;
+  return pcre2_match(entry.code.get(), reinterpret_cast<PCRE2_SPTR>(text.data()), text.size(), 0,
+                     0, scratch(entry.pairs), nullptr) >= 0;
 }
 
 std::optional<Match> first(std::string_view pattern, std::string_view text, bool caseInsensitive) {
-  const pcre2_code* code = compiled(pattern, caseInsensitive);
-  if (!code) return std::nullopt;
-  Data data = dataFor(code);
+  const Entry& entry = compiled(pattern, caseInsensitive);
+  if (!entry.code) return std::nullopt;
   Match m;
-  if (!matchAt(code, data.get(), text, 0, 0, m)) return std::nullopt;
+  if (!matchAt(entry, scratch(entry.pairs), text, 0, 0, m)) return std::nullopt;
   return m;
 }
 
 std::vector<Match> all(std::string_view pattern, std::string_view text, bool caseInsensitive) {
   std::vector<Match> out;
-  const pcre2_code* code = compiled(pattern, caseInsensitive);
-  if (!code) return out;
-  Data data = dataFor(code);
+  const Entry& entry = compiled(pattern, caseInsensitive);
+  if (!entry.code) return out;
+  pcre2_match_data* data = scratch(entry.pairs);
   size_t start = 0;
   while (start <= text.size()) {
     Match m;
-    if (!matchAt(code, data.get(), text, start, 0, m)) break;
+    if (!matchAt(entry, data, text, start, 0, m)) break;
     out.push_back(m);
     if (m.end == m.begin) {
       // Empty match: step past one UTF-8 code point to avoid looping.
@@ -124,8 +148,7 @@ std::vector<Match> all(std::string_view pattern, std::string_view text, bool cas
 
 std::string replace(std::string_view text, std::string_view pattern, std::string_view templ,
                     bool caseInsensitive) {
-  const pcre2_code* code = compiled(pattern, caseInsensitive);
-  if (!code) return std::string(text);
+  if (!compiled(pattern, caseInsensitive).code) return std::string(text);
   std::vector<Match> matches = all(pattern, text, caseInsensitive);
   if (matches.empty()) return std::string(text);
   std::string out;
