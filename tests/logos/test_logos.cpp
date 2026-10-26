@@ -1,0 +1,143 @@
+// Logo specs, the iptv-org index and the CSV reader.
+#include "core/logos/logos.hpp"
+#include "core/logos/table.hpp"
+#include "core/util/strings.hpp"
+#include "doctest.h"
+
+using namespace marigold;
+using namespace marigold::logos;
+using catalog::LineupCategory;
+
+namespace {
+
+std::string base(const std::string& file) { return std::string(kLogoBase) + file; }
+
+// Any station in the table with exactly one file, and its file.
+std::pair<std::string, std::string> singleFileStation() {
+  for (const auto& [sign, files] : stationLogos()) {
+    if (files.size() == 1) return {sign, files.begin()->second};
+  }
+  return {};
+}
+
+}  // namespace
+
+TEST_CASE("logo table data") {
+  CHECK(std::string(kLogoBase).rfind("https://", 0) == 0);
+  CHECK(coreLogos().count("CNN"));
+  CHECK(networkLogos().size() == 11);
+  CHECK(networkLogos().count("MYTV"));
+  CHECK(stationLogos().size() > 400);
+}
+
+TEST_CASE("spec: a local station") {
+  auto [sign, file] = singleFileStation();
+  REQUIRE_FALSE(sign.empty());
+  const std::string provider = "https://example.invalid/provider.png";
+  LogoSpec s = spec("FOX 2", std::nullopt, false, true, str::upper(sign), 2, provider, std::nullopt,
+                    LineupCategory::local, nullptr);
+  CHECK(s.style == LogoSpec::Style::local);
+  CHECK(s.callsign == str::upper(sign));
+  CHECK(s.line == "FOX 2");
+  REQUIRE(s.urls.size() == 3);
+  CHECK(s.urls[0] == base(networkLogos().at("FOX")));
+  CHECK(s.urls[1] == base(file));  // the only file, whatever its network
+  CHECK(s.urls[2] == provider);
+  CHECK(s.subtitle == std::string("Local"));
+  CHECK_FALSE(s.isWest);
+
+  LogoSpec mytv = spec("MyNetworkTV 20", std::nullopt, true, true, std::string("KZZZ"),
+                       std::nullopt, "", std::nullopt, std::nullopt, nullptr);
+  CHECK(mytv.line == "MyNetworkTV");
+  CHECK(mytv.urls == std::vector<std::string>{base(networkLogos().at("MYTV"))});
+  CHECK_FALSE(mytv.subtitle);
+  LogoSpec unknown = spec("Station 9", std::nullopt, false, true, std::string("KZZZ"), 9, "",
+                          std::nullopt, LineupCategory::local, nullptr);
+  CHECK(unknown.urls.empty());
+  CHECK(unknown.line == "9");
+}
+
+TEST_CASE("spec: a curated core network, then everything else") {
+  LogoSpec core =
+      spec("CNN", std::string("CNN"), true, false, std::nullopt, std::nullopt,
+           "https://example.invalid/p.png", std::nullopt, LineupCategory::news, nullptr);
+  CHECK(core.style == LogoSpec::Style::logoOnly);
+  CHECK(core.urls ==
+        std::vector<std::string>{base(coreLogos().at("CNN")), "https://example.invalid/p.png"});
+  CHECK(core.isWest);
+  CHECK(core.subtitle == std::string("News"));
+
+  // No curated logo: named, with the network's logo for a local without a sign.
+  LogoSpec local = spec("FOX 5 Testville", std::nullopt, false, false, std::nullopt, 5, "",
+                        std::nullopt, LineupCategory::local, nullptr);
+  CHECK(local.style == LogoSpec::Style::named);
+  CHECK(local.urls == std::vector<std::string>{base(networkLogos().at("FOX"))});
+  LogoSpec plain = spec("Dream Channel", std::string("Not In Table"), false, false, std::nullopt,
+                        std::nullopt, "", std::nullopt, LineupCategory::entertainment, nullptr);
+  CHECK(plain.style == LogoSpec::Style::named);
+  CHECK(plain.urls.empty());
+}
+
+TEST_CASE("iptv-org index from the two CSV files") {
+  std::string channels =
+      "id,name,alt_names,network,country,closed\r\n"
+      "DreamChannel.us,Dream Channel,Dream TV;DC,,US,\r\n"
+      "OldChannel.us,Old Channel,,,US,2020-01-01\r\n"
+      "Foreign.uk,Foreign,,,UK,\r\n"
+      "NoLogo.us,No Logo,,,US,\r\n"
+      "\"Quoted.us\",\"Quoted, Inc\",,,US,\r\n";
+  std::string logos =
+      "channel,feed,tags,width,height,format,url\n"
+      "DreamChannel.us,East,,1,1,PNG,https://example.invalid/feed.png\n"
+      "DreamChannel.us,,,1,1,PNG,https://example.invalid/main.png\n"
+      "DreamChannel.us,,,1,1,PNG,https://example.invalid/second.png\n"
+      "OldChannel.us,,,1,1,PNG,https://example.invalid/old.png\n"
+      "Foreign.uk,,,1,1,PNG,https://example.invalid/foreign.png\n"
+      "NoLogo.us,,,1,1,SVG,https://example.invalid/vector.svg\n"
+      "NoLogo.us,,,1,1,,http://example.invalid/insecure.png\n"
+      "Quoted.us,,,1,1,,https://example.invalid/QUOTED.JPG\n";
+  auto saved = IptvOrgIndex::build(channels, logos, 1000);
+  REQUIRE(saved);
+  CHECK(saved->fetched == 1000);
+  CHECK(saved->byID.size() == 2);
+  CHECK(saved->byID.at("dreamchannel.us") == "https://example.invalid/main.png");
+  CHECK(saved->byID.at("quoted.us") == "https://example.invalid/QUOTED.JPG");
+  CHECK(saved->byName.at("dream channel") == "https://example.invalid/main.png");
+  CHECK(saved->byName.at("dream tv") == "https://example.invalid/main.png");
+  CHECK(saved->byName.at("dc") == "https://example.invalid/main.png");
+  CHECK(saved->byName.at("quoted inc") == "https://example.invalid/QUOTED.JPG");
+
+  IptvOrgIndex index(*saved);
+  CHECK(index.url(std::string("DREAMCHANNEL.US"), "anything") ==
+        std::string("https://example.invalid/main.png"));
+  CHECK(index.url(std::nullopt, "Dream TV HD") == std::string("https://example.invalid/main.png"));
+  CHECK_FALSE(index.url(std::nullopt, "Unknown"));
+  CHECK_FALSE(index.url(std::nullopt, "HD"));
+  CHECK(index.needsRefresh(1000 + IptvOrgIndex::kMaxAge + 1));
+  CHECK_FALSE(index.needsRefresh(1000 + IptvOrgIndex::kMaxAge));
+  auto back = IptvOrgIndex::fromJson(IptvOrgIndex::toJson(*saved));
+  REQUIRE(back);
+  CHECK(back->byID == saved->byID);
+  CHECK(back->byName == saved->byName);
+
+  LogoSpec named = spec("Dream TV", std::nullopt, false, false, std::nullopt, std::nullopt,
+                        "https://example.invalid/p.png", std::nullopt, std::nullopt, &index);
+  CHECK(named.urls == std::vector<std::string>{"https://example.invalid/p.png",
+                                               "https://example.invalid/main.png"});
+
+  CHECK_FALSE(IptvOrgIndex::build("name\nx\n", logos, 0));                     // columns missing
+  CHECK_FALSE(IptvOrgIndex::build("id,name,country\nA.uk,A,UK\n", logos, 0));  // nothing in the US
+  CHECK_FALSE(IptvOrgIndex::build("", "", 0));
+}
+
+TEST_CASE("CSV rows: quotes, doubled quotes, CRLF, line breaks in fields") {
+  auto rows = csvRows("a,\"b,c\",\"say \"\"hi\"\"\"\r\n\"multi\nline\",,x\nlast");
+  REQUIRE(rows.size() == 3);
+  CHECK(rows[0] == std::vector<std::string>{"a", "b,c", "say \"hi\""});
+  CHECK(rows[1] == std::vector<std::string>{"multi\nline", "", "x"});
+  CHECK(rows[2] == std::vector<std::string>{"last"});
+  CHECK(csvRows("").empty());
+  CHECK(csvRows("x,\n") == std::vector<std::vector<std::string>>{{"x", ""}});
+  CHECK(csvRows("\"open") == std::vector<std::vector<std::string>>{{"open"}});
+  CHECK(csvRows("ab\"c,d\"e\n") == std::vector<std::vector<std::string>>{{"abc,de"}});
+}
