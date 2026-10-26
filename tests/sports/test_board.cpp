@@ -7,6 +7,8 @@
 #include <algorithm>
 
 #include "core/sports/board.hpp"
+#include "core/sports/player_photos.hpp"
+#include "core/sports/race_data.hpp"
 #include "core/util/strings.hpp"
 #include "doctest.h"
 #include "sports/helpers.hpp"
@@ -655,6 +657,64 @@ TEST_CASE("cameras and tennis: hooks for later milestones") {
   CHECK(tile(t, "sev|ATP|80|1").sides[0].photo);
   CHECK_FALSE(t.tiles.count("sev|ATP|80|2"));  // tennis only shows matches you can watch
   CHECK(t.tennisPlayers == std::vector<std::string>{"Bea Racket", "Ann Player"});
+}
+
+TEST_CASE("tennis photos and race podiums through the photo and race data hooks") {
+  SportsGame match = game("ATP", "Tennis", "80|1", team("p1", "Ann Player"), team("p2", "Bea Racket"), kNow + 3600);
+  match.tennis = true;
+  SportsGame doubles = game("ATP", "Tennis", "80|3", team("d1", "Ann One / Bea Two"),
+                            team("d2", "Cy Three / Di Four"), kNow + 3600);
+  doubles.tennis = true;
+  Input in = baseInput({eventOf(match, {feed("xt|t")}), eventOf(doubles, {feed("xt|d")})});
+  player_photos::Saved saved;
+  saved.entries["bea racket"] = player_photos::Entry{"https://example.invalid/bea.png", kNow};
+  in.playerPhoto = player_photos::PlayerPhotos(saved).photoHook();
+  Board b = build(in);
+  const Tile& t = tile(b, "sev|ATP|80|1");
+  REQUIRE(t.sides.size() == 2);
+  const SideLine& bea = t.sides[0].fullName == "Bea Racket" ? t.sides[0] : t.sides[1];
+  const SideLine& ann = t.sides[0].fullName == "Ann Player" ? t.sides[0] : t.sides[1];
+  CHECK(bea.photo);
+  CHECK(bea.photoUrl == std::string("https://example.invalid/bea.png"));
+  CHECK(bea.photoSmallUrl == std::string("https://example.invalid/bea.png/small"));
+  CHECK(bea.initials == "BR");
+  CHECK_FALSE(ann.photoUrl);  // initials until there is one
+  CHECK(ann.initials == "AP");
+  const Tile& d = tile(b, "sev|ATP|80|3");
+  CHECK(d.sides[0].doubles);
+  CHECK_FALSE(d.sides[0].photoUrl);
+  // Not tennis: no photo fields.
+  SportsGame nfl = game("NFL", "NFL", "1", team("a", "Harbor Rams"), team("b", "Bay Seals"), kNow + 3600);
+  Board n = build(baseInput({eventOf(nfl, {feed("xt|n")})}));
+  CHECK(tile(n, "sev|NFL|1").sides[0].initials.empty());
+
+  // A race weekend with scores on: the latest finished session's top 3.
+  auto part = [](const std::string& kind, Seconds start) {
+    SportsGame g = game("F1", "Motorsport", "ev1|" + kind, team("gp", "Grand Prix Alpha"),
+                        team("gp", "Grand Prix Alpha"), start);
+    g.cardKey = "f1|ev1|" + kind;
+    g.racing = true;
+    return eventOf(g, {feed("xt|f1" + kind)});
+  };
+  race_data::Saved race;
+  race.sessions = {race_data::Session{11, "fp1", kNow - 26 * 3600, std::nullopt},
+                   race_data::Session{12, "qual", kNow - 3 * 3600, std::nullopt}};
+  race.drivers = {race_data::RaceDriver{4, "DRA", "Driver Alpha", "Team Alpha", std::string("FF8000"), std::nullopt},
+                  race_data::RaceDriver{16, "DRB", "Driver Bravo", "Team Beta", std::nullopt, std::nullopt}};
+  race.results["12"] = {16, 4};
+  Input weekend =
+      baseInput({part("fp1", kNow - 26 * 3600), part("qual", kNow - 3 * 3600), part("race", kNow + 20 * 3600)});
+  weekend.podium = race_data::RaceData(race).podiumHook();
+  Board w = build(weekend);
+  REQUIRE(w.cards.count("card|F1|ev1"));
+  const Tile& r = tile(w, "card|F1|ev1");
+  REQUIRE(r.podium.size() == 2);
+  CHECK(r.podium[0].code == "DRB");
+  CHECK(r.podium[1].color == std::string("FF8000"));
+  CHECK(r.podiumLabel == std::string("Qualifying"));
+  CHECK(w.watchableRaceWeekends == std::vector<std::string>{"card|F1|ev1"});
+  weekend.settings.showsScores = false;
+  CHECK(tile(build(weekend), "card|F1|ev1").podium.empty());
 }
 
 TEST_CASE("formatting helpers") {

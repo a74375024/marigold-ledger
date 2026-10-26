@@ -86,7 +86,7 @@ struct ChannelLabel {
 };
 using ChannelFor = std::function<std::optional<ChannelLabel>(const EventSource&)>;
 
-// A race session's top three for a podium line (RaceData, a later milestone).
+// A race session's top three for a podium line (race_data::RaceData::podium).
 struct PodiumDriver {
   std::string code;                  // "VER"
   std::optional<std::string> color;  // team color hex
@@ -113,13 +113,17 @@ struct Input {
   time::Zone zone = time::Zone::device();
   Settings settings;
   ChannelFor channelFor;
-  // Hooks for later milestones (cameras panel, race data); unset = none.
-  // A race camera feed (SpecialFeeds.isCameraName), and the race it
-  // belongs to (cameraRace; nullopt for cameras of no particular race).
+  // Hooks for the cameras panel, race data and photos; unset = none.
+  // A race camera feed (special_feeds::isCameraName), and the race it
+  // belongs to (special_feeds::cameraRace; nullopt for cameras of no
+  // particular race).
   std::function<bool(std::string_view)> isCameraName;
   std::function<std::optional<std::string>(std::string_view)> cameraRace;
-  // A finished session's top three (RaceData.top3).
+  // A finished session's top three (RaceData.top3: race_data::RaceData::podiumHook).
   std::function<std::vector<PodiumDriver>(const std::string& kind, Seconds start)> podium;
+  // A tennis player's saved photo URL by name (PlayerPhotos.photo:
+  // player_photos::PlayerPhotos::photoHook).
+  std::function<std::optional<std::string>(std::string_view name)> playerPhoto;
 };
 
 // MARK: View model
@@ -153,7 +157,14 @@ struct SideLine {
   std::optional<bool> leads;  // false: dimmed score
   bool possession = false;
   std::vector<std::string> sets;  // tennis games per set
-  bool photo = false;  // tennis: a player photo (later milestone)
+  // Tennis: a player photo in a circle instead of the badge (a country
+  // chip still shows). The small size first, the full one if that fails;
+  // `initials` until one loads; a doubles pair gets a two-person icon.
+  bool photo = false;
+  std::optional<std::string> photoUrl;
+  std::optional<std::string> photoSmallUrl;
+  std::string initials;
+  bool doubles = false;
 };
 
 struct PartLine {
@@ -284,8 +295,8 @@ struct Board {
   // weekend sessions), in order.
   std::map<std::string, std::vector<SportsEvent>> cards;
   std::set<std::string> studio;
-  // For later milestones: tennis players on screen (photos) and race
-  // weekends you can watch (race data).
+  // Tennis players on screen (player_photos::PlayerPhotos::request) and race
+  // weekends you can watch (race_data::refreshForBoard).
   std::vector<std::string> tennisPlayers;
   std::vector<std::string> watchableRaceWeekends;
   Seconds now = 0;
