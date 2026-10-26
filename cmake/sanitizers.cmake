@@ -1,0 +1,12 @@
+# MARIGOLD_SANITIZE: "address,undefined", "thread", or empty.
+set(MARIGOLD_SANITIZE "" CACHE STRING "Sanitizers for host builds")
+if(MARIGOLD_SANITIZE)
+  if(MARIGOLD_WEBOS)
+    message(FATAL_ERROR "Sanitizers are for host builds only")
+  endif()
+  add_compile_options(-fsanitize=${MARIGOLD_SANITIZE} -fno-omit-frame-pointer -g)
+  if(MARIGOLD_SANITIZE MATCHES "undefined")
+    add_compile_options(-fno-sanitize-recover=all)
+  endif()
+  add_link_options(-fsanitize=${MARIGOLD_SANITIZE})
+endif()

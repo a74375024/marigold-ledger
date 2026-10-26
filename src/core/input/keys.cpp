@@ -1,0 +1,118 @@
+#include "core/input/keys.hpp"
+
+namespace marigold {
+namespace {
+
+// Standard SDL_Scancode values (SDL_scancode.h, stable since SDL 2.0.0).
+// Copied as numbers so core/ does not include SDL.
+namespace sdl {
+constexpr int kReturn = 40, kEscape = 41, kBackspace = 42, kSpace = 44;
+constexpr int k1 = 30, k0 = 39;
+constexpr int kRight = 79, kLeft = 80, kDown = 81, kUp = 82;
+constexpr int kKp1 = 89, kKp0 = 98, kKpEnter = 88;
+constexpr int kPageUp = 75, kPageDown = 78;
+constexpr int kMenu = 118, kAcBack = 270;
+constexpr int kAudioNext = 258, kAudioPrev = 259, kAudioStop = 260, kAudioPlay = 261;
+constexpr int kAudioRewind = 285, kAudioFastForward = 286;  // SDL 2.0.6+, harmless if unused
+constexpr int kF1 = 58;
+}  // namespace sdl
+
+// SDL_Keycode values that only desktop keyboards send.
+constexpr int32_t kKeycodeEscape = 27, kKeycodeBackspace = 8;
+
+}  // namespace
+
+Key keyFromSdl(int scancode, int32_t keycode) {
+  using namespace webos_scancode;
+  switch (scancode) {
+    case kChannelUp: return Key::ChannelUp;
+    case kChannelDown: return Key::ChannelDown;
+    case kBack: return Key::Back;
+    case kExit: return Key::Exit;
+    case kCursorShow: return Key::CursorShown;
+    case kCursorHide: return Key::CursorHidden;
+    case kRed: return Key::Red;
+    case kGreen: return Key::Green;
+    case kYellow: return Key::Yellow;
+    case kBlue: return Key::Blue;
+    case sdl::kUp: return Key::Up;
+    case sdl::kDown: return Key::Down;
+    case sdl::kLeft: return Key::Left;
+    case sdl::kRight: return Key::Right;
+    case sdl::kReturn:
+    case sdl::kKpEnter: return Key::Ok;
+    case sdl::kEscape:
+    case sdl::kAcBack:
+    case sdl::kBackspace: return Key::Back;
+    case sdl::kPageUp: return Key::ChannelUp;
+    case sdl::kPageDown: return Key::ChannelDown;
+    case sdl::kAudioPlay: return Key::PlayPause;
+    case sdl::kSpace: return Key::PlayPause;
+    case sdl::kAudioStop: return Key::Stop;
+    case sdl::kAudioRewind:
+    case sdl::kAudioPrev: return Key::Rewind;
+    case sdl::kAudioFastForward:
+    case sdl::kAudioNext: return Key::FastForward;
+    case sdl::kMenu: return Key::Menu;
+    case sdl::kF1: return Key::Info;
+    default: break;
+  }
+  if (scancode >= sdl::k1 && scancode <= sdl::k0) {
+    int d = scancode == sdl::k0 ? 0 : scancode - sdl::k1 + 1;
+    return static_cast<Key>(static_cast<int>(Key::Digit0) + d);
+  }
+  if (scancode >= sdl::kKp1 && scancode <= sdl::kKp0) {
+    int d = scancode == sdl::kKp0 ? 0 : scancode - sdl::kKp1 + 1;
+    return static_cast<Key>(static_cast<int>(Key::Digit0) + d);
+  }
+  if (keycode == kKeycodeEscape || keycode == kKeycodeBackspace) return Key::Back;
+  return Key::Unknown;
+}
+
+int digitOf(Key key) {
+  int k = static_cast<int>(key);
+  int d0 = static_cast<int>(Key::Digit0);
+  return k >= d0 && k <= d0 + 9 ? k - d0 : -1;
+}
+
+const char* keyName(Key key) {
+  switch (key) {
+    case Key::Unknown: return "Unknown";
+    case Key::Up: return "Up";
+    case Key::Down: return "Down";
+    case Key::Left: return "Left";
+    case Key::Right: return "Right";
+    case Key::Ok: return "OK";
+    case Key::Back: return "Back";
+    case Key::Exit: return "Exit";
+    case Key::ChannelUp: return "CH+";
+    case Key::ChannelDown: return "CH-";
+    case Key::Red: return "Red";
+    case Key::Green: return "Green";
+    case Key::Yellow: return "Yellow";
+    case Key::Blue: return "Blue";
+    case Key::Play: return "Play";
+    case Key::Pause: return "Pause";
+    case Key::PlayPause: return "Play/Pause";
+    case Key::Stop: return "Stop";
+    case Key::Rewind: return "Rewind";
+    case Key::FastForward: return "Fast forward";
+    case Key::Digit0: return "0";
+    case Key::Digit1: return "1";
+    case Key::Digit2: return "2";
+    case Key::Digit3: return "3";
+    case Key::Digit4: return "4";
+    case Key::Digit5: return "5";
+    case Key::Digit6: return "6";
+    case Key::Digit7: return "7";
+    case Key::Digit8: return "8";
+    case Key::Digit9: return "9";
+    case Key::Info: return "Info";
+    case Key::Menu: return "Menu";
+    case Key::CursorShown: return "Cursor shown";
+    case Key::CursorHidden: return "Cursor hidden";
+  }
+  return "Unknown";
+}
+
+}  // namespace marigold
