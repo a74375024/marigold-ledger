@@ -57,7 +57,8 @@ struct Program {
   // Came from the free outside listings rather than the provider's guide.
   bool fromOutsideGuide = false;
 
-  int minutes() const { return end > start ? static_cast<int>((end - start) / 60) : 1; }
+  // At least one minute, like LiveTVProgram.minutes (a 30 s slot is 1, not 0).
+  int minutes() const { return end - start >= 120 ? static_cast<int>((end - start) / 60) : 1; }
   bool isOn(time::Seconds t) const { return start <= t && t < end; }
 };
 
