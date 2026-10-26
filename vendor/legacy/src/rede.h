@@ -176,14 +176,6 @@ int rede_baixar_fluxo(const char *url, int segundos, const char *const *cab,
                       long long maxBytes, int *status, long long *bytes);
 
 
-#ifdef __EMSCRIPTEN__
-// POST de corpo text/plain com resposta BINARIA (tamanho em *n; 4xx/5xx viram
-// NULL, como em rede_baixar_bin). So existe no Tizen, para o proxy do Xtream
-// (#112): a url do icone vai no CORPO, que a plataforma do worker nao
-// registra, e volta uma imagem com zeros no meio — rede_postar_st nao da o
-// tamanho. Ver tex_cache.c e servidor/recomendacoes/src/xtream.js.
-char *rede_postar_bin(const char *url, int segundos, const char *corpo, long *n);
-#endif
 
 // Com cabecalhos. `cabecalhos` e um vetor terminado em NULL de linhas prontas
 // ("Authorization: Bearer x"). Existe por causa do Trakt, que exige token e
@@ -255,10 +247,7 @@ void rede_lateral(int sim);
 // (Program40.cs), que nao monta TLS de compilador — o primeiro acesso a uma
 // variavel _Thread_local seria o fim do processo. O estado por fio vive numa
 // struct por pthread_key (rede.c); o nome continua um lvalue por macro.
-#if defined(NV_TPK40) || defined(NV_UM_FIO)
-long *rede_teto_ptr(void);
-#define rede_teto (*rede_teto_ptr())
-#elif defined(__GNUC__)
+#if   defined(__GNUC__)
 extern _Thread_local long rede_teto;
 #else
 extern long rede_teto;
@@ -288,19 +277,6 @@ int rede_url_final_tipo(const char *url, int segundos, const char *const *cabeca
                         char *dst, unsigned tam, int *status,
                         char *mime, unsigned mimeTam, long *corpo);
 
-#ifdef NV_VIDAA
-// VARIANTE PARA A VIDAA. rede_url_final so devolve 0/1, e na VIDAA um 0 pode
-// significar duas coisas bem diferentes: "resolvi, e o destino respondeu
-// erro" (fonte morta de verdade) ou "a requisicao nem saiu" (bloqueio de
-// conteudo misto ou de CORS na pagina https — ver o comentario de
-// vidaaNuncaProxiar/vidaaPareceVideo em rede.c: URL de video nunca passa
-// pelo /v1/proxy, entao esse bloqueio e ROTINEIRO ali, nao uma prova de nada).
-// Devolve 1 = resolveu, 0 = resolveu e o destino falhou, -1 = desconhecido —
-// quem chama decide o que fazer com "desconhecido" (streams.c trata como
-// "presuma viva", a mesma politica que playlistVazia ja usa para "nao
-// baixei").
-int rede_url_final_vidaa(const char *url, int segundos, char *dst, unsigned tam);
-#endif
 
 // POST de JSON. Existe para o Trakt, que so aceita escrita por POST.
 char *rede_postar(const char *url, int segundos, const char *const *cabecalhos,
@@ -329,11 +305,6 @@ char *rede_postar_st_retry(const char *url, int segundos, const char *const *cab
 // 4xx volta com corpo). Existe para o TorBox, que edita um item so por PUT.
 char *rede_colocar_st(const char *url, int segundos, const char *const *cabecalhos,
                       const char *corpo, int *status);
-#ifdef __EMSCRIPTEN__
-// Authenticated JSON PATCH through the legacy WGT HTTP bridge.
-char *rede_patch_st(const char *url, int segundos, const char *const *cabecalhos,
-                    const char *corpo, int *status);
-#endif
 // POST que repete (espera 1 s, 2 s, ...) so quando nao houve resposta (status 0).
 char *rede_postar_repetindo(const char *url, int segundos, const char *const *cabecalhos,
                             const char *corpo, int *status, int tentativas);

@@ -1,6 +1,5 @@
 /* Nativo apenas. Incluido em dados.c para usar a mesma politica nas gravacoes
  * e nos testes leves que ja compilam dados.c sem o restante do app. */
-#ifndef __EMSCRIPTEN__
 #define NV_ESPACO_IMPLEMENTADO 1
 #include <dirent.h>
 #include <limits.h>
@@ -119,15 +118,6 @@ static void espacoRelatar(FILE *f, const char *dados, const char *app, double li
   if(dados && realpath(dados,d)) espacoSomar(d,NULL,-1,0,t); else d[0]=0;
   if(app && realpath(app,a) && strcmp(a,d) &&
       !(d[0] && !strncmp(a,d,strlen(d)) && a[strlen(d)]=='/')) espacoSomar(a,d[0]?d:NULL,-1,0,t);
-#ifdef NV_TPK
-  // O pacote fica em apps_ro e data/ em apps_rw. Inclui os irmaos de data/
-  // (cache do host/player etc.) como "outros", sem varrer a home no desktop.
-  char rw[PATH_MAX]; snprintf(rw,sizeof rw,"%s",d);
-  char *barra=strrchr(rw,'/'); if(barra) *barra=0;
-  const char *pkg=strstr(rw,"/apps_rw/");
-  if(pkg && pkg[9] && !strchr(pkg+9,'/') && strcmp(rw,a))
-    espacoSomar(rw,d,7,0,t);
-#endif
   // LG grava logs em /tmp, fora das duas arvores. Conta cada um so uma vez.
   const char *logs[]={getenv("NUVIO_LOG"),getenv("NUVIO_LOG_ANTERIOR")};
   for(int i=0;i<2;i++) {
@@ -189,6 +179,3 @@ static void espacoGravado(const char *nome) {
   espacoPodar(dados_dir(),p,ESPACO_CACHE,512,NULL);
   pthread_mutex_unlock(&espacoTrava);
 }
-#else
-void dados_espaco_iniciar(const char *arte) { (void)arte; }
-#endif

@@ -124,14 +124,7 @@ int video_dv_ativo(void) { return dtsSessao && dtsModoDv; }
 // (Dolby Vision/DTS path handing back to the TV player, audio switch) is not
 // a source that failed to open. Other targets keep 0.
 static int fonteTocou;
-#ifdef NV_TPK
-// .tpk: so o fluxo DTS/TrueHD convertido responde aqui (video_tpk.c); o resto
-// segue 0, como antes.
-int video_tpk_fonte_tocou(void);
-int video_fonte_tocou(void) { return fonteTocou || video_tpk_fonte_tocou(); }
-#else
 int video_fonte_tocou(void) { return fonteTocou; }
-#endif
 static int dvLiberadoNestaTv(void);
 static int dvPronto(void);
 const char *video_dts_saida(void) { return dtsSaida; }
@@ -151,14 +144,8 @@ int video_faixa_dts(const VideoFaixa *f) {
 // So o ramo webOS escreve aqui (PREPARANDO, CONVERTIDO, FALHOU): o resto sai
 // da faixa e do pipeline, igual em todos os alvos. No Mac, video_simular.
 static int dtsEstado;
-#ifdef NV_TPK
-int video_tpk_dts_estado(void);   // video_tpk.c: enquanto o .tpk converte o DTS
-#endif
 int video_dts_estado(void) {
   if (dtsEstado) return dtsEstado;
-#ifdef NV_TPK
-  { int e = video_tpk_dts_estado(); if (e) return e; }
-#endif
   if (!video_pronto() || !video_faixa_dts(video_audio(video_audio_atual()))) return VIDEO_DTS_NENHUM;
   return video_audio_nao_suportado() ? VIDEO_DTS_SEM_SOM : VIDEO_DTS_NATIVO;
 }
@@ -229,7 +216,6 @@ void video_normalizar_url_legenda(const char *url, char *dst, unsigned tam) {
 // a guarda para o topo obrigaria a duplica-los no video_tizen.c, e duas copias
 // de uma tabela e uma copia para divergir da outra.
 // ============================================================================
-#ifndef __EMSCRIPTEN__
 
 // Declarada aqui porque o loadCompleted a chama muito antes de ela ser
 // definida. O clang do Mac aceita a implicita; o gcc do ARM recusa — e o ARM
@@ -247,9 +233,7 @@ static void aplicarEstilo(void);
 // Mesmo limite de Stream.url: o pipeline recebe a URL original, e cortar a
 // copia faria somente a sonda MKV/ASS falhar (inclusive apos tentar de novo).
 static char  urlAtual[NV_MEDIA_URL_MAX];
-#if !defined(NV_TPK) && !defined(NV_ANDROID)   // .tpk e Android: video_url_atual vem do video_*.c do alvo
 const char *video_url_atual(void) { return urlAtual; }
-#endif
 // Recuperacao de pipeline destruido: pedida pelo fio de resposta do luna e
 // executada no fio principal (video_bombear), porque recarregar de dentro do
 // tratador de evento reentra no mesmo caminho que acabou de falhar.
@@ -308,131 +292,6 @@ static int       fioMkvVivo;
 // abertura e fazer o load correto ser ignorado.
 static unsigned  sessao;
 
-#if defined(__APPLE__) || defined(NV_LINUX_DESKTOP)
-// No Mac nao existe barramento nem plano de video. Os cotos deixam o resto do
-// app compilar e rodar igual, so sem imagem em movimento. As capturas podem
-// simular um video (video_simular, video.h); zerado e o coto mudo.
-static VideoSimulacao SIM;
-void video_simular(const VideoSimulacao *s) {
-  if (s) SIM = *s; else memset(&SIM, 0, sizeof SIM);
-  dtsEstado = SIM.dts;
-}
-int  video_iniciar(void) { return 0; }
-int  video_iniciar_auto(void) { return 0; }
-int  video_registro_negado(void) { return 0; }
-int video_luna(const char *uri, const char *carga, void (*cb)(const char *, void *), void *ctx) {
-  (void)uri; (void)carga; (void)cb; (void)ctx; return 0;
-}
-int  video_tocar(const char *u) { snprintf(urlAtual, sizeof urlAtual, "%s", u ? u : ""); return SIM.aceita; }
-void video_bombear(void) {}
-void video_parar(void) {}
-void video_pausar(int p) { (void)p; }
-int  video_pausa_confirmada(void) { return 0; }
-void video_volume(int pct) { (void)pct; }
-void video_buscar(double s) { (void)s; }
-void video_janela(int x,int y,int w,int h) { (void)x;(void)y;(void)w;(void)h; }
-// Coto que FALTAVA: a funcao existia so no ramo do aparelho, entao o build do
-// Mac quebrava no link com "_video_janela_fonte, referenced from
-// _aplicarAspecto". E o espelho da armadilha ja conhecida — o Mac nao compila a
-// metade do pipeline, e por isso nao valida `video.c`; aqui ele cobra a
-// declaracao que a outra metade nao tem. Toda funcao nova de video precisa
-// aparecer NOS DOIS ramos.
-void video_janela_fonte(int sx,int sy,int sw,int sh,int dx,int dy,int dw,int dh) {
-  (void)sx;(void)sy;(void)sw;(void)sh;(void)dx;(void)dy;(void)dw;(void)dh;
-}
-void video_recorte_reaplicar(void) {}
-void video_escala_definir(int sw, int sh) { (void)sw; (void)sh; }
-double video_pos(void) { return SIM.pos; }
-double video_duracao(void) { return SIM.duracao; }
-// Sem pipeline nao ha arquivo para ler capitulos: no Mac o pos-reproducao cai
-// no plano B dos ultimos minutos, que e o mesmo caminho de um MKV sem
-// capitulos. Melhor um stub honesto que um numero inventado.
-double video_creditos(void) { return 0.0; }
-double video_buffer_fim(void) { return SIM.bufferFim; }
-static VideoStats simStats;
-static int simStatsDef;
-void video_simular_estatisticas(const VideoStats *s) {
-  if (s) { simStats = *s; simStatsDef = 1; } else simStatsDef = 0;
-}
-void video_estatisticas(VideoStats *s) {
-  if (simStatsDef) { *s = simStats; return; }
-  video_stats_vazio(s);
-  if (SIM.bufferFim > 0) s->bufferSeg = SIM.bufferFim - SIM.pos;
-}
-void video_definir_dv(int dv) { (void)dv; }
-int  video_tocando(void) { return SIM.tocando; }
-int  video_iniciando(void) { return SIM.iniciando; }
-int  video_pronto(void) { return SIM.pronto; }
-// A tela do DV no Mac: o que a simulacao disser, e o registro das chamadas para
-// os testes provarem o mudo (dv_tela) e a escolha do HDR10 (recusar).
-static int simDvTela = -1, simDvRecusas;
-void video_dv_fase(VideoDvFase *f) { if (f) *f = SIM.dvFase; }
-int  video_dv_candidato(const char *url) { (void)url; return SIM.dvCandidato; }
-void video_dv_tela(int cobrindo) { simDvTela = cobrindo ? 1 : 0; }
-void video_dv_recusar(void) { simDvRecusas++; SIM.dvFase.recusa = VIDEO_DV_NAO_PESSOA; }
-void video_dv_segurar(int segurar) { (void)segurar; }
-int  video_simulado_dv_tela(void) { return simDvTela; }
-int  video_simulado_dv_recusas(void) { return simDvRecusas; }
-int  video_ativo(void) { return SIM.aceita; }
-int  video_falhou(void) { return 0; }
-const char *video_erro_texto(void) { return ""; }
-int  video_decoder_anunciou(void) { return 1; }
-int  video_audio_nao_suportado(void) { return 0; }
-int  video_seek_desistiu(void) { return 0; }
-int  video_terminou(void) { return 0; }
-int  video_conflito_recurso(void) { return 0; }
-unsigned video_bufferando_ms(void) { return SIM.bufferandoMs; }
-int  video_n_audio(void) { return SIM.nAudio; }
-int  video_n_legenda(void) { return SIM.nLeg; }
-const VideoFaixa *video_audio(int i) { return i >= 0 && i < SIM.nAudio ? &SIM.audio[i] : 0; }
-const VideoFaixa *video_legenda(int i) { return i >= 0 && i < SIM.nLeg ? &SIM.leg[i] : 0; }
-int video_legenda_ordinal_mkv(int i) { (void)i; return -1; }
-int  video_mkv_sondado(void) { return 2; }
-void video_sondar_mkv_agora(void) {}
-int  video_audio_atual(void) { return SIM.audioAtual; }
-int  video_legenda_atual(void) { return SIM.nLeg ? SIM.legAtual : -1; }
-void video_escolher_audio(int i) { (void)i; }
-void video_escolher_legenda(int i) { (void)i; }
-int  video_legenda_nativa(char *d, int t) { (void)t; if (d) d[0] = 0; return 0; }
-void video_legenda_externa(const char *u) { (void)u; }
-void video_legenda_estilo(const VideoLegendaEstilo *e) { (void)e; }
-void video_definir_mp4(int m) { (void)m; }
-void video_definir_reconexao(int sim) { (void)sim; }
-int  video_recarregar(void) { return 0; }
-int  video_reconectando(void) { return SIM.reconectando; }
-// No Mac quem toca e o pipeline do sistema por outro caminho; os cabecalhos do
-// addon so tem efeito no payload do load da webOS. Stub para o alvo linkar.
-void video_definir_cabecalhos(const char *cabs) { (void)cabs; }
-const char *video_cabecalhos(void) { return ""; }
-int  video_tem_atmos(void) { return SIM.atmos; }
-int  video_tem_dolby_vision(void) { return SIM.dv; }
-const char *video_hdr(void) { return SIM.hdr[0] ? SIM.hdr : "none"; }
-int  video_largura(void) { return SIM.largura; }
-int  video_altura(void) { return SIM.altura; }
-#ifdef NV_SHOT_HOOKS
-// Capturas: a folha de Fontes com o "Sem HDR" da LG (6 botoes no cabecalho).
-static int shotSdr;
-void video_shot_pode_forcar_sdr(int sim) { shotSdr = sim; }
-int  video_pode_forcar_sdr(void) { return shotSdr; }
-#else
-int  video_pode_forcar_sdr(void) { return 0; }
-#endif
-// No Mac nao ha plano de video: 1 para que a tela de aspecto ofereca todos os
-// modos ao desenvolver, que e o mesmo que a LG faz.
-int  video_recorte_fonte(void) { return 1; }
-void video_forcar_sdr(void) {}
-void video_encerrar(void) {}
-// Sem pipeline no Mac: a linha da velocidade aparece (para as capturas e para
-// desenvolver a folha) e o pedido so fica guardado.
-static int velMac = VEL_NORMAL;
-int  video_velocidade_suportada(void) { return 1; }
-void video_velocidade(int c) { velMac = c > 0 ? c : VEL_NORMAL; }
-int  video_velocidade_atual(void) { return velMac; }
-void video_velocidade_recusada(void) { velMac = VEL_NORMAL; }
-// Capturas: o passthrough simulado (cacheboost_ganho_relato) esmaece a linha.
-int  video_velocidade_bloqueada(void) { return cacheboost_ganho_estado() == CB_GANHO_PASSTHROUGH; }
-// .tpk da Samsung: o player e o do host .NET, em video_tpk.c.
-#elif !defined(NV_TPK) && !defined(NV_ANDROID)   // ramo luna (webOS): Android usa video_android.c
 #include <dlfcn.h>
 
 typedef struct LSHandle LSHandle;
@@ -2396,11 +2255,6 @@ void video_bombear(void) {
     // nativa, que na 2.0.0 seguia. Sem a lista de faixas, espera ela chegar.
     int knownDts = video_faixa_dts(video_audio(audioAtual)) > 0;
     int forcar = 0;
-#ifdef NV_DTS_DEBUG
-    // A C9 decodifica DTS sozinha: sem isto o caminho de conversao nunca roda
-    // nela. `touch /tmp/nuvio-dts-forcar` converte toda faixa DTS escolhida.
-    forcar = knownDts && access("/tmp/nuvio-dts-forcar", F_OK) == 0;
-#endif
     // Toda LG de 2020 em diante (release >= 5, dts_tv.h) converte o DTS antes
     // de tocar, inclusive os modelos 2023/24 que tem DTS: nao da para detectar
     // o suporte com seguranca (o webOS 26 toca MUDO sem errorCode 200, #285).
@@ -2907,9 +2761,6 @@ static int dvVersaoLiberada(int maior) { return maior >= 4; }
 static int dvLiberadoNestaTv(void) {
   static int avisado;
   int forcado = 0;
-#ifdef NV_DTS_DEBUG
-  forcado = access("/tmp/nuvio-dv-forcar", F_OK) == 0;
-#endif
   if (!dts_playback_enabled() || (!ajustes_dv_mkv() && !ajustes_dv7() && !forcado)) return 0;
   if (!dvVersaoLiberada(webosMaior())) {
     printf("[dv] Dolby Vision in MKV unavailable on webOS %d\n", webosMaior()); fflush(stdout);
@@ -3985,6 +3836,4 @@ int video_legenda_nativa(char *d, int t) {
   return 0;
 }
 
-#endif
 
-#endif  /* !__EMSCRIPTEN__ */

@@ -117,15 +117,6 @@ void ponteiro_camada(void);
 // tras. No preview, sem registro ou com INICIO recusado o arrasto e consumido
 // sem navegacao nem clique. Nas TVs, conserva a rolagem por setas.
 void ponteiro_rolagem(PonteiroRolagemFn fn);
-#ifdef NV_TOUCH_UI
-// Puxar a borda esquerda da camada para a direita abre a navegacao diretamente.
-// A largura segue a escala do desenho. Nova camada descarta o registro.
-typedef void (*PonteiroBordaFn)(void);
-void ponteiro_borda_esquerda(float largura, PonteiroBordaFn ativar);
-// A pilula/rail so recebe toque enquanto a mesma camada permite abrir o menu.
-int ponteiro_borda_registrada(void);
-void ponteiro_borda_ativar(void);
-#endif
 // O mesmo alvo, recortado a faixa vertical [y0, y1) — a janela de uma grade
 // que rola por baixo de um cabecalho fixo. O pedaco do cartao que a rolagem
 // escondeu nao recebe o ponteiro (por cima dele mora o cabecalho). E o caminho
