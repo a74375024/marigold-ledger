@@ -19,6 +19,8 @@ tvOS app (`tvosApp/NuvioTV/Sources/Core/LiveTV` on the `multiview` branch).
 - Strings: `core/util/strings.hpp` (`foldDiacritics` is Swift's
   `.diacriticInsensitive`).
 - Shared types: `core/model/channel.hpp` (`Channel`, `Program`).
+- JSON: `core/util/json.hpp` for settings, caches and small bodies (whole
+  tree). Large arrays need a streaming reader (the sources module adds one).
 
 ## Shape
 
