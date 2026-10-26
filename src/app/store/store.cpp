@@ -351,6 +351,12 @@ void Store::setPrefs(const catalog::LineupPrefs& p) {
   bool countriesChanged = p.countries != impl_->prefs.countries;
   impl_->prefs = p;
   app_.storage().write(kLineupFile, catalog::toJson(p));
+  if (countriesChanged && impl_->admissionCut) {
+    // Which groups fit under the cap depends on the countries: read the
+    // channel lists again.
+    refreshAll();
+    return;
+  }
   if (countriesChanged) scheduleProvider(true);
   rebuildEntries();
 }
@@ -789,13 +795,24 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
   status_.line = "Sorting " + std::to_string(total) + " channels\xe2\x80\xa6";
   time::Seconds now = time::now();
   auto stations = m.stations;
+  std::set<std::string> wanted = m.prefs.guideCountries();  // "US" for US English and US Spanish
+  auto cut = std::make_shared<bool>(false);
   app_.pool().post(
-      [merged, old, oldCatalog, result, renamedCount, now, stations] {
+      [merged, old, oldCatalog, result, renamedCount, now, stations, wanted, cut] {
         std::vector<Channel> list = std::move(*merged);
         if (list.size() > catalog::kMaxChannels) {
-          catalog::Admission adm = catalog::admitGroups(list, catalog::kMaxChannels);
+          // Over the cap: the viewer's countries first, then unmarked groups
+          // ("United States", "4K|", event groups), then everything else.
+          // Provider order alone kept Europe and cut every US group.
+          catalog::GroupRank rank = [&wanted](const std::string&, const Channel& first) {
+            auto country = catalog::markedCountry(first);
+            if (!country) return 1;
+            return wanted.count(*country) ? 0 : 2;
+          };
+          catalog::Admission adm = catalog::admitGroups(list, catalog::kMaxChannels, rank);
           MLOG_I("store", "admitted %zu channels in %zu groups, %zu groups cut", adm.channels.size(),
                  adm.admittedGroups, adm.cutGroups);
+          *cut = adm.cutGroups > 0;
           list = std::move(adm.channels);
         }
         auto annotated = std::make_shared<std::vector<Channel>>(catalog::annotated(list));
@@ -810,9 +827,10 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
         }
         *result = {annotated, std::make_shared<CatalogResult>(catalog::build(*annotated, now, *stations))};
       },
-      [this, gen, result, renamedCount, showing, problems] {
+      [this, gen, result, renamedCount, showing, problems, cut] {
         if (gen != impl_->generation) return;
         Impl& mm = *impl_;
+        mm.admissionCut = *cut;
         mm.loading = false;
         mm.channelsLoadedAt = time::now();
         bool wasEmpty = mm.channels->empty();

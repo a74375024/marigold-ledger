@@ -322,6 +322,12 @@ CallsignContext::CallsignContext(const std::vector<Channel>& channels,
   }
 }
 
+std::optional<std::string> markedCountry(const Channel& channel) {
+  std::string rawGroup = groupOf(channel);
+  return countryFor(channel.name, str::lower(channel.name), rawGroup, str::lower(rawGroup),
+                    str::startsWith(channel.serverId, "xt:"));
+}
+
 // MARK: Build
 
 CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,

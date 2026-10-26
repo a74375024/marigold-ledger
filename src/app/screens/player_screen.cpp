@@ -43,6 +43,13 @@ class PlayerScreen : public Screen {
 
  public:
   explicit PlayerScreen(App& app) : Screen(app) { bannerFrom_ = app.ms() + kBannerDelayMs; }
+  // Freed after the screen below has been shown again: the guide has taken
+  // the picture into its corner by then. Anywhere else (Live Events, a
+  // game's page, search), leaving the player ends the stream.
+  ~PlayerScreen() override {
+    Playback& p = app_.playback();
+    if (p.active() && p.full()) p.stop();
+  }
 
   bool key(const KeyEvent& e) override {
     Playback& p = app_.playback();

@@ -39,6 +39,7 @@ App::App(platform::Window& window, platform::Storage& storage, gfx::Renderer& g,
 }
 
 App::~App() {
+  nav_ = Navigator();  // screens first: they may still use playback and the store
   playback_.reset();
   pool_.stop();
   store_.reset();

@@ -131,6 +131,7 @@ struct Store::Impl {
   std::unordered_map<std::string, size_t> entryInfo;  // entry id -> catalog->entries index
   catalog::LineupOutput lineup;
   bool partial = false;
+  bool admissionCut = false;  // the last list was over the cap: groups were left out
   time::Seconds channelsLoadedAt = 0;
   bool loading = false;
   uint64_t generation = 1;   // bumps when accounts change

@@ -7,6 +7,7 @@
 #include <set>
 
 #include "catalog/helpers.hpp"
+#include "core/catalog/admission.hpp"
 #include "core/catalog/catalog.hpp"
 #include "core/catalog/lineup.hpp"
 #include "core/catalog/work.hpp"
@@ -170,4 +171,37 @@ TEST_CASE("locals named by call sign and network, outside a locals group") {
   auto ny = marketLineup(list, stations, {"New York", std::nullopt, {"WQQQ"}});
   CHECK(ny.count("m3u:p|wqqq"));
   CHECK(ny.count("m3u:p|espn"));
+}
+
+TEST_CASE("over the channel cap: the viewer's countries first, then unmarked groups") {
+  // The provider lists Europe first; a cap that fits about half the list.
+  std::vector<Channel> list;
+  auto add = [&](const std::string& group, int count) {
+    for (int i = 0; i < count; ++i) list.push_back(channel(group + std::to_string(i), "Ch " + std::to_string(i), group));
+  };
+  add("UK| GENERAL", 40);
+  add("DE| SPORT", 30);
+  add("US| ENTERTAINMENT", 25);
+  add("US| NBC", 20);
+  add("United States", 10);  // a group word, not a prefix
+  add("PPV Live Events", 10);  // no country
+  add("4K| UHD", 5);  // a number prefix is not a country
+  std::set<std::string> wanted = {"US"};
+  GroupRank rank = [&wanted](const std::string&, const Channel& first) {
+    auto country = markedCountry(first);
+    if (!country) return 1;
+    return wanted.count(*country) ? 0 : 2;
+  };
+  Admission a = admitGroups(list, 80, rank);
+  std::set<std::string> groups;
+  for (const Channel& c : a.channels) groups.insert(*c.group);
+  CHECK(groups.count("US| ENTERTAINMENT"));
+  CHECK(groups.count("US| NBC"));
+  CHECK(groups.count("United States"));
+  CHECK(groups.count("PPV Live Events"));
+  CHECK(groups.count("4K| UHD"));
+  CHECK_FALSE(groups.count("UK| GENERAL"));  // 70 taken, 40 more don't fit
+  CHECK(a.channels.size() == 70);
+  // Admitted channels keep the provider's order.
+  CHECK(*a.channels.front().group == "US| ENTERTAINMENT");
 }

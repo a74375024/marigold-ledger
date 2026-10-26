@@ -58,3 +58,12 @@ Requests: race drivers and results only for race weekends you can watch
 | Backup | A feed that stops while watching | Corner card "Switched to a backup: Feed 1 stopped, so Feed 2 (HD) took over" for 8 s |
 | Nothing works | A channel whose feeds all fail | Card with Try Again, Choose a Source, Back to the last channel, and why each feed failed |
 | Pointer | Move the Magic Remote | Guide and last-channel buttons at the edges, the action row clickable |
+| Leave from Live Events | Watch a game from Live Events (or a game's page, or search), then Back | The stream stops; nothing keeps playing behind the board |
+| Leave to the guide | Watch from the guide, then Back | The picture shrinks into the guide's corner (or stops with previews off) |
+
+## Large provider lists
+
+| Area | How to check | Pass |
+|---|---|---|
+| Over 30,000 channels | A provider with more channels than the cap, US checked in Countries | All Channels and My Lineup include the US groups; the groups left out are other countries' |
+| Change countries | Check another country in Options › Countries & Languages | The list loads again with that country's groups kept first |

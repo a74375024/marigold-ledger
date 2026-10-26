@@ -1,5 +1,6 @@
 #include "core/catalog/admission.hpp"
 
+#include <algorithm>
 #include <string>
 #include <unordered_map>
 
@@ -15,21 +16,30 @@ const std::string& groupKey(const Channel& c) {
 
 }  // namespace
 
-Admission admitGroups(const std::vector<Channel>& channels, size_t cap) {
+Admission admitGroups(const std::vector<Channel>& channels, size_t cap, const GroupRank& rank) {
   // Group sizes, in first-seen (provider) order.
   std::unordered_map<std::string, size_t> indexOf;
   std::vector<size_t> sizes;
+  std::vector<int> ranks;
   std::vector<size_t> groupOf(channels.size());
   for (size_t i = 0; i < channels.size(); ++i) {
-    auto [it, inserted] = indexOf.try_emplace(groupKey(channels[i]), sizes.size());
-    if (inserted) sizes.push_back(0);
+    const std::string& key = groupKey(channels[i]);
+    auto [it, inserted] = indexOf.try_emplace(key, sizes.size());
+    if (inserted) {
+      sizes.push_back(0);
+      ranks.push_back(rank ? rank(key, channels[i]) : 0);
+    }
     sizes[it->second] += 1;
     groupOf[i] = it->second;
   }
+  // By rank, then provider order.
+  std::vector<size_t> order(sizes.size());
+  for (size_t g = 0; g < order.size(); ++g) order[g] = g;
+  std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return ranks[a] < ranks[b]; });
   Admission out;
   std::vector<bool> admitted(sizes.size(), false);
   size_t total = 0;
-  for (size_t g = 0; g < sizes.size(); ++g) {
+  for (size_t g : order) {
     if (sizes[g] <= cap - total) {
       admitted[g] = true;
       total += sizes[g];

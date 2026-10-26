@@ -40,6 +40,10 @@ struct CallsignContext {
 // The provider group a channel is in: its group, else its first tag.
 std::string groupOf(const Channel& channel);
 
+// The country a channel is marked with (group prefix, group words, name
+// prefix), nullopt when it isn't marked.
+std::optional<std::string> markedCountry(const Channel& channel);
+
 // Pass 0: call-sign context; pass 1: traits and event families; pass 2:
 // entries (clusters of variants); pass 3: event families and events.
 CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
