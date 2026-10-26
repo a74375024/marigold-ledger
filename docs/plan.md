@@ -198,6 +198,7 @@ Platform pieces that need replacements:
   - JSON files in the app data dir, written atomically through `dados.c`.
   - Account passwords go in a separate 0600 file, never in logs or exports.
   - The TV has no keychain, so the file permission is the protection.
+- **M3U accounts:** one playlist link per account. The link often carries a login, so it is stored and treated like a password: never logged, exported or shown in full. Channels from a playlist cluster with Xtream and Emby feeds the same way, so they also serve as backups.
 - **Images:** SDL2_image, libjpeg and libwebp decode logos into our cache.
 
 ## 5. Efficiency and request load
@@ -207,6 +208,7 @@ The tvOS budgets carry over unchanged:
 | Data | Rule |
 |---|---|
 | Channel list | re-read every 30 min; per-source binary cache loads first |
+| M3U playlist | streamed into the arena (Legacy limits: 120 s, 200 MiB); re-read every 12 h with ETag/IMS; its `url-tvg` guide is used like a provider guide |
 | Xtream short EPG | only rows on screen, 6 in parallel, skipped where the provider guide covers |
 | Provider guide (`xmltv.php`) | 12 h; in-scope channels only |
 | Outside XMLTV | 20 h; ETag/IMS; backups only for stale shards; paused while video plays |
@@ -293,7 +295,7 @@ Each milestone ends with a "Build NN" `.ipk` you can install.
 | # | Scope | Done when |
 |---|---|---|
 | M0 | Toolchain, CMake, CI (hygiene, host + sanitizers, ipk), platform facades, a test screen that draws, reads every remote key and plays one stream you enter on the TV | CI green; the app opens on your TV and plays |
-| M1 · Lineup + guide | Xtream and Emby accounts (LG keyboard), streaming channel load with whole-group admission up to 30k, catalog and clustering, My Lineup wizard, guide grid with hero, rail, time menu, search, provider guide, outside XMLTV, logo cache, Options (lineup and guide parts) | A 60k-channel mock loads within its memory budget; the guide scrolls at 60 fps on the TV; listings match like tvOS on the fixtures |
+| M1 · Lineup + guide | Xtream, Emby and M3U playlist accounts (LG keyboard), streaming channel load with whole-group admission up to 30k, catalog and clustering, My Lineup wizard, guide grid with hero, rail, time menu, search, provider guide, outside XMLTV, logo cache, Options (lineup and guide parts) | A 60k-channel mock loads within its memory budget; the guide scrolls at 60 fps on the TV; listings match like tvOS on the fixtures |
 | M2 · Playback with backups | Video facade, preview corner, tuning card, banner, previous channel, number and CH keys, mini guide, Sources panel, failover policy, reliability scores, pinned feeds, playback log | A killed feed fails over silently on the TV; failover unit tests pass under TSan |
 | M3 · Live Events with scores | Schedule, network map, matcher, board (rows, tiles, hero, sports column), Where to Watch, detail card, live scores, My Sports wizard, reminders, event guide in the player, remembered source per game | The matcher reproduces the tvOS results on synthetic fixtures; scores stay within the request caps |
 | M4 · Panels, cameras, tennis | F1/NASCAR cameras panel, race data, followed drivers, whip-arounds, tennis tiles with player photos, the rest of Options | Feature parity with the tvOS `multiview` branch, minus Multiview |
