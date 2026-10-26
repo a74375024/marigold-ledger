@@ -27,6 +27,7 @@
 #include "core/guide/outside.hpp"
 #include "core/guide/provider.hpp"
 #include "core/guide/xmltv.hpp"
+#include "core/logos/logos.hpp"
 #include "core/sources/account.hpp"
 #include "core/sources/emby.hpp"
 #include "core/sources/m3u.hpp"
@@ -118,9 +119,13 @@ uint8_t titleGenres(const std::string& title, const std::optional<std::string>& 
 }
 
 bool readFile(const std::string& path, std::string& out) {
-  std::ifstream f(path, std::ios::binary);
+  std::FILE* f = std::fopen(path.c_str(), "rb");
   if (!f) return false;
-  out.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+  out.clear();
+  char buf[64 * 1024];
+  size_t n;
+  while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) out.append(buf, n);
+  std::fclose(f);
   return true;
 }
 
@@ -1984,16 +1989,30 @@ void Store::publishChannels() {
     g.west = str::endsWith(e.id, "~west");
     g.inLineup = lo.lineupIDs.count(e.id) > 0;
     g.favorite = m.favorites.count(e.id) > 0 || e.isFavorite;
-    if (ei && cat == catalog::LineupCategory::local && ei->callsign) {
-      g.style = GuideChannel::Style::Local;
-      g.subtitle = g.name;
-      g.name = *ei->callsign;
-    } else if (ei && ei->core && !g.logoUrl.empty()) {
-      g.style = GuideChannel::Style::LogoOnly;
-      g.subtitle = catalog::genreTitle(cat);
-    } else {
-      g.style = GuideChannel::Style::Named;
-      g.subtitle = catalog::genreTitle(cat);
+    // Which logo a row tries and how its cell reads (ChannelLogos.spec).
+    const Channel* member = nullptr;
+    if (ei && !ei->members.empty()) {
+      auto ci = m.indexByID.find(ei->members.front());
+      if (ci != m.indexByID.end()) member = &(*m.channels)[ci->second];
+    }
+    logos::LogoSpec spec = logos::spec(
+        g.name, ei ? ei->core : std::nullopt, g.west, ei && cat == catalog::LineupCategory::local && ei->callsign,
+        ei ? ei->callsign : std::nullopt, ei ? ei->virtualNumber : std::nullopt, e.imageUrl,
+        member ? member->epgId : std::nullopt, cat, nullptr);
+    g.logoUrl = spec.urls.empty() ? std::string() : spec.urls.front();
+    g.subtitle = spec.subtitle.value_or(catalog::genreTitle(cat));
+    switch (spec.style) {
+      case logos::LogoSpec::Style::local:
+        g.style = GuideChannel::Style::Local;
+        if (!spec.callsign.empty()) g.name = spec.callsign;
+        g.subtitle = spec.line;
+        break;
+      case logos::LogoSpec::Style::logoOnly:
+        g.style = g.logoUrl.empty() ? GuideChannel::Style::Named : GuideChannel::Style::LogoOnly;
+        break;
+      case logos::LogoSpec::Style::named:
+        g.style = GuideChannel::Style::Named;
+        break;
     }
     // Locals by their broadcast number; the rest by cable-style blocks.
     if (ei && cat == catalog::LineupCategory::local && ei->virtualNumber) {
