@@ -249,7 +249,7 @@ int rede_pedir(const RedePedido *p, RedeResposta *r) {
   c.tetoCorpo = p->max_bytes ? p->max_bytes : REDE_CORPO_PADRAO;
   c.tetoCab = p->max_cabecalhos ? p->max_cabecalhos : REDE_CAB_PADRAO;
   if (!pedidoMetodo(metodo) || !pedidoOrigem(p->url, origem, sizeof origem, &tls) ||
-      c.tetoCorpo > REDE_CORPO_MAXIMO || c.tetoCab > REDE_CAB_MAXIMO ||
+      c.tetoCorpo > (p->receber_corpo ? REDE_FLUXO_MAXIMO : REDE_CORPO_MAXIMO) || c.tetoCab > REDE_CAB_MAXIMO ||
       p->prazo_ms > 300000 || (p->n_corpo && !p->corpo) ||
       p->n_corpo > REDE_CORPO_PADRAO || ((c.head || !strcmp(metodo, "GET")) && p->n_corpo) ||
       p->janela_corpo_ms > 60000 || (p->janela_corpo_ms &&

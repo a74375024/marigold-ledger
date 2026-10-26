@@ -34,6 +34,9 @@ typedef enum {
 } RedeErro;
 #define REDE_CORPO_PADRAO (8u * 1024u * 1024u)
 #define REDE_CORPO_MAXIMO (32u * 1024u * 1024u)
+/* marigold: streamed bodies (receber_corpo) are never held, so a whole
+ * guide file may be larger than the buffered cap. */
+#define REDE_FLUXO_MAXIMO (1024u * 1024u * 1024u)
 #define REDE_CAB_PADRAO 16384u
 #define REDE_CAB_MAXIMO 65536u
 #define REDE_CAP_CORPO 1u
@@ -217,7 +220,9 @@ void rede_lateral(int sim);
 // (Program40.cs), que nao monta TLS de compilador — o primeiro acesso a uma
 // variavel _Thread_local seria o fim do processo. O estado por fio vive numa
 // struct por pthread_key (rede.c); o nome continua um lvalue por macro.
-#if   defined(__GNUC__)
+#if   defined(__cplusplus)
+extern thread_local long rede_teto;
+#elif defined(__GNUC__)
 extern _Thread_local long rede_teto;
 #else
 extern long rede_teto;

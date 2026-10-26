@@ -31,7 +31,8 @@ add_library(marigold_core STATIC ${MARIGOLD_CORE_SOURCES})
 target_include_directories(marigold_core PUBLIC src)
 marigold_warnings(marigold_core)
 find_package(Threads REQUIRED)
-target_link_libraries(marigold_core PUBLIC Threads::Threads pcre2)
+find_package(ZLIB REQUIRED)
+target_link_libraries(marigold_core PUBLIC Threads::Threads pcre2 ZLIB::ZLIB)
 
 # Legacy headers that are pure C and safe to test on the host.
 add_library(legacy_pure INTERFACE)

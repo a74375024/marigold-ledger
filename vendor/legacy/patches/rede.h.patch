@@ -19,7 +19,17 @@
   * Redirects so HTTP(S), sem downgrade HTTPS. Cabecalhos do dono e corpo nao
   * atravessam origem; 307/308 autenticados entre origens sao recusados.
   * O XHR sincrono WGT nao oferece este contrato: retorna INDISPONIVEL sem
-@@ -113,39 +116,6 @@
+@@ -31,6 +34,9 @@
+ } RedeErro;
+ #define REDE_CORPO_PADRAO (8u * 1024u * 1024u)
+ #define REDE_CORPO_MAXIMO (32u * 1024u * 1024u)
++/* marigold: streamed bodies (receber_corpo) are never held, so a whole
++ * guide file may be larger than the buffered cap. */
++#define REDE_FLUXO_MAXIMO (1024u * 1024u * 1024u)
+ #define REDE_CAB_PADRAO 16384u
+ #define REDE_CAB_MAXIMO 65536u
+ #define REDE_CAP_CORPO 1u
+@@ -113,39 +119,6 @@
  void rede_job_cancelar(RedeJob *job);
  RedeErro rede_job_estado(RedeJob *job);
  
@@ -59,7 +69,7 @@
  typedef struct {
    int status;          // 0 = transporte sem resposta
    long bytes;          // corpo recebido; -1 quando nao medido
-@@ -176,14 +146,6 @@
+@@ -176,14 +149,6 @@
                        long long maxBytes, int *status, long long *bytes);
  
  
@@ -74,19 +84,19 @@
  
  // Com cabecalhos. `cabecalhos` e um vetor terminado em NULL de linhas prontas
  // ("Authorization: Bearer x"). Existe por causa do Trakt, que exige token e
-@@ -255,10 +217,7 @@
+@@ -255,9 +220,8 @@
  // (Program40.cs), que nao monta TLS de compilador — o primeiro acesso a uma
  // variavel _Thread_local seria o fim do processo. O estado por fio vive numa
  // struct por pthread_key (rede.c); o nome continua um lvalue por macro.
 -#if defined(NV_TPK40) || defined(NV_UM_FIO)
 -long *rede_teto_ptr(void);
 -#define rede_teto (*rede_teto_ptr())
--#elif defined(__GNUC__)
-+#if   defined(__GNUC__)
++#if   defined(__cplusplus)
++extern thread_local long rede_teto;
+ #elif defined(__GNUC__)
  extern _Thread_local long rede_teto;
  #else
- extern long rede_teto;
-@@ -288,19 +247,6 @@
+@@ -288,19 +252,6 @@
                          char *dst, unsigned tam, int *status,
                          char *mime, unsigned mimeTam, long *corpo);
  
@@ -106,7 +116,7 @@
  
  // POST de JSON. Existe para o Trakt, que so aceita escrita por POST.
  char *rede_postar(const char *url, int segundos, const char *const *cabecalhos,
-@@ -329,11 +275,6 @@
+@@ -329,11 +280,6 @@
  // 4xx volta com corpo). Existe para o TorBox, que edita um item so por PUT.
  char *rede_colocar_st(const char *url, int segundos, const char *const *cabecalhos,
                        const char *corpo, int *status);
@@ -118,7 +128,7 @@
  // POST que repete (espera 1 s, 2 s, ...) so quando nao houve resposta (status 0).
  char *rede_postar_repetindo(const char *url, int segundos, const char *const *cabecalhos,
                              const char *corpo, int *status, int tentativas);
-@@ -487,26 +428,14 @@
+@@ -487,26 +433,14 @@
  // O criterio de "segmento suspeito" acima, exposto para o teste.
  int rede_segmento_suspeito(const char *s, unsigned n);
  

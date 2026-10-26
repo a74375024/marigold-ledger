@@ -11,7 +11,7 @@ fail=0
 # 1. Shared libraries. libcurl and luna-service2 are dlopen'd at run time and
 #    must never be linked (the SDK ships libcurl.so.4, the TVs only .so.5);
 #    libstdc++ is linked statically because the TVs' copy is much older.
-allowed="libSDL2-2.0.so.0 libSDL2_ttf-2.0.so.0 libGLESv2.so.2 libEGL.so.1 libdl.so.2
+allowed="libSDL2-2.0.so.0 libSDL2_ttf-2.0.so.0 libSDL2_image-2.0.so.0 libz.so.1 libGLESv2.so.2 libEGL.so.1 libdl.so.2
 libpthread.so.0 libm.so.6 libc.so.6 ld-linux.so.3 librt.so.1"
 for lib in $("$tc-readelf" -d "$bin" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p'); do
   if ! grep -qx "$lib" <<<"$(tr ' ' '\n' <<<"$allowed")"; then
@@ -41,6 +41,7 @@ check() {
 }
 check SDL "$here/abi/sdl2-2.0.2.txt"
 check TTF "$here/abi/sdl2_ttf-2.0.12.txt"
+check IMG "$here/abi/sdl2_image-2.0.0.txt"
 
 if [ "$fail" -ne 0 ]; then exit 1; fi
-echo "abi-check: ok (glibc ${max:-none}, $(grep -cE '^(SDL|TTF)_' <<<"$undef") SDL/TTF symbols)"
+echo "abi-check: ok (glibc ${max:-none}, $(grep -cE '^(SDL|TTF|IMG)_' <<<"$undef") SDL/TTF/IMG symbols)"

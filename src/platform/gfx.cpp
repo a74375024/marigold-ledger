@@ -58,6 +58,11 @@ void main() {
     float inner = roundedBox(p, hs - vec2(uThickness), max(r - uThickness, 0.0));
     cover *= clamp(0.5 + inner / uPixel, 0.0, 1.0);
   }
+  if (uMode == 2) {
+    vec4 t = texture2D(uTexture, vUv);
+    gl_FragColor = vec4(t.rgb, t.a * uColor.a * cover);
+    return;
+  }
   gl_FragColor = vec4(uColor.rgb, uColor.a * cover);
 }
 )";
@@ -160,7 +165,7 @@ void Renderer::draw(Rect r, Color c, float radius, float thickness, int mode, un
   glUniform1f(uRadius_, radius);
   glUniform1f(uThickness_, thickness);
   glUniform1i(uMode_, mode);
-  if (mode == 1) glBindTexture(GL_TEXTURE_2D, texture);
+  if (mode != 0) glBindTexture(GL_TEXTURE_2D, texture);
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
 
@@ -172,6 +177,10 @@ void Renderer::stroke(Rect r, Color c, float radius, float thickness) {
 
 void Renderer::textureAlpha(unsigned texture, Rect r, Color c) {
   if (texture) draw(r, c, 0.0f, 0.0f, 1, texture);
+}
+
+void Renderer::image(unsigned texture, Rect r, float opacity, float radius) {
+  if (texture) draw(r, Color{1, 1, 1, opacity}, radius, 0.0f, 2, texture);
 }
 
 void Renderer::hole(Rect r) {
