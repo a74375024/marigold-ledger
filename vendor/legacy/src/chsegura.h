@@ -25,7 +25,9 @@
 //    (repeticao em pares Up/Down do X11/EFL), nao toque novo.
 #ifndef NV_CHSEGURA_H
 #define NV_CHSEGURA_H
-
+#ifdef __cplusplus
+extern "C" {
+#endif
 #define CHS_SEGURAR_MS  600u
 #define CHS_ATRASO_MS   300u   // dead zone: no progress drawn, a click shows nothing
 #define CHS_EMENDA_MS    90u
@@ -52,4 +54,7 @@ int chs_quadro(ChSegura *s, unsigned t);
 // 1 enquanto o gesto esta em curso: o CH+ e engolido.
 int chs_ocupado(const ChSegura *s);
 
+#ifdef __cplusplus
+}
+#endif
 #endif

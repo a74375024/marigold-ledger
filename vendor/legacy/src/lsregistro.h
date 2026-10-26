@@ -14,7 +14,9 @@
 // lunaservice-errors.h): o hub disse "Invalid permissions", nao "nome em uso".
 #ifndef NV_LSREGISTRO_H
 #define NV_LSREGISTRO_H
-
+#ifdef __cplusplus
+extern "C" {
+#endif
 // Codigos publicos do luna-service2 (_LS_ERROR_CODE_OFFSET = 1024).
 #define LSR_UNKNOWN_ERROR   (-1 - 1024)
 #define LSR_OOM             (-2 - 1024)
@@ -51,4 +53,7 @@ void lsreg_deu_certo(LsRegEstado *e);
 // 1 quando o automatico ja desistiu nesta sessao (para o log dizer uma vez).
 int  lsreg_desistiu(const LsRegEstado *e);
 
+#ifdef __cplusplus
+}
+#endif
 #endif

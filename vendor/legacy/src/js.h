@@ -9,6 +9,9 @@
 #define NV_JS_H
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 // Fim do objeto/array que comeca em `p` (que aponta para '{' ou '['),
 // respeitando aspas e escapes.
 const char *js_fim(const char *p);
@@ -102,4 +105,7 @@ int js_texto_raiz(const char *corpo, const char *chave, char *dst, size_t tam);
 int js_texto_raiz_em(const char *ini, const char *fim, const char *chave,
                      char *dst, size_t tam);
 
+#ifdef __cplusplus
+}
+#endif
 #endif

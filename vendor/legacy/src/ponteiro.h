@@ -51,6 +51,9 @@
 #define NV_PONTEIRO_H
 #include <SDL2/SDL.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 typedef void (*PonteiroFn)(int a, int b);
 
 enum {
@@ -168,4 +171,7 @@ int  ponteiro_teste_lista(const PonteiroAlvo **v);
 // SDL_webOSCursorVisibility de mentira (so com -DNV_PONT_WEBOS_TESTE).
 void ponteiro_teste_cursor_sistema(SDL_bool (*fn)(SDL_bool));
 
+#ifdef __cplusplus
+}
+#endif
 #endif

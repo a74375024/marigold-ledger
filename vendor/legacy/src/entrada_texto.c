@@ -53,7 +53,6 @@
 // (release, Voz.cs), e devolve por nv_tpk_texto_valor/nv_tpk_texto_fim. Host
 // antigo nao registra: texto_sistema_disponivel() da 0 e fica o teclado do app.
 #include "entrada_texto.h"
-#include "arteurl.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -128,7 +127,7 @@ static int sdlImeMostra(SDL_Window *w) {
 }
 static int imeQuebrado(void) { return imeQuebrou; }
 
-#define TS_MAX NV_ARTE_URL_MAX
+#define TS_MAX 8192   // marigold: was NV_ARTE_URL_MAX (arteurl.h not vendored)
 
 static int aberto, viuTeclado, quadrosAberto;
 static Uint32 tipoEv;

@@ -122,9 +122,9 @@ static _Thread_local int redeCurlLocal;
 // request URLs/credentials, so never publish them in the UI or log (#418).
 static _Thread_local char redeErroTxt[200];
 static _Thread_local char redeErroBuf[256];   // CURLOPT_ERRORBUFFER (>= 256 bytes)
-// CA bundle (Mozilla, art/discord-ca.pem) configured once at startup. Android's
+// CA bundle (Mozilla) configured once at startup (marigold: was caBundle). Android's
 // libcurl+mbedTLS is built with no CA path at all.
-static char discordCa[600];
+static char caBundle[600];
 // Destino do endereco final do proximo pedido (so rede_baixar_trecho_st liga).
 static _Thread_local char *redeFinalDst;
 static _Thread_local unsigned redeFinalTam;
@@ -207,40 +207,11 @@ static int   (*curl_setopt_f)(void *, int, ...);
 // (addonurl.h) voltar a ser a URL inteira. O curl copia a string no setopt,
 // entao a expandida e liberada logo depois. Macro, e nao funcao variadica:
 // cada ramo recebe o valor com o tipo que ja tinha.
-// #416/#419: um alias oficial, ligado para todos os fios so apos responder.
-static int tmdbAlternativo;
-static char *tmdbUrl(const char *url) {
-  const char *h, *fim;
-  char *nova;
-  size_t prefixo;
-  if (!url || strncasecmp(url, "https://", 8)) return NULL;
-  h = url + 8;
-  fim = h + strcspn(h, "/?#");
-  // So o host exato; preserva esquema, porta, caminho e query byte a byte.
-  if (strncasecmp(h, "api.themoviedb.org", 18) ||
-      (h + 18 != fim && (h[18] != ':' || h + 19 == fim ||
-       h + 19 + strspn(h + 19, "0123456789") != fim))) return NULL;
-  prefixo = (size_t)(h - url);
-  nova = malloc(strlen(url) + 1);
-  if (!nova) return NULL;
-  memcpy(nova, url, prefixo);
-  strcpy(nova + prefixo, "api.tmdb.org");
-  strcat(nova, h + 18);
-  return nova;
-}
-static void tmdbLigou(void) {
-  if (!__atomic_exchange_n(&tmdbAlternativo, 1, __ATOMIC_ACQ_REL)) {
-    printf("[rede] api.themoviedb.org bloqueado aqui; usando api.tmdb.org\n");
-    fflush(stdout);
-  }
-}
 static int urlSetopt(void *c, const char *url) {
   url = nv_media_url(url);
   char *grande = nv_longa_expandir(url);
-  char *alias = __atomic_load_n(&tmdbAlternativo, __ATOMIC_ACQUIRE) ?
-                tmdbUrl(grande ? grande : url) : NULL;
-  int r = curl_setopt_f(c, 10002 /* OPT_URL */, alias ? alias : grande ? grande : url);
-  free(alias); free(grande);
+  int r = curl_setopt_f(c, 10002 /* OPT_URL */, grande ? grande : url);
+  free(grande);
   return r;
 }
 #define curl_setopt(c, op, v) ((op) == 10002 ? urlSetopt((c), (const char *)(uintptr_t)(v)) \
@@ -254,33 +225,6 @@ static int   (*curl_getinfo)(void *, int, ...);
 static void  (*curl_reset)(void *);
 static time_t (*curl_getdate_fn)(const char *, const time_t *);
 
-
-// Chamado depois da repeticao existente do GET, diretamente nos demais caminhos.
-// So falha de TRANSPORTE que falhou RAPIDO: conexao recusada (7), aperto de mao
-// TLS que nao fechou (35), resposta vazia (52) e recepcao que caiu (56). O curl
-// 28 (timeout) NAO entra: ele so acontece quando o prazo do pedido ja foi
-// gasto inteiro, e a tentativa no alias dobraria a espera maxima de quem
-// chamou — o mesmo principio de valeRepetir logo abaixo ("o que ja custou o
-// prazo inteiro nao repete").
-static int tmdbFallback(void *c, int r, const char *pedido) {
-  char *url = NULL, *alias, *origem;
-  long http = 0;
-  if (!(r == 35 || r == 7 || r == 56 || r == 52) ||
-      redeCancelouLocal || !curl_getinfo) return r;
-  // Um redirect de outro host ao TMDB nao autoriza reenviar seus cabecalhos.
-  origem = tmdbUrl(pedido);
-  if (!origem) return r;
-  free(origem);
-  if (curl_getinfo(c, INFO_RESPONSE_CODE, &http) || http ||
-      curl_getinfo(c, INFO_URL_FINAL, &url) || !(alias = tmdbUrl(url))) return r;
-  if (!curl_setopt_f(c, OPT_URL, alias)) {
-    r = curl_perform(c); /* uma unica tentativa, sem recursao */
-    if (!r) tmdbLigou();
-  }
-  free(alias);
-  return r;
-}
-static int performTmdb(void *c, const char *url) { return tmdbFallback(c, curl_perform(c), url); }
 
 static int retrySegundos(const char *s, size_t n) {
   char b[128], *fim;
@@ -361,7 +305,7 @@ static void handleCriarChave(void) { pthread_key_create(&handleChave, handleSolt
 // CURLOPT_MAXAGE_CONN, e FRESH_CONNECT deixaria a velha no cache para o
 // pedido seguinte escolher). Custa um handshake por host depois de uma pausa;
 // rajada de arte, que e onde o reuso rende, nunca para tanto.
-// NUVIO_REDE_OCIOSO_MS muda o limite (0 = sem limite, como antes).
+// MARIGOLD_REDE_OCIOSO_MS muda o limite (0 = sem limite, como antes).
 #define REDE_OCIOSO_PADRAO_MS 20000UL
 static unsigned long ociosoMaxMs = REDE_OCIOSO_PADRAO_MS;
 #define REDE_HOSTS_POR_FIO 16
@@ -583,10 +527,10 @@ static void opcoesComuns(void *c, unsigned long prazoMs) {
   // esta escrita aqui de proposito.
   curl_setopt(c, OPT_SSL_VERIFYPEER, (long)0);
   curl_setopt(c, OPT_SSL_VERIFYHOST, (long)0);
-  curl_setopt(c, OPT_USERAGENT, "Nuvio/1.0 (webOS)");
+  curl_setopt(c, OPT_USERAGENT, "Marigold/0.1 (webOS)"   /* marigold: own user agent */);
   // Bundle embarcado como fallback: a verificacao esta desligada acima, mas se
   // um dia ligar (ou a lib ignorar o VERIFYPEER) nao ha "sem CA" no Android.
-  if (discordCa[0]) curl_setopt(c, OPT_CAINFO, discordCa);
+  if (caBundle[0]) curl_setopt(c, OPT_CAINFO, caBundle);
   redeErroBuf[0] = 0;
   redeErroTxt[0] = 0;
   curl_setopt(c, OPT_ERRORBUFFER, redeErroBuf);
@@ -866,10 +810,10 @@ static int abrirReal(void) {
   // image.tmdb.org w1280 1,14-1,19 s x 0,32 s. O relatorio 1669 batia com o
   // numero de conexao nova: tmdb resolve 646 ms e download 1116 ms por arte.
   // REUSO LIGADO, mas so para transferencia limpa (soltarHandleR).
-  // NUVIO_REDE_REUSO=0 desliga de vez, para comparar numa TV com problema.
-  { const char *r = getenv("NUVIO_REDE_REUSO");
+  // MARIGOLD_REDE_REUSO=0 desliga de vez, para comparar numa TV com problema.
+  { const char *r = getenv("MARIGOLD_REDE_REUSO");
     if (!(r && r[0] == '0')) *(void **)(&curl_reset) = dlsym(h, "curl_easy_reset"); }
-  { const char *o = getenv("NUVIO_REDE_OCIOSO_MS");
+  { const char *o = getenv("MARIGOLD_REDE_OCIOSO_MS");
     if (o && *o) ociosoMaxMs = strtoul(o, NULL, 10); }
   if (!curl_init || !curl_setopt_f || !curl_perform) {
     printf("[rede] libcurl sem os simbolos esperados\n");
@@ -1092,7 +1036,7 @@ static char *rede_baixar_interno3(const char *url, int segundos, long *tam,
       if (etag && tamEtag) etag[0] = 0;
       continue;
     }
-    r = tmdbFallback(c, r == 42 && vigia.parou ? 28 : r, url);
+    r = r == 42 && vigia.parou ? 28 : r;   // marigold: TMDB host fallback removed
     break;
   }
   redeCurlLocal = r;
@@ -1226,7 +1170,7 @@ int rede_url_final_tipo(const char *url, int segundos, const char *const *cab,
     lista = nova;
   }
   if (lista) curl_setopt(c, OPT_HTTPHEADER, lista);
-  r = performTmdb(c, url);
+  r = curl_perform(c);
   curl_getinfo(c, INFO_RESPONSE_CODE, &http);
   curl_getinfo(c, INFO_URL_FINAL, &fim);
   if (status) *status = (int)http;
@@ -1304,7 +1248,7 @@ int rede_aquecer_job(const char *const *origens, int n, unsigned *ms, RedeJob *j
       curl_setopt(c, OPT_NOPROGRESS, 0L);
     }
     t0 = redeAgoraMs();
-    r = performTmdb(c, u);
+    r = curl_perform(c);
     curl_setopt(c, OPT_XFERINFOFUNCTION, (void *)0);
     curl_setopt(c, OPT_XFERINFODATA, (void *)0);
     curl_setopt(c, OPT_NOPROGRESS, 1L);
@@ -1355,7 +1299,7 @@ char *rede_apagar(const char *url, int segundos, const char *const *cab,
     for (k = 0; cab && cab[k]; k++) lista = slist_append(lista, cab[k]);
     if (lista) curl_setopt(c, OPT_HTTPHEADER, lista);
   }
-  r = performTmdb(c, url);
+  r = curl_perform(c);
   { long h = 0;
     if (!r && curl_getinfo) curl_getinfo(c, INFO_RESPONSE_CODE, &h);
     if (status) *status = (int)h;
@@ -1440,8 +1384,8 @@ int rede_baixar_fluxo(const char *url, int segundos, const char *const *cab,
 }
 
 // Set once at startup before OAuth/WebSocket workers begin.
-void rede_discord_ca(const char *caminho) {
-  snprintf(discordCa, sizeof discordCa, "%s", caminho ? caminho : "");
+void rede_ca_bundle(const char *caminho) {
+  snprintf(caBundle, sizeof caBundle, "%s", caminho ? caminho : "");
 }
 #define OPT_CAINFO 10065
 
@@ -1468,7 +1412,7 @@ static char *postarNativo(const char *url, int segundos, const char *const *cab,
     // OAuth credentials require authenticated TLS and never follow redirects.
     curl_setopt(c, OPT_SSL_VERIFYPEER, (long)1);
     curl_setopt(c, OPT_SSL_VERIFYHOST, (long)2);
-    if (discordCa[0]) curl_setopt(c, OPT_CAINFO, discordCa);
+    if (caBundle[0]) curl_setopt(c, OPT_CAINFO, caBundle);
     curl_setopt(c, OPT_FOLLOWLOCATION, (long)0);
   }
   if (retryAfter) {
@@ -1488,7 +1432,7 @@ static char *postarNativo(const char *url, int segundos, const char *const *cab,
     for (k = 0; cab && cab[k]; k++) lista = slist_append(lista, cab[k]);
     if (lista) curl_setopt(c, OPT_HTTPHEADER, lista);
   }
-  r = performTmdb(c, url);
+  r = curl_perform(c);
   redeCurlLocal = r;
   anotarErro(r);
   if (r != 0) { char seg[120];
@@ -1642,7 +1586,7 @@ int rede_medir_vazao(const char *url, const char *const *cab, int segundos,
     for (k = 0; cab[k]; k++) lista = slist_append(lista, cab[k]);
     if (lista) curl_setopt(c, OPT_HTTPHEADER, lista);
   }
-  r = performTmdb(c, url);
+  r = curl_perform(c);
   { long http = 0;
     if (curl_getinfo) curl_getinfo(c, INFO_RESPONSE_CODE, &http);
     if (http > 0) ct.status = (int)http; }
@@ -1680,519 +1624,8 @@ int rede_medir_vazao(const char *url, const char *const *cab, int segundos,
 }
 
 
-// ------------------------------------------------------------ TLS CRU (curl)
-//
-// Ver rede_tls_abrir em rede.h. CONNECT_ONLY faz a libcurl resolver, conectar
-// e negociar o TLS e PARAR: nenhum byte de HTTP sai. Dai em diante o fio fala
-// pelo curl_easy_send/recv, que cifram e decifram. O handle e proprio e nunca
-// vai para o cache de pegarHandle: uma conexao de websocket nao e reaproveitavel.
-#define OPT_CONNECT_ONLY      141
-#define OPT_HTTP_VERSION       84
-// CURLINFO_LASTSOCKET = CURLINFO_LONG + 29. ACTIVESOCKET (7.45+) seria o certo,
-// mas LASTSOCKET existe em toda versao que estas TVs trazem e devolve o mesmo
-// descritor quando ha uma conexao so — que e o caso de um handle CONNECT_ONLY.
-#define INFO_LASTSOCKET  2097181
-#define CURLE_AGAIN_ 81
+// marigold: raw TLS socket (Discord websocket) and the DTS range reader removed.
 
-#include <sys/select.h>
-
-struct RedeTls { void *c; int fd; };
-
-static int tlsEsperar(int fd, int escrever, int ms) {
-  fd_set f;
-  struct timeval tv;
-  if (fd < 0 || fd >= FD_SETSIZE) return -1;
-  FD_ZERO(&f);
-  FD_SET(fd, &f);
-  tv.tv_sec = ms / 1000;
-  tv.tv_usec = (ms % 1000) * 1000;
-  return select(fd + 1, escrever ? NULL : &f, escrever ? &f : NULL, NULL, &tv);
-}
-
-RedeTls *rede_tls_abrir(const char *url, int segundos) {
-  RedeTls *t;
-  void *c;
-  long fd = -1;
-  int r;
-  if (!url || !*url || !abrir() || !curl_send || !curl_recv) return NULL;
-  c = curl_init();
-  if (!c) return NULL;
-  curl_setopt(c, OPT_URL, url);
-  curl_setopt(c, OPT_CONNECT_ONLY, (long)1);
-  // HTTP/1.1 no ALPN. Sem isto uma libcurl com nghttp2 (a do Mac, a do Android)
-  // negocia h2 com o servidor, e o aperto de mao do websocket — texto HTTP/1.1
-  // — chega num canal HTTP/2: o servidor fecha sem resposta. MEDIDO no Mac
-  // contra gateway.discord.gg. A 7.53.1 das TVs nao tem h2, mas a opcao e
-  // inofensiva la.
-  curl_setopt(c, OPT_HTTP_VERSION, (long)2 /* CURL_HTTP_VERSION_1_1 */);
-  curl_setopt(c, OPT_CONNECTTIMEOUT_MS, (long)(segundos > 0 ? segundos : 15) * 1000L);
-  curl_setopt(c, OPT_NOSIGNAL, (long)1);
-  curl_setopt(c, OPT_TCP_KEEPALIVE, (long)1);
-  curl_setopt(c, OPT_TCP_KEEPIDLE, (long)15);
-  curl_setopt(c, OPT_TCP_KEEPINTVL, (long)5);
-  // Presence sends OAuth credentials: fail closed if the CA store is stale.
-  curl_setopt(c, OPT_SSL_VERIFYPEER, (long)1);
-  curl_setopt(c, OPT_SSL_VERIFYHOST, (long)2);
-  if (discordCa[0]) curl_setopt(c, OPT_CAINFO, discordCa);
-  r = performTmdb(c, url);
-  if (r == 0 && curl_getinfo) curl_getinfo(c, INFO_LASTSOCKET, &fd);
-  if (r != 0 || fd < 0) {
-    printf("[rede] tls: falhou (curl %d)\n", r);
-    curl_cleanup(c);
-    return NULL;
-  }
-  t = (RedeTls *)calloc(1, sizeof *t);
-  if (!t) { curl_cleanup(c); return NULL; }
-  t->c = c;
-  t->fd = (int)fd;
-  return t;
-}
-
-int rede_tls_tentar_enviar(RedeTls *t, const void *buf, size_t n, size_t *foi) {
-  int r;
-  if (foi) *foi = 0;
-  if (!t || !foi) return -1;
-  r = curl_send(t->c, buf, n, foi);
-  if (r == CURLE_AGAIN_) { *foi = 0; return 0; }
-  return r == 0 ? 0 : -1;
-}
-
-int rede_tls_enviar(RedeTls *t, const void *buf, size_t n) {
-  const unsigned char *p = (const unsigned char *)buf;
-  int voltas = 0;
-  if (!t) return -1;
-  while (n > 0) {
-    size_t foi = 0;
-    int r = curl_send(t->c, p, n, &foi);
-    if (r == CURLE_AGAIN_) {
-      // Socket cheio: espera ate 10 s no total. Websocket de presenca manda
-      // quadros de centenas de bytes; isto so acontece com a rede travada.
-      if (++voltas > 100 || tlsEsperar(t->fd, 1, 100) < 0) return -1;
-      continue;
-    }
-    if (r != 0) return -1;
-    p += foi;
-    n -= foi;
-  }
-  return 0;
-}
-
-int rede_tls_receber(RedeTls *t, void *buf, size_t n, int esperaMs) {
-  size_t veio = 0;
-  int r;
-  if (!t) return -1;
-  // recv ANTES do select: o TLS pode ter bytes ja decifrados no buffer dele, e
-  // o socket nao acusaria nada.
-  r = curl_recv(t->c, buf, n, &veio);
-  if (r == CURLE_AGAIN_ && esperaMs > 0) {
-    if (tlsEsperar(t->fd, 0, esperaMs) <= 0) return 0;
-    r = curl_recv(t->c, buf, n, &veio);
-  }
-  if (r == CURLE_AGAIN_) return 0;
-  if (r != 0) return -1;
-  return veio > 0 ? (int)veio : -1;   // 0 bytes com r == 0 = o outro lado fechou
-}
-
-void rede_tls_fechar(RedeTls *t) {
-  if (!t) return;
-  curl_cleanup(t->c);
-  free(t);
-}
-
-
-/* One response, bounded independently of the generic download TLS state. */
-typedef struct {
-  Balde body;
-  int status, valid, overflow, range_headers;
-  int64_t start, end, total, requested, limit;
-  volatile int *cancel, *urgent;
-  uint64_t progress_ms;
-  long long progress_bytes;
-  unsigned idle_ms;
-  int *stalled;
-} DtsRange;
-/* Reject values outside int64_t instead of relying on overflowing scanf. */
-static int dtsRangeNumber(const char **text, int64_t *value) {
-  const char *p = *text;
-  int64_t n = 0;
-  if (*p < '0' || *p > '9') return 0;
-  while (*p >= '0' && *p <= '9') {
-    int digit = *p++ - '0';
-    if (n > (INT64_MAX - digit) / 10) return 0;
-    n = n * 10 + digit;
-  }
-  *text = p; *value = n;
-  return 1;
-}
-/* Credential stripping must compare complete origins, never truncations. */
-static int dtsRangeOrigin(const char *url, char *origin, size_t capacity) {
-  const char *authority = strstr(url, "://");
-  size_t n;
-  if (!authority) return 0;
-  authority += 3;
-  n = (size_t)(authority - url) + strcspn(authority, "/?#");
-  if (n >= capacity) return 0;
-  memcpy(origin, url, n); origin[n] = 0;
-  return 1;
-}
-static size_t dtsRangeHeader(void *data, size_t size, size_t count, void *user) {
-  DtsRange *r = user;
-  size_t n;
-  const char *p = data;
-  char line[192];
-  if (size && count > SIZE_MAX / size) return 0;
-  n = size * count;
-  if (n > 5 && !strncasecmp(p, "HTTP/", 5)) {
-    const char *space = memchr(p, ' ', n);
-    r->status = space ? atoi(space + 1) : 0;
-    r->valid = 0; r->total = -1; r->range_headers = 0;
-  } else if (n > 14 && !strncasecmp(p, "Content-Range:", 14)) {
-    int64_t lo, hi, total = -1;
-    const char *value;
-    if (++r->range_headers > 1 || n >= sizeof line) return 0;
-    memcpy(line, p + 14, n - 14); line[n - 14] = 0;
-    value = line;
-    while (*value == ' ' || *value == '\t') value++;
-    if (strncasecmp(value, "bytes ", 6)) return n;
-    value += 6;
-    if (!dtsRangeNumber(&value, &lo) || *value != '-') return n;
-    value++;
-    if (!dtsRangeNumber(&value, &hi) || *value != '/' || hi < lo) return n;
-    value++;
-    if (*value == '*') value++;
-    else if (!dtsRangeNumber(&value, &total) || total <= hi) return n;
-    while (*value == ' ' || *value == '\t' || *value == '\r' || *value == '\n') value++;
-    if (*value) return n;
-    r->start = lo; r->end = hi; r->total = total; r->valid = 1;
-  }
-  return n;
-}
-static size_t dtsRangeBody(void *data, size_t size, size_t count, void *user) {
-  DtsRange *r = user;
-  size_t n;
-  char *next;
-  if (size && count > SIZE_MAX / size) return 0;
-  n = size * count;
-  if (r->cancel && __atomic_load_n(r->cancel, __ATOMIC_RELAXED)) return 0;
-  if (r->status >= 300 && r->status < 400) return n;
-  if (r->status != 206 || !r->valid || r->start != r->requested ||
-      r->end - r->start >= r->limit || n > (size_t)r->limit - r->body.n) {
-    r->overflow = 1; return 0;
-  }
-  if (r->body.n + n + 1 > r->body.cap) {
-    size_t cap = r->body.cap ? r->body.cap : 4096;
-    while (cap < r->body.n + n + 1) cap *= 2;
-    if (cap > (size_t)r->limit + 1) cap = (size_t)r->limit + 1;
-    next = realloc(r->body.p, cap);
-    if (!next) return 0;
-    r->body.p = next; r->body.cap = cap;
-  }
-  if (n) memcpy(r->body.p + r->body.n, data, n);
-  r->body.n += n;
-  if (r->body.p) r->body.p[r->body.n] = 0;
-  return n;
-}
-static int dtsRangeProgress(void *user, long long dt, long long dn,
-                            long long ut, long long un) {
-  DtsRange *r = user;
-  (void)dt; (void)ut; (void)un;
-  if(r->cancel && __atomic_load_n(r->cancel,__ATOMIC_RELAXED)) return 1;
-  uint64_t now=pedidoAgoraMs();
-  if(dn!=r->progress_bytes) { r->progress_bytes=dn; r->progress_ms=now; }
-  if(r->urgent && r->idle_ms && now>=r->progress_ms &&
-     now-r->progress_ms>=r->idle_ms && __atomic_load_n(r->urgent,__ATOMIC_RELAXED)) {
-    if(r->stalled) *r->stalled=1;
-    printf("[range-stall] start=%lld idleMs=%llu got=%llu\n",(long long)r->requested,
-           (unsigned long long)(now-r->progress_ms),(unsigned long long)r->body.n);
-    fflush(stdout); return 1;
-  }
-  return 0;
-}
-char *rede_range_headers(const char *raw, int public_only) {
-  char *copy, *line, *ctx = NULL;
-  size_t used = 0;
-  if (!raw) raw = "";
-  char *out = malloc(strlen(raw) + 2);
-  if (!out) return NULL;
-  copy = strdup(raw);
-  if (!copy) { free(out); return NULL; }
-  for (line = strtok_r(copy, "\n", &ctx); line; line = strtok_r(NULL, "\n", &ctx)) {
-    char *colon = strchr(line, ':');
-    size_t n = strlen(line), key;
-    if (n && line[n - 1] == '\r') line[--n] = 0;
-    if (!colon || strchr(line, '\r')) continue;
-    key = (size_t)(colon - line);
-    if ((key == 5 && !strncasecmp(line, "range", key)) ||
-        (key == 15 && !strncasecmp(line, "accept-encoding", key))) continue;
-    if (public_only && !((key == 7 && !strncasecmp(line, "referer", key)) ||
-                        (key == 10 && !strncasecmp(line, "user-agent", key)) ||
-                        (key == 6 && !strncasecmp(line, "origin", key)))) continue;
-    memcpy(out + used, line, n); used += n; out[used++] = '\n';
-  }
-  out[used] = 0;
-  free(copy);
-  return out;
-}
-static void *dtsRangeHeaders(const char *raw, int public_only) {
-  void *list = NULL;
-  char *copy = rede_range_headers(raw, public_only), *ctx = NULL;
-  if (!copy) return NULL;
-  if (slist_append) for (char *line = strtok_r(copy, "\n", &ctx); line; line = strtok_r(NULL, "\n", &ctx))
-    list = slist_append(list, line);
-  free(copy);
-  return list;
-}
-/* `final` (8192 bytes, optional) receives the address that answered 206 when
- * at least one redirect was followed, "" otherwise; `cross` says whether that
- * address is on another origin (credential headers were NOT sent to it). */
-char *rede_baixar_trecho64_vigiado(const char *url, const char *headers,
-                              int64_t start, int64_t end, long *size,
-                              int64_t *total, int *status,
-                              volatile int *cancelled, char *final, int *cross,
-                              volatile int *urgent,unsigned idle_ms,int *stalled) {
-  char current[8192], range[64], origin[128];
-  int hop, public_only = 0, downgraded = 0;
-  if(stalled) *stalled=0;
-  if (size) *size = 0;
-  if (total) *total = -1;
-  if (status) *status = 0;
-  if (final) final[0] = 0;
-  if (cross) *cross = 0;
-  if (!url || strlen(url) >= sizeof current || start < 0 || end < start ||
-      end - start >= 4 * 1024 * 1024 || !abrir()) return NULL;
-  if (strncmp(url, "http://", 7) && strncmp(url, "https://", 8)) return NULL;
-  snprintf(current, sizeof current, "%s", url);
-  if (!dtsRangeOrigin(url, origin, sizeof origin)) return NULL;
-  snprintf(range, sizeof range, "%lld-%lld", (long long)start, (long long)end);
-  for (hop = 0; hop < 6; hop++) {
-    DtsRange r;
-    void *c, *list;
-    int result;
-    long http = 0;
-    char redirected[8192] = "", *next = NULL;
-    if (cancelled && __atomic_load_n(cancelled, __ATOMIC_RELAXED)) return NULL;
-    memset(&r, 0, sizeof r);
-    r.requested = start; r.limit = end - start + 1; r.total = -1; r.cancel = cancelled;
-    r.urgent=urgent; r.idle_ms=idle_ms; r.stalled=stalled; r.progress_ms=pedidoAgoraMs();
-    c = pegarHandle(current);
-    if (!c) return NULL;
-    opcoesComuns(c, 15000);
-    /* DTS requests may carry provider credentials: always authenticate TLS,
-     * independent of the legacy generic download defaults. */
-    curl_setopt(c, OPT_SSL_VERIFYPEER, (long)1);
-    curl_setopt(c, OPT_SSL_VERIFYHOST, (long)2);
-    if (discordCa[0]) curl_setopt(c, OPT_CAINFO, discordCa);
-    curl_setopt(c, OPT_URL, current);
-    curl_setopt(c, OPT_RANGE, range);
-    curl_setopt(c, OPT_FOLLOWLOCATION, (long)0);
-    curl_setopt(c, OPT_WRITEFUNCTION, dtsRangeBody);
-    curl_setopt(c, OPT_WRITEDATA, &r);
-    curl_setopt(c, OPT_HEADERFUNCTION, dtsRangeHeader);
-    curl_setopt(c, OPT_HEADERDATA, &r);
-    curl_setopt(c, OPT_XFERINFOFUNCTION, dtsRangeProgress);
-    curl_setopt(c, OPT_XFERINFODATA, &r);
-    curl_setopt(c, OPT_NOPROGRESS, (long)0);
-    list = downgraded ? NULL : dtsRangeHeaders(headers, public_only);
-    if (list) curl_setopt(c, OPT_HTTPHEADER, list);
-    result = performTmdb(c, url);
-    if (curl_getinfo) {
-      curl_getinfo(c, INFO_RESPONSE_CODE, &http);
-      /* CURLINFO_REDIRECT_URL resolves relative Location without following it. */
-      curl_getinfo(c, 1048607, &next);
-      if (next && strlen(next) < sizeof redirected)
-        snprintf(redirected, sizeof redirected, "%s", next);
-    }
-    if (status) *status = (int)http;
-    if (list && slist_free) slist_free(list);
-    soltarHandleR(c, result, current);
-    if (!result && http >= 300 && http < 400 && redirected[0]) {
-      char host[128];
-      free(r.body.p);
-      if (strncmp(redirected, "http://", 7) && strncmp(redirected, "https://", 8)) return NULL;
-      if (!dtsRangeOrigin(redirected, host, sizeof host)) return NULL;
-      if (strcmp(host, origin)) public_only = 1;
-      /* HTTPS -> HTTP: followed (debrid CDNs answer on plain HTTP: Real-Debrid
-       * via Debridio, where the TV's own player plays), but NO caller header
-       * goes to the downgraded hop or anything after it: not credentials, not
-       * even Referer/User-Agent/Origin. Only the URL travels. */
-      if (!strncmp(current, "https://", 8) && !strncmp(redirected, "http://", 7)) {
-        static int logged;
-        downgraded = public_only = 1;
-        if (!logged) {
-          logged = 1;
-          printf("[rede] range: HTTPS redirect to HTTP followed without request headers\n");
-          fflush(stdout);
-        }
-      }
-      snprintf(current, sizeof current, "%s", redirected);
-      continue;
-    }
-    if (!result && http == 206 && r.valid && !r.overflow &&
-        r.start == start && r.end <= end && r.body.n &&
-        (uint64_t)(r.end - r.start + 1) == r.body.n) {
-      if (size) *size = (long)r.body.n;
-      if (total) *total = r.total;
-      if (final && hop > 0) snprintf(final, 8192, "%s", current);
-      if (cross) *cross = downgraded ? 2 : public_only;
-      return baldeFinal(&r.body);
-    }
-    /* Numeric only: identify failed interval, response validation and discarded
-     * partial bytes without exposing URL, request headers or response payload. */
-    if(!cancelled || !__atomic_load_n(cancelled,__ATOMIC_RELAXED)) {
-      printf("[range-http] start=%lld end=%lld curl=%d http=%ld got=%llu "
-             "valid=%d overflow=%d responseStart=%lld responseEnd=%lld total=%lld\n",
-             (long long)start,(long long)end,result,http,(unsigned long long)r.body.n,
-             r.valid,r.overflow,(long long)r.start,(long long)r.end,(long long)r.total);
-      fflush(stdout);
-    }
-    free(r.body.p);
-    return NULL;
-  }
-  return NULL;
-}
-char *rede_baixar_trecho64_final(const char *url,const char *headers,
-                              int64_t start,int64_t end,long *size,
-                              int64_t *total,int *status,
-                              volatile int *cancelled,char *final,int *cross) {
-  return rede_baixar_trecho64_vigiado(url,headers,start,end,size,total,status,cancelled,
-                                    final,cross,NULL,0,NULL);
-}
-char *rede_baixar_trecho64_cab(const char *url, const char *headers,
-                              int64_t start, int64_t end, long *size,
-                              int64_t *total, int *status,
-                              volatile int *cancelled) {
-  return rede_baixar_trecho64_final(url, headers, start, end, size, total, status, cancelled, NULL, NULL);
-}
-
-/* ONE LONG READ, LIKE THE TV'S OWN PLAYER (Samsung DTS/TrueHD converter).
- *
- * The ranged reader above asks 4 MiB at a time from up to 4 lanes. A 4K remux
- * at 60-67 Mbit/s is then ~2 requests a second on 4 connections, and TorBox's
- * CDN throttled it after about a minute and refused every connection after
- * (S95C, 13/10/2026), while the TV's player streaming the same file over one
- * connection never dropped. This asks "bytes=start-" once and hands the body
- * to `sink` as it arrives. The sink may block (backpressure: the converter is
- * paced by the TV); time spent inside it does not count as a stall. */
-typedef struct {
-  DtsRange r;
-  int (*sink)(void *, const char *, size_t);
-  void *opaque;
-  int stopped, accepted;
-  int64_t got;
-  uint64_t lastByteMs;
-  long stallMs;
-} DtsFluxo;
-static uint64_t fluxoAgoraMs(void) {
-  struct timespec t;
-  clock_gettime(CLOCK_MONOTONIC, &t);
-  return (uint64_t)t.tv_sec * 1000u + (uint64_t)t.tv_nsec / 1000000u;
-}
-static size_t dtsFluxoBody(void *data, size_t size, size_t count, void *user) {
-  DtsFluxo *f = user;
-  size_t n;
-  if (size && count > SIZE_MAX / size) return 0;
-  n = size * count;
-  if (f->r.cancel && __atomic_load_n(f->r.cancel, __ATOMIC_RELAXED)) return 0;
-  if (f->r.status >= 300 && f->r.status < 400) return n;
-  if (!f->accepted) {
-    /* 206 starting exactly where asked; a 200 is the whole file, usable only
-     * when the request was for byte 0 (some origins ignore Range). */
-    if (f->r.status == 206 && f->r.valid && f->r.start == f->r.requested) f->accepted = 1;
-    else if (f->r.status == 200 && f->r.requested == 0) f->accepted = 1;
-    else { f->r.overflow = 1; return 0; }
-  }
-  if (!f->sink(f->opaque, data, n)) { f->stopped = 1; return 0; }
-  f->got += (int64_t)n;
-  f->lastByteMs = fluxoAgoraMs();
-  return n;
-}
-static int dtsFluxoProgress(void *user, long long dt, long long dn, long long ut, long long un) {
-  DtsFluxo *f = user;
-  (void)dt; (void)dn; (void)ut; (void)un;
-  if (f->r.cancel && __atomic_load_n(f->r.cancel, __ATOMIC_RELAXED)) return 1;
-  return f->stallMs > 0 && fluxoAgoraMs() - f->lastByteMs > (uint64_t)f->stallMs;
-}
-int rede_fluxo64(const char *url, const char *headers, int64_t start,
-                 int (*sink)(void *opaque, const char *data, size_t n), void *opaque,
-                 int64_t *total, int *status, volatile int *cancelled,
-                 char *final, int *cross, long stall_ms, int64_t *bytes) {
-  char current[8192], range[48], origin[128];
-  int hop, public_only = 0, downgraded = 0;
-  if (total) *total = -1;
-  if (status) *status = 0;
-  if (final) final[0] = 0;
-  if (cross) *cross = 0;
-  if (bytes) *bytes = 0;
-  if (!url || !sink || strlen(url) >= sizeof current || start < 0 || !abrir()) return -1;
-  if (strncmp(url, "http://", 7) && strncmp(url, "https://", 8)) return -1;
-  snprintf(current, sizeof current, "%s", url);
-  if (!dtsRangeOrigin(url, origin, sizeof origin)) return -1;
-  snprintf(range, sizeof range, "%lld-", (long long)start);
-  for (hop = 0; hop < 6; hop++) {
-    DtsFluxo f;
-    void *c, *list;
-    int result;
-    long http = 0;
-    char redirected[8192] = "", *next = NULL;
-    if (cancelled && __atomic_load_n(cancelled, __ATOMIC_RELAXED)) return -1;
-    memset(&f, 0, sizeof f);
-    f.r.requested = start; f.r.total = -1; f.r.cancel = cancelled;
-    f.sink = sink; f.opaque = opaque; f.stallMs = stall_ms; f.lastByteMs = fluxoAgoraMs();
-    c = pegarHandle(current);
-    if (!c) return -1;
-    opcoesComuns(c, 15000);                 /* connect deadline from here...      */
-    curl_setopt(c, OPT_TIMEOUT_MS, (long)0); /* ...but no limit on the whole body */
-    curl_setopt(c, OPT_SSL_VERIFYPEER, (long)1);
-    curl_setopt(c, OPT_SSL_VERIFYHOST, (long)2);
-    if (discordCa[0]) curl_setopt(c, OPT_CAINFO, discordCa);
-    curl_setopt(c, OPT_URL, current);
-    curl_setopt(c, OPT_RANGE, range);
-    curl_setopt(c, OPT_FOLLOWLOCATION, (long)0);
-    curl_setopt(c, OPT_WRITEFUNCTION, dtsFluxoBody);
-    curl_setopt(c, OPT_WRITEDATA, &f);
-    curl_setopt(c, OPT_HEADERFUNCTION, dtsRangeHeader);
-    curl_setopt(c, OPT_HEADERDATA, &f.r);
-    curl_setopt(c, OPT_XFERINFOFUNCTION, dtsFluxoProgress);
-    curl_setopt(c, OPT_XFERINFODATA, &f);
-    curl_setopt(c, OPT_NOPROGRESS, (long)0);
-    list = downgraded ? NULL : dtsRangeHeaders(headers, public_only);
-    if (list) curl_setopt(c, OPT_HTTPHEADER, list);
-    result = performTmdb(c, url);
-    if (curl_getinfo) {
-      curl_getinfo(c, INFO_RESPONSE_CODE, &http);
-      curl_getinfo(c, 1048607, &next);
-      if (next && strlen(next) < sizeof redirected)
-        snprintf(redirected, sizeof redirected, "%s", next);
-    }
-    if (status) *status = (int)http;
-    if (list && slist_free) slist_free(list);
-    soltarHandleR(c, result, current);
-    if (bytes) *bytes = f.got;
-    if (f.r.total >= 0 && total) *total = f.r.total;
-    if (!result && http >= 300 && http < 400 && redirected[0]) {
-      char host[128];
-      if (strncmp(redirected, "http://", 7) && strncmp(redirected, "https://", 8)) return -1;
-      if (!dtsRangeOrigin(redirected, host, sizeof host)) return -1;
-      if (strcmp(host, origin)) public_only = 1;
-      if (!strncmp(current, "https://", 8) && !strncmp(redirected, "http://", 7)) downgraded = public_only = 1;
-      snprintf(current, sizeof current, "%s", redirected);
-      continue;
-    }
-    if (f.accepted) {
-      if (final && hop > 0) snprintf(final, 8192, "%s", current);
-      if (cross) *cross = downgraded ? 2 : public_only;
-    }
-    if (f.stopped) return 1;                 /* the sink asked to stop */
-    if (!result && f.accepted) return 0;     /* body ended (EOF or a capped range) */
-    return -1;                               /* error: status/curl, bytes so far in *bytes */
-  }
-  return -1;
-}
-
-
-// #382: o resolvedor da TV falha por minutos depois do boot ("Resolving timed out").
-// Falha de transporte (status 0) tenta de novo com espera crescente; resposta
-// HTTP, ou tentativa que gastou o prazo inteiro, encerra.
 #ifndef REDE_POST_ESPERA_MS
 #define REDE_POST_ESPERA_MS 1000
 #endif

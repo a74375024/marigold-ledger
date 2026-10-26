@@ -305,7 +305,7 @@ int rede_pedir(const RedePedido *p, RedeResposta *r) {
       PEDIDO_OPT(OPT_SSL_VERIFYPEER, pessoal ? 0L : 1L);
       PEDIDO_OPT(OPT_SSL_VERIFYHOST, pessoal ? 0L : 2L);
     }
-    if (p->ca_arquivo || discordCa[0]) PEDIDO_OPT(OPT_CAINFO, p->ca_arquivo ? p->ca_arquivo : discordCa);
+    if (p->ca_arquivo || caBundle[0]) PEDIDO_OPT(OPT_CAINFO, p->ca_arquivo ? p->ca_arquivo : caBundle);
     PEDIDO_OPT(OPT_USERAGENT, "Nuvio/1.8");
     /* Media diagnostics measure the player's wire body, without transparent
      * gzip inflation. Buffered requests retain negotiated decompression. */
@@ -332,7 +332,7 @@ int rede_pedir(const RedePedido *p, RedeResposta *r) {
 #undef PEDIDO_OPT
     strcpy(r->final, url);
     rede_url_publica(url, r->host, sizeof r->host);
-    r->curl_erro = performTmdb(curl, url);
+    r->curl_erro = curl_perform(curl);
     { char *final = NULL;
       if (!curl_getinfo(curl, INFO_URL_FINAL, &final) && final)
         snprintf(r->final, sizeof r->final, "%s", final);

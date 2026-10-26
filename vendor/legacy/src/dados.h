@@ -13,7 +13,9 @@
 // escrever de verdade em cada candidato e registra no log qual venceu.
 #ifndef NV_DADOS_H
 #define NV_DADOS_H
-
+#ifdef __cplusplus
+extern "C" {
+#endif
 // Escolhe a pasta. `dirArte` entra como ULTIMO recurso (e o comportamento de
 // hoje, e e melhor que nao gravar nada). Chamar uma vez, no arranque.
 void dados_iniciar(const char *dirArte);
@@ -119,6 +121,9 @@ void dados_despedida_fim(void);
 // com teto de 3 s. Chamar no fim de main, no lugar do exit direto.
 void dados_descarregar_e_sair(void);
 
+#ifdef __cplusplus
+}
+#endif
 #endif
 
 // Indica backend configurado: IDBFS montado no Tizen; nos alvos nativos,
