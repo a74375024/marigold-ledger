@@ -6,6 +6,7 @@
 
 #include "core/guide/names.hpp"
 #include "core/sports/matcher.hpp"
+#include "core/sports/player_photos.hpp"
 #include "core/sports/text.hpp"
 
 namespace marigold::sports::board {
@@ -751,6 +752,19 @@ SideLine sideLine(const SportsTeam& team, bool soccer, bool home, const std::opt
   return line;
 }
 
+// A tennis side's photo (PlayerPhotoView): doubles get no single face; the
+// saved photo, its small size first; the initials of the first two words.
+void addPhoto(SideLine& line, const std::function<std::optional<std::string>(std::string_view)>& playerPhoto) {
+  const std::string& name = line.fullName;
+  line.doubles = name.find('/') != std::string::npos;
+  std::vector<std::string> words = text::words(name);
+  line.initials.clear();
+  for (size_t i = 0; i < words.size() && i < 2; ++i) line.initials += text::firstCharacter(words[i]);
+  if (line.doubles || !playerPhoto) return;
+  line.photoUrl = playerPhoto(name);
+  if (line.photoUrl) line.photoSmallUrl = player_photos::PlayerPhotos::smallUrl(*line.photoUrl);
+}
+
 // 0 when the top line leads, 1 when the bottom does, nil when level or unknown.
 std::optional<int> leader(const std::optional<std::string>& top, const std::optional<std::string>& bottom) {
   if (!top || !bottom) return std::nullopt;
@@ -890,6 +904,9 @@ Tile makeTile(const SportsEvent& event, const Place& place, const std::string& r
                                   place.possessionTop == true, place.topSets, place.photos));
     tile.sides.push_back(sideLine(*place.bottom, soccer, place.homeIsTop == false, place.bottomScore, bottomLeads,
                                   place.possessionTop == false, place.bottomSets, place.photos));
+    if (place.photos) {
+      for (SideLine& line : tile.sides) addPhoto(line, ctx.in.playerPhoto);
+    }
   } else {
     tile.layout = Tile::Layout::plain;
   }
