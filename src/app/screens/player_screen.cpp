@@ -127,6 +127,10 @@ class PlayerScreen : public Screen {
     Playback& p = app_.playback();
     auto ch = app_.store().channels();
     const GuideChannel* g = ch->find(p.entry());
+    if (!g) {
+      // A game: show the channel it plays on.
+      if (!p.feeds().empty()) g = ch->find(app_.store().entryOfChannel(p.feeds()[std::min(p.feedIndex(), p.feeds().size() - 1)].channelId));
+    }
     if (p.ready() && !p.failed()) {
       c.g.hole({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight});
     } else {
@@ -155,6 +159,16 @@ class PlayerScreen : public Screen {
   }
   void flipped(const std::string& id) {
     if (id.empty()) return;
+    // Games: "2 / 5 · Rams at Seahawks".
+    if (app_.store().isEvent(id)) {
+      const std::vector<std::string>& list = app_.playback().flipList();
+      auto it = std::find(list.begin(), list.end(), id);
+      const EventTile* t = app_.store().eventTile(id);
+      if (it != list.end() && t)
+        app_.toast(std::to_string(it - list.begin() + 1) + " / " + std::to_string(list.size()) + " \xc2\xb7 " +
+                       (t->heroTitle.empty() ? t->title : t->heroTitle),
+                   true);
+    }
     showBanner();
     bannerFrom_ = app_.ms() + kBannerDelayMs;
     bannerUntil_ = bannerFrom_ + kBannerMs;

@@ -60,6 +60,44 @@ std::unique_ptr<Screen> makeOptions(App& app) {
     };
     p.items.push_back(fill);
 
+    p.items.push_back(ui::PanelItem::header("LIVE EVENTS"));
+    ui::PanelItem sports{ui::PanelItem::Kind::Chevron, "My Sports"};
+    sports.select = [&app] { app.nav().push(makeMySports(app)); };
+    p.items.push_back(sports);
+    ui::PanelItem schedule{ui::PanelItem::Kind::Toggle, "Game schedule"};
+    schedule.detail = "This week's games and where to watch them";
+    schedule.on = set.scheduleEnabled;
+    schedule.select = [&app] {
+      Settings n = app.store().settings();
+      n.scheduleEnabled = !n.scheduleEnabled;
+      app.store().setSettings(n);
+    };
+    p.items.push_back(schedule);
+    if (set.scheduleEnabled) {
+      ui::PanelItem refresh{ui::PanelItem::Kind::Action, "Refresh schedule"};
+      refresh.select = [&app] {
+        app.store().refreshSchedule();
+        app.toast("Refreshing the schedule");
+      };
+      p.items.push_back(refresh);
+      ui::PanelItem unwatchable{ui::PanelItem::Kind::Toggle, "Games not in my channels"};
+      unwatchable.on = set.showUnwatchable;
+      unwatchable.select = [&app] {
+        Settings n = app.store().settings();
+        n.showUnwatchable = !n.showUnwatchable;
+        app.store().setSettings(n);
+      };
+      p.items.push_back(unwatchable);
+      ui::PanelItem scores{ui::PanelItem::Kind::Toggle, "Show scores"};
+      scores.on = set.showScores;
+      scores.select = [&app] {
+        Settings n = app.store().settings();
+        n.showScores = !n.showScores;
+        app.store().setSettings(n);
+      };
+      p.items.push_back(scores);
+    }
+
     bool anyXtream = false;
     for (const AccountSummary& a : accounts) anyXtream = anyXtream || a.kind == "Xtream";
     if (anyXtream) {

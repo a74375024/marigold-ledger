@@ -3,6 +3,7 @@
 // except the lambdas handed to pool().post() / afterTransfer / onChunk,
 // which only touch what they captured (by value or shared_ptr).
 #include "app/store/store.hpp"
+#include "app/store/store_impl.hpp"
 
 #include <sys/stat.h>
 #include <unistd.h>
@@ -147,75 +148,6 @@ bool writeFileAtomic(const std::string& path, const std::string& data, bool secr
 
 }  // namespace
 
-struct Store::Impl {
-  enum class GuideState : uint8_t { None, Loading, Loaded, Failed };
-
-  struct AccountRun {
-    std::string state = "Not loaded yet";
-    std::vector<std::string> formats;  // Xtream allowed_output_formats
-  };
-
-  // Persisted.
-  std::vector<sources::Account> accounts;
-  std::set<std::string> favorites;   // entry ids (Xtream and M3U have no favorites API)
-  std::vector<std::string> recents;  // entry ids, newest first
-  std::map<std::string, std::string> pinned;  // entry id -> raw channel id
-  std::map<std::string, std::vector<int>> reliability;  // source tag -> {worked, failed}
-  catalog::LineupPrefs prefs;
-
-  std::map<std::string, AccountRun> runs;  // by source id ("xt:..")
-  // M3U links and headers by raw channel id. Secret: memory and a 0600 file.
-  std::unordered_map<std::string, sources::m3u::StreamInfo> m3uStreams;
-
-  // Catalog.
-  std::shared_ptr<const std::vector<Channel>> channels = std::make_shared<std::vector<Channel>>();
-  std::unordered_map<std::string, size_t> indexByID;
-  std::shared_ptr<const CatalogResult> catalog = std::make_shared<CatalogResult>();
-  std::unordered_map<std::string, size_t> entryInfo;  // entry id -> catalog->entries index
-  catalog::LineupOutput lineup;
-  bool partial = false;
-  time::Seconds channelsLoadedAt = 0;
-  bool loading = false;
-  uint64_t generation = 1;   // bumps when accounts change
-  uint64_t rebuildGeneration = 0;
-  std::string signature;
-  uint32_t lineupRefreshAt = 0;
-
-  // Guide.
-  std::unordered_map<std::string, std::vector<Program>> serverPrograms;  // short EPG / Emby
-  guide::ProgramsById providerMatches;
-  guide::ProgramsById outsideMatches;
-  std::unordered_map<std::string, std::vector<Program>> programs;  // raw and entry ids
-  std::unordered_map<std::string, GuideState> guideState;
-  std::unordered_map<std::string, time::Seconds> guideWindowByChannel;
-  std::unordered_map<std::string, std::string> entryGuideKeys;
-  std::vector<std::string> pendingGuide;
-  std::unordered_set<std::string> pendingGuideSet;
-  std::vector<std::string> recentlyRequested;
-  int activeGuideFetches = 0;
-  uint32_t guideFlushAt = 0;
-  time::Seconds guideWindowStart = 0;
-  uint64_t listingsGeneration = 0;
-  std::unordered_set<std::string> touchedListings;
-
-  bool providerRunning = false, outsideRunning = false;
-  uint32_t providerAt = 0, outsideAt = 0;  // scheduled start (ms), 0 = none
-  bool providerForce = false, outsideForce = false;
-  std::map<std::string, guide::provider::Saved> providerSaved;  // by cache key
-  std::optional<guide::Saved> outsideSaved;
-  bool savedListingsRead = false;
-  std::string guideLine;  // status line of a running guide job
-  std::vector<catalog::markets::Market> tvMarkets;  // last list loaded for the setup
-
-  // Shared with workers.
-  std::shared_ptr<std::atomic<bool>> playingFull = std::make_shared<std::atomic<bool>>(false);
-  std::shared_ptr<std::atomic<bool>> stopJobs = std::make_shared<std::atomic<bool>>(false);
-
-  uint64_t publishVersion = 0;
-  bool channelsDirty = false, listingsDirty = false;
-  std::unordered_set<std::string> dirtyEntries;  // entry ids whose listings changed
-  bool allListingsDirty = false;
-};
 
 // ------------------------------------------------------------ persistence
 
@@ -251,6 +183,9 @@ Store::Store(App& app) : app_(app), impl_(std::make_unique<Impl>()) {
       settings_.allChannelsTab = (*v)["allChannelsTab"].asBool(false);
       settings_.preferTS = (*v)["preferTS"].asBool(true);
       settings_.fillMissingListings = (*v)["fillMissingListings"].asBool(true);
+      settings_.scheduleEnabled = (*v)["scheduleEnabled"].asBool(true);
+      settings_.showUnwatchable = (*v)["showUnwatchable"].asBool(true);
+      settings_.showScores = (*v)["showScores"].asBool(true);
     }
   }
   if (auto text = st.read(kListsFile)) {
@@ -280,6 +215,7 @@ Store::Store(App& app) : app_(app), impl_(std::make_unique<Impl>()) {
     if (settings_.preferTS) a.preferTS = true;
     m.runs[a.sourceId()];
   }
+  loadEvents();
   MLOG_I("store", "%zu provider(s)", m.accounts.size());
   if (m.accounts.empty()) {
     status_.phase = StoreStatus::Phase::NoAccounts;
@@ -342,6 +278,10 @@ void Store::setSettings(const Settings& s) {
   v.set("allChannelsTab", s.allChannelsTab);
   v.set("preferTS", s.preferTS);
   v.set("fillMissingListings", s.fillMissingListings);
+  v.set("scheduleEnabled", s.scheduleEnabled);
+  v.set("showUnwatchable", s.showUnwatchable);
+  v.set("showScores", s.showScores);
+  impl_->ev.boardDirty = true;
   app_.storage().write(kSettingsFile, json::write(v, true));
   if (tsChanged) {
     for (sources::Account& a : impl_->accounts) a.preferTS = s.preferTS;
@@ -614,19 +554,7 @@ void Store::installSaved(catalog::cache::Saved saved, bool partial) {
   startGuides(true);
 }
 
-struct OpenStream {
-  std::shared_ptr<sources::emby::Client> client;
-  sources::emby::Stream stream;
-};
 
-struct Fetched {
-  std::vector<Channel> channels;
-  std::unordered_map<std::string, sources::m3u::StreamInfo> streams;
-  std::vector<std::string> formats;
-  std::optional<sources::Account> updated;
-  std::string problem;
-  bool done = false;
-};
 
 void Store::downloadChannels(uint64_t gen) {
   Impl& m = *impl_;
@@ -852,6 +780,7 @@ void Store::installCatalog(std::shared_ptr<const std::vector<Channel>> list, std
   for (size_t i = 0; i < m.channels->size(); ++i) m.indexByID.emplace((*m.channels)[i].id, i);
   m.entryInfo.clear();
   for (size_t i = 0; i < m.catalog->entries.size(); ++i) m.entryInfo.emplace(m.catalog->entries[i].id, i);
+  ++m.catalogRevision;
   rebuildEntries();
 }
 
@@ -923,6 +852,7 @@ void Store::rebuildEntries() {
                    [this, gen, generation, out] {
                      if (gen != impl_->generation || generation != impl_->rebuildGeneration) return;
                      impl_->lineup = std::move(*out);
+                     ++impl_->lineupRevision;
                      impl_->channelsDirty = true;
                      // Entry guides from whatever member data is already here.
                      std::vector<std::string> ids;
@@ -1925,35 +1855,46 @@ void Store::runOutsideGuide() {
 
 // ------------------------------------------------------------ playback
 
-std::vector<Feed> Store::feeds(const std::string& entryId) const {
-  const Impl& m = *impl_;
-  std::vector<std::string> members;
-  auto info = m.entryInfo.find(entryId);
-  if (info != m.entryInfo.end()) members = m.catalog->entries[info->second].members;
-  else if (m.indexByID.count(entryId)) members = {entryId};
-  // Reliable sources move up; a pinned version always goes first.
-  auto score = [&](const std::string& id) {
-    auto t = m.catalog->traits.find(id);
-    std::string tag = t == m.catalog->traits.end() ? "" : t->second.sourceTag;
-    auto r = m.reliability.find(tag);
-    int ok = r == m.reliability.end() ? 0 : r->second[0], bad = r == m.reliability.end() ? 0 : r->second[1];
-    return static_cast<double>(ok + 1) / static_cast<double>(ok + bad + 2);
-  };
-  std::vector<std::pair<size_t, std::string>> order;
-  for (size_t i = 0; i < members.size(); ++i) order.push_back({i, members[i]});
-  std::stable_sort(order.begin(), order.end(), [&](const auto& a, const auto& b) {
-    double sa = score(a.second), sb = score(b.second);
-    if (std::abs(sa - sb) > 0.25) return sa > sb;
-    return a.first < b.first;
-  });
-  members.clear();
-  for (auto& [i, id] : order) members.push_back(id);
-  auto pin = m.pinned.find(entryId);
-  if (pin != m.pinned.end()) {
-    auto it = std::find(members.begin(), members.end(), pin->second);
-    if (it != members.end()) std::rotate(members.begin(), it, it + 1);
-  }
+std::string Store::entryOfChannel(const std::string& channelId) const {
+  auto it = impl_->catalog->entryOf.find(channelId);
+  return it == impl_->catalog->entryOf.end() ? std::string() : it->second;
+}
 
+double Store::reliabilityOf(const std::string& channelId) const {
+  const Impl& m = *impl_;
+  auto t = m.catalog->traits.find(channelId);
+  std::string tag = t == m.catalog->traits.end() ? "" : t->second.sourceTag;
+  auto r = m.reliability.find(tag);
+  int ok = r == m.reliability.end() || r->second.size() < 2 ? 0 : r->second[0];
+  int bad = r == m.reliability.end() || r->second.size() < 2 ? 0 : r->second[1];
+  return static_cast<double>(ok + 1) / static_cast<double>(ok + bad + 2);
+}
+
+std::vector<std::string> Store::versionsOf(const std::string& id) const {
+  // An entry's own versions, best first, the pinned one first; a raw
+  // channel alone (sports::store::baseVersions, LiveTVStore.baseVersions).
+  const Impl& m = *impl_;
+  auto info = m.entryInfo.find(id);
+  const EntryInfo* ei = info == m.entryInfo.end() ? nullptr : &m.catalog->entries[info->second];
+  auto pin = m.pinned.find(id);
+  std::optional<std::string> pinned;
+  if (pin != m.pinned.end()) pinned = pin->second;
+  return sports::store::baseVersions(
+      id, ei, pinned, [this](const std::string& c) { return reliabilityOf(c); },
+      [&m](const std::string& c) { return m.indexByID.count(c) > 0; });
+}
+
+std::vector<Feed> Store::feeds(const std::string& entryId) const {
+  if (isEvent(entryId)) return eventFeeds(entryId, "");
+  std::vector<std::string> members = versionsOf(entryId);
+  // A game on now on this channel: its provider feeds back it up.
+  for (const std::string& f : eventBackups(entryId))
+    if (std::find(members.begin(), members.end(), f) == members.end()) members.push_back(f);
+  return feedsFor(members);
+}
+
+std::vector<Feed> Store::feedsFor(const std::vector<std::string>& members) const {
+  const Impl& m = *impl_;
   std::vector<Feed> out;
   for (const std::string& id : members) {
     auto ci = m.indexByID.find(id);
@@ -2204,6 +2145,8 @@ void Store::publishListings() {
 
 bool Store::tick(uint32_t ms) {
   Impl& m = *impl_;
+  uint64_t eventsVersion = events_->version;
+  eventsTick(ms);
   *m.playingFull = app_.playback().active() && app_.playback().full();
   if (m.guideFlushAt && ms >= m.guideFlushAt) {
     m.guideFlushAt = 0;
@@ -2235,7 +2178,7 @@ bool Store::tick(uint32_t ms) {
       load(true);
     }
   }
-  bool changed = false;
+  bool changed = events_->version != eventsVersion;
   if (m.channelsDirty) {
     m.channelsDirty = false;
     publishChannels();

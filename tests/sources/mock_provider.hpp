@@ -80,9 +80,9 @@ class Provider {
                                       "Channel 4", "TNT Sports 1"};
     static const char* const kMX[] = {"Canal 5", "Las Estrellas", "TUDN", "Azteca 7", "ESPN M\xC3\xA9xico"};
     static const char* const kOther[] = {"FR: TF1", "DE| Das Erste", "[PT] RTP 1", "FR: France 2", "DE| ZDF",
-                                         "[PT] SIC Not\xC3\xAD" "cias"};
+                                         "[PT] SIC Not\u00EDcias"};
     static const char* const kOtherCat[] = {"16", "17", "18", "16", "17", "18"};
-    static const char* const kRadio[] = {"Jazz FM", "Classic Rock 101", "News Talk 880", "R\xC3\xA1" "dio Cl\xC3\xA1ssica"};
+    static const char* const kRadio[] = {"Jazz FM", "Classic Rock 101", "News Talk 880", "R\u00E1dio Cl\u00E1ssica"};
     static const char* const kSeparators[] = {"##### SPORTS #####", "#### NEWS ####", "===== MOVIES =====",
                                               "##### US LOCALS #####"};
 

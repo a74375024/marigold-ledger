@@ -258,6 +258,18 @@ class EventsBoardScreen : public Screen {
   }
 
   void select(const EventTile& t) {
+    // An event channel family: its first feed, Up/Down surfs the others.
+    if (row_ < static_cast<int>(board_->rows.size()) && board_->rows[static_cast<size_t>(row_)].families) {
+      std::vector<std::string> feeds = app_.store().familyFeeds(t.id);
+      Playback& p = app_.playback();
+      if (feeds.empty() || !p.tune(feeds.front(), feeds)) {
+        app_.toast("No feeds in this family right now");
+        return;
+      }
+      p.setFull();
+      app_.nav().push(makePlayer(app_));
+      return;
+    }
     // Live, likely over or untimed with somewhere to watch: play. Otherwise
     // the detail card.
     if (t.watchable && !t.upcoming && !t.finished) {

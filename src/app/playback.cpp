@@ -30,12 +30,20 @@ Playback::Playback(App& app) : app_(app) {
   if (!proxy_.start()) MLOG_W("play", "TS proxy unavailable; HLS feeds play directly");
 }
 
+void Playback::rememberGame() {
+  // Leaving or switching a game: its source starts it next time (6 h).
+  if (entry_.empty() || feeds_.empty() || !app_.store().isEvent(entry_)) return;
+  size_t i = rec_.feedIndex();
+  if (i < feeds_.size()) app_.store().noteEventFeed(entry_, feeds_[i].channelId, ready());
+}
+
 bool Playback::begin(const std::string& entryId, std::vector<Feed> feeds, const std::vector<std::string>& flip) {
   if (!flip.empty()) flip_ = flip;
   if (feeds.empty()) {
     MLOG_W("play", "no feeds for this channel");
     return false;
   }
+  rememberGame();
   entry_ = entryId;
   feeds_ = std::move(feeds);
   failMessage_.clear();
@@ -65,6 +73,7 @@ bool Playback::useFeed(size_t index) {
 
 void Playback::stop() {
   if (entry_.empty()) return;
+  rememberGame();
   apply(rec_.stop(app_.ms()));
   app_.video().stop();
   app_.store().closeStream();

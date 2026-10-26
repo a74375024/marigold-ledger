@@ -70,6 +70,7 @@ class Playback {
   void apply(const playback::Actions& actions);
   void playFeed(size_t feed, uint64_t token);
   void watched();
+  void rememberGame();
   gfx::Rect window() const;
   void scheduleReapply();
 

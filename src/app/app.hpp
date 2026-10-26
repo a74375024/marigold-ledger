@@ -72,6 +72,7 @@ class App {
   void frame();
   void suspend();
   void drawToast(ui::Ctx& c);
+  void drawReminder(ui::Ctx& c);
 
   platform::Window& window_;
   platform::Storage& storage_;
