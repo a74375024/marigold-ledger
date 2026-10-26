@@ -1,0 +1,1310 @@
+#include "core/sports/matcher.hpp"
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstdlib>
+#include <unordered_set>
+
+#include "core/catalog/catalog.hpp"
+#include "core/guide/names.hpp"
+#include "core/sports/network_map.hpp"
+#include "core/sports/text.hpp"
+
+namespace marigold::sports::matcher {
+
+namespace {
+
+constexpr const char* kProviderDetail = "Provider event channel";
+
+bool has(std::string_view hay, std::string_view needle) { return hay.find(needle) != std::string_view::npos; }
+
+std::vector<std::string> splitWords(const std::string& normalizedText) { return text::words(normalizedText); }
+
+std::string trimmed(const std::string& s) { return std::string(str::trimUnicode(s)); }
+
+EventSource providerSource(const std::string& feed, bool spanish) {
+  EventSource s;
+  s.channelID = feed;
+  s.kind = EventSource::Kind::provider;
+  s.spanish = spanish;
+  s.detail = kProviderDetail;
+  return s;
+}
+
+bool containsSource(const std::vector<EventSource>& list, const std::string& id) {
+  return std::any_of(list.begin(), list.end(), [&](const EventSource& s) { return s.channelID == id; });
+}
+
+void addFeeds(SportsEvent& value, const ProviderEvent& event) {
+  for (const std::string& feed : event.feeds) {
+    if (!containsSource(value.sources, feed)) value.sources.push_back(providerSource(feed, event.spanish));
+  }
+}
+
+const std::set<std::string>& genericWords() {
+  static const std::set<std::string> kWords = {
+      "fc",   "cf",  "sc",  "afc", "club", "city",     "united", "the",       "team", "state",
+      "university", "college", "real", "athletic", "sporting", "new", "san", "los", "las", "st"};
+  return kWords;
+}
+
+bool sameLeague(const std::string& league, const SportsGame& game) {
+  if (league.empty() || league == "Other") return false;
+  if (league == game.league) return true;
+  auto it = sportFamilies().find(league);
+  return it != sportFamilies().end() && it->second.count(game.league) > 0;
+}
+
+bool compatible(const std::string& league, const SportsGame& game) {
+  if (league.empty() || league == "Other" || league == game.league) return true;
+  auto it = sportFamilies().find(league);
+  return it != sportFamilies().end() && it->second.count(game.league) > 0;
+}
+
+SportsEvent plainEvent(const ProviderEvent& event) {
+  SportsEvent e;
+  e.id = event.id;
+  e.title = event.title;
+  e.league = event.league;
+  e.leagueShort = shortLeague(event.league);
+  e.start = event.start;
+  for (const std::string& feed : event.feeds) e.sources.push_back(providerSource(feed, event.spanish));
+  e.family = event.family;
+  return e;
+}
+
+bool closeEnough(std::optional<Seconds> a, std::optional<Seconds> b) {
+  if (!a || !b) return true;
+  return std::llabs(*a - *b) <= 90 * 60;
+}
+
+struct RaceWords {
+  std::set<std::string> words;
+  std::optional<std::string> number;
+};
+
+// The race session a provider feed is: an F1 feed naming the session
+// ("Formula 1: United States: Race [Main Broadcast]", "2617 GP F1
+// Qualifying") at about its time, or the session on at the feed's time.
+std::optional<int> raceTarget(const ProviderEvent& event, const std::vector<int>& sessions,
+                              const std::vector<SportsGame>& games, const std::map<int, RaceWords>& raceWords,
+                              const std::vector<std::string>& raceWordList,
+                              const std::function<bool(std::string_view)>& isCameraName) {
+  // Cheap tests first: most feeds aren't racing.
+  std::string raw = event.title + " " + event.family;
+  bool maybeF1 = str::icontains(raw, "f1") || str::icontains(raw, "formula");
+  std::string lowered = raceWordList.empty() ? "" : str::lower(raw);
+  bool maybeOther = !raceWordList.empty() &&
+                    std::any_of(raceWordList.begin(), raceWordList.end(),
+                                [&](const std::string& w) { return has(lowered, w); });
+  if (!maybeF1 && !maybeOther) return std::nullopt;
+  std::string norm = normalized(raw);
+  bool isF1 = maybeF1 && (has(norm, " f1 ") || has(norm, " formula 1 ") || has(norm, " formula one ") ||
+                          has(norm, " f1tv "));
+  if (!isF1 && !maybeOther) return std::nullopt;
+  // Cameras go to the race's cameras panel; shows around it aren't it.
+  if ((isCameraName && isCameraName(event.title)) || isStudioShow(event.title)) return std::nullopt;
+  std::optional<std::string> kind;
+  if (isF1) kind = race_session::kindInTitle(normalized(event.title));
+  // A guessed day isn't a time to go by (other races compare the clock).
+  std::optional<Seconds> start = event.guessed ? std::nullopt : event.start;
+  if (!kind && !start && !(maybeOther && event.start)) return std::nullopt;
+  std::set<std::string> titleWords;
+  if (maybeOther) {
+    for (const std::string& w : splitWords(norm)) titleWords.insert(w);
+  }
+  // Another race (NASCAR) only from a racing feed, not a game.
+  bool otherAllowed = maybeOther &&
+                      (event.league == "Motorsport" || event.league == "Other" || event.league.empty()) &&
+                      !looksLikeGame(event.title);
+  bool saysNascar = has(norm, " nascar ") || has(norm, " cup series ");
+  std::optional<std::pair<int, Seconds>> best, bestOther;
+  for (int index : sessions) {
+    const SportsGame& game = games[static_cast<size_t>(index)];
+    Seconds gap = start ? std::llabs(*start - game.start) : 0;
+    if (game.leagueShort == "F1") {
+      if (!isF1) continue;
+      if (kind && !(game.cardKey && str::endsWith(*game.cardKey, "|" + *kind))) continue;
+      // A named session: the nearest of its kind (they're a week apart; a
+      // feed's clock may be hours off). Otherwise the one on then.
+      if (gap > (kind ? 14 * 3600 : 90 * 60)) continue;
+      if (!best || gap < best->second) best = std::make_pair(index, gap);
+    } else {
+      // Another race: its name's word or number, with "NASCAR" or both, at
+      // about its time (a day-less time: the same clock today).
+      auto info = raceWords.find(index);
+      if (!otherAllowed || info == raceWords.end()) continue;
+      bool hasWord = std::any_of(info->second.words.begin(), info->second.words.end(),
+                                 [&](const std::string& w) { return titleWords.count(w) > 0; });
+      bool hasNumber = info->second.number && titleWords.count(*info->second.number) > 0;
+      if (!((hasWord && (hasNumber || saysNascar)) || (hasNumber && saysNascar))) continue;
+      if (event.guessed && event.start) {
+        Seconds full = std::llabs(*event.start - game.start);
+        Seconds rem = full % 86'400;
+        if (std::min(rem, 86'400 - rem) > 75 * 60 || full >= 36 * 3600) continue;
+      } else {
+        if (!start || gap > 3 * 3600) continue;
+      }
+      if (!bestOther || gap < bestOther->second) bestOther = std::make_pair(index, gap);
+    }
+  }
+  // A NASCAR feed in a mixed "F1 / NASCAR" group goes to its race.
+  if (bestOther) return bestOther->first;
+  if (best) return best->first;
+  return std::nullopt;
+}
+
+int64_t elapsedMs(std::chrono::steady_clock::time_point since) {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - since)
+      .count();
+}
+
+}  // namespace
+
+// MARK: Listings
+
+json::Value toJson(const GuideListing& l) {
+  json::Value v = json::Value::object();
+  v.set("entryID", l.entryID);
+  v.set("inLineup", l.inLineup);
+  v.set("spanish", l.spanish);
+  v.set("title", l.title);
+  v.set("start", static_cast<int64_t>(l.start));
+  v.set("end", static_cast<int64_t>(l.end));
+  if (l.detail) v.set("detail", *l.detail);
+  if (l.venue) v.set("venue", *l.venue);
+  if (l.city) v.set("city", *l.city);
+  if (l.rank) v.set("rank", *l.rank);
+  return v;
+}
+
+std::optional<GuideListing> listingFromJson(const json::Value& v) {
+  if (!v["entryID"].isString() || !v["title"].isString() || !v["start"].isNumber() || !v["end"].isNumber()) {
+    return std::nullopt;
+  }
+  GuideListing l;
+  l.entryID = v["entryID"].asString();
+  l.inLineup = v["inLineup"].asBool();
+  l.spanish = v["spanish"].asBool();
+  l.title = v["title"].asString();
+  l.start = v["start"].asInt();
+  l.end = v["end"].asInt();
+  if (v["detail"].isString()) l.detail = v["detail"].asString();
+  if (v["venue"].isString()) l.venue = v["venue"].asString();
+  if (v["city"].isString()) l.city = v["city"].asString();
+  if (v["rank"].isNumber()) l.rank = static_cast<int>(v["rank"].asInt());
+  return l;
+}
+
+std::optional<std::pair<std::string, std::string>> venueOf(std::string_view description) {
+  auto m = rx::first(
+      "^\\s*(?:live\\s+)?(?:from|at)\\s+(?:the\\s+)?(.+?)\\s+in\\s+([A-Z][^,.;]+?)(?:,\\s*[A-Z][A-Za-z.]*\\.?)?(?:[.;]|$)",
+      description, true);
+  if (!m || !m->has(1) || !m->has(2)) return std::nullopt;
+  std::string venue = trimmed(normalized(m->group(1)));
+  std::string city = trimmed(normalized(m->group(2)));
+  if (text::count(venue) < 4 || city.empty()) return std::nullopt;
+  return std::make_pair(venue, city);
+}
+
+bool isGenericSportsTitle(std::string_view title) {
+  return rx::test(
+      "\\b(nfl|nba|wnba|nhl|mlb|mls|nwsl|ncaa|college|basketball|football|hockey|baseball|soccer|f[u\xC3\xBA]tbol|b[e\xC3\xA9]isbol|baloncesto)\\b",
+      title, true);
+}
+
+const std::set<std::string>& completeLeagues() {
+  static const std::set<std::string> kLeagues = {"NFL", "NBA", "WNBA", "NHL", "MLB"};
+  return kLeagues;
+}
+
+const std::set<std::string>& supportedLeagues() {
+  static const std::set<std::string> kLeagues = {"NFL", "College Football", "NBA", "MLB",
+                                                 "NHL", "MLS",              "Soccer"};
+  return kLeagues;
+}
+
+std::string Stats::summary() const {
+  std::vector<std::string> steps;
+  for (const auto& [step, ms] : milliseconds) steps.push_back(step + " " + std::to_string(ms));
+  auto n = [](int v) { return std::to_string(v); };
+  std::string out = "games " + n(games) + ", events " + n(events) + " \xE2\x86\x92 " + n(filtered) +
+                    " game-like, " + n(matchedEvents) + " matched, " + n(guessedMatched) + " by day, " +
+                    n(replays) + " replays and " + n(stale) + " stale hidden, " + n(mergedPlain) +
+                    " duplicate feeds merged, listings " + n(listings) + " \xE2\x86\x92 " +
+                    n(matchedListings) + " matched (" + n(venueListings) + " by venue, " +
+                    n(describedListings) + " by description), " + n(trimmedStations) +
+                    " extra stations folded, school pairs " + n(schoolPairs) + ", name pairs " +
+                    n(namePairs) + ", fight feeds " + n(fightFeeds);
+  if (!offsets.empty()) out += ", offsets " + str::join(offsets, "; ");
+  out += "; ms: " + str::join(steps, ", ");
+  if (aborted) out += "; ABORTED: " + *aborted;
+  return out;
+}
+
+// MARK: Build
+
+std::optional<BuildResult> build(const BuildInput& in) {
+  const std::vector<SportsGame>& games = in.games;
+  const Seconds now = in.now;
+  Stats stats;
+  stats.events = static_cast<int>(in.events.size());
+  stats.games = static_cast<int>(games.size());
+  stats.listings = static_cast<int>(in.listings.size());
+  auto clock = std::chrono::steady_clock::now();
+  auto lap = [&](const std::string& step) {
+    stats.milliseconds[step] = static_cast<int>(elapsedMs(clock));
+    clock = std::chrono::steady_clock::now();
+  };
+  auto stop = [&]() -> bool {
+    if (!in.shouldStop) return false;
+    if (auto reason = in.shouldStop()) {
+      stats.aborted = *reason;
+      return true;
+    }
+    return false;
+  };
+
+  TeamIndex index(games);
+  lap("0 index");
+  const size_t gameCount = games.size();
+  std::vector<std::optional<SportsEvent>> byGame(gameCount);
+  std::vector<std::optional<std::string>> firstProviderID(gameCount);
+  auto entry = [&](size_t gameIndex) -> SportsEvent {
+    if (byGame[gameIndex]) return *byGame[gameIndex];
+    const SportsGame& game = games[gameIndex];
+    SportsEvent e;
+    e.id = "sev|" + game.id;
+    e.title = game.title();
+    e.league = game.league;
+    e.leagueShort = game.leagueShort;
+    e.start = game.start;
+    e.game = game;
+    return e;
+  };
+
+  // 0. Channels airing each game's TV network.
+  for (size_t i = 0; i < gameCount; ++i) {
+    auto it = in.channelSources.find(games[i].id);
+    if (it == in.channelSources.end() || it->second.empty()) continue;
+    SportsEvent value = entry(i);
+    value.sources = it->second;
+    byGame[i] = std::move(value);
+  }
+
+  // 1. Provider event feeds -> games. Only titles that look like a game
+  // (two sides) or are in a league the schedule covers.
+  const Seconds low = now - 8 * 3600, high = now + 8 * 86'400;
+  std::vector<ProviderEvent> plain;
+  std::vector<ProviderEvent> unmatched;
+  // 1a. Which scheduled games each game-like title names (any time).
+  std::vector<std::pair<ProviderEvent, std::vector<int>>> pending;
+  // Fight cards by promotion and number ("ufc|333"), for feeds named after
+  // the card rather than the fighters.
+  std::map<std::string, std::vector<int>> cards;
+  for (size_t i = 0; i < gameCount; ++i) {
+    if (!games[i].cardKey) continue;
+    std::vector<std::string> parts = text::components(*games[i].cardKey, "|");
+    if (parts.size() != 3) continue;
+    cards[parts[0] + "|" + parts[1]].push_back(static_cast<int>(i));
+  }
+  // Race weekend sessions, for feeds named after a session.
+  std::vector<int> raceSessions;
+  for (size_t i = 0; i < gameCount; ++i) {
+    if (games[i].isRacing()) raceSessions.push_back(static_cast<int>(i));
+  }
+  // Other races (NASCAR) are found by their name's distinctive words and
+  // number ("YellaWood 500" -> yellawood, 500).
+  std::map<int, RaceWords> raceWords;
+  static const std::set<std::string> kRaceStop = {"nascar", "series", "racing", "speedway",
+                                                  "motor",  "sports", "grand"};
+  for (int i : raceSessions) {
+    const SportsGame& game = games[static_cast<size_t>(i)];
+    if (game.leagueShort == "F1") continue;
+    std::vector<std::string> tokens = splitWords(normalized(game.home.name));
+    RaceWords info;
+    for (const std::string& t : tokens) {
+      if (text::count(t) >= 5 && !text::isAllDigits(t) && !kRaceStop.count(t)) info.words.insert(t);
+    }
+    for (const std::string& t : tokens) {
+      if (text::count(t) >= 3 && text::isAllDigits(t)) {
+        info.number = t;
+        break;
+      }
+    }
+    if (!info.words.empty() || info.number) raceWords[i] = info;
+  }
+  std::vector<std::string> raceWordList;
+  if (!raceWords.empty()) {
+    std::set<std::string> all = {"nascar"};
+    for (const auto& [i, info] : raceWords) all.insert(info.words.begin(), info.words.end());
+    raceWordList.assign(all.begin(), all.end());
+  }
+  for (const ProviderEvent& event : in.events) {
+    bool inWindow = !event.start || (*event.start > low && *event.start < high);
+    if (inWindow && !raceSessions.empty()) {
+      if (auto target = raceTarget(event, raceSessions, games, raceWords, raceWordList, in.isCameraName)) {
+        size_t t = static_cast<size_t>(*target);
+        stats.filtered += 1;
+        SportsEvent value = entry(t);
+        // The main broadcast first, then other feeds.
+        bool main = has(str::lower(event.title), "main broadcast");
+        for (const std::string& feed : event.feeds) {
+          if (containsSource(value.sources, feed)) continue;
+          EventSource source = providerSource(feed, event.spanish);
+          auto at = std::find_if(value.sources.begin(), value.sources.end(),
+                                 [](const EventSource& s) { return s.kind == EventSource::Kind::provider; });
+          if (main && at != value.sources.end()) {
+            value.sources.insert(at, source);
+          } else {
+            value.sources.push_back(source);
+          }
+        }
+        if (!value.family) value.family = event.family;
+        byGame[t] = std::move(value);
+        if (!firstProviderID[t]) firstProviderID[t] = event.id;
+        stats.matchedEvents += 1;
+        continue;
+      }
+    }
+    // A card named by its number goes by the card and its times; one named
+    // only by its fighters ("UFC: Pereira vs Hill") by the fighters.
+    if (inWindow && !cards.empty() && event.league == "Fighting") {
+      auto key = fightKey(event.title);
+      if (key && (!key->number.empty() || !looksLikeGame(event.title))) {
+        std::vector<int> targets =
+            fightTargets(*key, event.guessed ? std::nullopt : event.start, cards, games);
+        if (!targets.empty()) {
+          stats.filtered += 1;
+          stats.fightFeeds += 1;
+          for (int gi : targets) {
+            size_t g = static_cast<size_t>(gi);
+            SportsEvent value = entry(g);
+            addFeeds(value, event);
+            if (!value.family) value.family = event.family;
+            byGame[g] = std::move(value);
+            if (!firstProviderID[g] && targets.size() == 1) firstProviderID[g] = event.id;
+          }
+          stats.matchedEvents += 1;
+          continue;
+        }
+      }
+    }
+    if (!inWindow || !(looksLikeGame(event.title) || supportedLeagues().count(event.league))) {
+      plain.push_back(event);
+      continue;
+    }
+    stats.filtered += 1;
+    if (games.empty()) {
+      unmatched.push_back(event);
+      continue;
+    }
+    std::vector<int> candidates = index.matches(
+        event.title, [&](int g) { return compatible(event.league, games[static_cast<size_t>(g)]); },
+        [&](int g) { return sameLeague(event.league, games[static_cast<size_t>(g)]); });
+    // An event of unknown league matching games of more than one league
+    // (Panthers, Rangers, Kings...) is too ambiguous.
+    bool ambiguous = false;
+    if (event.league.empty() || event.league == "Other") {
+      std::set<std::string> leagues;
+      for (int g : candidates) leagues.insert(games[static_cast<size_t>(g)].league);
+      ambiguous = leagues.size() > 1;
+    }
+    if (candidates.empty() || ambiguous) {
+      unmatched.push_back(event);
+      continue;
+    }
+    pending.emplace_back(event, std::move(candidates));
+  }
+
+  // 1b. Each event channel group's clock offset, learned from titles that
+  // name a scheduled game: the same whole-hour gap on most of them means the
+  // group writes another time zone (UTC, CET...). An hour early is usually
+  // the pregame show, not a time zone: ignored.
+  std::map<std::string, std::map<int, int>> votes;
+  std::map<std::string, int> voteTotals;
+  for (const auto& item : pending) {
+    const ProviderEvent& event = item.first;
+    if (!event.start || event.guessed) continue;
+    std::optional<Seconds> nearest;
+    // Tennis times are a court's order of play: no clock to learn from.
+    for (int g : item.second) {
+      const SportsGame& game = games[static_cast<size_t>(g)];
+      if (game.isTennis()) continue;
+      Seconds gap = *event.start - game.start;
+      if (std::llabs(gap) <= 14 * 3600 && (!nearest || std::llabs(gap) < std::llabs(*nearest))) nearest = gap;
+    }
+    if (!nearest) continue;
+    double hours = std::round(static_cast<double>(*nearest) / 3600.0);
+    if (std::fabs(static_cast<double>(*nearest) - hours * 3600) > 20 * 60) continue;
+    votes[event.family][static_cast<int>(hours)] += 1;
+    voteTotals[event.family] += 1;
+  }
+  std::map<std::string, Seconds> offsets;
+  for (const auto& [family, counts] : votes) {
+    std::optional<std::pair<int, int>> best;
+    for (const auto& [hours, count] : counts) {
+      // Most votes; on a tie the smaller shift.
+      if (!best || count > best->second || (count == best->second && std::abs(hours) < std::abs(best->first))) {
+        best = std::make_pair(hours, count);
+      }
+    }
+    if (!best || std::abs(best->first) < 2 || best->second < 2 || best->second * 2 <= voteTotals[family]) {
+      continue;
+    }
+    offsets[family] = Seconds{best->first} * 3600;
+  }
+  for (const auto& [family, offset] : offsets) {
+    if (stats.offsets.size() >= 8) break;
+    int hours = static_cast<int>(offset / 3600);
+    stats.offsets.push_back(family + " " + (offset > 0 ? "+" : "") + std::to_string(hours) + "h");
+  }
+  auto corrected = [&](const ProviderEvent& event) -> ProviderEvent {
+    if (event.guessed || !event.start) return event;
+    auto it = offsets.find(event.family);
+    if (it == offsets.end()) return event;
+    ProviderEvent copy = event;
+    copy.start = *event.start - it->second;
+    return copy;
+  };
+  // How far apart two moments are on the clock, ignoring the day.
+  auto clockGap = [](Seconds a, Seconds b) {
+    Seconds gap = std::llabs(a - b) % 86'400;
+    return std::min(gap, 86'400 - gap);
+  };
+
+  // 1c. The schedule decides. A dated title is the game when it airs within
+  // 3 h of it; further away it's a replay (hidden). A title with no day goes
+  // to that matchup's next game (at its clock time when one is given).
+  // Per channel group, titles with no day that named a finished game
+  // (yesterday's slate still in its slots) vs. a game still to come.
+  std::map<std::string, int> staleByFamily, freshByFamily;
+  const Seconds startOfToday = text::startOfDay(now, in.zone);
+  for (const auto& item : pending) {
+    ProviderEvent event = corrected(item.first);
+    std::optional<int> chosen;
+    // A singles feed (no "/") doesn't go to the same players' doubles.
+    std::vector<int> candidates = item.second;
+    if (!has(event.title, "/")) {
+      std::vector<int> singles;
+      for (int g : candidates) {
+        const SportsGame& game = games[static_cast<size_t>(g)];
+        if (!game.isTennis() || !(has(game.home.name, " / ") || has(game.away.name, " / "))) singles.push_back(g);
+      }
+      if (!singles.empty()) candidates = singles;
+    }
+    if (event.start && !event.guessed) {
+      std::optional<std::pair<int, Seconds>> best;
+      for (int g : candidates) {
+        Seconds gap = std::llabs(*event.start - games[static_cast<size_t>(g)].start);
+        if (!best || gap < best->second) best = std::make_pair(g, gap);
+      }
+      // Tennis: a later match on a court can start hours after its listed time.
+      if (best && best->second <= (games[static_cast<size_t>(best->first)].isTennis() ? 8 : 3) * 3600) {
+        chosen = best->first;
+      }
+    } else {
+      std::vector<int> open;
+      for (int g : candidates) {
+        const SportsGame& game = games[static_cast<size_t>(g)];
+        if (!game.completed && game.start > now - 6 * 3600 && game.start < now + 7 * 86'400) open.push_back(g);
+      }
+      std::stable_sort(open.begin(), open.end(), [&](int a, int b) {
+        return games[static_cast<size_t>(a)].start < games[static_cast<size_t>(b)].start;
+      });
+      if (event.start) {
+        auto at = std::find_if(open.begin(), open.end(), [&](int g) {
+          return clockGap(games[static_cast<size_t>(g)].start, *event.start) <= 75 * 60;
+        });
+        if (at != open.end()) {
+          chosen = *at;
+        } else if (!open.empty()) {
+          chosen = open.front();
+        }
+      } else if (!open.empty()) {
+        chosen = open.front();
+      }
+      // Counted per group and sport, for day-less titles only: fresh when it
+      // names a game still to come, stale when the game it names was before
+      // today (not earlier today).
+      std::string familyKey = event.family + "|" + event.league;
+      if (chosen) {
+        stats.guessedMatched += 1;
+        if (event.guessed && !event.family.empty()) freshByFamily[familyKey] += 1;
+      } else if (event.guessed && !event.family.empty() &&
+                 std::any_of(candidates.begin(), candidates.end(), [&](int g) {
+                   return games[static_cast<size_t>(g)].start < startOfToday;
+                 })) {
+        staleByFamily[familyKey] += 1;
+      }
+    }
+    if (!chosen) {
+      stats.replays += 1;
+      continue;
+    }
+    size_t g = static_cast<size_t>(*chosen);
+    stats.matchedEvents += 1;
+    SportsEvent value = entry(g);
+    addFeeds(value, event);
+    if (!value.family) value.family = event.family;
+    byGame[g] = std::move(value);
+    if (!firstProviderID[g]) firstProviderID[g] = event.id;
+  }
+  lap("1 events");
+  if (stop()) return std::nullopt;
+
+  // 2. Guide listings -> games (only the game itself, not the shows around
+  // it), up to two days ahead. Local and regional listings rarely name the
+  // teams ("Live: NBA Basketball"), but their description names the venue,
+  // which the schedule has too. Capped at 2 s.
+  std::vector<char> relevant(gameCount, 0);
+  bool anyRelevant = false;
+  for (size_t i = 0; i < gameCount; ++i) {
+    const SportsGame& game = games[i];
+    if (!game.completed && game.start > now - 5 * 3600 && game.start < now + 48 * 3600) {
+      relevant[i] = 1;
+      anyRelevant = true;
+    }
+  }
+  auto isRelevant = [&](int g) { return g >= 0 && static_cast<size_t>(g) < gameCount && relevant[static_cast<size_t>(g)]; };
+  std::map<std::string, std::vector<int>> byVenue, byCity;
+  for (size_t i = 0; i < gameCount; ++i) {
+    // A tennis "venue" is a court ("Centre Court"), not a place to find.
+    if (!relevant[i] || games[i].isTennis() || !games[i].venue) continue;
+    // "Golden 1 Center, Sacramento": the city follows the last comma.
+    std::vector<std::string> parts = text::components(*games[i].venue, ", ");
+    std::string name;
+    if (parts.size() > 1) {
+      std::vector<std::string> head(parts.begin(), parts.end() - 1);
+      name = trimmed(normalized(str::join(head, ", ")));
+    } else {
+      name = trimmed(normalized(*games[i].venue));
+    }
+    byVenue[name].push_back(static_cast<int>(i));
+    if (parts.size() > 1) byCity[trimmed(normalized(parts.back()))].push_back(static_cast<int>(i));
+  }
+  if (anyRelevant) {
+    auto started = std::chrono::steady_clock::now();
+    for (const GuideListing& listing : in.listings) {
+      if (elapsedMs(started) > kListingsBudgetMs) {
+        stats.aborted = "listings over 2 s";
+        break;
+      }
+      if (excluded(normalized(listing.title))) continue;
+      auto airing = [&](int g) {
+        const SportsGame& game = games[static_cast<size_t>(g)];
+        return listing.start < game.start + 2 * 3600 && listing.end > game.start - 15 * 60;
+      };
+      auto filtered = [&](std::vector<int> list, const std::function<bool(int)>& keep) {
+        std::vector<int> out;
+        for (int g : list) {
+          if (keep(g)) out.push_back(g);
+        }
+        return out;
+      };
+      std::vector<int> candidates = filtered(index.matches(listing.title, isRelevant), airing);
+      std::string how = "title";
+      if (candidates.empty() && (listing.venue || listing.detail)) {
+        std::string league = catalog::leagueFor("", "", listing.title);
+        auto fits = [&](int g) { return airing(g) && compatible(league, games[static_cast<size_t>(g)]); };
+        if (listing.venue) {
+          // The venue, at that time, in that sport; else the city when only
+          // one such game is there.
+          auto v = byVenue.find(*listing.venue);
+          if (v != byVenue.end()) candidates = filtered(v->second, fits);
+          if (candidates.empty() && listing.city) {
+            auto c = byCity.find(*listing.city);
+            if (c != byCity.end()) {
+              std::vector<int> inCity = filtered(c->second, fits);
+              if (inCity.size() == 1) candidates = inCity;
+            }
+          }
+          how = "venue";
+        } else if (listing.detail) {
+          // The description names one game's two teams.
+          std::vector<int> found = filtered(
+              index.matches(*listing.detail,
+                            [&](int g) { return isRelevant(g) && compatible(league, games[static_cast<size_t>(g)]); }),
+              airing);
+          if (found.size() == 1) candidates = found;
+          how = "description";
+        }
+      }
+      if (!candidates.empty()) {
+        if (how == "venue") {
+          stats.venueListings += 1;
+        } else if (how == "description") {
+          stats.describedListings += 1;
+        }
+      }
+      for (int gi : candidates) {
+        size_t g = static_cast<size_t>(gi);
+        stats.matchedListings += 1;
+        SportsEvent value = entry(g);
+        if (!value.listingEnd || listing.end > *value.listingEnd) value.listingEnd = listing.end;
+        if (!containsSource(value.sources, listing.entryID)) {
+          int rank = listing.rank.value_or(listing.inLineup ? station_rank::lineup : station_rank::elsewhere);
+          EventSource source;
+          source.channelID = listing.entryID;
+          source.kind = listing.inLineup ? EventSource::Kind::lineup : EventSource::Kind::guide;
+          source.spanish = listing.spanish;
+          source.detail = stationDetail(rank);
+          source.rank = rank;
+          value.sources.push_back(std::move(source));
+        }
+        byGame[g] = std::move(value);
+      }
+    }
+  }
+  lap("2 listings");
+  if (stop()) return std::nullopt;
+
+  // 3. Provider events that matched no game: grouped by matchup (either
+  // team order, start within 90 minutes) through a key lookup.
+  std::vector<SportsEvent> loose;
+  std::map<std::string, std::vector<size_t>> byPair;
+  for (const ProviderEvent& original : unmatched) {
+    ProviderEvent event = corrected(original);
+    // A group whose day-less titles are mostly yesterday's games: its other
+    // day-less titles are too.
+    std::string familyKey = event.family + "|" + event.league;
+    int staleCount = staleByFamily.count(familyKey) ? staleByFamily[familyKey] : 0;
+    int freshCount = freshByFamily.count(familyKey) ? freshByFamily[familyKey] : 0;
+    if (event.guessed && !event.family.empty() && staleCount >= 3 && staleCount > 3 * freshCount) {
+      stats.stale += 1;
+      continue;
+    }
+    std::optional<std::string> key = pairKey(event.title);
+    if (key) {
+      auto list = byPair.find(*key);
+      if (list != byPair.end()) {
+        auto at = std::find_if(list->second.begin(), list->second.end(),
+                               [&](size_t i) { return closeEnough(loose[i].start, event.start); });
+        if (at != list->second.end()) {
+          addFeeds(loose[*at], event);
+          continue;
+        }
+      }
+    }
+    loose.push_back(plainEvent(event));
+    if (key) byPair[*key].push_back(loose.size() - 1);
+  }
+  // Fight feeds no card matched: one tile per card part ("UFC 333 Prelims"
+  // in English, Spanish and from another provider). The same feed title
+  // from several channel groups at the same time: one tile with every feed.
+  std::vector<SportsEvent> plainTiles;
+  std::map<std::string, std::vector<size_t>> byCard, byTitle;
+  auto sameTime = [](std::optional<Seconds> a, std::optional<Seconds> b) {
+    if (!a || !b) return !a && !b;
+    return std::llabs(*a - *b) <= 10 * 60;
+  };
+  for (const ProviderEvent& original : plain) {
+    ProviderEvent event = corrected(original);
+    std::optional<FightKey> key;
+    if (event.league == "Fighting") key = fightKey(event.title);
+    if (!key || key->number.empty()) {
+      std::string titleKey = normalized(event.title) + "|" + event.league;
+      auto list = byTitle.find(titleKey);
+      if (list != byTitle.end()) {
+        auto at = std::find_if(list->second.begin(), list->second.end(),
+                               [&](size_t i) { return sameTime(plainTiles[i].start, event.start); });
+        if (at != list->second.end()) {
+          addFeeds(plainTiles[*at], event);
+          stats.mergedPlain += 1;
+          continue;
+        }
+      }
+      plainTiles.push_back(plainEvent(event));
+      byTitle[titleKey].push_back(plainTiles.size() - 1);
+      continue;
+    }
+    std::string cardID = key->org + "|" + key->number + "|" + key->part.value_or("");
+    auto list = byCard.find(cardID);
+    if (list != byCard.end()) {
+      auto at = std::find_if(list->second.begin(), list->second.end(),
+                             [&](size_t i) { return closeEnough(plainTiles[i].start, event.start); });
+      if (at != list->second.end()) {
+        SportsEvent& tile = plainTiles[*at];
+        // The English feed names the tile.
+        bool allSpanish = std::all_of(tile.sources.begin(), tile.sources.end(),
+                                      [](const EventSource& s) { return s.spanish; });
+        if (!event.spanish && allSpanish) {
+          std::vector<EventSource> previous = tile.sources;
+          tile = plainEvent(event);
+          for (const EventSource& source : previous) {
+            if (!containsSource(tile.sources, source.channelID)) tile.sources.push_back(source);
+          }
+        } else {
+          addFeeds(tile, event);
+        }
+        stats.fightFeeds += 1;
+        continue;
+      }
+    }
+    plainTiles.push_back(plainEvent(event));
+    byCard[cardID].push_back(plainTiles.size() - 1);
+  }
+  std::vector<SportsEvent> others = loose;
+  others.insert(others.end(), plainTiles.begin(), plainTiles.end());
+
+  // Teams named in titles no game matched: two teams of a complete league
+  // with no game between them is a replay or an old slot name (hidden);
+  // elsewhere their logos go on the tile.
+  std::set<size_t> hidden;
+  if (!in.rosters.empty()) {
+    std::vector<std::pair<const RosterLeague*, TeamIndex>> indexes;
+    for (const RosterLeague& roster : in.rosters) {
+      indexes.emplace_back(&roster, TeamIndex::fromTeams(roster.teams, roster.college));
+    }
+    // College: the schedule has every game between the schools it knows, so
+    // two of them with no game is a leftover too. Only while that schedule
+    // is loaded; basketball only with both men's and women's.
+    std::set<std::string> scheduled;
+    for (const SportsGame& game : games) scheduled.insert(game.league);
+    std::set<std::string> complete = completeLeagues();
+    if (scheduled.count("College Football")) complete.insert("College Football");
+    std::set<std::string> shorts;
+    for (const RosterLeague& roster : in.rosters) shorts.insert(roster.shortName);
+    if (scheduled.count("College Basketball") && shorts.count("NCAAM") && shorts.count("NCAAW")) {
+      complete.insert("College Basketball");
+    }
+    for (size_t position = 0; position < others.size(); ++position) {
+      const SportsEvent& event = others[position];
+      if (event.game || !looksLikeGame(event.title)) continue;
+      bool unknown = event.league.empty() || event.league == "Other";
+      std::set<std::string> groups = {event.league};
+      auto family = sportFamilies().find(event.league);
+      if (family != sportFamilies().end()) groups = family->second;
+      struct Found {
+        const RosterLeague* league;
+        SportsTeam home, away;
+      };
+      std::vector<Found> found;
+      for (const auto& item : indexes) {
+        // A title of unknown sport only borrows soccer clubs ("Panthers @
+        // Sharks" may be rugby, "Utah vs Arizona" anything).
+        const std::string& group = item.first->group;
+        if (unknown ? !(group == "Soccer" || group == "MLS") : !groups.count(group)) continue;
+        if (auto pair = item.second.pair(event.title)) found.push_back({item.first, pair->first, pair->second});
+      }
+      if (found.empty()) continue;
+      std::set<std::string> foundGroups;
+      for (const Found& f : found) foundGroups.insert(f.league->group);
+      if (foundGroups.size() != 1) continue;
+      const Found& hit = found.front();
+      if (complete.count(hit.league->group)) {
+        hidden.insert(position);
+        stats.stale += 1;
+        continue;
+      }
+      SportsEvent copy = unknown ? event.retitled(hit.league->group, hit.league->shortName) : event;
+      copy.teams = std::vector<SportsTeam>{hit.home, hit.away};
+      others[position] = std::move(copy);
+      stats.namePairs += 1;
+    }
+  }
+  if (!hidden.empty()) {
+    std::vector<SportsEvent> kept;
+    for (size_t i = 0; i < others.size(); ++i) {
+      if (!hidden.count(i)) kept.push_back(std::move(others[i]));
+    }
+    others = std::move(kept);
+  }
+  if (!in.schools.empty()) {
+    TeamIndex schoolIndex = TeamIndex::fromTeams(in.schools);
+    // College sports by name; elsewhere (soccer, plain "Football", hockey,
+    // "Other") only with a college sign in the title or feed.
+    static const std::set<std::string> kCollege = {"College Football", "College Basketball", "Volleyball",
+                                                   "Field Hockey",     "Lacrosse",           "Softball",
+                                                   "Wrestling",        "Baseball"};
+    static const std::set<std::string> kPro = {"NFL", "NBA", "WNBA", "MLB", "NHL", "MLS"};
+    static const char* const kClue =
+        "\\b(ncaa\\w*|college|university|univ|women's|men's|espn\\+|accn|acc network|secn|sec network|btn\\+?|big ten)";
+    for (SportsEvent& event : others) {
+      if (kPro.count(event.league) || event.teams) continue;
+      std::string family = event.family.value_or("");
+      if (!(kCollege.count(event.league) || rx::test(kClue, event.title + " " + family, true) ||
+            rx::test("\\bflo", family, true))) {
+        continue;
+      }
+      if (!looksLikeGame(event.title)) continue;
+      auto pair = schoolIndex.pair(event.title);
+      if (!pair) continue;
+      event.teams = std::vector<SportsTeam>{pair->first, pair->second};
+      stats.schoolPairs += 1;
+    }
+  }
+  std::unordered_set<std::string> used;
+  std::vector<SportsEvent> result;
+  result.reserve(gameCount + others.size());
+  for (SportsEvent& event : others) {
+    if (used.insert(event.id).second) result.push_back(std::move(event));
+  }
+
+  // 4. Games (no channel showing them: dimmed). Ids stay stable: last
+  // time's id, else the provider event it was first shown as, unless a
+  // provider tile above already uses it.
+  for (size_t i = 0; i < gameCount; ++i) {
+    SportsEvent value = entry(i);
+    const SportsGame& game = games[i];
+    std::string id;
+    auto previous = in.previousIDs.find(game.id);
+    if (previous != in.previousIDs.end()) {
+      id = previous->second;
+    } else if (firstProviderID[i]) {
+      id = *firstProviderID[i];
+    } else {
+      id = value.id;
+    }
+    if (used.count(id)) id = firstProviderID[i] ? *firstProviderID[i] : value.id;
+    if (used.count(id)) id = value.id;
+    if (!used.insert(id).second) continue;
+    result.push_back(value.withId(id));
+  }
+  lap("3 assemble");
+
+  // Source order: My Lineup, other channels, provider feeds, team channels;
+  // Spanish after English unless the viewer picked US Spanish. Stations
+  // beyond the best few (one game can be on 90 stations) are counted, not
+  // listed.
+  for (SportsEvent& event : result) {
+    if (event.sources.size() <= 1) continue;
+    std::vector<std::pair<size_t, EventSource>> numbered;
+    for (size_t i = 0; i < event.sources.size(); ++i) numbered.emplace_back(i, event.sources[i]);
+    auto lang = [&](const EventSource& s) { return (in.preferSpanish ? !s.spanish : s.spanish) ? 1 : 0; };
+    std::sort(numbered.begin(), numbered.end(), [&](const auto& a, const auto& b) {
+      if (a.second.kind != b.second.kind) return static_cast<int>(a.second.kind) < static_cast<int>(b.second.kind);
+      int ra = a.second.rank.value_or(4), rb = b.second.rank.value_or(4);
+      if (ra != rb) return ra < rb;
+      int sa = lang(a.second), sb = lang(b.second);
+      if (sa != sb) return sa < sb;
+      return a.first < b.first;
+    });
+    std::vector<EventSource> kept;
+    int stations = 0, folded = 0;
+    for (auto& item : numbered) {
+      if (item.second.kind == EventSource::Kind::guide) {
+        stations += 1;
+        if (stations > 3) {
+          folded += 1;
+          continue;
+        }
+      }
+      kept.push_back(std::move(item.second));
+    }
+    event.sources = std::move(kept);
+    if (folded > 0) {
+      event.moreStations = folded;
+      stats.trimmedStations += folded;
+    }
+  }
+  std::sort(result.begin(), result.end(), [](const SportsEvent& a, const SportsEvent& b) {
+    if (a.start && b.start) {
+      if (*a.start != *b.start) return *a.start < *b.start;
+      return a.title != b.title ? a.title < b.title : a.id < b.id;
+    }
+    if (a.start && !b.start) return true;
+    if (!a.start && b.start) return false;
+    return a.title != b.title ? a.title < b.title : a.id < b.id;
+  });
+  lap("4 order");
+  BuildResult out;
+  out.events = std::move(result);
+  out.stats = std::move(stats);
+  return out;
+}
+
+// MARK: Fight cards
+
+std::optional<FightKey> fightKey(std::string_view title) {
+  std::string t = normalized(title);
+  static const char* const kAround[] = {" press conference ", " weigh in ", " weigh ins ", " embedded ",
+                                        " countdown ",        " 24 7 ",     " preview ",   " replay ",
+                                        " classic ",          " highlights ", " post fight ", " pre fight ",
+                                        " face off ",         " faceoffs ", " media day "};
+  for (const char* w : kAround) {
+    if (has(t, w)) return std::nullopt;
+  }
+  std::string org;
+  for (const char* o : {"ufc", "pfl", "bkfc"}) {
+    if (has(t, std::string(" ") + o + " ")) {
+      org = o;
+      break;
+    }
+  }
+  if (org.empty()) return std::nullopt;
+  std::string number;
+  if (auto m = rx::first("(?<=\\b" + org + " )\\d{1,4}\\b", t)) {
+    number = std::to_string(text::toInt(m->group(0)).value_or(0));
+  }
+  std::optional<std::string> part;
+  if (has(t, " early prelim") || has(t, " early preliminar")) {
+    part = "early";
+  } else if (has(t, " prelim") || has(t, " preliminar")) {
+    part = "prelims";
+  } else if (has(t, " main card ") || has(t, " main event ") || has(t, " cartelera principal ")) {
+    part = "main";
+  }
+  FightKey key;
+  key.org = org;
+  key.number = number == "0" ? "" : number;
+  key.part = part;
+  key.fightPass = has(t, " fight pass ");
+  return key;
+}
+
+std::vector<int> fightTargets(const FightKey& key, std::optional<Seconds> start,
+                              const std::map<std::string, std::vector<int>>& cards,
+                              const std::vector<SportsGame>& games) {
+  auto found = cards.find(key.org + "|" + key.number);
+  if (found == cards.end()) return {};
+  std::vector<int> list = found->second;
+  auto game = [&](int i) -> const SportsGame& { return games[static_cast<size_t>(i)]; };
+  std::stable_sort(list.begin(), list.end(), [&](int a, int b) { return game(a).start < game(b).start; });
+  auto part = [&](int i) -> std::string {
+    if (!game(i).cardKey) return "";
+    std::vector<std::string> parts = text::components(*game(i).cardKey, "|");
+    return parts.back();
+  };
+  auto gap = [&](int i) -> Seconds { return start ? std::llabs(game(i).start - *start) : 0; };
+  // "UFC|600061267": one card (Fight Nights share an empty number).
+  auto card = [&](int i) -> std::string {
+    std::vector<std::string> parts = text::components(game(i).id, "|");
+    parts.pop_back();
+    return str::join(parts, "|");
+  };
+  auto nearestOf = [&](const std::vector<int>& from) -> std::optional<int> {
+    std::optional<int> best;
+    for (int i : from) {
+      if (!best || gap(i) < gap(*best)) best = i;
+    }
+    return best;
+  };
+  // Several cards under one key (Fight Nights): the one nearest in time, or
+  // none when there's no time to tell them apart.
+  std::set<std::string> distinct;
+  for (int i : list) distinct.insert(card(i));
+  if (distinct.size() > 1) {
+    auto closest = nearestOf(list);
+    if (!start || !closest) return {};
+    std::string chosen = card(*closest);
+    std::vector<int> kept;
+    for (int i : list) {
+      if (card(i) == chosen) kept.push_back(i);
+    }
+    list = kept;
+  }
+  if (list.empty()) return {};
+  int first = list.front();
+  std::optional<int> nearest = nearestOf(list);
+  // A card that isn't split: one game.
+  if (std::all_of(list.begin(), list.end(), [&](int i) { return part(i).empty(); })) {
+    if (!start || gap(first) <= 6 * 3600) return {first};
+    return {};
+  }
+  if (key.part) {
+    std::string wanted = *key.part;
+    if (key.fightPass && wanted == "prelims" &&
+        std::any_of(list.begin(), list.end(), [&](int i) { return part(i) == "early"; })) {
+      wanted = "early";
+    }
+    std::vector<int> labeled;
+    for (int i : list) {
+      if (part(i) == wanted) labeled.push_back(i);
+    }
+    if (!start) return labeled;
+    if (!labeled.empty() && gap(labeled.front()) <= 45 * 60) return {labeled.front()};
+    if (nearest && gap(*nearest) <= 30 * 60) return {*nearest};
+    std::vector<int> out;
+    for (int i : labeled) {
+      if (gap(i) <= 3 * 3600) out.push_back(i);
+    }
+    return out;
+  }
+  if (!start) return {};
+  if (*start <= game(first).start + 30 * 60 && *start >= game(first).start - 3 * 3600) return list;
+  if (!nearest || gap(*nearest) > 3 * 3600) return {};
+  return {*nearest};
+}
+
+// MARK: Names
+
+std::string matchupKey(std::string_view title) {
+  if (auto key = pairKey(title)) return *key;
+  return normalized(title);
+}
+
+bool looksLikeGame(std::string_view title) {
+  std::string full = " " + str::lower(title) + " ";
+  if (has(full, "@")) return true;
+  for (const char* sep : {" vs ", " vs. ", " v ", " v. ", " at "}) {
+    if (has(full, sep)) return true;
+  }
+  // " - " only counts after a "Network:" style prefix.
+  size_t colon = full.find(':');
+  if (colon != std::string::npos && text::count(std::string_view(full).substr(0, colon)) < 30) {
+    std::string rest = " " + full.substr(colon + 1);
+    return has(rest, " - ");
+  }
+  return false;
+}
+
+std::string normalized(std::string_view input) {
+  std::string folded = str::replaceAll(str::lower(str::foldDiacritics(input)), "&", " and ");
+  std::vector<std::string> tokens = guide::letterNumberTokens(folded);
+  return " " + str::join(tokens, " ") + " ";
+}
+
+std::vector<std::string> teamVariants(const SportsTeam& team, bool college) {
+  std::vector<std::string> names = {team.name};
+  names.insert(names.end(), team.alternates.begin(), team.alternates.end());
+  if (college && team.location) names.push_back(*team.location);
+  std::vector<std::string> words = splitWords(normalized(team.name));
+  if (words.size() >= 2) {
+    const std::string& last = words.back();
+    if (text::count(last) >= 4 && !genericWords().count(last)) names.push_back(last);
+    std::string lastTwo = words[words.size() - 2] + " " + last;
+    if (!genericWords().count(words[words.size() - 2])) names.push_back(lastTwo);
+  }
+  std::vector<std::string> out;
+  std::set<std::string> seen;
+  for (const std::string& n : names) {
+    std::string v = trimmed(normalized(n));
+    if (text::count(v) >= 3 && !genericWords().count(v) && seen.insert(v).second) out.push_back(v);
+  }
+  return out;
+}
+
+const std::map<std::string, std::set<std::string>>& sportFamilies() {
+  static const std::map<std::string, std::set<std::string>> kFamilies = {
+      {"Football", {"NFL", "College Football"}},
+      {"Basketball", {"NBA", "WNBA", "College Basketball"}},
+      {"Hockey", {"NHL", "Hockey"}},
+      {"Baseball", {"MLB", "MiLB", "Baseball"}},
+      {"Soccer", {"Soccer", "MLS"}},
+      {"MLS", {"Soccer", "MLS"}},
+  };
+  return kFamilies;
+}
+
+bool isStudioShow(std::string_view title) {
+  if (looksLikeGame(title)) return false;
+  // Not excluded()'s list: "Classic" is also a tournament's name.
+  static const char* const kStudio[] = {
+      " pregame ",    " pre game ",   " postgame ",   " post game ",  " countdown ",  " preview ",
+      " highlights ", " replay ",     " encore ",     " rewind ",     " recap ",      " press conference ",
+      " kickoff ",    " kick off ",   " gameday ",    " game day ",   " sportscenter ", " nfl today ",
+      " inside the nfl ", " good morning football ", " first take ", " get up ",   " nfl live ",
+      " warm up ",    " warmup ",     " weigh in ",   " weigh ins ",  " media day ",  " embedded ",
+      " studio ",     " fantasy ",    " the herd ",   " pti ",        " pre race ",   " post race ",
+      " build up ",   " buildup ",    " notebook ",   " paddock ",    " race show ",  " pre show ",
+      " post show ",  " prerace ",    " postrace ",   " post fight ", " pre fight ",  " fight conference ",
+      " qualifying replay "};
+  std::string t = normalized(title);
+  for (const char* w : kStudio) {
+    if (has(t, w)) return true;
+  }
+  return false;
+}
+
+bool excluded(std::string_view t) {
+  static const char* const kWords[] = {" pregame ",    " pre game ", " postgame ", " post game ",
+                                       " countdown ",  " preview ",  " highlights ", " replay ",
+                                       " classic ",    " encore ",   " rewind ",   " recap ",
+                                       " press conference ", " kickoff show ", " tonight ", " live from "};
+  for (const char* w : kWords) {
+    if (has(t, w)) return true;
+  }
+  return false;
+}
+
+std::optional<std::string> pairKey(std::string_view title) {
+  std::string cleaned = rx::replace(rx::replace(title, "^[A-Za-z+ ]{2,20}:\\s*", ""), "\\([^)]*\\)?", " ");
+  std::vector<std::string> parts = text::components(cleaned, " ");
+  size_t split = parts.size();
+  for (size_t i = 0; i < parts.size(); ++i) {
+    std::string w = str::lower(parts[i]);
+    if (w == "vs" || w == "vs." || w == "v" || w == "at" || w == "@" || w == "-") {
+      split = i;
+      break;
+    }
+  }
+  if (split == parts.size() || split == 0 || split >= parts.size() - 1) return std::nullopt;
+  std::vector<std::string> left(parts.begin(), parts.begin() + static_cast<std::ptrdiff_t>(split));
+  std::vector<std::string> right(parts.begin() + static_cast<std::ptrdiff_t>(split) + 1, parts.end());
+  std::string a = trimmed(normalized(str::join(left, " ")));
+  std::string b = trimmed(normalized(str::join(right, " ")));
+  if (a.empty() || b.empty()) return std::nullopt;
+  return a < b ? a + "|" + b : b + "|" + a;
+}
+
+std::string shortLeague(std::string_view league) {
+  if (league == "College Football") return "NCAAF";
+  if (league == "College Basketball") return "NCAAB";
+  if (league == "Motorsport") return "MOTOR";
+  if (league == "Fighting") return "FIGHT";
+  if (league == "Field Hockey") return "FIELD H.";
+  if (league == "Volleyball") return "VOLLEY";
+  if (league == "Lacrosse") return "LAX";
+  if (league == "Wrestling") return "WREST.";
+  if (league.empty()) return "EVENT";
+  return str::upper(league);
+}
+
+// MARK: TeamIndex
+
+TeamIndex::TeamIndex(const std::vector<SportsGame>& games) {
+  for (size_t i = 0; i < games.size(); ++i) {
+    const SportsGame& game = games[i];
+    bool college = game.league == "College Football" || game.league == "College Basketball";
+    add(game.home, static_cast<int>(i), 0, college, true);
+    add(game.away, static_cast<int>(i), 1, college, true);
+  }
+}
+
+TeamIndex TeamIndex::fromTeams(const std::vector<SportsTeam>& list, bool college) {
+  TeamIndex index;
+  index.teams_ = list;
+  for (size_t i = 0; i < list.size(); ++i) index.add(list[i], static_cast<int>(i), 0, college, false);
+  return index;
+}
+
+void TeamIndex::add(const SportsTeam& team, int slot, int side, bool college, bool abbreviations) {
+  std::set<std::string> seen;
+  for (const std::string& variant : teamVariants(team, college)) {
+    std::vector<std::string> words = text::words(variant);
+    if (words.empty() || !seen.insert(variant).second) continue;
+    byFirstWord_[words.front()].push_back(Name{slot, side, team.id, words, std::nullopt, false});
+  }
+  // Pro teams' city ("Atlanta vs. Chicago"), only when the league is known.
+  if (!college && team.location) {
+    std::string variant = trimmed(normalized(*team.location));
+    std::vector<std::string> words = text::words(variant);
+    if (!words.empty() && text::count(variant) >= 4 && seen.insert(variant).second) {
+      byFirstWord_[words.front()].push_back(Name{slot, side, team.id, words, std::nullopt, true});
+    }
+  }
+  if (abbreviations && team.shortName) {
+    std::string shortName = trimmed(*team.shortName);
+    size_t n = text::count(shortName);
+    if (n >= 2 && n <= 5) {
+      std::string word = str::lower(shortName);
+      if (seen.insert(word).second) {
+        byFirstWord_[word].push_back(Name{slot, side, team.id, {word}, str::upper(shortName), false});
+      }
+    }
+  }
+}
+
+std::vector<TeamIndex::Hit> TeamIndex::hits(std::string_view title, const Filter& allowed,
+                                            const Filter& allowLoose, std::set<std::string>* written) const {
+  std::vector<std::string> words = splitWords(normalized(title));
+  if (words.size() < 2) return {};
+  // Words as written, for "abbreviations count only in capitals". In an
+  // all-capitals title every word looks like an abbreviation, so none
+  // counts on its own there.
+  if (written) {
+    if (text::hasLowercase(title)) {
+      for (std::string& w : guide::letterNumberTokens(title)) written->insert(std::move(w));
+    }
+  }
+  std::vector<Hit> found;
+  for (size_t position = 0; position < words.size(); ++position) {
+    auto names = byFirstWord_.find(words[position]);
+    if (names == byFirstWord_.end()) continue;
+    for (const Name& name : names->second) {
+      if (allowed && !allowed(name.slot)) continue;
+      if (name.loose && !(allowLoose && allowLoose(name.slot))) continue;
+      size_t end = position + name.words.size();
+      if (end > words.size()) continue;
+      if (!std::equal(name.words.begin(), name.words.end(), words.begin() + static_cast<std::ptrdiff_t>(position))) {
+        continue;
+      }
+      found.push_back(Hit{&name, static_cast<int>(position), static_cast<int>(end)});
+    }
+  }
+  // The longest name wins its words: "michigan state" keeps "michigan"
+  // (another team) from counting.
+  std::vector<Hit> kept;
+  for (const Hit& hit : found) {
+    bool covered = std::any_of(found.begin(), found.end(), [&](const Hit& other) {
+      return other.name->team != hit.name->team && other.length() > hit.length() && other.start <= hit.start &&
+             other.end >= hit.end;
+    });
+    if (!covered) kept.push_back(hit);
+  }
+  return kept;
+}
+
+std::vector<int> TeamIndex::matches(std::string_view title, const Filter& allowed, const Filter& allowLoose) const {
+  std::set<std::string> written;
+  std::vector<Hit> kept = hits(title, allowed, allowLoose, &written);
+  if (kept.size() < 2) return {};
+  std::map<int, std::vector<Hit>> byGame;
+  for (const Hit& hit : kept) byGame[hit.name->slot].push_back(hit);
+  std::vector<int> result;
+  for (const auto& [game, list] : byGame) {
+    bool loose = allowLoose && allowLoose(game);
+    auto strong = [&](const Hit& hit) {
+      if (!hit.name->abbreviation) return true;
+      if (!written.count(*hit.name->abbreviation)) return false;
+      return text::count(*hit.name->abbreviation) >= 3 || loose;
+    };
+    auto full = [](const Hit& hit) { return !hit.name->abbreviation; };
+    bool found = false;
+    for (const Hit& h : list) {
+      if (found || h.name->side != 0) continue;
+      for (const Hit& a : list) {
+        if (found || a.name->side != 1) continue;
+        if (!(h.end <= a.start || a.end <= h.start)) continue;
+        // An abbreviation in lower case only counts next to a full name.
+        if ((strong(h) && strong(a)) || (full(h) && a.name->abbreviation) || (full(a) && h.name->abbreviation)) {
+          found = true;
+        }
+      }
+    }
+    if (found) result.push_back(game);
+  }
+  return result;  // std::map keeps them sorted
+}
+
+std::optional<SportsTeam> TeamIndex::single(std::string_view input, std::string_view leagueWord) const {
+  std::vector<Hit> kept = hits(input, nullptr, nullptr, nullptr);
+  bool hasLeague = has(normalized(input), " " + str::lower(leagueWord) + " ");
+  std::vector<Hit> strong;
+  for (const Hit& hit : kept) {
+    if (hit.name->slot < 0 || static_cast<size_t>(hit.name->slot) >= teams_.size()) continue;
+    std::string words = str::join(hit.name->words, " ");
+    std::string full = trimmed(normalized(teams_[static_cast<size_t>(hit.name->slot)].name));
+    if (hit.name->words.size() >= 2 || words == full || (hasLeague && text::count(words) >= 4)) strong.push_back(hit);
+  }
+  if (strong.empty()) return std::nullopt;
+  std::set<std::string> distinct;
+  for (const Hit& hit : strong) distinct.insert(hit.name->team);
+  if (distinct.size() != 1) return std::nullopt;
+  return teams_[static_cast<size_t>(strong.front().name->slot)];
+}
+
+std::optional<std::pair<SportsTeam, SportsTeam>> TeamIndex::pair(std::string_view title) const {
+  std::vector<Hit> kept = hits(title, nullptr, nullptr, nullptr);
+  std::vector<Hit> strong;
+  for (const Hit& hit : kept) {
+    if (text::count(str::join(hit.name->words, " ")) >= 4) strong.push_back(hit);
+  }
+  std::stable_sort(strong.begin(), strong.end(), [](const Hit& a, const Hit& b) { return a.start < b.start; });
+  // Exactly two schools, on separate words; more is ambiguous.
+  std::set<std::string> distinct;
+  for (const Hit& hit : strong) distinct.insert(hit.name->team);
+  if (distinct.size() != 2) return std::nullopt;
+  const Hit& first = strong.front();
+  auto second = std::find_if(strong.begin(), strong.end(), [&](const Hit& h) {
+    return h.name->team != first.name->team && h.start >= first.end;
+  });
+  if (second == strong.end()) return std::nullopt;
+  size_t a = static_cast<size_t>(first.name->slot), b = static_cast<size_t>(second->name->slot);
+  if (a >= teams_.size() || b >= teams_.size()) return std::nullopt;
+  return std::make_pair(teams_[a], teams_[b]);
+}
+
+}  // namespace marigold::sports::matcher
