@@ -18,7 +18,6 @@ namespace theme = ui::theme;
 
 constexpr uint32_t kBannerDelayMs = 1500;
 constexpr uint32_t kBannerMs = 6000;
-constexpr uint32_t kNoteMs = 5000;
 constexpr uint32_t kDigitsMs = 1500;
 
 class PlayerScreen : public Screen {
@@ -120,7 +119,7 @@ class PlayerScreen : public Screen {
       else flipped(p.tune(target) ? target : std::string());
     }
     bool bannerAnim = ms < bannerUntil_ + 50;
-    bool note = p.switchedAt() && ms - p.switchedAt() < kNoteMs + 50;
+    bool note = !p.note().empty();
     return opening || bannerAnim || note || !digits_.empty();
   }
 
@@ -134,8 +133,8 @@ class PlayerScreen : public Screen {
       drawTuning(c, g);
     }
     if (bannerVisible() && p.ready()) drawBanner(c, g);
-    if (p.switchedAt() && c.ms - p.switchedAt() < kNoteMs) {
-      std::string note = "Switched to a backup feed";
+    if (!p.note().empty()) {
+      const std::string& note = p.note();
       float w = ui::textWidth(c, note, Weight::Medium, 20) + 48;
       Rect r{gfx::kLayoutWidth - 80 - w, 50, w, 48};
       c.g.fill(r, theme::black(0.7f), 24);
@@ -198,8 +197,9 @@ class PlayerScreen : public Screen {
     if (l) ui::label(c, l->title, x, y, Weight::Bold, 60, theme::white(), 1500);
     y += 90;
     if (p.failed()) {
-      ui::label(c, "None of its feeds answered. OK tries again; Back returns to the guide.", x, y,
-                Weight::Regular, 28, theme::white(0.7f));
+      std::string why = p.failMessage().empty() ? "None of its feeds answered." : p.failMessage();
+      ui::paragraph(c, why + " OK tries again; Back returns to the guide.", x, y, 1400, Weight::Regular, 28,
+                    theme::white(0.7f), 2);
     } else {
       ui::spinner(c, x + 20, y + 20, 18);
     }

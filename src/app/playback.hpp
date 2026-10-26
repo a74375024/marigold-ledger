@@ -1,10 +1,13 @@
-// What is playing: one entry, its feeds, the flip list it was picked from,
-// and the previous channel. The guide preview and full screen share it, so
-// OK on the previewed channel just grows the same picture (no second tune).
+// What is playing: one entry (a guide channel or a game), its feeds, the
+// flip list it was picked from, and the previous channel. The guide preview
+// and full screen share it, so OK on the previewed channel just grows the
+// same picture (no second tune).
 //
-// Failover in this build: a feed that fails, or shows no first frame in 20 s,
-// gives way to the next feed of the same channel, silently. The stall
-// watchdog and reconnects come with milestone 2.
+// Failover follows the tvOS rules, ported to core/playback/recovery: no
+// first frame in 20 s or an error moves to the next feed; a feed that played
+// and then froze is reconnected first, then the next feed takes over; one
+// round through the feeds, then a safe message. Emby streams are opened on
+// the server one at a time. HLS feeds play through the local TS proxy.
 #pragma once
 
 #include <cstdint>
@@ -12,7 +15,9 @@
 #include <vector>
 
 #include "app/store/model.hpp"
+#include "core/playback/recovery.hpp"
 #include "platform/gfx.hpp"
+#include "platform/ts_proxy.hpp"
 
 namespace marigold::app {
 
@@ -20,7 +25,7 @@ class App;
 
 class Playback {
  public:
-  explicit Playback(App& app) : app_(app) {}
+  explicit Playback(App& app);
 
   // Starts `entryId` (or keeps it if it is already playing). `flip` is the
   // list CH+/CH- and Up/Down move through in the player. A tune in the
@@ -43,42 +48,45 @@ class Playback {
   void setCorner(gfx::Rect r);
   bool full() const { return full_; }
 
-  // UI thread, every loop: failover. True while the picture is opening.
+  // UI thread, every loop: drives the recovery rules. True while something
+  // is pending (opening, a window re-apply, a note on screen).
   bool tick(uint32_t ms);
 
   const std::string& entry() const { return entry_; }
   const std::string& previousEntry() const { return previous_; }
   const std::vector<Feed>& feeds() const { return feeds_; }
   const std::vector<std::string>& flipList() const { return flip_; }
-  size_t feedIndex() const { return feed_; }
+  size_t feedIndex() const { return rec_.feedIndex(); }
   bool active() const { return !entry_.empty(); }
-  bool ready() const { return ready_; }
-  bool failed() const { return failed_; }
-  // Set when failover moved to another feed (the note at the top right).
-  uint32_t switchedAt() const { return switchedAt_; }
+  bool ready() const { return rec_.sawFirstFrame(); }
+  bool failed() const { return rec_.phase() == playback::Recovery::Phase::Failed; }
+  const std::string& failMessage() const { return failMessage_; }
+  // The small note at the top right ("Reconnecting…"); empty = none.
+  const std::string& note() const { return rec_.note(); }
   uint32_t tunedAt() const { return tunedAt_; }
 
  private:
-  bool start(size_t feed);
+  bool begin(const std::string& entryId, std::vector<Feed> feeds, const std::vector<std::string>& flip);
+  void apply(const playback::Actions& actions);
+  void playFeed(size_t feed, uint64_t token);
   void watched();
   gfx::Rect window() const;
   void scheduleReapply();
 
   App& app_;
+  playback::Recovery rec_;
+  platform::TsProxy proxy_;
   std::string entry_, previous_, lastWatched_;
   std::vector<std::string> flip_;
   std::vector<Feed> feeds_;
-  size_t feed_ = 0;
-  size_t tried_ = 0;
   bool full_ = false;
-  bool ready_ = false;
-  bool failed_ = false;
-  bool openFailed_ = false;
-  uint64_t attempt_ = 0;
-  uint32_t tunedAt_ = 0, feedAt_ = 0, switchedAt_ = 0;
+  std::string failMessage_;
+  uint32_t tunedAt_ = 0;
   gfx::Rect corner_{};
   uint32_t reapplyAt_[3] = {0, 0, 0};
   bool reapplyOnReady_ = false;
+  // Player flags seen last tick, to report changes only.
+  bool sawPicture_ = false, sawBuffering_ = false, sawFailed_ = false, sawEnded_ = false;
 };
 
 }  // namespace marigold::app
