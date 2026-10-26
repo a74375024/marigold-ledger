@@ -24,6 +24,7 @@ cp app/fonts/*.ttf "$stage/fonts/"
 cp LICENSE "$stage/licenses/LICENSE-GPL-3.0.txt"
 cp CREDITS.md "$stage/licenses/CREDITS.md"
 cp app/fonts/InterDisplay-OFL.txt "$stage/licenses/"
+cp vendor/qrcodegen/LICENSE "$stage/licenses/qrcodegen-MIT.txt"
 version="0.1.${MARIGOLD_BUILD_NUMBER:-0}"
 python3 - "$stage/appinfo.json" "$version" <<'PY'
 import json, sys

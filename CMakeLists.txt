@@ -23,6 +23,7 @@ include(cmake/warnings.cmake)
 include(cmake/sanitizers.cmake)
 
 add_subdirectory(vendor/pcre2)
+add_subdirectory(vendor/qrcodegen)
 
 # Pure logic: no platform headers. Built for the TV and for tests. Sources are
 # globbed so modules can be added without touching this file.
@@ -32,7 +33,7 @@ target_include_directories(marigold_core PUBLIC src)
 marigold_warnings(marigold_core)
 find_package(Threads REQUIRED)
 find_package(ZLIB REQUIRED)
-target_link_libraries(marigold_core PUBLIC Threads::Threads pcre2 ZLIB::ZLIB)
+target_link_libraries(marigold_core PUBLIC Threads::Threads pcre2 ZLIB::ZLIB PRIVATE qrcodegen)
 
 # Legacy headers that are pure C and safe to test on the host.
 add_library(legacy_pure INTERFACE)
