@@ -57,7 +57,10 @@ EventsResult buildEvents(const std::vector<Channel>& channels,
 void refreshEvents(CatalogResult& result, const std::vector<Channel>& channels,
                    const std::vector<Channel>& renamed, time::Seconds now);
 
-ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context = CallsignContext());
+// `numberedFamilies` false reads the name as if no numbered event family
+// matched (build() uses it when a family turns out too small).
+ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context = CallsignContext(),
+                        bool numberedFamilies = true);
 
 // MARK: Classification
 

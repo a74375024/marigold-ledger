@@ -57,9 +57,22 @@ TEST_CASE("families: 15+ numbered feeds always count") {
 TEST_CASE("families: 14 bare numbered feeds are not a numbered family") {
   CatalogResult r = build(numbered("Slot", 14, "Misc", 0), wednesdayNoon());
   for (const auto& [id, t] : r.traits) CHECK(t.familyKey != std::string("slot #"));
-  // As in tvOS, a name that parsed as a numbered slot stays an event and is
-  // grouped by its provider group instead.
-  CHECK(family(r, "fam|grp:misc"));
+  // Not a family, so they read as plain channels (tvOS kept them as event
+  // slots of a "grp:" family; Marigold reads the name again).
+  CHECK_FALSE(family(r, "fam|grp:misc"));
+  for (const auto& [id, t] : r.traits) CHECK(t.kind == ChannelKind::channel);
+}
+
+TEST_CASE("a network channel ending in a number is a channel, not an event slot") {
+  std::vector<Channel> list = {channel("1", "US: Telemundo 47"), channel("2", "US: Univision 41"),
+                               channel("3", "US: Fox 23")};
+  CatalogResult r = build(list, wednesdayNoon());
+  for (const auto& [id, t] : r.traits) {
+    CHECK(t.kind == ChannelKind::channel);
+    CHECK_FALSE(t.familyKey);
+  }
+  CHECK(r.families.empty());
+  CHECK(r.entries.size() == 3);
 }
 
 TEST_CASE("families: 5+ feeds with at least 40% named NN: ...") {

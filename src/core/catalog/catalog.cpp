@@ -332,9 +332,11 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
     if (it == result.traits.end()) continue;
     ChannelTraits& traits = it->second;
     if (traits.familyKey && !isFamily(*traits.familyKey)) {
-      traits.familyKey.reset();
-      traits.familyNumber.reset();
-      traits.eventText.reset();
+      // Marigold: not a family after all, so read the name again without
+      // one. tvOS only dropped the family and kept the event kind it had
+      // implied, so "US: Telemundo 47" or "Fox 23" with no local group
+      // became event slots instead of channels.
+      traits = traitsFor(channel, context, false);
     }
     // Event slots (and placeholders in event groups) outside a numbered
     // family: one family per provider group.
@@ -552,7 +554,7 @@ void refreshEvents(CatalogResult& result, const std::vector<Channel>& channels,
 
 // MARK: Traits
 
-ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context) {
+ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, bool numberedFamilies) {
   const std::string& name = channel.name;
   std::string lower = str::lower(name);
   std::string rawGroup = groupOf(channel);
@@ -601,7 +603,7 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context) 
   bool hasSeparator = false;
   bool isLocalish =
       contains(group, "local") || (hasAnyOf(lower, "(") && rx::test("\\([kw][a-z]{2,3}\\b", lower));
-  if (!core && kind != ChannelKind::separator && (!isLocalish || kind == ChannelKind::event)) {
+  if (numberedFamilies && !core && kind != ChannelKind::separator && (!isLocalish || kind == ChannelKind::event)) {
     if (auto family = familyParts(name)) {
       familyKey = family->key;
       familyNumber = family->number;
