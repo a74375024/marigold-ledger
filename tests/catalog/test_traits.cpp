@@ -89,8 +89,11 @@ TEST_CASE("country from Xtream group prefix, group name, name prefix") {
   CHECK(traitsFor(channel("1", "Thing", "GB| News")).country == std::string("UK"));
   // "4K|" blocks say nothing, and stop the search.
   CHECK_FALSE(traitsFor(channel("1", "UK: Thing", "4K| Sports")).country);
-  // The Xtream code is taken as written.
-  CHECK(traitsFor(channel("1", "Thing", "USA| Movies")).country == std::string("USA"));
+  // The Xtream code is taken as written, except that three-letter group
+  // codes are the same countries (Marigold; tvOS kept "USA").
+  CHECK(traitsFor(channel("1", "Thing", "USA| Movies")).country == std::string("US"));
+  CHECK(traitsFor(channel("1", "Thing", "MEX| Canales")).country == std::string("MX"));
+  CHECK(traitsFor(channel("1", "ESPN", "USA| Sports")).core == std::string("ESPN"));
   // Not Xtream: the group's name, then name prefixes.
   CHECK(traitsFor(channel("1", "Thing", "Mexico TV", "jf:1")).country == std::string("MX"));
   CHECK(traitsFor(channel("1", "(Pluto USA) Crime Show", std::nullopt, "jf:1")).country ==

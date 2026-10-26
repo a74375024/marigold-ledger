@@ -34,6 +34,11 @@ void Video::setWindow(gfx::Rect r) {
                static_cast<int>(std::lround(r.w)), static_cast<int>(std::lround(r.h)));
 }
 
+void Video::reapplyWindow(gfx::Rect r) {
+  video_janela_forcar(static_cast<int>(std::lround(r.x)), static_cast<int>(std::lround(r.y)),
+                      static_cast<int>(std::lround(r.w)), static_cast<int>(std::lround(r.h)));
+}
+
 void Video::shutdown() {
   if (started_) video_encerrar();
   started_ = false;

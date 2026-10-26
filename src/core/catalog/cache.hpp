@@ -20,7 +20,8 @@
 
 namespace marigold::catalog::cache {
 
-constexpr int kVersion = 1;
+// 2: three-letter Xtream group codes read as countries ("USA|" is US).
+constexpr int kVersion = 2;
 
 enum class Part { first, full };
 

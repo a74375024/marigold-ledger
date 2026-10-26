@@ -49,7 +49,8 @@ class ListPanel {
 
   // Draws inside `r` (the panel's own background is drawn by the caller).
   // `hitBase` offsets the pointer ids this panel registers.
-  void draw(Ctx& c, Rect r, int hitBase = 1000);
+  // `showFocus` false draws the focused row like the others (focus is elsewhere).
+  void draw(Ctx& c, Rect r, int hitBase = 1000, bool showFocus = true);
 
   static constexpr int kHitBase = 1000;
 

@@ -48,6 +48,8 @@ void video_volume(int pct);
 // tela: pedir origem negativa ou tamanho maior que o painel APAGA o plano — um
 // plano de hardware nao recorta o excedente. Para ampliar, use a funcao abaixo.
 void video_janela(int x, int y, int w, int h);
+// Same, even when the rect did not change (re-applies a lost change).
+void video_janela_forcar(int x, int y, int w, int h);
 
 // Zoom de verdade: recorta a FONTE (coordenadas do quadro decodificado, ver
 // video_largura/video_altura) e desenha no destino (coordenadas de tela).

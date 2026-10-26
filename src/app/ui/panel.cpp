@@ -67,7 +67,7 @@ void ListPanel::hover(int id) {
   if (i >= 0 && i < static_cast<int>(items.size()) && items[static_cast<size_t>(i)].focusable()) focus_ = i;
 }
 
-void ListPanel::draw(Ctx& c, Rect r, int hitBase) {
+void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
   float y = r.y;
   if (!subtitle.empty()) {
     label(c, subtitle, r.x, y, Weight::Bold, 16, theme::white(0.55f));
@@ -104,7 +104,7 @@ void ListPanel::draw(Ctx& c, Rect r, int hitBase) {
     Rect row{list.x, ry, list.w, h};
     ry += h + 6;
     if (row.y + row.h < list.y || row.y > list.y + list.h) continue;
-    bool focused = static_cast<int>(i) == focus_;
+    bool focused = showFocus && static_cast<int>(i) == focus_;
     if (it.kind == PanelItem::Kind::Header) {
       label(c, it.title, row.x + 8, row.y + 20, Weight::Bold, 16, theme::white(0.55f));
       continue;

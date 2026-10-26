@@ -22,10 +22,13 @@
 #include "core/catalog/cache.hpp"
 #include "core/catalog/catalog.hpp"
 #include "core/catalog/lineup.hpp"
+#include "core/catalog/markets.hpp"
 #include "core/catalog/work.hpp"
 #include "core/guide/genre.hpp"
 #include "core/guide/outside.hpp"
+#include "core/guide/names.hpp"
 #include "core/guide/provider.hpp"
+#include "core/guide/stations.hpp"
 #include "core/guide/xmltv.hpp"
 #include "core/logos/logos.hpp"
 #include "core/sources/account.hpp"
@@ -202,6 +205,7 @@ struct Store::Impl {
   std::optional<guide::Saved> outsideSaved;
   bool savedListingsRead = false;
   std::string guideLine;  // status line of a running guide job
+  std::vector<catalog::markets::Market> tvMarkets;  // last list loaded for the setup
 
   // Shared with workers.
   std::shared_ptr<std::atomic<bool>> playingFull = std::make_shared<std::atomic<bool>>(false);
@@ -929,18 +933,142 @@ void Store::rebuildEntries() {
                    http::Priority::Visible);
 }
 
-std::vector<MarketSummary> Store::markets() const {
-  std::map<std::string, int> counts;
+catalog::LineupPrefs Store::lineupPrefs() const { return impl_->prefs; }
+
+namespace {
+
+// One Wikipedia page's wikitext, on a pool thread.
+std::optional<std::string> wikitext(http::Client& pool, const std::string& title) {
+  http::Request q;
+  q.url = guide::stations::wikiRequestUrl(title);
+  q.headers.push_back("User-Agent: Marigold/0.1 (webOS TV; personal use)");
+  q.tag = "wiki";
+  q.timeoutMs = 60000;
+  q.maxBytes = 8u << 20;
+  q.priority = http::Priority::Visible;
+  for (int attempt = 0; attempt < 3; ++attempt) {
+    if (attempt > 0) usleep(static_cast<useconds_t>(attempt) * 2000000u);
+    http::Response r = pool.fetchNow(q);
+    if (r.status == 429) continue;  // rate limited: wait and try again
+    if (!r.ok) continue;
+    return guide::stations::wikitextFromResponse(r.body);
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
+void Store::loadMarkets(std::function<void(TvMarkets)> done) {
+  Impl& m = *impl_;
+  std::string path = app_.storage().path("markets.json");
+  // Names the market suggestion reads: local-looking channels first (tvOS).
+  auto names = std::make_shared<std::vector<std::string>>();
+  for (const Channel& c : *m.channels) {
+    std::string group = str::lowerAscii(c.group.value_or(""));
+    if (group.find("local") != std::string::npos || guide::bareCallsign(c.name)) names->push_back(c.name);
+  }
+  if (names->empty()) {
+    for (const Channel& c : *m.channels) names->push_back(c.name);
+  }
+  if (names->size() > 6000) names->resize(6000);
+  auto result = std::make_shared<TvMarkets>();
+  auto list = std::make_shared<std::vector<catalog::markets::Market>>();
+  http::Client& pool = app_.pool();
+  app_.pool().post(
+      [path, names, result, list, &pool] {
+        struct stat st;
+        std::string text;
+        time::Seconds now = time::now();
+        if (stat(path.c_str(), &st) == 0 && readFile(path, text)) {
+          if (auto saved = catalog::markets::fromJson(text)) {
+            if (catalog::markets::cacheFresh(st.st_mtime, now, saved->empty())) *list = std::move(*saved);
+          }
+        }
+        if (list->empty()) {
+          if (auto page = wikitext(pool, catalog::markets::kListPage)) *list = catalog::markets::parseMarkets(*page);
+          if (!list->empty()) writeFileAtomic(path, catalog::markets::toJson(*list));
+        }
+        if (list->empty() && readFile(path, text)) {
+          // An old saved list beats none.
+          if (auto saved = catalog::markets::fromJson(text)) *list = std::move(*saved);
+        }
+        if (list->empty()) {
+          result->problem = "Couldn't load the list of TV markets. Check the connection and try again, or skip local stations.";
+          return;
+        }
+        for (const auto& mk : *list) result->all.push_back(mk.name);
+        for (const auto& mk : catalog::markets::suggested(*list, *names)) result->suggested.push_back(mk.name);
+      },
+      [this, result, list, done] {
+        impl_->tvMarkets = *list;
+        done(*result);
+      },
+      http::Priority::Visible);
+}
+
+void Store::resolveMarkets(const std::vector<std::string>& names, const catalog::LineupPrefs& draft,
+                           std::function<void(std::vector<catalog::MarketChoice>)> done) {
+  std::vector<catalog::MarketChoice> known;
+  std::vector<catalog::markets::Market> todo;
+  for (const std::string& name : names) {
+    auto existing = std::find_if(draft.markets.begin(), draft.markets.end(),
+                                 [&](const catalog::MarketChoice& c) { return c.name == name; });
+    if (existing != draft.markets.end() && !existing->callsigns.empty()) continue;
+    auto mk = std::find_if(impl_->tvMarkets.begin(), impl_->tvMarkets.end(),
+                           [&](const catalog::markets::Market& x) { return x.name == name; });
+    todo.push_back(mk != impl_->tvMarkets.end() ? *mk : catalog::markets::Market{name, std::nullopt});
+  }
+  auto fetched = std::make_shared<std::map<std::string, catalog::MarketChoice>>();
+  http::Client& pool = app_.pool();
+  app_.pool().post(
+      [todo, fetched, &pool] {
+        bool first = true;
+        for (const auto& mk : todo) {
+          catalog::MarketChoice choice;
+          choice.name = mk.name;
+          choice.templateName = mk.templateName;
+          if (mk.templateName) {
+            // Wikipedia rate-limits bursts.
+            if (!first) usleep(guide::stations::kRequestSpacingMs * 1000);
+            first = false;
+            if (auto page = wikitext(pool, *mk.templateName))
+              choice.callsigns = catalog::markets::callsignsInWikitext(*page);
+          }
+          (*fetched)[mk.name] = std::move(choice);
+        }
+      },
+      [names, draft, fetched, done] {
+        std::vector<catalog::MarketChoice> out;
+        for (const std::string& name : names) {
+          auto f = fetched->find(name);
+          if (f != fetched->end()) {
+            out.push_back(f->second);
+            continue;
+          }
+          for (const catalog::MarketChoice& c : draft.markets)
+            if (c.name == name) out.push_back(c);
+        }
+        done(std::move(out));
+      },
+      http::Priority::Visible);
+}
+
+std::vector<MarketSummary> Store::countries(const std::set<std::string>& selected) const {
+  std::map<std::string, int> counts = {{"US", 0}, {"US-ES", 0}};
   for (const EntryInfo& info : impl_->catalog->entries) {
     if (info.kind == catalog::ChannelKind::channel && info.market) ++counts[*info.market];
   }
   std::vector<MarketSummary> out;
-  for (const auto& [code, n] : counts) out.push_back({code, marketName(code), n, impl_->prefs.countries.count(code) > 0});
+  for (const auto& [code, n] : counts) out.push_back({code, marketName(code), n, selected.count(code) > 0});
   std::map<std::string, int> rank = {{"US", 0}, {"US-ES", 1}};
   std::sort(out.begin(), out.end(), [&](const MarketSummary& a, const MarketSummary& b) {
     int ra = rank.count(a.code) ? rank[a.code] : 2, rb = rank.count(b.code) ? rank[b.code] : 2;
     return ra != rb ? ra < rb : a.count > b.count;
   });
+  // Codes are logged (never channel names) so a missing country can be traced.
+  std::string line;
+  for (size_t i = 0; i < out.size() && i < 12; ++i) line += out[i].code + "=" + std::to_string(out[i].count) + " ";
+  MLOG_I("lineup", "countries: %s", line.c_str());
   return out;
 }
 
@@ -953,16 +1081,20 @@ std::string Store::marketName(const std::string& code) {
       {"PK", "Pakistan"}, {"PH", "Philippines"}, {"TR", "Turkey"}, {"PL", "Poland"}, {"SE", "Sweden"},
       {"NO", "Norway"}, {"DK", "Denmark"}, {"FI", "Finland"}, {"GR", "Greece"}, {"RO", "Romania"},
       {"ASIA", "Asia"}, {"AFR", "Africa"}, {"EXYU", "Ex-Yugoslavia"}, {"LA", "Latin America"},
-      {"KU", "Kurdish"}, {"AR-AR", "Arabic"}};
+      {"KU", "Kurdish"}, {"CO", "Colombia"}, {"CL", "Chile"}, {"PE", "Peru"}, {"VE", "Venezuela"},
+      {"DO", "Dominican Republic"}, {"PR", "Puerto Rico"}, {"JP", "Japan"}, {"KR", "South Korea"},
+      {"CN", "China"}, {"VN", "Vietnam"}, {"TH", "Thailand"}, {"ID", "Indonesia"}, {"RU", "Russia"},
+      {"UA", "Ukraine"}, {"IL", "Israel"}, {"AE", "United Arab Emirates"}, {"SA", "Saudi Arabia"},
+      {"EG", "Egypt"}, {"ZA", "South Africa"}, {"NG", "Nigeria"}, {"CH", "Switzerland"}, {"AT", "Austria"},
+      {"AL", "Albania"}, {"IR", "Iran"}, {"HU", "Hungary"}, {"CZ", "Czechia"}};
   auto it = kNames.find(code);
   return it == kNames.end() ? code : it->second;
 }
 
-std::vector<CategorySummary> Store::categories(const std::set<std::string>& countries, bool requireGuide) const {
+std::vector<CategorySummary> Store::categories(const catalog::LineupPrefs& draft) const {
   const Impl& m = *impl_;
-  catalog::LineupPrefs everything = m.prefs;
-  everything.countries = countries;
-  everything.requireGuide = requireGuide;
+  // Counts: (in the suggested lineup with every category on, total).
+  catalog::LineupPrefs everything = draft;
   everything.categories = std::set<catalog::LineupCategory>(catalog::kAllCategories.begin(), catalog::kAllCategories.end());
   std::map<catalog::LineupCategory, std::pair<int, int>> counts;
   for (const EntryInfo& info : m.catalog->entries) {
@@ -978,21 +1110,15 @@ std::vector<CategorySummary> Store::categories(const std::set<std::string>& coun
     s.detail = catalog::detail(cat);
     s.suggested = counts[cat].first;
     s.total = counts[cat].second;
-    s.on = m.prefs.categories.count(cat) > 0;
+    s.on = draft.categories.count(cat) > 0;
     out.push_back(std::move(s));
   }
   return out;
 }
 
-void Store::buildLineup(const std::set<std::string>& countries, const std::set<std::string>& categoryKeys,
-                        bool requireGuide) {
+void Store::buildLineup(catalog::LineupPrefs draft) {
   Impl& m = *impl_;
-  catalog::LineupPrefs draft = m.prefs;
-  draft.countries = countries.empty() ? catalog::LineupPrefs::defaultCountries() : countries;
-  draft.categories.clear();
-  for (const std::string& k : categoryKeys)
-    if (auto c = catalog::categoryFromRaw(k)) draft.categories.insert(*c);
-  draft.requireGuide = requireGuide;
+  if (draft.countries.empty()) draft.countries = catalog::LineupPrefs::defaultCountries();
   draft.suggested.clear();
   for (const EntryInfo& info : m.catalog->entries) {
     if (catalog::suggests(info, draft, entryHasGuide(info.id), info.name)) draft.suggested.insert(info.id);
@@ -1002,7 +1128,6 @@ void Store::buildLineup(const std::set<std::string>& countries, const std::set<s
   setPrefs(draft);
 }
 
-bool Store::lineupBuilding() const { return impl_->rebuildGeneration > 0 && impl_->lineup.entries.empty() && !impl_->catalog->entries.empty(); }
 
 void Store::toggleLineup(const std::string& entryId) {
   Impl& m = *impl_;

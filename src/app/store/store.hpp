@@ -24,6 +24,7 @@ struct Program;
 namespace catalog {
 struct CatalogResult;
 struct LineupPrefs;
+struct MarketChoice;
 namespace cache {
 struct Saved;
 }
@@ -45,6 +46,13 @@ struct MarketSummary {
   std::string name;   // "United States (English)"
   int count = 0;      // channels
   bool on = false;
+};
+
+// TV markets for "Where do you watch?" (US Nielsen markets).
+struct TvMarkets {
+  std::vector<std::string> all;        // biggest first
+  std::vector<std::string> suggested;  // from the channel names
+  std::string problem;                 // shown when the list couldn't load
 };
 
 // A lineup category with how many channels it would suggest.
@@ -122,12 +130,20 @@ class Store {
   void pinFeed(const std::string& entryId, const std::string& channelId);  // "" = automatic
   std::string pinnedFeed(const std::string& entryId) const;
 
-  // My Lineup setup.
-  std::vector<MarketSummary> markets() const;
-  std::vector<CategorySummary> categories(const std::set<std::string>& countries, bool requireGuide) const;
-  void buildLineup(const std::set<std::string>& countries, const std::set<std::string>& categoryKeys,
-                   bool requireGuide);
-  bool lineupBuilding() const;
+  // My Lineup setup (LineupSetupView). The draft is the caller's until
+  // buildLineup().
+  catalog::LineupPrefs lineupPrefs() const;
+  // Market list: saved on the TV for 90 days, else read from Wikipedia.
+  void loadMarkets(std::function<void(TvMarkets)> done);
+  // Each picked market with its stations' call signs (kept from the draft
+  // when it already has them).
+  void resolveMarkets(const std::vector<std::string>& names, const catalog::LineupPrefs& draft,
+                      std::function<void(std::vector<catalog::MarketChoice>)> done);
+  // Countries and languages of the channel list (US English and US Spanish
+  // always listed), marked on when in `selected`.
+  std::vector<MarketSummary> countries(const std::set<std::string>& selected) const;
+  std::vector<CategorySummary> categories(const catalog::LineupPrefs& draft) const;
+  void buildLineup(catalog::LineupPrefs draft);
   static std::string marketName(const std::string& code);
 
   const Settings& settings() const { return settings_; }

@@ -41,6 +41,8 @@ class Video {
   void pump();
   // Plane rectangle in 1920x1080 layout units.
   void setWindow(gfx::Rect r);
+  // Applies `r` again even if it did not change.
+  void reapplyWindow(gfx::Rect r);
   void shutdown();
 
   VideoState state() const;

@@ -1364,6 +1364,14 @@ void video_janela(int x, int y, int w, int h) {
     acbJanela(acb, d.x, d.y, d.w, d.h, cheia, &tarefa); }
 }
 
+// marigold: applies the window again even when it is the same rect. A change
+// made while the bind thread was still attaching the plane can be lost (the
+// bind read the old rect), so the app re-applies it a few times.
+void video_janela_forcar(int x, int y, int w, int h) {
+  janX = janY = janW = janH = -1;
+  video_janela(x, y, w, h);
+}
+
 static int semUms;   // 1 depois que o recorte de fonte foi recusado
 
 void video_recorte_reaplicar(void) {

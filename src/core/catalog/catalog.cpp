@@ -66,6 +66,11 @@ std::optional<std::string> countryFor(std::string_view name, std::string_view lo
   if (xtream && hasAnyOf(rawGroup, "|")) {
     if (auto code = text::firstGroup("^\\s*([A-Z0-9]{2,5})\\s*\\|", rawGroup, 1)) {
       if (!code->empty() && (*code)[0] >= '0' && (*code)[0] <= '9') return std::nullopt;  // "4K|"
+      // Marigold: "USA|", "MEX|", "GBR|" are the same countries as "US|"
+      // (tvOS kept "USA" as its own code, so those channels never counted
+      // as US: no core networks, no locals, and no "US" in the country list).
+      auto three = threeLetterCodes().find(*code);
+      if (three != threeLetterCodes().end()) return three->second;
       return *code == "GB" ? std::string("UK") : *code;
     }
   }

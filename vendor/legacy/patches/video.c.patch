@@ -3024,7 +3024,7 @@
    fonX = -1; dstX = -1;
    if (!ligado || !midia[0]) return;   // sem midia presa, aplicar seria no vazio
    if (!acb && !expWin[0]) return;
-@@ -3405,45 +1364,8 @@
+@@ -3405,45 +1364,16 @@
      acbJanela(acb, d.x, d.y, d.w, d.h, cheia, &tarefa); }
  }
  
@@ -3055,8 +3055,13 @@
 -    if (acb) acbJanela(acb, 0, 0, escW, escH, 1, &tarefa);
 -  }
 -  return 1;
--}
-+static int semUms;   // 1 depois que o recorte de fonte foi recusado
++// marigold: applies the window again even when it is the same rect. A change
++// made while the bind thread was still attaching the plane can be lost (the
++// bind read the old rect), so the app re-applies it a few times.
++void video_janela_forcar(int x, int y, int w, int h) {
++  janX = janY = janW = janH = -1;
++  video_janela(x, y, w, h);
+ }
  
 -// ZOOM DE VERDADE: recorta a FONTE e mantem o destino dentro da tela.
 -//
@@ -3068,10 +3073,12 @@
 -// que calculada do lado certo do escalonador.
 -//
 -// Mantem o acbJanela para o caso de tela cheia sem recorte, que ja funcionava.
++static int semUms;   // 1 depois que o recorte de fonte foi recusado
++
  void video_recorte_reaplicar(void) {
    long tarefa = 0;
    SDL_Rect d;
-@@ -3456,15 +1378,15 @@
+@@ -3456,15 +1386,15 @@
    fflush(stdout);
  }
  
@@ -3091,7 +3098,7 @@
    if (dx < 0) { dw += dx; dx = 0; }
    if (dy < 0) { dh += dy; dy = 0; }
    if (dx + dw > 1920) dw = 1920 - dx;
-@@ -3477,28 +1399,16 @@
+@@ -3477,28 +1407,16 @@
    dstX = dx; dstY = dy; dstW = dw; dstH = dh;
    janX = dx; janY = dy; janW = dw; janH = dh;   // o reaplicar do bind usa estes
    if (!ligado || !midia[0]) return;
@@ -3121,7 +3128,7 @@
      printf("[video] janela exportada recusou o recorte; sem zoom\n"); fflush(stdout);
      semUms = 1;
      video_janela(dx, dy, dw, dh);
-@@ -3515,258 +1425,42 @@
+@@ -3515,258 +1433,42 @@
    }
    semUms = 1;
    video_janela(dx, dy, dw, dh);
@@ -3385,7 +3392,7 @@
    if (i != audioAtual) audioNaoSup = 0;
    snprintf(b, sizeof b, "{\"mediaId\":\"%s\",\"type\":\"audio\",\"index\":%d}",
             midia, f->numero);
-@@ -3774,178 +1468,6 @@
+@@ -3774,178 +1476,6 @@
    audioAtual = i;
  }
  
@@ -3564,7 +3571,7 @@
  static int encerrarLaco(void *l) {
    loopParar(l);
    return 0; // remove a fonte
-@@ -3963,8 +1485,6 @@
+@@ -3963,8 +1493,6 @@
    if (expWin[0] && sdlExpDestruir) { sdlExpDestruir(expWin); expWin[0] = 0; }
    // O loop usa o contexto padrao (loopNovo(NULL, 0)). A fonte fica pendente
    // ate ele rodar: quit direto ANTES do run se perde e trava o join (#205).
@@ -3573,7 +3580,7 @@
    if (laco) loopAgendar(-100, encerrarLaco, laco, NULL);
    pthread_join(fio, NULL);
    if (bus && lsUnregister) {
-@@ -3977,14 +1497,3 @@
+@@ -3977,14 +1505,3 @@
    ligado = 0;
    ack_publicar();
  }

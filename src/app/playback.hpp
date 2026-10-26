@@ -46,6 +46,7 @@ class Playback {
   const std::string& entry() const { return entry_; }
   const std::string& previousEntry() const { return previous_; }
   const std::vector<Feed>& feeds() const { return feeds_; }
+  const std::vector<std::string>& flipList() const { return flip_; }
   size_t feedIndex() const { return feed_; }
   bool active() const { return !entry_.empty(); }
   bool ready() const { return ready_; }
@@ -57,6 +58,8 @@ class Playback {
  private:
   bool start(size_t feed);
   void watched();
+  gfx::Rect window() const;
+  void scheduleReapply();
 
   App& app_;
   std::string entry_, previous_, lastWatched_;
@@ -71,6 +74,8 @@ class Playback {
   uint64_t attempt_ = 0;
   uint32_t tunedAt_ = 0, feedAt_ = 0, switchedAt_ = 0;
   gfx::Rect corner_{};
+  uint32_t reapplyAt_[3] = {0, 0, 0};
+  bool reapplyOnReady_ = false;
 };
 
 }  // namespace marigold::app

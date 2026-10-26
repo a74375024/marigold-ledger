@@ -56,6 +56,11 @@ class PlayerScreen : public Screen {
         return true;
       }
       case Key::Left:
+        if (!p.failed()) {
+          app_.nav().push(makeMiniGuide(app_));
+          return true;
+        }
+        [[fallthrough]];
       case Key::Info:
       case Key::Ok:
         if (p.failed()) {

@@ -38,8 +38,7 @@ bool Playback::start(size_t feed) {
   ++attempt_;
   const Feed& f = feeds_[feed];
   MLOG_I("play", "feed %zu of %zu (%s)", feed + 1, feeds_.size(), f.label.c_str());
-  if (full_) app_.video().setWindow({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight});
-  else app_.video().setWindow(corner_);
+  app_.video().setWindow(window());
   if (f.needsOpen) {
     // Emby / Jellyfin open the stream on the server first; a newer tune
     // makes this one moot.
@@ -102,16 +101,35 @@ std::string Playback::previous() {
 }
 
 void Playback::setFull() {
+  bool changed = !full_;
   full_ = true;
   watched();
-  app_.video().setWindow({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight});
+  app_.video().setWindow(window());
+  if (changed) scheduleReapply();
+}
+
+gfx::Rect Playback::window() const {
+  return full_ ? gfx::Rect{0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight} : corner_;
+}
+
+void Playback::scheduleReapply() {
+  // A change made while the TV was still attaching the picture can be lost:
+  // apply it again a little later, and once more when the picture is up.
+  uint32_t now = app_.ms();
+  reapplyAt_[0] = now + 300;
+  reapplyAt_[1] = now + 1200;
+  reapplyAt_[2] = now + 3000;
+  reapplyOnReady_ = true;
 }
 
 void Playback::setCorner(gfx::Rect r) {
   bool changed = full_ || r.x != corner_.x || r.y != corner_.y || r.w != corner_.w || r.h != corner_.h;
   full_ = false;
   corner_ = r;
-  if (changed) app_.video().setWindow(r);
+  if (changed) {
+    app_.video().setWindow(r);
+    if (active()) scheduleReapply();
+  }
 }
 
 bool Playback::tick(uint32_t ms) {
@@ -120,6 +138,16 @@ bool Playback::tick(uint32_t ms) {
   if (!ready_ && (s.playing || s.decoderSeen)) {
     ready_ = true;
     app_.store().recordFeed(feeds_[feed_].channelId, true);
+    if (reapplyOnReady_) {
+      reapplyOnReady_ = false;
+      app_.video().reapplyWindow(window());
+    }
+  }
+  for (uint32_t& at : reapplyAt_) {
+    if (at && ms >= at) {
+      at = 0;
+      app_.video().reapplyWindow(window());
+    }
   }
   bool stuck = !ready_ && ms - feedAt_ > kFirstFrameMs;
   bool broken = s.failed || openFailed_;
@@ -136,7 +164,8 @@ bool Playback::tick(uint32_t ms) {
       app_.video().stop();
     }
   }
-  return !ready_ && !failed_;
+  bool reapplying = reapplyAt_[0] || reapplyAt_[1] || reapplyAt_[2];
+  return (!ready_ && !failed_) || reapplying;
 }
 
 }  // namespace marigold::app

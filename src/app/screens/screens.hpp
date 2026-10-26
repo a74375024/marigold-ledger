@@ -13,6 +13,8 @@ namespace marigold::app {
 
 // Full screen playback of whatever Playback holds.
 std::unique_ptr<Screen> makePlayer(App& app);
+// Left in the player: the channels of the flip list, with what's on.
+std::unique_ptr<Screen> makeMiniGuide(App& app);
 // Program detail card for a show that has not started.
 std::unique_ptr<Screen> makeProgramDetail(App& app, const std::string& entryId, const Listing& l);
 // Channel search; `pick` gets the chosen entry id.
