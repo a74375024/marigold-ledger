@@ -6,10 +6,12 @@
 #include <cstdio>
 #include <string>
 
-#include "app/test_screen.hpp"
+#include "app/app.hpp"
+#include "app/screens/guide_screen.hpp"
+#include "app/screens/screens.hpp"
+#include "app/store/store.hpp"
 #include "app_id.h"
 #include "core/util/log.hpp"
-#include "entrada_texto.h"
 #include "platform/gfx.hpp"
 #include "platform/stdout_capture.hpp"
 #include "platform/storage.hpp"
@@ -42,7 +44,7 @@ int main(int argc, char** argv) {
   (void)argc;
   (void)argv;
   using namespace marigold;
-  // Data files (and the stream link the test screen saves) are the app's only.
+  // Data files (accounts, caches, logs) are the app's only.
   umask(077);
   // Numbers with a dot, always: JSON payloads are built with printf.
   std::setlocale(LC_NUMERIC, "C");
@@ -80,42 +82,16 @@ int main(int argc, char** argv) {
   platform::Video video;
   video.start();
 
-  app::SystemInfo info;
-  info.version = MARIGOLD_VERSION;
-  info.build = MARIGOLD_BUILD;
-  info.webosMajor = nv_webos_major();
-  info.sdlRuntime = window.sdlRuntime();
-  info.glRenderer = window.glRenderer();
-  info.drawableW = window.drawableWidth();
-  info.drawableH = window.drawableHeight();
-  info.transparentSurface = window.transparentSurface();
-  app::TestScreen screen(g, text, video, storage, info);
-
-  bool running = true;
-  while (running && !screen.wantsQuit()) {
-    SDL_Event e;
-    while (SDL_PollEvent(&e)) {
-      uint32_t now = SDL_GetTicks();
-      // The system keyboard sees text before any screen (Legacy main.c).
-      texto_sistema_observar(&e);
-      if (e.type == SDL_QUIT) {
-        running = false;
-      } else if (e.type == SDL_WINDOWEVENT) {
-        if ((e.window.event == SDL_WINDOWEVENT_HIDDEN ||
-             e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) &&
-            !texto_sistema_aberto()) {
-          screen.suspend();
-        }
-        MLOG_I("app", "window event %d", e.window.event);
-      } else if (e.type == SDL_APP_WILLENTERBACKGROUND) {
-        screen.suspend();
-      }
-      screen.handle(e, now);
-    }
-    texto_sistema_quadro();
-    video.pump();
-    screen.frame(SDL_GetTicks());
-    window.swap();
+  app::Build build;
+  build.version = MARIGOLD_VERSION;
+  build.build = MARIGOLD_BUILD;
+  build.webosMajor = nv_webos_major();
+  {
+    app::App app(window, storage, g, text, video, build);
+    if (app.store().accounts().empty()) app.nav().push(app::makeAccounts(app, true));
+    else app.nav().push(std::make_unique<app::GuideScreen>(app));
+    app.nav().settle();
+    app.run();
   }
 
   MLOG_I("app", "exiting");
