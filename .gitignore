@@ -1,0 +1,43 @@
+# Data exports and lists (never commit)
+*.csv
+*.tsv
+*.m3u
+*.m3u8
+*.xmltv
+*.xml.gz
+
+# Logs and playback traces
+*.log
+logs/
+log/
+*.trace
+
+# Credentials, tokens and local config
+local.properties
+*.env
+.env*
+secrets*
+credentials*
+*.pem
+*.key
+*.p12
+*.keystore
+*.jks
+*token*
+*.netrc
+
+# Build outputs
+build/
+build-*/
+out/
+*.ipk
+*.o
+*.a
+*.so
+compile_commands.json
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
