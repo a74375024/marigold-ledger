@@ -12,7 +12,7 @@ std::string toJson(const Saved& saved) {
   json::Value v = json::Value::object();
   v.set("built", saved.built);
   v.set("channelCount", saved.channelCount);
-  v.set("programs", guide::toJson(saved.programs));
+  guide::setPrograms(v, saved.programs);
   json::Value notes = json::Value::object();
   for (const auto& [k, n] : saved.notes) notes.set(k, n);
   v.set("notes", notes);
@@ -30,7 +30,7 @@ std::optional<Saved> savedFromJson(std::string_view text) {
   Saved s;
   s.built = v["built"].asInt();
   s.channelCount = static_cast<int>(v["channelCount"].asInt());
-  s.programs = programsFromJson(v["programs"]);
+  s.programs = sharedProgramsFromJson(v);
   for (const auto& [k, n] : v["notes"].fields()) s.notes[k] = n.asString();
   s.guideChannels = static_cast<int>(v["guideChannels"].asInt());
   s.guideProgrammes = static_cast<int>(v["guideProgrammes"].asInt());
@@ -129,13 +129,15 @@ Outcome build(const std::vector<Channel>& channels, time::Seconds nowSec, const 
   out.kind = Outcome::Kind::built;
   out.saved.built = nowSec;
   out.saved.channelCount = static_cast<int>(channels.size());
+  ProgramsById programs;
   for (auto& [channelID, entry] : found->programs) {
-    std::vector<RawProgram> sorted = entry.programs;
+    std::vector<RawProgram> sorted = std::move(entry.programs);
     std::stable_sort(sorted.begin(), sorted.end(),
                      [](const RawProgram& a, const RawProgram& b) { return a.s < b.s; });
-    out.saved.programs[channelID] = std::move(sorted);
+    programs[channelID] = std::move(sorted);
     out.saved.notes[channelID] = "Provider guide: " + entry.note;
   }
+  out.saved.programs = share(std::move(programs));
   out.saved.guideChannels = found->guideChannels;
   out.saved.guideProgrammes = found->programmes;
   out.saved.bytes = found->bytes;

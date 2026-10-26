@@ -110,6 +110,9 @@ struct Fixture {
   std::unordered_map<std::string, ServerGuideState> state;
   std::unordered_map<std::string, std::vector<Program>> server, programs;
   marigold::guide::ProgramsById outside, providerMatches;
+  // What the report reads: the lists above, shared.
+  mutable std::unordered_map<std::string, std::shared_ptr<const std::vector<Program>>> sharedPrograms;
+  mutable marigold::guide::SharedPrograms sharedOutside, sharedProvider;
   std::map<std::string, std::string> outsideNotes, providerNotes, names;
   std::map<std::string, provider::Status> providerStates;
   std::set<std::string> countries{"US"};
@@ -123,10 +126,14 @@ struct Fixture {
     in.hiddenGroups = &hidden;
     in.guideState = &state;
     in.serverPrograms = &server;
-    in.programs = &programs;
-    in.outsideMatches = &outside;
+    sharedPrograms.clear();
+    for (const auto& [id, list] : programs) sharedPrograms[id] = std::make_shared<const std::vector<Program>>(list);
+    sharedOutside = marigold::guide::share(marigold::guide::ProgramsById(outside));
+    sharedProvider = marigold::guide::share(marigold::guide::ProgramsById(providerMatches));
+    in.programs = &sharedPrograms;
+    in.outsideMatches = &sharedOutside;
     in.outsideNotes = &outsideNotes;
-    in.providerMatches = &providerMatches;
+    in.providerMatches = &sharedProvider;
     in.providerNotes = &providerNotes;
     in.providerStates = &providerStates;
     in.providerCountries = &countries;

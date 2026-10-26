@@ -157,9 +157,20 @@ TEST_CASE("listing: provider guide first, short guide and outside for gaps") {
 
   std::set<std::string> ids = {"c1", "c2"};
   std::unordered_map<std::string, std::vector<Program>> server = {{"c1", shortGuide}};
-  auto merged = mergedListings(ids, server, {}, {{"c1", outside}}, start);
+  guide::SharedPrograms outsideById = {{"c1", std::make_shared<const std::vector<guide::RawProgram>>(outside)}};
+  auto merged = mergedListings(ids, server, {}, outsideById, start);
   CHECK(merged.size() == 1);
-  CHECK(merged.at("c1").size() == 2);
+  CHECK(merged.at("c1")->size() == 2);
+
+  // Channels with the same outside schedule and nothing of their own share
+  // one list; a channel with its own short guide gets its own.
+  outsideById["c2"] = outsideById["c1"];
+  outsideById["c3"] = outsideById["c1"];
+  auto shared = mergedListings({"c1", "c2", "c3"}, server, {}, outsideById, start);
+  REQUIRE(shared.size() == 3);
+  CHECK(shared.at("c2").get() == shared.at("c3").get());
+  CHECK(shared.at("c1").get() != shared.at("c2").get());
+  CHECK(shared.at("c2")->size() == outside.size());
 }
 
 TEST_CASE("lineup: membership, guide order, browse list and groups") {

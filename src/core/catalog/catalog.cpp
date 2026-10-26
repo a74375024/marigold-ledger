@@ -770,6 +770,16 @@ bool isEventGroup(std::string_view group) {
       group);
 }
 
+bool sportsGroup(std::string_view group) {
+  std::string lower = str::lower(group);
+  return isEventGroup(lower) ||
+         rx::test("sport|soccer|football|futbol|fútbol|calcio|hockey|cricket|rugby|tennis|golf|"
+                  "racing|motor|boxing|\\bufc\\b|\\bwwe\\b|fight|\\btsn|bein|eurosport|setanta|"
+                  "premier|bundesliga|\\bliga\\b|serie a|ligue ?1|eredivisie|champions|olymp|"
+                  "\\bmatch",
+                  lower);
+}
+
 ChannelKind kindFor(std::string_view name, std::string_view lower, std::string_view group,
                     bool isCore) {
   // Each pattern below only runs when the name holds a character or word

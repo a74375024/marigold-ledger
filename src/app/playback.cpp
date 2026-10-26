@@ -9,6 +9,7 @@
 #include "app/store/store.hpp"
 #include "platform/storage.hpp"
 #include "core/util/log.hpp"
+#include "core/util/memory.hpp"
 #include "core/util/strings.hpp"
 
 namespace marigold::app {
@@ -30,6 +31,7 @@ bool looksHls(const std::string& url) {
 
 constexpr const char* kLogFile = "playback-log.json";
 constexpr uint32_t kLogSaveMs = 10000;
+constexpr uint32_t kMemoryEveryMs = 5 * 60 * 1000;
 
 // Wall clock in ms, for the log's times.
 int64_t wallMs() {
@@ -56,6 +58,13 @@ void Playback::logEvent(std::string_view event, std::string_view detail) {
     provider = app_.store().providerName(feeds_[i].channelId);
   }
   log_.add(wallMs(), event, session_, channel, feed, provider, detail);
+}
+
+void Playback::logMemory(std::string_view what) {
+  std::string reading = memory::describe(memory::read());
+  if (reading.empty()) return;
+  std::string detail = what.empty() ? reading : std::string(what) + ": " + reading;
+  log_.add(wallMs(), "memory", 0, {}, {}, {}, detail);
 }
 
 void Playback::saveLog(uint32_t ms) {
@@ -110,6 +119,7 @@ bool Playback::begin(const std::string& entryId, std::vector<Feed> feeds, const 
     return false;
   }
   rememberGame();
+  logMemory("before tuning");
   camera_ = false;
   hadPicture_ = false;
   backup_.reset();
@@ -327,6 +337,10 @@ void Playback::setCorner(gfx::Rect r) {
 }
 
 bool Playback::tick(uint32_t ms) {
+  if (ms >= memoryAt_) {
+    if (memoryAt_) logMemory();
+    memoryAt_ = ms + kMemoryEveryMs;
+  }
   saveLog(ms);
   if (entry_.empty()) return false;
   platform::VideoState s = app_.video().state();

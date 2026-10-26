@@ -19,6 +19,14 @@ const typename Map::mapped_type* find(const Map* map, const std::string& key) {
   return it == map->end() ? nullptr : &it->second;
 }
 
+// The same for maps of shared lists.
+template <typename Map>
+const typename Map::mapped_type::element_type* findShared(const Map* map, const std::string& key) {
+  if (!map) return nullptr;
+  auto it = map->find(key);
+  return it == map->end() ? nullptr : it->second.get();
+}
+
 // The first `count` characters (code points; Swift's prefix counts
 // grapheme clusters, which only differs for combining marks and emoji).
 std::string prefixChars(std::string_view s, size_t count) {
@@ -240,7 +248,7 @@ std::string channelReportCSV(const ChannelReportInput& in,
         in.catalog ? find(&in.catalog->traits, channel.id) : nullptr;
     const std::string* entryId = in.catalog ? find(&in.catalog->entryOf, channel.id) : nullptr;
     const bool isXtream = str::startsWith(channel.serverId, "xt:");
-    const Program* now = current(find(in.programs, channel.id), in.now);
+    const Program* now = current(findShared(in.programs, channel.id), in.now);
 
     std::string nowSource;
     if (now) {
@@ -267,9 +275,9 @@ std::string channelReportCSV(const ChannelReportInput& in,
       inLineup = in.lineupIds && in.lineupIds->count(*entryId) > 0;
     }
 
-    const std::vector<guide::RawProgram>* outsideRaw = find(in.outsideMatches, channel.id);
+    const std::vector<guide::RawProgram>* outsideRaw = findShared(in.outsideMatches, channel.id);
     const std::vector<guide::RawProgram>* providerRaw =
-        isXtream ? find(in.providerMatches, channel.id) : nullptr;
+        isXtream ? findShared(in.providerMatches, channel.id) : nullptr;
     std::string outsideNote;
     if (const std::string* note = find(in.outsideNotes, channel.id))
       outsideNote = *note;

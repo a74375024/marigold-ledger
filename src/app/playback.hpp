@@ -94,6 +94,9 @@ class Playback {
   // Options › Help › Export Playback Log.
   const report::PlaybackLog& log() const { return log_; }
   void clearLog() { log_.clear(); }
+  // A "memory" line in the log: the app's memory now, after `what` ("channels
+  // sorted"; empty for the regular reading every few minutes).
+  void logMemory(std::string_view what = {});
 
  private:
   bool begin(const std::string& entryId, std::vector<Feed> feeds, const std::vector<std::string>& flip);
@@ -134,6 +137,7 @@ class Playback {
   int session_ = 0;
   uint64_t logSaved_ = 0;
   uint32_t logSaveAt_ = 0;
+  uint32_t memoryAt_ = 0;
   void logEvent(std::string_view event, std::string_view detail = {});
   void saveLog(uint32_t ms);
 };

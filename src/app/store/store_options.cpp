@@ -312,8 +312,9 @@ void Store::buildChannelReport(std::function<void(std::shared_ptr<std::string>)>
     std::shared_ptr<const CatalogResult> catalog;
     std::set<std::string> lineup, hidden, countries;
     std::unordered_map<std::string, report::ServerGuideState> guideState;
-    std::unordered_map<std::string, std::vector<Program>> serverPrograms, programs;
-    guide::ProgramsById outside, provider;
+    std::unordered_map<std::string, std::vector<Program>> serverPrograms;
+    catalog::ProgramLists programs;
+    guide::SharedPrograms outside, provider;
     std::map<std::string, std::string> outsideNotes, providerNotes, names;
     std::map<std::string, guide::provider::Status> providerStates;
     guide::StationsByNetwork stations;

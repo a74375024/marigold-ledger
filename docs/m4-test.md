@@ -67,3 +67,13 @@ Requests: race drivers and results only for race weekends you can watch
 |---|---|---|
 | Over 30,000 channels | A provider with more channels than the cap, US checked in Countries | All Channels and My Lineup include the US groups; the groups left out are other countries' |
 | Change countries | Check another country in Options › Countries & Languages | The list loads again with that country's groups kept first |
+| Other countries | US checked only | All Channels and channel search show US (and unmarked) channels; Live Events still finds games on other countries' sports and event channels (UK, Canada, DAZN, PPV) |
+
+## Memory
+
+| Area | How to check | Pass |
+|---|---|---|
+| Reading | Options › Help | "Memory in use: 212 MB (peak 340 MB)" above the version |
+| Log | Use the app for an hour, then Export Playback Log | "memory" lines every 5 minutes, before each tune, and after "channels sorted", "listings merged", "outside listings built", "provider guide built", "channel list checked" |
+| Half-hourly refresh | Leave the guide open past 30 minutes | "channel list checked" (nothing sorted again) when the provider's list hasn't changed; memory stays level |
+| No restarts | A long session browsing and watching | No "restart to free up memory" |

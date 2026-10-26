@@ -148,22 +148,37 @@ std::vector<Program> bestListing(const std::vector<Program>* serverIn,
   return result;
 }
 
-std::unordered_map<std::string, std::vector<Program>> mergedListings(
-    const std::set<std::string>& ids,
-    const std::unordered_map<std::string, std::vector<Program>>& server,
-    const std::unordered_map<std::string, std::vector<guide::RawProgram>>& provider,
-    const std::unordered_map<std::string, std::vector<guide::RawProgram>>& outside,
-    time::Seconds start) {
-  std::unordered_map<std::string, std::vector<Program>> merged;
+ProgramLists mergedListings(const std::set<std::string>& ids,
+                            const std::unordered_map<std::string, std::vector<Program>>& server,
+                            const guide::SharedPrograms& provider,
+                            const guide::SharedPrograms& outside, time::Seconds start) {
+  ProgramLists merged;
   merged.reserve(ids.size());
-  auto find = [](const auto& map, const std::string& id) {
+  std::map<std::pair<const void*, const void*>, ProgramList> made;
+  auto schedule = [](const guide::SharedPrograms& map, const std::string& id) -> const guide::Schedule* {
     auto it = map.find(id);
-    return it == map.end() ? nullptr : &it->second;
+    return it == map.end() || !it->second ? nullptr : &it->second;
   };
   for (const std::string& id : ids) {
-    std::vector<Program> list =
-        listing(id, find(server, id), find(provider, id), find(outside, id), start);
-    if (!list.empty()) merged[id] = std::move(list);
+    auto own = server.find(id);
+    const std::vector<Program>* serverList = own == server.end() ? nullptr : &own->second;
+    const guide::Schedule* fromProvider = schedule(provider, id);
+    const guide::Schedule* fromOutside = schedule(outside, id);
+    std::pair<const void*, const void*> key{fromProvider ? fromProvider->get() : nullptr,
+                                            fromOutside ? fromOutside->get() : nullptr};
+    bool shared = !serverList && (key.first || key.second);
+    if (shared) {
+      auto it = made.find(key);
+      if (it != made.end()) {
+        if (it->second) merged[id] = it->second;
+        continue;
+      }
+    }
+    std::vector<Program> list = listing(id, serverList, fromProvider ? fromProvider->get() : nullptr,
+                                        fromOutside ? fromOutside->get() : nullptr, start);
+    ProgramList made1 = list.empty() ? nullptr : std::make_shared<const std::vector<Program>>(std::move(list));
+    if (shared) made[key] = made1;
+    if (made1) merged[id] = std::move(made1);
   }
   return merged;
 }

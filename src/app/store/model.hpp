@@ -29,6 +29,9 @@ struct GuideChannel {
   bool west = false;
   bool favorite = false;
   bool inLineup = false;
+  // In All Channels' countries (or in My Lineup / a favorite). Another
+  // country's sports channels are kept for Live Events only.
+  bool browsable = true;
   bool radio = false;
   Style style = Style::Named;
 };

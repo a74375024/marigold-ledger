@@ -4,6 +4,7 @@
 #pragma once
 
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -62,14 +63,18 @@ std::vector<Program> listing(const std::string& id, const std::vector<Program>* 
 std::vector<Program> bestListing(const std::vector<Program>* server,
                                  const std::vector<Program>* outside, time::Seconds windowStart);
 
+// Channel id -> its listing, shared between channels and snapshots.
+using ProgramList = std::shared_ptr<const std::vector<Program>>;
+using ProgramLists = std::unordered_map<std::string, ProgramList>;
+
 // Every channel's merged listing (after a guide source loads or the window
-// moves on). Channels with nothing are left out.
-std::unordered_map<std::string, std::vector<Program>> mergedListings(
-    const std::set<std::string>& ids,
-    const std::unordered_map<std::string, std::vector<Program>>& server,
-    const std::unordered_map<std::string, std::vector<guide::RawProgram>>& provider,
-    const std::unordered_map<std::string, std::vector<guide::RawProgram>>& outside,
-    time::Seconds windowStart);
+// moves on). Channels with nothing are left out. Channels with no listing of
+// their own from the server whose provider and outside schedules are the same
+// lists share one result (its programme ids name the first such channel).
+ProgramLists mergedListings(const std::set<std::string>& ids,
+                            const std::unordered_map<std::string, std::vector<Program>>& server,
+                            const guide::SharedPrograms& provider,
+                            const guide::SharedPrograms& outside, time::Seconds windowStart);
 
 // MARK: My Lineup
 

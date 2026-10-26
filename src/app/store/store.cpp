@@ -39,6 +39,7 @@
 #include "core/util/gunzip.hpp"
 #include "core/util/json.hpp"
 #include "core/util/log.hpp"
+#include "core/util/memory.hpp"
 #include "core/util/redact.hpp"
 #include "core/util/strings.hpp"
 #include "platform/logo_cache.hpp"
@@ -352,8 +353,9 @@ void Store::setPrefs(const catalog::LineupPrefs& p) {
   impl_->prefs = p;
   app_.storage().write(kLineupFile, catalog::toJson(p));
   if (countriesChanged && impl_->admissionCut) {
-    // Which groups fit under the cap depends on the countries: read the
-    // channel lists again.
+    // Which groups are kept depends on the countries: read the channel
+    // lists again, and sort them even if they haven't changed.
+    impl_->admissionChanged = true;
     refreshAll();
     return;
   }
@@ -797,22 +799,30 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
   auto stations = m.stations;
   std::set<std::string> wanted = m.prefs.guideCountries();  // "US" for US English and US Spanish
   auto cut = std::make_shared<bool>(false);
+  uint64_t lastPrint = showing && !m.admissionChanged ? m.listFingerprint : 0;
+  auto print = std::make_shared<uint64_t>(0);
+  auto unchanged = std::make_shared<bool>(false);
   app_.pool().post(
-      [merged, old, oldCatalog, result, renamedCount, now, stations, wanted, cut] {
+      [merged, old, oldCatalog, result, renamedCount, now, stations, wanted, cut, lastPrint, print, unchanged] {
         std::vector<Channel> list = std::move(*merged);
-        if (list.size() > catalog::kMaxChannels) {
-          // Over the cap: the viewer's countries first, then unmarked groups
-          // ("United States", "4K|", event groups), then everything else.
-          // Provider order alone kept Europe and cut every US group.
-          catalog::GroupRank rank = [&wanted](const std::string&, const Channel& first) {
-            auto country = catalog::markedCountry(first);
-            if (!country) return 1;
-            return wanted.count(*country) ? 0 : 2;
-          };
-          catalog::Admission adm = catalog::admitGroups(list, catalog::kMaxChannels, rank);
-          MLOG_I("store", "admitted %zu channels in %zu groups, %zu groups cut", adm.channels.size(),
-                 adm.admittedGroups, adm.cutGroups);
-          *cut = adm.cutGroups > 0;
+        // The same download as last time (the usual case every half hour):
+        // nothing to sort again.
+        *print = catalog::fingerprint(list);
+        if (lastPrint && *print == lastPrint) {
+          *unchanged = true;
+          return;
+        }
+        // With countries chosen, another country's groups are kept only for
+        // sports and events (Live Events finds games on them); the rest is
+        // left out. Over the cap: the viewer's countries first, then
+        // unmarked groups ("United States", "4K|", event groups), then those
+        // sports groups. Provider order alone kept Europe and cut every US
+        // group.
+        if (!wanted.empty() || list.size() > catalog::kMaxChannels) {
+          catalog::Admission adm = catalog::admitGroups(list, catalog::kMaxChannels, catalog::countryRank(wanted));
+          MLOG_I("store", "admitted %zu channels in %zu groups; %zu groups cut for room, %zu other countries' left out",
+                 adm.channels.size(), adm.admittedGroups, adm.cutGroups, adm.leftOut);
+          *cut = adm.cutGroups > 0 || adm.leftOut > 0;
           list = std::move(adm.channels);
         }
         auto annotated = std::make_shared<std::vector<Channel>>(catalog::annotated(list));
@@ -827,12 +837,21 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
         }
         *result = {annotated, std::make_shared<CatalogResult>(catalog::build(*annotated, now, *stations))};
       },
-      [this, gen, result, renamedCount, showing, problems, cut] {
+      [this, gen, result, renamedCount, showing, problems, cut, print, unchanged] {
         if (gen != impl_->generation) return;
         Impl& mm = *impl_;
-        mm.admissionCut = *cut;
         mm.loading = false;
         mm.channelsLoadedAt = time::now();
+        mm.listFingerprint = *print;
+        if (*unchanged) {
+          MLOG_I("store", "refresh: the channel list is unchanged");
+          status_.problem = str::join(problems, "\n");
+          status_.line.clear();
+          afterBigJob("channel list checked");
+          return;
+        }
+        mm.admissionChanged = false;
+        mm.admissionCut = *cut;
         bool wasEmpty = mm.channels->empty();
         installCatalog(result->first, result->second, false);
         status_.phase = StoreStatus::Phase::Ready;
@@ -849,6 +868,7 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
         saveCatalog();
         if (!mm.stationsFresh) fetchStations();
         fetchLogoIndex();
+        afterBigJob("channels sorted");
       },
       showing ? http::Priority::Background : http::Priority::Visible);
 }
@@ -1473,7 +1493,7 @@ bool Store::providerCovers(const std::string& id, time::Seconds start) const {
   if (it == impl_->providerMatches.end()) return false;
   int low = static_cast<int>(start / 60);
   int high = low + static_cast<int>(kGuideHours * 60);
-  for (const guide::RawProgram& p : it->second)
+  for (const guide::RawProgram& p : *it->second)
     if (p.s < high && p.s + p.m > low) return true;
   return false;
 }
@@ -1491,7 +1511,7 @@ void Store::landed(const std::vector<std::string>& ids, const std::unordered_map
     m.touchedListings.insert(id);
     std::vector<Program> best = bestListing(id);
     if (best.empty()) m.programs.erase(id);
-    else m.programs[id] = std::move(best);
+    else m.programs[id] = std::make_shared<const std::vector<Program>>(std::move(best));
     m.guideState[id] = Impl::GuideState::Loaded;
     m.guideWindowByChannel[id] = start;
   }
@@ -1603,14 +1623,14 @@ std::vector<Program> Store::providerListing(const std::string& id) const {
   auto it = impl_->providerMatches.find(id);
   if (it == impl_->providerMatches.end()) return {};
   time::Seconds start = windowStart() - 3600;
-  return guide::programs(it->second, id, start, start + 14 * 3600, "pg", false);
+  return guide::programs(*it->second, id, start, start + 14 * 3600, "pg", false);
 }
 
 std::vector<Program> Store::outsideListing(const std::string& id) const {
   auto it = impl_->outsideMatches.find(id);
   if (it == impl_->outsideMatches.end()) return {};
   time::Seconds start = windowStart() - 3600;
-  return guide::programs(it->second, id, start, start + 14 * 3600);
+  return guide::programs(*it->second, id, start, start + 14 * 3600);
 }
 
 std::vector<Program> Store::bestListing(const std::string& id) const {
@@ -1638,14 +1658,14 @@ void Store::applyEntryGuides(const std::vector<std::string>& entryIDs) {
   for (const std::string& id : entryIDs) {
     auto info = m.entryInfo.find(id);
     if (info == m.entryInfo.end()) continue;
-    const std::vector<Program>* best = nullptr;
+    const catalog::ProgramList* best = nullptr;
     std::string bestMember;
     time::Seconds bestCoverage = -1;
     bool anyLoading = false, anyLoaded = false, anyFailed = false;
     for (const std::string& member : m.catalog->entries[info->second].members) {
       auto p = m.programs.find(member);
-      if (p != m.programs.end() && !p->second.empty()) {
-        time::Seconds value = coverage(p->second);
+      if (p != m.programs.end() && p->second && !p->second->empty()) {
+        time::Seconds value = coverage(*p->second);
         if (value > bestCoverage) {
           best = &p->second;
           bestCoverage = value;
@@ -1663,13 +1683,13 @@ void Store::applyEntryGuides(const std::vector<std::string>& entryIDs) {
     std::string key;
     if (best) {
       int tagged = 0;
-      for (const Program& p : *best) tagged += p.genres ? 1 : 0;
-      key = bestMember + "|" + std::to_string(best->size()) + "|" + best->front().id + "|" + best->back().id + "|" +
-            std::to_string(tagged);
+      for (const Program& p : **best) tagged += p.genres ? 1 : 0;
+      key = bestMember + "|" + std::to_string((*best)->size()) + "|" + (*best)->front().id + "|" + (*best)->back().id +
+            "|" + std::to_string(tagged);
     }
     if (key.empty() || m.entryGuideKeys[id] != key || !m.programs.count(id)) {
       m.entryGuideKeys[id] = key;
-      if (best) m.programs[id] = *best;
+      if (best) m.programs[id] = *best;  // the member's list, shared
       else m.programs.erase(id);
       m.dirtyEntries.insert(id);
     }
@@ -1689,10 +1709,8 @@ void Store::rebuildOutsidePrograms() {
   Impl& m = *impl_;
   uint64_t generation = ++m.listingsGeneration;
   auto server = std::make_shared<std::unordered_map<std::string, std::vector<Program>>>(m.serverPrograms);
-  auto provider = std::make_shared<std::unordered_map<std::string, std::vector<guide::RawProgram>>>(
-      m.providerMatches.begin(), m.providerMatches.end());
-  auto outside = std::make_shared<std::unordered_map<std::string, std::vector<guide::RawProgram>>>(
-      m.outsideMatches.begin(), m.outsideMatches.end());
+  auto provider = std::make_shared<const guide::SharedPrograms>(m.providerMatches);
+  auto outside = std::make_shared<const guide::SharedPrograms>(m.outsideMatches);
   std::set<std::string> ids;
   for (const auto& [id, v] : m.outsideMatches) ids.insert(id);
   for (const auto& [id, v] : m.providerMatches) ids.insert(id);
@@ -1700,7 +1718,7 @@ void Store::rebuildOutsidePrograms() {
     if (!str::startsWith(id, "e|")) ids.insert(id);
   time::Seconds window = windowStart();
   m.touchedListings.clear();
-  auto merged = std::make_shared<std::unordered_map<std::string, std::vector<Program>>>();
+  auto merged = std::make_shared<catalog::ProgramLists>();
   uint64_t gen = m.generation;
   app_.pool().post(
       [server, provider, outside, ids, window, merged] {
@@ -1712,7 +1730,7 @@ void Store::rebuildOutsidePrograms() {
         for (const std::string& id : mm.touchedListings) {
           std::vector<Program> list = bestListing(id);
           if (list.empty()) merged->erase(id);
-          else (*merged)[id] = std::move(list);
+          else (*merged)[id] = std::make_shared<const std::vector<Program>>(std::move(list));
         }
         // Entry lists stay until applyEntryGuides decides they changed.
         for (auto& [key, value] : mm.programs)
@@ -1721,6 +1739,7 @@ void Store::rebuildOutsidePrograms() {
         std::vector<std::string> ids2;
         for (const auto& [id, idx] : mm.entryInfo) ids2.push_back(id);
         applyEntryGuides(ids2);
+        afterBigJob("listings merged");
       },
       http::Priority::Normal);
 }
@@ -1953,6 +1972,7 @@ void Store::runProviderGuide() {
         installProviderSaved();
         rebuildOutsidePrograms();
         scheduleLineupRefresh();
+        afterBigJob("provider guide built");
       },
       http::Priority::Long);
   (void)dir;
@@ -2118,8 +2138,16 @@ void Store::runOutsideGuide() {
         mm.outsideMatches = mm.outsideSaved->programs;
         rebuildOutsidePrograms();
         scheduleLineupRefresh();
+        afterBigJob("outside listings built");
       },
       http::Priority::Long);
+}
+
+// ------------------------------------------------------------ memory
+
+void Store::afterBigJob(const char* what) {
+  memory::release();
+  app_.playback().logMemory(what);
 }
 
 // ------------------------------------------------------------ playback
@@ -2373,9 +2401,11 @@ void Store::publishChannels() {
     auto it = out->byId.find(e.id);
     if (it != out->byId.end()) out->lineup.push_back(it->second);
   }
+  for (GuideChannel& g : out->all) g.browsable = false;
   for (const Channel& e : lo.browseEntries) {
     auto it = out->byId.find(e.id);
     if (it == out->byId.end()) continue;
+    out->all[static_cast<size_t>(it->second)].browsable = true;
     if (m.hiddenGroups.count(out->all[static_cast<size_t>(it->second)].group)) continue;
     out->browse.push_back(it->second);
   }
@@ -2399,10 +2429,10 @@ void Store::publishListings() {
   out->version = ++m.publishVersion;
   auto convert = [&](const std::string& id) {
     auto p = m.programs.find(id);
-    if (p == m.programs.end() || p->second.empty()) {
+    if (p == m.programs.end() || !p->second || p->second->empty()) {
       out->byChannel.erase(id);
     } else {
-      auto v = std::make_shared<std::vector<Listing>>(cleanListings(p->second));
+      auto v = std::make_shared<std::vector<Listing>>(cleanListings(*p->second));
       if (v->empty()) out->byChannel.erase(id);
       else out->byChannel[id] = v;
     }

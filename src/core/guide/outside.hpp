@@ -95,10 +95,21 @@ struct RawProgram {
   int f = 0;                      // flags: 1 movie, 2 sports, 4 news, 8 kids, 16 live, 32 new
 
   int end() const { return s + m; }
+  bool operator==(const RawProgram& o) const {
+    return s == o.s && m == o.m && f == o.f && t == o.t && st == o.st && d == o.d;
+  }
 };
 
 // User channel id -> its programmes.
 using ProgramsById = std::map<std::string, std::vector<RawProgram>>;
+
+// The same, shared: the channels one guide channel stands for (a network's
+// HD, FHD and backup feeds) point at one list, and copies of the map (saved,
+// live, handed to a worker) copy pointers, not programmes.
+using Schedule = std::shared_ptr<const std::vector<RawProgram>>;
+using SharedPrograms = std::map<std::string, Schedule>;
+// Identical lists become one.
+SharedPrograms share(ProgramsById&& programs);
 
 // A user channel a guide channel stands for. `shift`: minutes added to its
 // times (a West feed made from the East one: +180).
@@ -146,7 +157,7 @@ struct Saved {
   time::Seconds built = 0;
   std::vector<std::string> shards;
   int channelCount = 0;
-  ProgramsById programs;
+  SharedPrograms programs;
   // How each channel was matched ("US locals: WNBC-DT (by call sign WNBC)").
   std::optional<std::map<std::string, std::string>> notes;
   // Each source's state from the last update (by Source::id).
@@ -164,6 +175,10 @@ json::Value toJson(const RawProgram& p);
 std::optional<RawProgram> rawProgramFromJson(const json::Value& v);
 json::Value toJson(const ProgramsById& programs);
 ProgramsById programsFromJson(const json::Value& v);
+// Into `v`: "programs" (channel id -> index) and "lists" (each distinct list
+// once). Reading also takes the older "programs" (channel id -> list).
+void setPrograms(json::Value& v, const SharedPrograms& programs);
+SharedPrograms sharedProgramsFromJson(const json::Value& v);
 json::Value toJson(const SourceState& s);
 std::optional<SourceState> sourceStateFromJson(const json::Value& v);
 std::string toJson(const Saved& saved);
@@ -287,7 +302,7 @@ struct BuildIO {
 };
 
 struct BuildResult {
-  ProgramsById programs;
+  SharedPrograms programs;
   std::vector<std::string> problems;
   std::map<std::string, std::string> notes;
   std::map<std::string, SourceState> states;

@@ -337,7 +337,7 @@ void Store::rebuildEvents() {
       ss::ListingInput in;
       in.channel = lc;
       auto p = m.programs.find(lc.id);
-      if (p != m.programs.end()) in.programs = &p->second;
+      if (p != m.programs.end()) in.programs = p->second.get();
       inputs.push_back(in);
     }
     ss::ExtractedListings ex = ss::extractListings(inputs, now);

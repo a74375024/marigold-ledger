@@ -284,6 +284,7 @@ class SearchScreen : public Screen {
       std::vector<std::pair<int, int>> scored;  // score, index
       for (size_t i = 0; i < ch->all.size(); ++i) {
         const GuideChannel& g = ch->all[i];
+        if (!g.browsable) continue;  // another country's, kept for Live Events
         std::string name = fold(g.name);
         int score = 0;
         if (name == q) score = 95;

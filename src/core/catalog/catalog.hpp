@@ -75,6 +75,9 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context =
 
 // Provider groups (lower-cased) that hold event slots rather than channels.
 bool isEventGroup(std::string_view group);
+// Provider groups (any case) for sports: event slots, pay-per-view, sports
+// channels ("UK| SKY SPORTS", "DE| SOCCER PPV", "CA| TSN+", "SE| HOCKEY").
+bool sportsGroup(std::string_view group);
 ChannelKind kindFor(std::string_view name, std::string_view lower, std::string_view group,
                     bool isCore);
 

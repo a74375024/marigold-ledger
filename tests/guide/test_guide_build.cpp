@@ -100,8 +100,8 @@ TEST_CASE("outside build: mains, a failed main, stale shards, backups with a clo
 
   REQUIRE(r.programs.count("a"));
   REQUIRE(r.programs.count("b"));
-  CHECK(r.programs.at("b").size() == 24);
-  const auto& a = r.programs.at("a");
+  CHECK(r.programs.at("b")->size() == 24);
+  const auto& a = *r.programs.at("a");
   REQUIRE(a.size() == 30);
   CHECK(a[24].t == "Later 0");
   CHECK(a[24].s == kNow + 24 * 60);  // moved back by the assumed 8 h
@@ -157,7 +157,7 @@ TEST_CASE("outside build: mains, a failed main, stale shards, backups with a clo
   again.status = {{"us-locals", 304}, {"us-national", 304}, {"us-sports", 0}};
   BuildResult reused = build(channels, on, &*loaded, {}, kNowSec + 600, again.io());
   CHECK(again.reads.count("us-national") == 0);
-  CHECK(reused.programs.at("a").size() == 30);
+  CHECK(reused.programs.at("a")->size() == 30);
   CHECK(reused.notes.at("b") == r.notes.at("b"));
   CHECK(reused.log[3] == "guide main sources unchanged: saved listings reused (2 channels)");
 
@@ -171,7 +171,7 @@ TEST_CASE("outside build: mains, a failed main, stale shards, backups with a clo
   shorter.status.clear();
   BuildResult kept = build(more, on, &*loaded, {}, kNowSec + 600, shorter.io());
   CHECK(shorter.reads.at("us-national") == 1);
-  CHECK(kept.programs.at("a").size() == 30);
+  CHECK(kept.programs.at("a")->size() == 30);
   bool keptLine = false;
   for (const std::string& line : kept.log)
     keptLine |= line.find("kept the last update's later listings") != std::string::npos;
@@ -185,7 +185,7 @@ TEST_CASE("outside build: nothing stale means no backups and a day's wait") {
   fake.files["us-sports"] = hours("dream.us", "Dream Sports", kNow + 24 * 60, 6);
   BuildResult r = build(channels, {"us"}, nullptr, {}, kNowSec, fake.io());
   CHECK(r.nextCheck == kNowSec + kRefreshAge);
-  CHECK(r.programs.at("a").size() == 30);  // the second main fills the later hours
+  CHECK(r.programs.at("a")->size() == 30);  // the second main fills the later hours
   CHECK(r.states.at("backup--epgtalk-us").used == false);
   CHECK(fake.reads.count("backup--epgtalk-us") == 0);
   // A short horizon on a backed-up shard is stale too.
@@ -286,8 +286,8 @@ TEST_CASE("provider guide: scope, rebuild, outcomes") {
       },
       [&](const std::string& line) { lines.push_back(line); });
   REQUIRE(built.kind == provider::Outcome::Kind::built);
-  CHECK(built.saved.programs.at("a")[0].t == "First");  // sorted by start
-  CHECK(built.saved.programs.at("b").size() == 2);
+  CHECK((*built.saved.programs.at("a"))[0].t == "First");  // sorted by start
+  CHECK(built.saved.programs.at("b")->size() == 2);
   CHECK(built.saved.notes.at("a") == "Provider guide: One TV (by guide id)");
   CHECK(built.saved.channelCount == 3);
   CHECK(built.saved.guideChannels == 1);
@@ -295,7 +295,7 @@ TEST_CASE("provider guide: scope, rebuild, outcomes") {
   CHECK(lines.size() == 1);
   auto back = provider::savedFromJson(provider::toJson(built.saved));
   REQUIRE(back);
-  CHECK(back->programs.at("b")[1].t == "Later");
+  CHECK((*back->programs.at("b"))[1].t == "Later");
   CHECK(back->notes == built.saved.notes);
   CHECK(back->bytes == 4096);
 }

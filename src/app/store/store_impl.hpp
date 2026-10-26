@@ -131,7 +131,11 @@ struct Store::Impl {
   std::unordered_map<std::string, size_t> entryInfo;  // entry id -> catalog->entries index
   catalog::LineupOutput lineup;
   bool partial = false;
-  bool admissionCut = false;  // the last list was over the cap: groups were left out
+  bool admissionCut = false;
+  // The last downloaded list (before admission), and whether what admission
+  // keeps has changed since (countries), so the same list must be sorted again.
+  uint64_t listFingerprint = 0;
+  bool admissionChanged = false;  // the last list was over the cap: groups were left out
   time::Seconds channelsLoadedAt = 0;
   bool loading = false;
   uint64_t generation = 1;   // bumps when accounts change
@@ -141,9 +145,10 @@ struct Store::Impl {
 
   // Guide.
   std::unordered_map<std::string, std::vector<Program>> serverPrograms;  // short EPG / Emby
-  guide::ProgramsById providerMatches;
-  guide::ProgramsById outsideMatches;
-  std::unordered_map<std::string, std::vector<Program>> programs;  // raw and entry ids
+  // Shared lists: copies of these maps copy pointers (see guide::share).
+  guide::SharedPrograms providerMatches;
+  guide::SharedPrograms outsideMatches;
+  catalog::ProgramLists programs;  // raw and entry ids
   std::unordered_map<std::string, GuideState> guideState;
   std::unordered_map<std::string, time::Seconds> guideWindowByChannel;
   std::unordered_map<std::string, std::string> entryGuideKeys;

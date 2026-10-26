@@ -8,6 +8,7 @@
 #include "app/store/store.hpp"
 #include "core/catalog/lineup.hpp"
 #include "core/sports/my_sports.hpp"
+#include "core/util/memory.hpp"
 
 namespace marigold::app {
 namespace {
@@ -307,6 +308,8 @@ std::unique_ptr<Screen> makeOptions(App& app) {
     ui::PanelItem diag{ui::PanelItem::Kind::Chevron, "Remote and video test"};
     diag.select = [&app] { app.nav().push(makeDiagnostics(app)); };
     p.items.push_back(diag);
+    std::string inUse = memory::describe(memory::read());
+    if (!inUse.empty()) p.items.push_back(ui::PanelItem::note("Memory in use: " + inUse));
     ui::PanelItem about{ui::PanelItem::Kind::Note, "Marigold " + app.build().version + " (build " + app.build().build + ")"};
     p.items.push_back(about);
   });

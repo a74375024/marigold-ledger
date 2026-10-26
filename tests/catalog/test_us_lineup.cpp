@@ -179,20 +179,14 @@ TEST_CASE("over the channel cap: the viewer's countries first, then unmarked gro
   auto add = [&](const std::string& group, int count) {
     for (int i = 0; i < count; ++i) list.push_back(channel(group + std::to_string(i), "Ch " + std::to_string(i), group));
   };
-  add("UK| GENERAL", 40);
-  add("DE| SPORT", 30);
+  add("UK| SPORTS", 40);
+  add("DE| SOCCER PPV", 30);
   add("US| ENTERTAINMENT", 25);
   add("US| NBC", 20);
   add("United States", 10);  // a group word, not a prefix
   add("PPV Live Events", 10);  // no country
   add("4K| UHD", 5);  // a number prefix is not a country
-  std::set<std::string> wanted = {"US"};
-  GroupRank rank = [&wanted](const std::string&, const Channel& first) {
-    auto country = markedCountry(first);
-    if (!country) return 1;
-    return wanted.count(*country) ? 0 : 2;
-  };
-  Admission a = admitGroups(list, 80, rank);
+  Admission a = admitGroups(list, 80, countryRank({"US"}));
   std::set<std::string> groups;
   for (const Channel& c : a.channels) groups.insert(*c.group);
   CHECK(groups.count("US| ENTERTAINMENT"));
@@ -200,8 +194,57 @@ TEST_CASE("over the channel cap: the viewer's countries first, then unmarked gro
   CHECK(groups.count("United States"));
   CHECK(groups.count("PPV Live Events"));
   CHECK(groups.count("4K| UHD"));
-  CHECK_FALSE(groups.count("UK| GENERAL"));  // 70 taken, 40 more don't fit
+  CHECK_FALSE(groups.count("UK| SPORTS"));  // 70 taken, 40 more don't fit
   CHECK(a.channels.size() == 70);
+  CHECK(a.cutGroups == 2);  // UK| SPORTS, DE| SOCCER PPV: sports, but no room
   // Admitted channels keep the provider's order.
   CHECK(*a.channels.front().group == "US| ENTERTAINMENT");
+}
+
+TEST_CASE("other countries: sports and event groups kept, the rest left out") {
+  std::vector<Channel> list;
+  auto add = [&](const std::string& group, const std::string& name) {
+    list.push_back(channel(group + name, name, group));
+  };
+  add("UK| GENERAL", "BBC One");
+  add("UK| SKY SPORTS", "Sky Sports Main Event");
+  add("DE| KINDER", "KiKA");
+  add("DE| SOCCER PPV", "Bundesliga 01");
+  add("CA| TSN+ PPV", "TSN+ 03");
+  add("SE| SVENSK HOCKEY PPV", "SHL 2");
+  add("FR| FRANCE SPORT VIP", "beIN Sports 1");
+  add("IT| CINEMA", "Rai Movie");
+  add("US| ENTERTAINMENT", "USA Network");
+  add("Entertainment", "UK: BBC Two");  // a mixed group: its name has no country
+  add("PPV Live Events", "Event 01");
+  Admission a = admitGroups(list, kMaxChannels, countryRank({"US"}));
+  std::set<std::string> groups;
+  for (const Channel& c : a.channels) groups.insert(*c.group);
+  CHECK(groups == std::set<std::string>{"UK| SKY SPORTS", "DE| SOCCER PPV", "CA| TSN+ PPV", "SE| SVENSK HOCKEY PPV",
+                                        "FR| FRANCE SPORT VIP", "US| ENTERTAINMENT", "Entertainment",
+                                        "PPV Live Events"});
+  CHECK(a.leftOut == 3);  // UK| GENERAL, DE| KINDER, IT| CINEMA
+  CHECK(a.cutGroups == 0);
+  // A country the viewer checked keeps all its groups.
+  Admission withUK = admitGroups(list, kMaxChannels, countryRank({"US", "UK"}));
+  CHECK(withUK.leftOut == 2);
+  // No countries chosen: everything.
+  CHECK(admitGroups(list, kMaxChannels, countryRank({})).channels.size() == list.size());
+}
+
+TEST_CASE("channel list fingerprint: same list, same value; any change, another") {
+  std::vector<Channel> list = {channel("1", "ESPN", "US| SPORTS"), channel("2", "CNN", "US| NEWS")};
+  uint64_t first = fingerprint(list);
+  CHECK(fingerprint(list) == first);
+  std::vector<Channel> renamed = list;
+  renamed[1].name = "CNN HD";
+  CHECK(fingerprint(renamed) != first);
+  std::vector<Channel> regrouped = list;
+  regrouped[0].group = "US| ENTERTAINMENT";
+  CHECK(fingerprint(regrouped) != first);
+  std::vector<Channel> reordered = {list[1], list[0]};
+  CHECK(fingerprint(reordered) != first);
+  std::vector<Channel> logo = list;
+  logo[0].imageUrl = "logo";
+  CHECK(fingerprint(logo) != first);
 }

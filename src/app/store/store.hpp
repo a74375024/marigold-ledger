@@ -314,6 +314,9 @@ class Store {
   std::vector<Program> bestListing(const std::string& id) const;
   void applyEntryGuides(const std::vector<std::string>& entryIDs);
   void rebuildOutsidePrograms();
+  // After a channel sort or a guide build: freed memory back to the system,
+  // and a memory line in the playback log.
+  void afterBigJob(const char* what);
   void startGuides(bool requestRows);
   void readSavedListings();
   void installProviderSaved();

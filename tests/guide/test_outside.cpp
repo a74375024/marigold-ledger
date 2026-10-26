@@ -198,8 +198,11 @@ TEST_CASE("saved listings: JSON, file name, when to rebuild") {
   saved.built = kNow;
   saved.shards = {"us", "fast"};
   saved.channelCount = 100;
-  saved.programs["c1"] = {raw(kNowMin, 30, "A & B \"quoted\""), raw(kNowMin + 30, 30, "C")};
-  saved.programs["c1"][0].st = "Part 1";
+  std::vector<RawProgram> c1 = {raw(kNowMin, 30, "A & B \"quoted\""), raw(kNowMin + 30, 30, "C")};
+  c1[0].st = "Part 1";
+  saved.programs["c1"] = std::make_shared<const std::vector<RawProgram>>(c1);
+  saved.programs["c2"] = saved.programs["c1"];  // an HD feed of the same channel
+  saved.programs["c3"] = std::make_shared<const std::vector<RawProgram>>(c1);  // equal, not shared
   saved.notes = std::map<std::string, std::string>{{"c1", "US national: Dream (by name)"}};
   SourceState state;
   state.id = "us-national";
@@ -217,10 +220,12 @@ TEST_CASE("saved listings: JSON, file name, when to rebuild") {
   saved.detailVersion = kDetailVersion;
   auto back = savedFromJson(toJson(saved));
   REQUIRE(back);
-  CHECK(back->programs.at("c1").size() == 2);
-  CHECK(back->programs.at("c1")[0].t == "A & B \"quoted\"");
-  CHECK(back->programs.at("c1")[0].st == std::string("Part 1"));
-  CHECK_FALSE(back->programs.at("c1")[1].st);
+  CHECK(back->programs.at("c1")->size() == 2);
+  CHECK((*back->programs.at("c1"))[0].t == "A & B \"quoted\"");
+  CHECK((*back->programs.at("c1"))[0].st == std::string("Part 1"));
+  CHECK_FALSE((*back->programs.at("c1"))[1].st);
+  CHECK(back->programs.at("c2").get() == back->programs.at("c1").get());  // written once, shared again
+  CHECK(*back->programs.at("c3") == *back->programs.at("c1"));
   CHECK(back->sources->at("us-national") == state);
   CHECK(back->notes->at("c1") == "US national: Dream (by name)");
   CHECK(toJson(*back) == toJson(saved));
@@ -295,4 +300,30 @@ TEST_CASE("Targets: national networks under the guide's other names, and looser 
   // No near misses.
   CHECK(targets.matches({"Turner Sports"}, "x", false).empty());
   CHECK(targets.matches({"Up North Live"}, "x", false).empty());
+}
+
+TEST_CASE("shared listings: equal lists become one; older saved files still read") {
+  ProgramsById byId;
+  byId["hd"] = {raw(kNowMin, 30, "News"), raw(kNowMin + 30, 30, "Weather")};
+  byId["fhd"] = byId["hd"];
+  byId["west"] = {raw(kNowMin + 180, 30, "News")};
+  byId["other"] = byId["hd"];
+  byId["other"][1].d = "A description";
+  SharedPrograms shared = share(std::move(byId));
+  REQUIRE(shared.size() == 4);
+  CHECK(shared.at("hd").get() == shared.at("fhd").get());
+  CHECK(shared.at("hd").get() != shared.at("west").get());
+  CHECK(shared.at("hd").get() != shared.at("other").get());
+  CHECK((*shared.at("other"))[1].d == std::string("A description"));
+
+  // Before lists were shared, "programs" held each channel's list.
+  ProgramsById old;
+  old["c1"] = {raw(kNowMin, 30, "A")};
+  old["c2"] = old["c1"];
+  json::Value v = json::Value::object();
+  v.set("programs", toJson(old));
+  SharedPrograms back = sharedProgramsFromJson(v);
+  REQUIRE(back.size() == 2);
+  CHECK(back.at("c1").get() == back.at("c2").get());
+  CHECK((*back.at("c1"))[0].t == "A");
 }

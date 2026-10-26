@@ -31,7 +31,7 @@ struct Saved {
   time::Seconds built = 0;
   // In-scope channels when this was built (a big jump means rebuild).
   int channelCount = 0;
-  ProgramsById programs;
+  SharedPrograms programs;
   std::map<std::string, std::string> notes;
   // Channels and programmes in the provider's whole file.
   int guideChannels = 0;

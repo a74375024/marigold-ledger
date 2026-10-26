@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -86,14 +87,14 @@ struct ChannelReportInput {
   const std::unordered_map<std::string, ServerGuideState>* guideState = nullptr;
   const std::unordered_map<std::string, std::vector<Program>>* serverPrograms = nullptr;
   // The merged listing shown in the guide, by raw channel id ("now").
-  const std::unordered_map<std::string, std::vector<Program>>* programs = nullptr;
+  const std::unordered_map<std::string, std::shared_ptr<const std::vector<Program>>>* programs = nullptr;
 
   // Outside listings: matches and how each channel was matched.
-  const guide::ProgramsById* outsideMatches = nullptr;
+  const guide::SharedPrograms* outsideMatches = nullptr;
   const std::map<std::string, std::string>* outsideNotes = nullptr;
   // The provider's full guide (Xtream xmltv.php): matches, notes, each
   // account's state (by server id "xt:...") and the countries in scope.
-  const guide::ProgramsById* providerMatches = nullptr;
+  const guide::SharedPrograms* providerMatches = nullptr;
   const std::map<std::string, std::string>* providerNotes = nullptr;
   const std::map<std::string, guide::provider::Status>* providerStates = nullptr;
   const std::set<std::string>* providerCountries = nullptr;
