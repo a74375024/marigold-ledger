@@ -8,6 +8,7 @@
 #include <string>
 #include <tuple>
 #include <unordered_map>
+#include <vector>
 
 #include "platform/gfx.hpp"
 
@@ -32,8 +33,14 @@ class TextRenderer {
   bool init(const std::string& fontDir);
   void shutdown();
 
-  // Width in layout units.
+  // Width in layout units (cached).
   float measure(const std::string& s, Weight w, int px);
+  // Height of a drawn line (the font's ascent plus descent).
+  float lineHeight(Weight w, int px);
+  // Word-wraps into at most `maxLines` lines; the last one ends with an
+  // ellipsis when text is left over.
+  std::vector<std::string> wrap(const std::string& s, Weight w, int px, float maxWidth,
+                                int maxLines);
   // Draws one line with its top at `y`. If `maxWidth` > 0 the text is cut
   // with an ellipsis to fit. Returns the drawn width.
   float draw(gfx::Renderer& g, const std::string& s, float x, float y, Weight w, int px,
@@ -56,6 +63,7 @@ class TextRenderer {
   std::string files_[3];
   std::map<std::pair<int, int>, TTF_Font*> fonts_;
   std::unordered_map<std::string, Line> lines_;
+  std::unordered_map<std::string, float> widths_;  // measure cache, cleared when full
   std::list<std::string> lru_;
   size_t budget_;
   size_t bytes_ = 0;

@@ -97,6 +97,10 @@ class Client {
   // `done` on the UI thread from pump().
   Ticket post(std::function<void()> work, std::function<void()> done,
               Priority priority = Priority::Normal);
+  // Runs a request on the calling thread and returns its response. For
+  // background jobs already on a pool thread (guide builds); never call it
+  // on the UI thread. cancelAll() stops it too.
+  Response fetchNow(Request req);
   // Drops every queued and running request (account switch, exit). Their
   // callbacks never run.
   void cancelAll();

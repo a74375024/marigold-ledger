@@ -164,6 +164,17 @@ Ticket Client::enqueue(std::shared_ptr<Ticket::Job> job) {
   return Ticket(job);
 }
 
+Response Client::fetchNow(Request req) {
+  Ticket::Job job;
+  job.req = std::move(req);
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    job.rede = rede_job_criar(group_);
+  }
+  execute(job);
+  return std::move(job.resp);
+}
+
 void Client::cancelAll() {
   {
     std::lock_guard<std::mutex> lock(mu_);

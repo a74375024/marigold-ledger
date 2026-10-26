@@ -19,7 +19,8 @@ struct Channel {
   std::string id;
   // "xt:<account>", "jf:<server>" or "m3u:<account>".
   std::string serverId;
-  // Provider's id: Xtream stream_id, Emby item id, or the M3U entry index.
+  // Provider's id: Xtream stream_id, Emby item id, or for M3U a hash of
+  // (tvg-id, name, group).
   std::string itemId;
   std::string name;
   std::optional<std::string> number;

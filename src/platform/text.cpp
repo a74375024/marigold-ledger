@@ -23,13 +23,10 @@ std::string cacheKey(const std::string& s, Weight w, int px) {
   return key;
 }
 
-// Drops the last UTF-8 code point.
-void popCodePoint(std::string& s) {
-  while (!s.empty()) {
-    unsigned char c = static_cast<unsigned char>(s.back());
-    s.pop_back();
-    if ((c & 0xC0) != 0x80) break;
-  }
+// "Word…" reads better than "Word …" or "Word,…".
+std::string trimRight(std::string s) {
+  while (!s.empty() && (s.back() == ' ' || s.back() == ',' || s.back() == '-')) s.pop_back();
+  return s;
 }
 
 }  // namespace
@@ -57,6 +54,7 @@ void TextRenderer::shutdown() {
     if (l.texture) glDeleteTextures(1, &l.texture);
   }
   lines_.clear();
+  widths_.clear();
   lru_.clear();
   bytes_ = 0;
   for (auto& [key, f] : fonts_) {
@@ -143,21 +141,78 @@ void TextRenderer::evictTo(size_t limit) {
 }
 
 float TextRenderer::measure(const std::string& s, Weight w, int px) {
-  TTF_Font* f = s.empty() ? nullptr : font(w, px);
+  if (s.empty()) return 0.0f;
+  std::string key = cacheKey(s, w, px);
+  auto it = widths_.find(key);
+  if (it != widths_.end()) return it->second;
+  TTF_Font* f = font(w, px);
   int width = 0, height = 0;
   if (!f || TTF_SizeUTF8(f, s.c_str(), &width, &height) != 0) return 0.0f;
+  if (widths_.size() >= 8192) widths_.clear();
+  widths_.emplace(std::move(key), static_cast<float>(width));
   return static_cast<float>(width);
+}
+
+float TextRenderer::lineHeight(Weight w, int px) {
+  TTF_Font* f = font(w, px);
+  return f ? static_cast<float>(TTF_FontHeight(f)) : static_cast<float>(px) * 1.2f;
 }
 
 std::string TextRenderer::fitted(const std::string& s, Weight w, int px, float maxWidth) {
   if (maxWidth <= 0 || measure(s, w, px) <= maxWidth) return s;
-  std::string cut = s;
-  while (!cut.empty()) {
-    popCodePoint(cut);
-    std::string candidate = cut + kEllipsis;
-    if (measure(candidate, w, px) <= maxWidth) return candidate;
+  // Binary search over code point boundaries for the longest prefix that
+  // fits with the ellipsis (results are cached by measure()).
+  std::vector<size_t> cuts;
+  for (size_t i = 0; i < s.size(); ++i) {
+    if ((static_cast<unsigned char>(s[i]) & 0xC0) != 0x80 && i > 0) cuts.push_back(i);
   }
-  return kEllipsis;
+  size_t lo = 0, hi = cuts.size();
+  std::string best = kEllipsis;
+  while (lo < hi) {
+    size_t mid = (lo + hi + 1) / 2;
+    std::string candidate(trimRight(s.substr(0, cuts[mid - 1])));
+    candidate += kEllipsis;
+    if (measure(candidate, w, px) <= maxWidth) {
+      best = std::move(candidate);
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return best;
+}
+
+std::vector<std::string> TextRenderer::wrap(const std::string& s, Weight w, int px,
+                                            float maxWidth, int maxLines) {
+  std::vector<std::string> lines;
+  if (s.empty() || maxLines <= 0) return lines;
+  std::vector<std::string> words;
+  size_t i = 0;
+  while (i < s.size()) {
+    while (i < s.size() && (s[i] == ' ' || s[i] == '\n' || s[i] == '\t')) ++i;
+    size_t j = i;
+    while (j < s.size() && s[j] != ' ' && s[j] != '\n' && s[j] != '\t') ++j;
+    if (j > i) words.push_back(s.substr(i, j - i));
+    i = j;
+  }
+  std::string current;
+  size_t k = 0;
+  for (; k < words.size(); ++k) {
+    std::string candidate = current.empty() ? words[k] : current + " " + words[k];
+    if (current.empty() || measure(candidate, w, px) <= maxWidth) {
+      current = std::move(candidate);
+      continue;
+    }
+    if (static_cast<int>(lines.size()) + 1 == maxLines) break;
+    lines.push_back(std::move(current));
+    current = words[k];
+  }
+  if (k < words.size()) {
+    // Out of lines: the rest goes on the last one, cut with an ellipsis.
+    for (; k < words.size(); ++k) current += " " + words[k];
+  }
+  if (!current.empty()) lines.push_back(fitted(current, w, px, maxWidth));
+  return lines;
 }
 
 float TextRenderer::draw(gfx::Renderer& g, const std::string& s, float x, float y, Weight w,
