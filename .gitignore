@@ -23,7 +23,8 @@ credentials*
 *.p12
 *.keystore
 *.jks
-*token*
+*.token
+tokens.json
 *.netrc
 
 # Build outputs
