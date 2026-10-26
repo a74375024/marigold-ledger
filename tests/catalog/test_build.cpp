@@ -248,3 +248,24 @@ TEST_CASE("refreshEvents re-reads renamed slots only") {
   CHECK_FALSE(r.traits["xt:1|c1"].familyKey);
   CHECK(r.entries.size() == 1);
 }
+
+TEST_CASE("a list that marks no US channels: unmarked channels count as US") {
+  std::vector<Channel> list = {channel("1", "ESPN HD", "Sports", "m3u:p"), channel("2", "CNN", "News", "m3u:p"),
+                               channel("3", "UK: BBC One", "UK", "m3u:p"),
+                               channel("4", "\xd0\x9f\xd0\xb5\xd1\x80\xd0\xb2\xd1\x8b\xd0\xb9", "Russia", "m3u:p")};
+  CatalogResult r = build(list, utc(2026, 10, 21, 12, 0));
+  CHECK(r.traits.at("m3u:p|1").market == std::string("US"));
+  CHECK(r.traits.at("m3u:p|1").core == std::string("ESPN"));
+  CHECK(r.traits.at("m3u:p|2").market == std::string("US"));
+  CHECK(r.traits.at("m3u:p|3").market == std::string("UK"));
+  CHECK_FALSE(r.traits.at("m3u:p|4").market);  // not Latin script
+}
+
+TEST_CASE("a list that marks its US channels: unmarked ones stay unknown") {
+  std::vector<Channel> list;
+  for (int i = 0; i < 30; ++i) list.push_back(channel("u" + std::to_string(i), "Channel " + std::to_string(i), "USA| General"));
+  list.push_back(channel("x", "Some Channel", "Misc"));
+  CatalogResult r = build(list, utc(2026, 10, 21, 12, 0));
+  CHECK(r.traits.at("xt:1|u0").market == std::string("US"));
+  CHECK_FALSE(r.traits.at("xt:1|x").market);
+}

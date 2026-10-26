@@ -83,6 +83,11 @@ std::optional<Document> parseScoreboard(std::string_view body, const League& lea
 std::optional<SportsGame> parseGame(const json::Value& event, const League& league);
 // Schools from the teams list.
 std::optional<std::vector<SportsTeam>> parseSchools(std::string_view body);
+// Marigold: every team of a league, for picking favourites. The schedule
+// only knows the teams playing in its window (late October that is the
+// two World Series teams for MLB). Same answer shape as the schools.
+sources::Request teamsRequest(const League& league);
+inline std::optional<std::vector<SportsTeam>> parseTeams(std::string_view body) { return parseSchools(body); }
 
 struct FightCards {
   std::vector<SportsGame> games;

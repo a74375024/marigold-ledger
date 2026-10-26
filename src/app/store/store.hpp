@@ -227,6 +227,8 @@ class Store {
   void setMySports(const sports::MySportsPrefs& prefs);
   std::vector<sports::SportsTeam> teamsOf(const std::string& leagueShort) const;
   void requestRosters(const std::set<std::string>& leagueShorts);
+  // Bumped when a league's team list arrives (My Sports reloads its grid).
+  int teamsRevision() const;
   void releaseRosters();
   // League (or other sport) id -> provider events that look like it.
   std::map<std::string, int> sportSuggestions() const;

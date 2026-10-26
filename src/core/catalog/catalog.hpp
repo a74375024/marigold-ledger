@@ -24,6 +24,11 @@ struct CallsignContext {
   std::unordered_set<std::string> known;
   std::unordered_map<std::string, std::string> networkOf;
   guide::StationsByNetwork stationsByNetwork;
+  // Marigold: the list doesn't mark its US channels ("ESPN", "FOX 5 New
+  // York" with no "US|" group or "US:" prefix), so a channel of unknown
+  // country in Latin script is taken as US. tvOS left them without a
+  // country, so such lists had no core networks, locals or US count.
+  bool unknownIsUS = false;
 
   CallsignContext() = default;
   // The station directory, plus signs seen in local groups or next to a

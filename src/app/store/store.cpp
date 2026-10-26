@@ -135,6 +135,29 @@ Listing toListing(const Program& p) {
   return l;
 }
 
+// One row's listings in time order with no overlaps. Merged guides (short
+// EPG, the provider's file, outside listings) and providers that repeat a
+// programme can hold two programmes for the same minutes, which the guide
+// drew one over the other. The first one listed for a time wins; one that
+// runs on past it keeps only the rest of its time.
+std::vector<Listing> cleanListings(const std::vector<Program>& programs) {
+  std::vector<Listing> all;
+  all.reserve(programs.size());
+  for (const Program& p : programs)
+    if (p.end > p.start) all.push_back(toListing(p));
+  std::stable_sort(all.begin(), all.end(), [](const Listing& a, const Listing& b) { return a.start < b.start; });
+  std::vector<Listing> out;
+  out.reserve(all.size());
+  for (Listing& l : all) {
+    if (!out.empty() && l.start < out.back().end) {
+      if (l.end <= out.back().end + 60) continue;  // covered by the one before
+      l.start = out.back().end;
+    }
+    out.push_back(std::move(l));
+  }
+  return out;
+}
+
 uint8_t titleGenres(const std::string& title, const std::optional<std::string>& episode) {
   return static_cast<uint8_t>(guide::genre::flagsForTitle(title, episode));
 }
@@ -870,7 +893,7 @@ void Store::fetchStations() {
         rebuildCatalog();
         if (guide::needsStationDirectory(guideShards())) scheduleOutside(true);
       },
-      http::Priority::Background);
+      http::Priority::Long);
 }
 
 // ------------------------------------------------------------ fallback logos
@@ -935,7 +958,7 @@ void Store::fetchLogoIndex() {
         mm.iptvOrg = std::make_shared<logos::IptvOrgIndex>(std::move(**out));
         mm.channelsDirty = true;
       },
-      http::Priority::Background);
+      http::Priority::Long);
 }
 
 // Classifies the current list again (the station directory changed).
@@ -1068,8 +1091,13 @@ std::optional<std::string> wikitext(http::Client& pool, const std::string& title
     if (attempt > 0) usleep(static_cast<useconds_t>(attempt) * 2000000u);
     http::Response r = pool.fetchNow(q);
     if (r.status == 429) continue;  // rate limited: wait and try again
-    if (!r.ok) continue;
-    return guide::stations::wikitextFromResponse(r.body);
+    if (!r.ok) {
+      MLOG_W("wiki", "page request failed (status %d, %s)", r.status, r.error.c_str());
+      continue;
+    }
+    auto text = guide::stations::wikitextFromResponse(r.body);
+    if (!text) MLOG_W("wiki", "page answer unreadable (status %d, %zu bytes)", r.status, r.body.size());
+    return text;
   }
   return std::nullopt;
 }
@@ -1886,7 +1914,7 @@ void Store::runProviderGuide() {
         rebuildOutsidePrograms();
         scheduleLineupRefresh();
       },
-      http::Priority::Background);
+      http::Priority::Long);
   (void)dir;
 }
 
@@ -2051,7 +2079,7 @@ void Store::runOutsideGuide() {
         rebuildOutsidePrograms();
         scheduleLineupRefresh();
       },
-      http::Priority::Background);
+      http::Priority::Long);
 }
 
 // ------------------------------------------------------------ playback
@@ -2333,10 +2361,9 @@ void Store::publishListings() {
     if (p == m.programs.end() || p->second.empty()) {
       out->byChannel.erase(id);
     } else {
-      auto v = std::make_shared<std::vector<Listing>>();
-      v->reserve(p->second.size());
-      for (const Program& pr : p->second) v->push_back(toListing(pr));
-      out->byChannel[id] = v;
+      auto v = std::make_shared<std::vector<Listing>>(cleanListings(p->second));
+      if (v->empty()) out->byChannel.erase(id);
+      else out->byChannel[id] = v;
     }
     auto st = m.guideState.find(id);
     if (st != m.guideState.end() && (st->second == Impl::GuideState::Loaded || st->second == Impl::GuideState::Failed) &&

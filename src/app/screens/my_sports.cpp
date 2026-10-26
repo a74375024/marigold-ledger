@@ -27,6 +27,7 @@ constexpr float kLeagueW = 400, kLeagueH = 96, kLeagueGap = 24;
 constexpr int kTeamCols = 6;
 constexpr float kTeamW = 250, kTeamH = 180, kTeamGap = 22;
 const char* kSections[] = {"Football", "Basketball", "Baseball", "Hockey", "Soccer"};
+constexpr int kHitTile = 100, kHitButton = 10, kHitTab = 20, kHitReminder = 30;
 
 struct Pick {
   std::string id, name, section;
@@ -45,10 +46,45 @@ class MySportsSetup : public Screen {
       if (!known) picks_.push_back({l.shortName, l.name, "More sports"});
     }
     for (const sports::OtherSport& o : sports::otherSports()) picks_.push_back({o.id, o.name, "More sports"});
+    layoutPicks();
   }
   ~MySportsSetup() override { app_.store().releaseRosters(); }
 
-  bool tick(uint32_t) override { return step_ == 2 && teams_.empty(); }
+  bool tick(uint32_t) override {
+    if (step_ == 2 && app_.store().teamsRevision() != teamsRevision_) {
+      std::string keep = focus_ >= 0 && focus_ < static_cast<int>(teams_.size()) ? teams_[static_cast<size_t>(focus_)].id : "";
+      loadTeams();
+      if (!keep.empty())
+        for (size_t i = 0; i < teams_.size(); ++i)
+          if (teams_[i].id == keep) focus_ = static_cast<int>(i);
+      return true;
+    }
+    return step_ == 2 && teams_.empty();
+  }
+
+  // Pointer: ids 100+ tiles, 10/11 the two buttons, 20+ league tabs, 30 the
+  // reminders row.
+  void hover(int id) override {
+    if (id == kHitButton || id == kHitButton + 1) {
+      button_ = id - kHitButton;
+      if (step_ == 1) focus_ = static_cast<int>(picks_.size());
+      else if (step_ == 2) focus_ = -2;
+      else reviewRow_ = 1;
+    } else if (step_ == 1 && id >= kHitTile && id - kHitTile < static_cast<int>(picks_.size())) {
+      focus_ = id - kHitTile;
+    } else if (step_ == 2 && id >= kHitTile && id - kHitTile < static_cast<int>(teams_.size())) {
+      focus_ = id - kHitTile;
+    } else if (step_ == 2 && id >= kHitTab && id < kHitTab + 10) {
+      int tab = id - kHitTab;
+      focus_ = -1;
+      if (tab != tab_ && tab < static_cast<int>(teamLeagues().size())) {
+        tab_ = tab;
+        loadTeams();
+      }
+    } else if (step_ == 3 && id == kHitReminder) {
+      reviewRow_ = 0;
+    }
+  }
 
   bool key(const KeyEvent& e) override {
     if (step_ == 1) return leaguesKey(e);
@@ -85,6 +121,30 @@ class MySportsSetup : public Screen {
   }
 
   // ---------------------------------------------------------- step 1
+  // Rows as drawn: kLeagueCols per row, a new row (under a heading) for
+  // each section.
+  void layoutPicks() {
+    rows_.clear();
+    rowOf_.assign(picks_.size(), 0);
+    colOf_.assign(picks_.size(), 0);
+    ys_.assign(picks_.size(), 0);
+    std::string section;
+    float cy = 0;
+    for (size_t i = 0; i < picks_.size(); ++i) {
+      bool newSection = i == 0 || picks_[i].section != section;
+      if (newSection || rows_.back().size() == static_cast<size_t>(kLeagueCols)) {
+        if (i > 0) cy += kLeagueH + kLeagueGap;
+        if (newSection) cy += 44;
+        section = picks_[i].section;
+        rows_.emplace_back();
+      }
+      rowOf_[i] = static_cast<int>(rows_.size()) - 1;
+      colOf_[i] = static_cast<int>(rows_.back().size());
+      ys_[i] = cy;
+      rows_.back().push_back(static_cast<int>(i));
+    }
+  }
+
   int buttonsRow() const { return static_cast<int>(picks_.size()); }  // focus index of the buttons
 
   bool leaguesKey(const KeyEvent& e) {
@@ -93,7 +153,9 @@ class MySportsSetup : public Screen {
       switch (e.key) {
         case Key::Left: button_ = 0; return true;
         case Key::Right: button_ = 1; return true;
-        case Key::Up: focus_ = n - 1; return true;
+        case Key::Up:
+          if (!rows_.empty()) focus_ = rows_.back().front();
+          return true;
         case Key::Ok:
           if (button_ == 0) app_.nav().pop();
           else goTeams();
@@ -101,13 +163,25 @@ class MySportsSetup : public Screen {
         default: return e.key != Key::Back;
       }
     }
+    // Arrows follow the grid as drawn: each section starts a new row.
+    size_t f = static_cast<size_t>(focus_);
+    int row = rowOf_[f], col = colOf_[f];
     switch (e.key) {
-      case Key::Left: if (focus_ % kLeagueCols > 0) --focus_; return true;
-      case Key::Right: if (focus_ + 1 < n && (focus_ + 1) % kLeagueCols != 0) ++focus_; return true;
-      case Key::Up: if (focus_ >= kLeagueCols) focus_ -= kLeagueCols; return true;
+      case Key::Left: if (col > 0) --focus_; return true;
+      case Key::Right:
+        if (col + 1 < static_cast<int>(rows_[static_cast<size_t>(row)].size())) ++focus_;
+        return true;
+      case Key::Up:
+        if (row > 0) {
+          const std::vector<int>& above = rows_[static_cast<size_t>(row - 1)];
+          focus_ = above[static_cast<size_t>(std::min(col, static_cast<int>(above.size()) - 1))];
+        }
+        return true;
       case Key::Down:
-        if (focus_ + kLeagueCols < n) focus_ += kLeagueCols;
-        else {
+        if (row + 1 < static_cast<int>(rows_.size())) {
+          const std::vector<int>& below = rows_[static_cast<size_t>(row + 1)];
+          focus_ = below[static_cast<size_t>(std::min(col, static_cast<int>(below.size()) - 1))];
+        } else {
           focus_ = n;
           button_ = 1;
         }
@@ -137,44 +211,26 @@ class MySportsSetup : public Screen {
     ui::label(c, "What do you watch?", kLeft, kTop + 34, Weight::Bold, 52, theme::white());
     ui::label(c, "Your teams lead Live Events, each pick gets a row, and the schedule is only looked up for these.",
               kLeft, kTop + 108, Weight::Regular, 22, theme::white(0.65f), 1760);
-    // Grid with section headings; scrolled so the focused tile shows.
+    // Grid with section headings; scrolled only when the focus would leave
+    // the view (so tiles stay put under the pointer).
     float y = kTop + 160;
-    float focusY = 0;
-    std::vector<std::pair<float, int>> rows;  // y, first index
-    std::string section;
-    int col = 0;
-    std::vector<float> ys(picks_.size());
-    float cy = 0;
-    for (size_t i = 0; i < picks_.size(); ++i) {
-      if (picks_[i].section != section) {
-        if (i > 0) cy += kLeagueH + kLeagueGap;
-        section = picks_[i].section;
-        cy += 44;
-        col = 0;
-      } else if (col == kLeagueCols) {
-        cy += kLeagueH + kLeagueGap;
-        col = 0;
-      }
-      ys[i] = cy;
-      ++col;
-      if (static_cast<int>(i) == focus_) focusY = cy;
-    }
     float visible = gfx::kLayoutHeight - y - 140;
-    float scroll = std::max(0.0f, focusY - visible + kLeagueH + 40);
+    if (focus_ >= 0 && focus_ < static_cast<int>(picks_.size())) {
+      float fy = ys_[static_cast<size_t>(focus_)];
+      if (fy - 50 < scroll_) scroll_ = std::max(0.0f, fy - 50);
+      if (fy + kLeagueH + 20 > scroll_ + visible) scroll_ = fy + kLeagueH + 20 - visible;
+    }
     c.g.pushClip({0, y - 4, gfx::kLayoutWidth, visible + 8});
-    section.clear();
-    col = 0;
+    std::string section;
     for (size_t i = 0; i < picks_.size(); ++i) {
       const Pick& p = picks_[i];
       if (p.section != section) {
         section = p.section;
-        col = 0;
-        ui::label(c, section, kLeft, y + ys[i] - 40 - scroll, Weight::Bold, 20, theme::white(0.6f));
+        ui::label(c, section, kLeft, y + ys_[i] - 40 - scroll_, Weight::Bold, 20, theme::white(0.6f));
       }
-      // Tiles in a section restart their columns at 0 for each new row.
-      int column = 0;
-      for (size_t k = i; k > 0 && picks_[k - 1].section == p.section && ys[k - 1] == ys[i]; --k) ++column;
-      Rect r{kLeft + static_cast<float>(column) * (kLeagueW + kLeagueGap), y + ys[i] - scroll, kLeagueW, kLeagueH};
+      Rect r{kLeft + static_cast<float>(colOf_[i]) * (kLeagueW + kLeagueGap), y + ys_[i] - scroll_, kLeagueW, kLeagueH};
+      if (r.y + r.h < y - 4 || r.y > y + visible + 4) continue;
+      c.hit(r, kHitTile + static_cast<int>(i));
       bool f = static_cast<int>(i) == focus_;
       bool on = picked(p.id);
       c.g.fill(r, f ? theme::white() : theme::white(0.08f), 18);
@@ -192,7 +248,6 @@ class MySportsSetup : public Screen {
       } else {
         c.g.stroke(check, ink.withAlpha(0.4f), 16, 2);
       }
-      ++col;
     }
     c.g.popClip();
     drawButtons(c, "Cancel", teamLeagues().empty() ? "Next: review" : "Next: favorite teams",
@@ -205,6 +260,7 @@ class MySportsSetup : public Screen {
       const std::string& t = i == 0 ? a : b;
       float w = ui::chipWidth(c, t, 24) + 50;
       Rect r{x, y, w, 64};
+      c.hit(r, kHitButton + i);
       bool f = focusedRow && button_ == i;
       c.g.fill(r, f ? theme::white() : theme::white(0.12f), 32);
       ui::labelIn(c, t, r, Weight::Bold, 24, f ? theme::black() : theme::white(), Align::Center);
@@ -215,6 +271,7 @@ class MySportsSetup : public Screen {
   // ---------------------------------------------------------- step 2
   void loadTeams() {
     std::vector<std::string> leagues = teamLeagues();
+    teamsRevision_ = app_.store().teamsRevision();
     teams_.clear();
     if (tab_ < static_cast<int>(leagues.size())) teams_ = app_.store().teamsOf(leagues[static_cast<size_t>(tab_)]);
     std::sort(teams_.begin(), teams_.end(), [](const sports::SportsTeam& a, const sports::SportsTeam& b) { return a.name < b.name; });
@@ -274,6 +331,7 @@ class MySportsSetup : public Screen {
       std::string t = l ? l->shortName : leagues[i];
       float w = ui::chipWidth(c, t, 22) + 30;
       Rect r{x, y, w, 52};
+      c.hit(r, kHitTab + static_cast<int>(i));
       bool sel = static_cast<int>(i) == tab_;
       bool f = sel && focus_ == -1;
       c.g.fill(r, f ? theme::white() : sel ? theme::white(0.25f) : theme::white(0.1f), 26);
@@ -286,8 +344,14 @@ class MySportsSetup : public Screen {
       ui::label(c, "Looking up the teams\xe2\x80\xa6", kLeft + 50, y + 26, Weight::Medium, 24, theme::white(0.6f));
     }
     float visible = gfx::kLayoutHeight - y - 140;
-    int focusRow = std::max(0, focus_) / kTeamCols;
-    float scroll = std::max(0.0f, (static_cast<float>(focusRow) + 1) * (kTeamH + kTeamGap) - visible);
+    if (focus_ >= 0) {
+      float fy = static_cast<float>(focus_ / kTeamCols) * (kTeamH + kTeamGap);
+      if (fy < teamScroll_) teamScroll_ = fy;
+      if (fy + kTeamH > teamScroll_ + visible) teamScroll_ = fy + kTeamH - visible;
+    } else if (focus_ == -1) {
+      teamScroll_ = 0;
+    }
+    float scroll = teamScroll_;
     c.g.pushClip({0, y - 4, gfx::kLayoutWidth, visible + 8});
     std::string league = tab_ < static_cast<int>(leagues.size()) ? leagues[static_cast<size_t>(tab_)] : "";
     for (size_t i = 0; i < teams_.size(); ++i) {
@@ -295,6 +359,7 @@ class MySportsSetup : public Screen {
       int row = static_cast<int>(i) / kTeamCols, col = static_cast<int>(i) % kTeamCols;
       Rect r{kLeft + static_cast<float>(col) * (kTeamW + kTeamGap), y + static_cast<float>(row) * (kTeamH + kTeamGap) - scroll, kTeamW, kTeamH};
       if (r.y > y + visible || r.y + r.h < y) continue;
+      c.hit(r, kHitTile + static_cast<int>(i));
       bool f = static_cast<int>(i) == focus_;
       bool on = std::find(draft_.teams.begin(), draft_.teams.end(), sports::teamKey(league, t.id)) != draft_.teams.end();
       c.g.fill(r, f ? theme::white() : theme::white(0.08f), 18);
@@ -365,6 +430,7 @@ class MySportsSetup : public Screen {
     line("Everything else", "In \"More events\"");
     y += 20;
     Rect row{kLeft, y, 1200, 84};
+    c.hit(row, kHitReminder);
     bool f = reviewRow_ == 0;
     bool enabled = !draft_.teams.empty();
     c.g.fill(row, f ? theme::white() : theme::white(0.07f), theme::kRowRadius);
@@ -392,6 +458,12 @@ class MySportsSetup : public Screen {
   int button_ = 1;
   int tab_ = 0;
   int reviewRow_ = 1;
+  int teamsRevision_ = -1;
+  // Step 1 layout (see layoutPicks) and the scroll positions.
+  std::vector<std::vector<int>> rows_;
+  std::vector<int> rowOf_, colOf_;
+  std::vector<float> ys_;
+  float scroll_ = 0, teamScroll_ = 0;
 };
 
 }  // namespace

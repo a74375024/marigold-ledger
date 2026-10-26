@@ -1279,14 +1279,16 @@ void GuideScreen::drawChannelCell(ui::Ctx& c, const GuideChannel& g, Rect r, boo
       break;
     case GuideChannel::Style::Local:
       ui::logo(c, g.logoUrl, "", {r.x + 12, r.y + 24, 58, 36}, focused);
-      ui::label(c, g.name, r.x + 80, r.y + 18, Weight::Bold, 20, fg, r.w - 88);
+      ui::label(c, g.name, r.x + 80, r.y + 18, Weight::Bold, 20, fg, r.w - (g.favorite ? 108 : 88));
       ui::label(c, g.subtitle, r.x + 80, r.y + 46, Weight::Regular, 15, sub, r.w - 88);
       break;
     case GuideChannel::Style::Named: {
       bool hasLogo = !g.logoUrl.empty();
       float tx = r.x + (hasLogo ? 80 : 14);
       if (hasLogo) ui::logo(c, g.logoUrl, "", {r.x + 12, r.y + 24, 58, 36}, focused);
-      std::vector<std::string> lines = c.t.wrap(g.name, Weight::Bold, 18, r.x + r.w - 10 - tx, 2);
+      // Leave room for the favourite star in the corner.
+      float right = r.x + r.w - (g.favorite ? 28 : 10);
+      std::vector<std::string> lines = c.t.wrap(g.name, Weight::Bold, 18, right - tx, 2);
       float ty = r.y + (lines.size() > 1 ? 10 : 18);
       for (const std::string& s : lines) {
         ui::label(c, s, tx, ty, Weight::Bold, 18, fg);

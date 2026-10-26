@@ -720,10 +720,48 @@ void Store::setMySports(const sports::MySportsPrefs& prefs) {
 
 std::vector<sports::SportsTeam> Store::teamsOf(const std::string& leagueShort) const {
   const sports::League* l = sports::leagueByShort(leagueShort);
-  return l ? impl_->ev.schedule.teams(*l) : std::vector<sports::SportsTeam>();
+  if (!l) return {};
+  // The league's whole list, with the schedule's (fresher) copies on top.
+  std::map<std::string, sports::SportsTeam> byId;
+  auto full = impl_->ev.leagueTeams.find(leagueShort);
+  if (full != impl_->ev.leagueTeams.end())
+    for (const sports::SportsTeam& t : full->second) byId[t.id] = t;
+  for (const sports::SportsTeam& t : impl_->ev.schedule.teams(*l)) byId[t.id] = t;
+  std::vector<sports::SportsTeam> out;
+  out.reserve(byId.size());
+  for (auto& [id, t] : byId) out.push_back(std::move(t));
+  return out;
 }
 
+int Store::teamsRevision() const { return impl_->ev.teamsRevision; }
+
 void Store::requestRosters(const std::set<std::string>& shorts) {
+  EventsState& e = impl_->ev;
+  time::Seconds now = time::now();
+  for (const std::string& id : shorts) {
+    const sports::League* l = sports::leagueByShort(id);
+    if (!l || l->college() || l->fights || l->racing || l->tennis || e.leagueTeamsBusy.count(id)) continue;
+    auto at = e.leagueTeamsAt.find(id);
+    if (at != e.leagueTeamsAt.end() && now - at->second < 12 * 3600) continue;
+    e.leagueTeamsBusy.insert(id);
+    auto teams = std::make_shared<std::optional<std::vector<sports::SportsTeam>>>();
+    http::Request q = toHttp(sports::schedule::teamsRequest(*l), "events.teams");
+    q.afterTransfer = [teams](http::Response& r) {
+      if (r.ok && r.status == 200) *teams = sports::schedule::parseTeams(r.body);
+    };
+    app_.pool().submit(std::move(q), [this, id, teams](http::Response&&) {
+      EventsState& ev = impl_->ev;
+      ev.leagueTeamsBusy.erase(id);
+      ev.leagueTeamsAt[id] = time::now();
+      if (!*teams || (*teams)->empty()) {
+        MLOG_W("events", "teams for %s: couldn't load", id.c_str());
+        return;
+      }
+      MLOG_I("events", "teams for %s: %zu", id.c_str(), (*teams)->size());
+      ev.leagueTeams[id] = std::move(**teams);
+      ++ev.teamsRevision;
+    });
+  }
   impl_->ev.schedule.requestRosters(shorts, scheduleContext());
   ++eventsOpen_;  // the setup screen drives the fetch like the board
   impl_->ev.rostersHeld = true;

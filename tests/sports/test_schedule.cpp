@@ -303,6 +303,14 @@ TEST_CASE("requests: the public scoreboard, the limit form and the extra query")
         "https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?week=9&seasontype=2&groups=80");
   CHECK(schoolsRequest().url ==
         "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/teams?limit=1000");
+  CHECK(teamsRequest(*leagueByShort("MLB")).url ==
+        "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/teams?limit=1000");
+  // A league's teams come back like the schools.
+  auto teams = parseTeams(R"({"sports":[{"leagues":[{"teams":[)"
+                          R"({"team":{"id":"10","displayName":"Testville Owls","abbreviation":"TVO","name":"Owls","location":"Testville"}},)"
+                          R"({"team":{"id":"11","displayName":"Sample City Hawks","abbreviation":"SCH","name":"Hawks","location":"Sample City"}}]}]}]})");
+  REQUIRE(teams);
+  CHECK(teams->size() == 2);
 }
 
 TEST_CASE("queries: a month or two, day by day, or this week") {

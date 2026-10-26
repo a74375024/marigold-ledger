@@ -112,6 +112,16 @@ std::optional<std::string> countryFor(std::string_view name, std::string_view lo
   return std::nullopt;
 }
 
+// Names in Latin script (accents, dashes and superscripts allowed): not
+// Cyrillic, Greek, Hebrew, Arabic, Indic, Thai or CJK.
+bool latinScript(std::string_view name) {
+  for (char ch : name) {
+    unsigned char c = static_cast<unsigned char>(ch);
+    if ((c >= 0xCD && c <= 0xDF) || c == 0xE0 || (c >= 0xE3 && c <= 0xEF)) return false;
+  }
+  return true;
+}
+
 // US channels in Spanish (Univision, Telemundo, ESPN Deportes...).
 bool isSpanishUS(std::string_view name, std::string_view group) {
   return rx::test(
@@ -274,13 +284,23 @@ CallsignContext::CallsignContext(const std::vector<Channel>& channels,
   for (const Channel& channel : channels) {
     std::string group = groupOf(channel);
     bool strong = contains(str::lower(group), "local") ||
-                  rx::test("^\\s*US\\s*\\|\\s*(NBC|FOX|CBS|ABC|CW|PBS)\\b", group);
+                  rx::test("^\\s*USA?\\s*\\|\\s*(NBC|FOX|CBS|ABC|CW|PBS)\\b", group);
     std::optional<std::string> network = networkWord(channel.name);
     for (const CallsignCandidate& candidate : callsignCandidates(channel.name)) {
       if (strong || (network && candidate.inParens)) known.insert(candidate.sign);
       if (network) counts[candidate.sign][*network] += 3;
     }
   }
+  // Lists that mark countries mark the US too; when hardly any channel is
+  // marked US, unmarked channels are the US ones.
+  size_t us = 0;
+  for (const Channel& channel : channels) {
+    std::string rawGroup = groupOf(channel);
+    auto country = countryFor(channel.name, str::lower(channel.name), rawGroup, str::lower(rawGroup),
+                              str::startsWith(channel.serverId, "xt:"));
+    if (country == std::string("US")) ++us;
+  }
+  unknownIsUS = !channels.empty() && us < std::max<size_t>(20, channels.size() / 100);
   // Each sign's most common network. Swift's max over a dictionary breaks
   // ties in hash order; here the alphabetically first network wins.
   for (const auto& [sign, byNetwork] : counts) {
@@ -582,6 +602,7 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
   bool isWest = rx::test("\\b(west|pacific)\\b", lower);
   std::optional<std::string> country =
       countryFor(name, lower, rawGroup, group, str::startsWith(channel.serverId, "xt:"));
+  if (!country && context.unknownIsUS && latinScript(name)) country = "US";
   std::optional<std::string> market = country;
   if (country == std::string("US") && isSpanishUS(name, group)) market = "US-ES";
   std::string display = cleanName(name);

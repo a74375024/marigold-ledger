@@ -109,7 +109,8 @@ void Client::start(int threads, std::function<void()> wake) {
   group_ = rede_grupo_criar();
   wake_ = std::move(wake);
   stopping_ = false;
-  for (int i = 0; i < std::max(1, threads); ++i) threads_.emplace_back([this] { worker(); });
+  for (int i = 0; i < std::max(1, threads); ++i) threads_.emplace_back([this] { worker(false); });
+  threads_.emplace_back([this] { worker(true); });
 }
 
 void Client::stop() {
@@ -118,6 +119,7 @@ void Client::stop() {
     if (threads_.empty() && !group_) return;
     stopping_ = true;
     queue_.clear();
+    longQueue_.clear();
   }
   if (group_) rede_grupo_cancelar(group_);
   cv_.notify_all();
@@ -155,12 +157,17 @@ Ticket Client::enqueue(std::shared_ptr<Ticket::Job> job) {
     job->cancelled = true;
     return Ticket(job);
   }
+  if (job->req.priority == Priority::Long) {
+    longQueue_.push_back(job);
+    cv_.notify_all();
+    return Ticket(job);
+  }
   // Highest priority first; first come, first served within a priority.
   auto pos = std::find_if(queue_.begin(), queue_.end(), [&](const auto& other) {
     return other->req.priority < job->req.priority;
   });
   queue_.insert(pos, job);
-  cv_.notify_one();
+  cv_.notify_all();  // the long-lane thread shares cv_
   return Ticket(job);
 }
 
@@ -179,6 +186,7 @@ void Client::cancelAll() {
   {
     std::lock_guard<std::mutex> lock(mu_);
     queue_.clear();
+    longQueue_.clear();
   }
   // Running requests see the new generation and stop at the next chunk;
   // any result they still post is dropped by pump().
@@ -189,7 +197,7 @@ void Client::cancelAll() {
 
 size_t Client::queued() const {
   std::lock_guard<std::mutex> lock(mu_);
-  return queue_.size();
+  return queue_.size() + longQueue_.size();
 }
 
 int Client::pump() {
@@ -213,15 +221,16 @@ int Client::pump() {
   return ran;
 }
 
-void Client::worker() {
+void Client::worker(bool longLane) {
+  std::deque<std::shared_ptr<Ticket::Job>>& queue = longLane ? longQueue_ : queue_;
   while (true) {
     std::shared_ptr<Ticket::Job> job;
     {
       std::unique_lock<std::mutex> lock(mu_);
-      cv_.wait(lock, [&] { return stopping_ || !queue_.empty(); });
+      cv_.wait(lock, [&] { return stopping_ || !queue.empty(); });
       if (stopping_) return;
-      job = std::move(queue_.front());
-      queue_.pop_front();
+      job = std::move(queue.front());
+      queue.pop_front();
     }
     if (job->stopped()) continue;
     ++running_;

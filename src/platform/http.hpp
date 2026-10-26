@@ -26,7 +26,10 @@ struct RedeJob;
 
 namespace marigold::http {
 
-enum class Priority { Background = 0, Normal = 1, Visible = 2 };
+// `Long` is for jobs that hold a thread for minutes (guide builds, big
+// downloads): they run one at a time on a thread of their own, so they can
+// never take every worker away from what is on screen.
+enum class Priority { Background = 0, Normal = 1, Visible = 2, Long = 3 };
 
 struct Response;
 // Worker thread, after the transfer and before the UI callback: the place to
@@ -111,13 +114,14 @@ class Client {
   size_t running() const { return running_.load(); }
 
  private:
-  void worker();
+  void worker(bool longLane);
   void execute(Ticket::Job& job);
   Ticket enqueue(std::shared_ptr<Ticket::Job> job);
 
   mutable std::mutex mu_;
   std::condition_variable cv_;
   std::deque<std::shared_ptr<Ticket::Job>> queue_;
+  std::deque<std::shared_ptr<Ticket::Job>> longQueue_;  // Priority::Long, one at a time
   std::vector<std::thread> threads_;
   bool stopping_ = false;
   RedeGrupo* group_ = nullptr;

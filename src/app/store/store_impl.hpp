@@ -93,6 +93,12 @@ struct EventsState {
   int raceSeen = 0, photosSeen = 0;  // revisions the board was built with
   std::string f1Key;
   std::vector<sports::EventSource> f1Sources;
+
+  // Every team of a league for My Sports (one request per league, kept 12 h).
+  std::map<std::string, std::vector<sports::SportsTeam>> leagueTeams;
+  std::map<std::string, time::Seconds> leagueTeamsAt;
+  std::set<std::string> leagueTeamsBusy;
+  int teamsRevision = 0;
 };
 
 struct Store::Impl {

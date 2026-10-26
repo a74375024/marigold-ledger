@@ -32,6 +32,13 @@ sources::Request schoolsRequest() {
   return request;
 }
 
+sources::Request teamsRequest(const League& league) {
+  sources::Request request;
+  request.url = std::string(kApiBase) + league.path + "/teams?limit=1000";
+  request.timeoutSeconds = kTimeoutSeconds;
+  return request;
+}
+
 std::vector<std::string> queriesFor(const League& league, Seconds now, const time::Zone& zone) {
   std::vector<std::string> queries;
   switch (league.mode) {
