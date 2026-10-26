@@ -28,6 +28,19 @@ bool Playback::tune(const std::string& entryId, const std::vector<std::string>& 
   return start(0);
 }
 
+bool Playback::tuneEventVia(const std::string& eventId, const std::string& via, const std::vector<std::string>& flip) {
+  if (!flip.empty()) flip_ = flip;
+  std::vector<Feed> feeds = app_.store().eventFeeds(eventId, via);
+  if (feeds.empty()) return false;
+  entry_ = eventId;
+  feeds_ = std::move(feeds);
+  tried_ = 0;
+  tunedAt_ = app_.ms();
+  switchedAt_ = 0;
+  if (full_) watched();
+  return start(0);
+}
+
 bool Playback::start(size_t feed) {
   if (feed >= feeds_.size()) return false;
   feed_ = feed;

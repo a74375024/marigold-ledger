@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 
+#include "app/store/events_model.hpp"
 #include "app/store/model.hpp"
 
 namespace marigold {
@@ -146,6 +147,20 @@ class Store {
   void buildLineup(catalog::LineupPrefs draft);
   static std::string marketName(const std::string& code);
 
+  // Live Events. The board snapshot; scores refresh only while at least one
+  // screen holds it open (board, event guide).
+  std::shared_ptr<const EventsBoard> events() const { return events_; }
+  void eventsOpen(bool open);
+  bool isEvent(const std::string& id) const;
+  const EventTile* eventTile(const std::string& id) const;
+  WhereToWatch whereToWatch(const std::string& eventId) const;
+  // The games Up/Down flips through when watching `eventId`.
+  std::vector<std::string> eventFlipList(const std::string& eventId) const;
+  // Feeds for a game with the source `via` (entry or raw channel) first.
+  std::vector<Feed> eventFeeds(const std::string& eventId, const std::string& via) const;
+  bool hasReminder(const std::string& id) const;
+  bool toggleReminder(const std::string& id);  // true = now set
+
   const Settings& settings() const { return settings_; }
   void setSettings(const Settings& s);
 
@@ -198,6 +213,8 @@ class Store {
   StoreStatus status_;
   Settings settings_;
   std::shared_ptr<OpenStream> openStream_;
+  std::shared_ptr<const EventsBoard> events_ = std::make_shared<EventsBoard>();
+  int eventsOpen_ = 0;
 };
 
 }  // namespace marigold::app

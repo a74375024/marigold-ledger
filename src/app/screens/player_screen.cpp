@@ -57,7 +57,8 @@ class PlayerScreen : public Screen {
       }
       case Key::Left:
         if (!p.failed()) {
-          app_.nav().push(makeMiniGuide(app_));
+          // Watching a game from Live Events: the event guide.
+          app_.nav().push(app_.store().isEvent(p.entry()) ? makeEventGuide(app_) : makeMiniGuide(app_));
           return true;
         }
         [[fallthrough]];

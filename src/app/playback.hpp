@@ -27,6 +27,9 @@ class Playback {
   // guide corner is a preview: it is not "watched" (Recent, previous
   // channel) until it goes full screen.
   bool tune(const std::string& entryId, const std::vector<std::string>& flip = {});
+  // A game, starting with the source `via` (an entry or a raw feed) picked
+  // in Where to Watch; the others stay as backups.
+  bool tuneEventVia(const std::string& eventId, const std::string& via, const std::vector<std::string>& flip = {});
   // Plays a specific feed of the current entry (Sources panel).
   bool useFeed(size_t index);
   void stop();

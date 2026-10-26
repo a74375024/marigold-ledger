@@ -140,7 +140,7 @@ const std::vector<int>& GuideScreen::tabRows() const {
     case Tab::Lineup: return ch_->lineupConfigured ? ch_->lineup : ch_->browse;
     case Tab::Favorites: return ch_->favorites;
     case Tab::Recent: return ch_->recent;
-    case Tab::Events: return kNone;  // the Live Events board comes with milestone 3
+    case Tab::Events: return kNone;  // the board is its own screen
     case Tab::All: return ch_->browse;
   }
   return kNone;
@@ -588,6 +588,21 @@ void GuideScreen::openSearch() {
   }));
 }
 
+void GuideScreen::openEvents() {
+  // The board is its own screen over the guide; closing it picks a tab.
+  GuideScreen* self = this;
+  app_.nav().push(makeEventsBoard(app_, [self](int tab) {
+    static const Tab kTabs[] = {Tab::Lineup, Tab::Favorites, Tab::Recent};
+    self->tab_ = kTabs[std::clamp(tab, 0, 2)];
+    self->filter_ = Filter::None;
+    self->rebuildLines();
+    auto it = std::find(self->tabs_.begin(), self->tabs_.end(), self->tab_);
+    self->tabFocus_ = static_cast<int>(it - self->tabs_.begin());
+    self->area_ = tab == 0 ? Area::Grid : Area::Tabs;
+    self->requestVisibleListings();
+  }));
+}
+
 void GuideScreen::openLineupSetup() { app_.nav().push(makeLineupSetup(app_)); }
 
 void GuideScreen::digit(int d) {
@@ -645,13 +660,9 @@ bool GuideScreen::key(const KeyEvent& e) {
         app_.toast(adding ? name + " added to My Lineup" : name + " removed from My Lineup");
       }
       return true;
-    case Key::Yellow: {
-      tab_ = Tab::Events;
-      rebuildLines();
-      area_ = Area::Tabs;
-      tabFocus_ = 3;
+    case Key::Yellow:
+      openEvents();
       return true;
-    }
     case Key::Blue: openOptions(); return true;
     case Key::ChannelUp:
     case Key::ChannelDown: {
@@ -724,6 +735,10 @@ bool GuideScreen::key(const KeyEvent& e) {
       case Key::Ok:
         if (area_ == Area::Tabs) {
           // Moving across tabs only highlights; OK switches.
+          if (tabs_[static_cast<size_t>(tabFocus_)] == Tab::Events) {
+            openEvents();
+            return true;
+          }
           tab_ = tabs_[static_cast<size_t>(tabFocus_)];
           filter_ = Filter::None;
           rebuildLines();
