@@ -20,15 +20,38 @@ and update the pinned commit above.
 
 ## Files
 
-| File | Upstream role |
-|---|---|
-| `video.c`, `video.h`, `video_modo.c`, `video_escala.h`, `video_reconexao.h`, `video_seekretry.h` | webOS player over LS2 (`com.webos.media`), video plane attach |
-| `lsregistro.c/.h`, `webosver.c/.h`, `app_id.h`, `mediaurl.h` | LS2 registration, webOS version, ids |
-| `livestall.h` | live stall watchdog |
-| `rede.c/.h`, `rede_pedido.inc`, `redeurl.c`, `negcache.h/.inc`, `addonurl.h` | HTTP over the TV's libcurl (dlopen) |
-| `js.c/.h` | tolerant JSON reader |
-| `dados.c/.h`, `espaco.inc` | data directory, atomic writes |
-| `sdlcompat.h`, `gl_compat.h` | SDL 2.0.2 and GLES header compatibility |
-| `entrada_texto.c/.h` | LG on-screen keyboard |
-| `chsegura.c/.h`, `teclavoltar.h` | CH+ hold vs tap, Back detection |
-| `ponteiro.c/.h` | Magic Remote pointer |
+| File | Upstream role | Local changes |
+|---|---|---|
+| `video.c`, `video.h`, `video_modo.c`, `video_escala.h` | webOS player over LS2 (`com.webos.media`), video plane attach | Live-only: keeps LS2 registration, the libAcb plane (webOS 2-4) and SDL exported window (5+), load payloads (modes 0 and 2), event parsing, pipeline-death reload, HTTP headers, window and source crop, screensaver hold, audio tracks. Drops Dolby Vision, DTS, MKV probing, subtitles, seeking, speed, cache boost and the VOD reconnect machine |
+| `lsregistro.c/.h`, `webosver.c/.h`, `app_id.h`, `mediaurl.h` | LS2 registration backoff, webOS version, ids | App id `org.marigold.app`, LS2 client `com.webos.media.client.marigold` |
+| `livestall.h` | live stall watchdog | other-platform branches removed |
+| `rede.c/.h`, `rede_pedido.inc`, `redeurl.c`, `negcache.h/.inc`, `addonurl.h` | HTTP over the TV's libcurl (dlopen) | Drops the TMDB host fallback, the Discord raw TLS socket and the DTS range reader; own user agent and `MARIGOLD_REDE_*` env names |
+| `js.c/.h` | tolerant JSON reader | none |
+| `dados.c/.h` | data folder, atomic writes | `.marigold` folder names; disk-space accounting (`espaco.inc`) removed |
+| `sdlcompat.h` | SDL 2.0.2 compatibility | none |
+| `entrada_texto.c/.h` | LG on-screen keyboard | buffer size no longer from `arteurl.h` |
+| `chsegura.c/.h` | CH+ hold vs tap | none |
+| `ponteiro.c/.h` | Magic Remote pointer | draws through `shim/gfx.h` |
+
+Every file also lost its Tizen, Android, VIDAA, Emscripten and Mac branches
+(`unifdef`), and headers called from C++ gained `extern "C"` guards.
+
+## Not vendored, written fresh
+
+Legacy's `gfx.c`, `text.c` and `tex_cache.c` are one renderer built around the
+old app's design (a shader per drawing mode, glass, blur and lighting effects
+sharing globals). Trimming them would keep a tangle without keeping any
+platform knowledge, so Marigold has its own small renderer and text cache
+(`src/platform/`). What those files knew about the TV is kept: the window and
+GL setup and the non-opaque Wayland surface (`src/platform/window.cpp`, from
+Legacy `main.c`), the premultiplied blend mode, the scissor-clear video hole,
+SDL_ttf text uploads, and `sdlcompat.h`.
+
+## Notes for later milestones
+
+- `rede.c` still turns TLS certificate checks off (upstream does, because the
+  TV CA store is old). The plan is to ship a CA bundle and verify by default
+  once Marigold makes HTTPS requests (M1).
+- Not yet vendored, planned: `proxyts.c` (M2), `xtream.c`, `xtepg.c`,
+  `xmltv.c`, `ltv.c`, `m3u_parse.c`, `idcanal.c` (M1), `jpegrapido.c`,
+  `webp.c` (M1 logos).

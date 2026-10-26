@@ -1,0 +1,36 @@
+--- upstream/src/ponteiro.h
++++ vendor/legacy/src/ponteiro.h
+@@ -51,6 +51,9 @@
+ #define NV_PONTEIRO_H
+ #include <SDL2/SDL.h>
+ 
++#ifdef __cplusplus
++extern "C" {
++#endif
+ typedef void (*PonteiroFn)(int a, int b);
+ 
+ enum {
+@@ -117,15 +120,6 @@
+ // tras. No preview, sem registro ou com INICIO recusado o arrasto e consumido
+ // sem navegacao nem clique. Nas TVs, conserva a rolagem por setas.
+ void ponteiro_rolagem(PonteiroRolagemFn fn);
+-#ifdef NV_TOUCH_UI
+-// Puxar a borda esquerda da camada para a direita abre a navegacao diretamente.
+-// A largura segue a escala do desenho. Nova camada descarta o registro.
+-typedef void (*PonteiroBordaFn)(void);
+-void ponteiro_borda_esquerda(float largura, PonteiroBordaFn ativar);
+-// A pilula/rail so recebe toque enquanto a mesma camada permite abrir o menu.
+-int ponteiro_borda_registrada(void);
+-void ponteiro_borda_ativar(void);
+-#endif
+ // O mesmo alvo, recortado a faixa vertical [y0, y1) — a janela de uma grade
+ // que rola por baixo de um cabecalho fixo. O pedaco do cartao que a rolagem
+ // escondeu nao recebe o ponteiro (por cima dele mora o cabecalho). E o caminho
+@@ -177,4 +171,7 @@
+ // SDL_webOSCursorVisibility de mentira (so com -DNV_PONT_WEBOS_TESTE).
+ void ponteiro_teste_cursor_sistema(SDL_bool (*fn)(SDL_bool));
+ 
++#ifdef __cplusplus
++}
++#endif
+ #endif

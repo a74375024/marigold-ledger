@@ -1,0 +1,152 @@
+--- upstream/src/rede.h
++++ vendor/legacy/src/rede.h
+@@ -5,6 +5,9 @@
+ // existe na TV, e os addons so falam https. No Mac usa a libcurl do sistema.
+ #ifndef NV_REDE_H
+ #define NV_REDE_H
++#ifdef __cplusplus
++extern "C" {
++#endif
+ 
+ #include <stddef.h>
+ #include <stdint.h>
+@@ -14,7 +17,7 @@
+  * ficam validos ate retornar. rede_resposta_limpar libera as duas alocacoes.
+  * max_bytes/max_cabecalhos zero usam limites seguros, nunca "ilimitado".
+  * TLS e verificado; ca_arquivo sobrescreve o bundle confiavel registrado no
+- * arranque (rede_discord_ca), ou usa trust do sistema se nao houver bundle.
++ * arranque (rede_ca_bundle), ou usa trust do sistema se nao houver bundle.
+  * Redirects so HTTP(S), sem downgrade HTTPS. Cabecalhos do dono e corpo nao
+  * atravessam origem; 307/308 autenticados entre origens sao recusados.
+  * O XHR sincrono WGT nao oferece este contrato: retorna INDISPONIVEL sem
+@@ -113,39 +116,6 @@
+ void rede_job_cancelar(RedeJob *job);
+ RedeErro rede_job_estado(RedeJob *job);
+ 
+-/* Bounded, validated byte ranges for the local DTS demuxer. Unlike the old
+- * long-offset API this works past 2 GiB on ARM. Only matching HTTP 206 bodies
+- * are accepted; total is -1 when unknown. Caller frees the returned buffer.
+- * Raw headers use one Name: value per line. Credentials are stripped when a
+- * redirect changes origin. Cancelling also interrupts an idle transfer. */
+-/* cross: 0 = same origin, 1 = public headers only, 2 = no caller headers
+- * after an HTTPS downgrade (including subsequent HTTPS hops). */
+-char *rede_range_headers(const char *raw, int public_only); /* caller frees */
+-char *rede_baixar_trecho64_final(const char *url, const char *headers,
+-                              int64_t start, int64_t end, long *size,
+-                              int64_t *total, int *status,
+-                              volatile int *cancelled, char *final, int *cross);
+-/* Optional guard for an actively awaited range. Atomic urgent flag is owned
+- * by the caller for this synchronous call. Last retry can omit this guard. */
+-char *rede_baixar_trecho64_vigiado(const char *url,const char *headers,
+-    int64_t start,int64_t end,long *size,int64_t *total,int *status,
+-    volatile int *cancelled,char *final,int *cross,volatile int *urgent,
+-    unsigned idle_ms,int *stalled);
+-/* One streaming read "bytes=start-" for the Samsung converter: the body goes to
+- * sink(opaque, data, n) as it arrives (return 0 to stop; it may block). Same
+- * redirect and header rules as rede_baixar_trecho64_final. No limit on the
+- * whole transfer; it aborts after stall_ms without a byte (time inside the sink
+- * does not count). Returns 0 when the body ended, 1 when the sink stopped it,
+- * -1 on error (*status = HTTP code or 0, *bytes = body bytes delivered). */
+-int rede_fluxo64(const char *url, const char *headers, int64_t start,
+-                 int (*sink)(void *opaque, const char *data, size_t n), void *opaque,
+-                 int64_t *total, int *status, volatile int *cancelled,
+-                 char *final, int *cross, long stall_ms, int64_t *bytes);
+-char *rede_baixar_trecho64_cab(const char *url, const char *headers,
+-                              int64_t start, int64_t end, long *size,
+-                              int64_t *total, int *status,
+-                              volatile int *cancelled);
+-
+ typedef struct {
+   int status;          // 0 = transporte sem resposta
+   long bytes;          // corpo recebido; -1 quando nao medido
+@@ -176,14 +146,6 @@
+                       long long maxBytes, int *status, long long *bytes);
+ 
+ 
+-#ifdef __EMSCRIPTEN__
+-// POST de corpo text/plain com resposta BINARIA (tamanho em *n; 4xx/5xx viram
+-// NULL, como em rede_baixar_bin). So existe no Tizen, para o proxy do Xtream
+-// (#112): a url do icone vai no CORPO, que a plataforma do worker nao
+-// registra, e volta uma imagem com zeros no meio — rede_postar_st nao da o
+-// tamanho. Ver tex_cache.c e servidor/recomendacoes/src/xtream.js.
+-char *rede_postar_bin(const char *url, int segundos, const char *corpo, long *n);
+-#endif
+ 
+ // Com cabecalhos. `cabecalhos` e um vetor terminado em NULL de linhas prontas
+ // ("Authorization: Bearer x"). Existe por causa do Trakt, que exige token e
+@@ -255,10 +217,7 @@
+ // (Program40.cs), que nao monta TLS de compilador — o primeiro acesso a uma
+ // variavel _Thread_local seria o fim do processo. O estado por fio vive numa
+ // struct por pthread_key (rede.c); o nome continua um lvalue por macro.
+-#if defined(NV_TPK40) || defined(NV_UM_FIO)
+-long *rede_teto_ptr(void);
+-#define rede_teto (*rede_teto_ptr())
+-#elif defined(__GNUC__)
++#if   defined(__GNUC__)
+ extern _Thread_local long rede_teto;
+ #else
+ extern long rede_teto;
+@@ -288,19 +247,6 @@
+                         char *dst, unsigned tam, int *status,
+                         char *mime, unsigned mimeTam, long *corpo);
+ 
+-#ifdef NV_VIDAA
+-// VARIANTE PARA A VIDAA. rede_url_final so devolve 0/1, e na VIDAA um 0 pode
+-// significar duas coisas bem diferentes: "resolvi, e o destino respondeu
+-// erro" (fonte morta de verdade) ou "a requisicao nem saiu" (bloqueio de
+-// conteudo misto ou de CORS na pagina https — ver o comentario de
+-// vidaaNuncaProxiar/vidaaPareceVideo em rede.c: URL de video nunca passa
+-// pelo /v1/proxy, entao esse bloqueio e ROTINEIRO ali, nao uma prova de nada).
+-// Devolve 1 = resolveu, 0 = resolveu e o destino falhou, -1 = desconhecido —
+-// quem chama decide o que fazer com "desconhecido" (streams.c trata como
+-// "presuma viva", a mesma politica que playlistVazia ja usa para "nao
+-// baixei").
+-int rede_url_final_vidaa(const char *url, int segundos, char *dst, unsigned tam);
+-#endif
+ 
+ // POST de JSON. Existe para o Trakt, que so aceita escrita por POST.
+ char *rede_postar(const char *url, int segundos, const char *const *cabecalhos,
+@@ -329,11 +275,6 @@
+ // 4xx volta com corpo). Existe para o TorBox, que edita um item so por PUT.
+ char *rede_colocar_st(const char *url, int segundos, const char *const *cabecalhos,
+                       const char *corpo, int *status);
+-#ifdef __EMSCRIPTEN__
+-// Authenticated JSON PATCH through the legacy WGT HTTP bridge.
+-char *rede_patch_st(const char *url, int segundos, const char *const *cabecalhos,
+-                    const char *corpo, int *status);
+-#endif
+ // POST que repete (espera 1 s, 2 s, ...) so quando nao houve resposta (status 0).
+ char *rede_postar_repetindo(const char *url, int segundos, const char *const *cabecalhos,
+                             const char *corpo, int *status, int tentativas);
+@@ -487,26 +428,14 @@
+ // O criterio de "segmento suspeito" acima, exposto para o teste.
+ int rede_segmento_suspeito(const char *s, unsigned n);
+ 
+-// CONEXAO TLS CRUA, sem HTTP. Existe para o websocket do Discord (discordws.c):
+-// a libcurl das TVs (7.53.1) nao fala websocket, mas abre o TLS e entrega o
+-// canal com CONNECT_ONLY. `url` e "https://host:porta/" — so host e porta
+-// contam. Bloqueia ate conectar ou estourar `segundos`. NULL = sem conexao.
+-// No navegador (Emscripten) sempre NULL.
+-// Startup only: optional trusted CA bundle for Discord OAuth and Gateway.
++// Startup only: optional trusted CA bundle (marigold: upstream used it for Discord).
+ // Empty uses libcurl system trust; never disables certificate verification.
+-void rede_discord_ca(const char *pemPath);
++void rede_ca_bundle(const char *pemPath);
+ // OAuth POST: verified TLS, dedicated handle, no native redirects.
+ char *rede_postar_seguro_st(const char *url, int segundos, const char *const *cab,
+                             const char *corpo, int *status);
+-typedef struct RedeTls RedeTls;
+-RedeTls *rede_tls_abrir(const char *url, int segundos);
+-// Manda tudo ou falha: 0 ok, -1 erro.
+-int rede_tls_enviar(RedeTls *t, const void *buf, size_t n);
+-// One nonblocking send. 0 = success/would-block; *foi is the consumed prefix.
+-int rede_tls_tentar_enviar(RedeTls *t, const void *buf, size_t n, size_t *foi);
+-// Ate `n` bytes, esperando no maximo `esperaMs` (0 = nao espera).
+-// >0 bytes lidos, 0 nada chegou, -1 conexao caiu ou fechou.
+-int rede_tls_receber(RedeTls *t, void *buf, size_t n, int esperaMs);
+-void rede_tls_fechar(RedeTls *t);
+ 
++#ifdef __cplusplus
++}
++#endif
+ #endif

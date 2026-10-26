@@ -16,7 +16,6 @@
 #include <sys/socket.h>
 #include <netpacket/packet.h>
 
-static void espacoGravado(const char *nome);
 
 
 #define NV_FS_TRAVAR()   ((void)0)
@@ -64,7 +63,7 @@ static int serve(const char *candidato) {
 void dados_iniciar(const char *dirArte) {
   char lar[512], envLar[512], arteLar[512];
   int isolado = strcmp(NV_APP_ID, NV_APP_ID_PRODUCTION) != 0;
-  const char *env = getenv("NUVIO_DADOS");
+  const char *env = getenv("MARIGOLD_DADOS");
   const char *home = getenv("HOME");
   const char *candidatos[5];
   int n = 0, i;
@@ -77,11 +76,11 @@ void dados_iniciar(const char *dirArte) {
     }
   }
   if (home && *home) {
-    int size = snprintf(lar, sizeof lar, isolado ? "%s/.%s" : "%s/.nuvio", home, NV_APP_ID);
+    int size = snprintf(lar, sizeof lar, isolado ? "%s/.%s" : "%s/.marigold", home, NV_APP_ID);
     if (size > 0 && size < (int)sizeof lar) candidatos[n++] = lar;
   }
   // The debug package never probes or reads the production developer folder.
-  candidatos[n++] = isolado ? "/media/developer/temp/" NV_APP_ID : "/media/developer/temp/nuvio";
+  candidatos[n++] = isolado ? "/media/developer/temp/" NV_APP_ID : "/media/developer/temp/marigold";
   if (dirArte && *dirArte) {
     if (!isolado) candidatos[n++] = dirArte;
     else {
@@ -177,7 +176,6 @@ int dados_gravar(const char *nome, const char *conteudo) {
 
 int dados_gravar_leve(const char *nome, const char *conteudo) {
   int ok = gravarInterno(nome, conteudo, 1);
-  if (ok) espacoGravado(nome);
   return ok;
 }
 
@@ -233,7 +231,7 @@ void dados_uuid(char *dst, unsigned tam) {
 const char *dados_aparelho_id(void) {
   static char id[64];
   if (id[0]) return id;
-  const char *raw = getenv("NUVIO_DEVICE_ID");
+  const char *raw = getenv("MARIGOLD_DEVICE_ID");
   char hardware[128] = "";
   if (!raw || !*raw) {
     // Native TV network interfaces survive uninstall. Prefer wired over Wi-Fi;
@@ -305,4 +303,4 @@ int dados_persistente(void) {
   return dir[0] != 0;
 }
 
-#include "espaco.inc"
+// marigold: espaco.inc (the old app's disk-space accounting) not vendored.

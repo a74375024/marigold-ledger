@@ -122,8 +122,8 @@ Line counts below are upstream `wc -l`.
 | `rede.c/.h`, `rede_pedido.inc`, `redeurl.c`, `negcache.*` | 4031 / 512 / 403 / 178 / 255 | libcurl via `dlopen` (so.5, then .4), per-thread handles, ETag, streaming download, body-stall watchdog, credential stripping for logs | Drop the Emscripten/VIDAA branch (194–1135), Android/TPK branches, the TMDB fallback and the Discord TLS socket. Enable the shared DNS cache (today `NV_TPK` only) on webOS. About 2.9k lines remain |
 | `js.c/.h` | 475 | tolerant JSON reader | none (used for small bodies only, see §5) |
 | `dados.c/.h` | 894 | data dir, atomic writes | Android cache include removed |
-| `gfx.c/.h`, `gl_compat.h`, `perftv.*`, `sdlcompat.h`, `anim.h` | 5201 / 852 / 59 / 52 / 102 / 170 | GLES2 rects, textures, clipping, video hole (`gfx_furo`) | Keep init, rect, colour, texture, clip, hole and icons. Drop glass/blur/ambient/snapshot/FBO effects, `corviva`, `gpunivel` and SGSR upscaling. About 1.5k lines remain |
-| `text.c/.h`, `bidi.c`, `dobra.c` | 2532 / 380 / 320 / 66 | SDL_ttf text with a per-string texture cache and fallback fonts | Replace the app style enum with our own small set. Drop the subtitle fonts. Keep Latin, plus CJK and Arabic fallback through system fonts |
+| `sdlcompat.h` | 102 | SDL 2.0.2 compatibility (webOS 3) | none |
+| `gfx.c`, `text.c`, `tex_cache.c` | 5201 / 2532 / 4813 | **Not vendored after all (M0 finding).** They are one design-bound renderer; Marigold has its own small GLES2 renderer and text cache in `src/platform/`, keeping Legacy's window setup, non-opaque Wayland surface, blend mode, video hole and SDL_ttf upload path | — |
 | `jpegrapido.c/.h`, `webp.c/.h`, `vendor/jpeg62/` | 477 / 834 / 1882 | JPEG (TV libjpeg.so.62, `dlopen`), WebP (TV libwebp.so.7) | Add the IJG licence file that upstream lacks |
 | `ponteiro.c/.h` | 1211 | Magic Remote pointer: hover to focus, wheel to arrows, cursor show/hide | `gfx_*` calls go through our facade |
 | `teclavoltar.h`, `chsegura.c/.h`, `layout.h` key codes | 22 / 106 / ~10 | Back detection, CH+ hold vs tap, scancodes (Back 482, CH 480/481, red 486, green 487, yellow 488, blue 489) | Take only the key lines of `layout.h` |

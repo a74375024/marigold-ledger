@@ -1,0 +1,19 @@
+{
+  "id": "org.marigold.app",
+  "version": "0.1.0",
+  "vendor": "marigold",
+  "type": "native",
+  "main": "marigold",
+  "title": "Marigold",
+  "icon": "icon.png",
+  "largeIcon": "icon-large.png",
+  "splashBackground": "splash.png",
+  "resolution": "1920x1080",
+  "bgColor": "#121418",
+  "iconColor": "#121418",
+  "disableBackHistoryAPI": true,
+  "requiredPermissions": [
+    "all"
+  ],
+  "nativeLifeCycleInterfaceVersion": 2
+}

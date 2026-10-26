@@ -1,0 +1,29 @@
+--- upstream/src/webosver.c
++++ vendor/legacy/src/webosver.c
+@@ -5,12 +5,8 @@
+ #include <string.h>
+ 
+ static pthread_mutex_t trava = PTHREAD_MUTEX_INITIALIZER;
+-#ifdef NV_WEBOS
+ static char caminhoNyx[256] = "/var/run/nyx/os_info.json";
+ static char caminhoStarfish[256] = "/etc/starfish-release";
+-#else
+-static char caminhoNyx[256], caminhoStarfish[256];   // vazio = nao le (so o hook)
+-#endif
+ static int lido, major;
+ static const char *fonte = "-";
+ static char linhaStarfish[128];
+@@ -231,13 +227,8 @@
+ #ifdef AJUSTES_TESTE
+ void nv_webos_testar(const char *nyx, const char *starfish) {
+   pthread_mutex_lock(&trava);
+-#ifdef NV_WEBOS
+   snprintf(caminhoNyx, sizeof caminhoNyx, "%s", nyx ? nyx : "/var/run/nyx/os_info.json");
+   snprintf(caminhoStarfish, sizeof caminhoStarfish, "%s", starfish ? starfish : "/etc/starfish-release");
+-#else
+-  snprintf(caminhoNyx, sizeof caminhoNyx, "%s", nyx ? nyx : "");
+-  snprintf(caminhoStarfish, sizeof caminhoStarfish, "%s", starfish ? starfish : "");
+-#endif
+   lido = 0;
+   pthread_mutex_unlock(&trava);
+ }
