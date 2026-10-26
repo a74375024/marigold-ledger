@@ -30,6 +30,28 @@ TEST_CASE("parseMarkets reads template links, once each") {
   CHECK(list[1].templateName == std::string("Template:Capital TV"));
 }
 
+TEST_CASE("parseMarkets: only the United States section, each template once") {
+  // The page's shape in 2026: DMAs, then the FCC's TMAs (the same templates
+  // under longer names), territories, then Canada and Mexico.
+  std::string text =
+      "intro [[Template:Ignored TV|Ignored]]\n"
+      "==United States==\n===Contiguous States===\n====DMAs====\n"
+      "*[[Template:Springfield TV|Springfield]] (#1)\n"
+      "*[[Template:Capital TV|Capital City]] (#2)\n"
+      "====TMAs====\n"
+      "*(1) [[Template:Springfield TV|Springfield, ST\u2013Shelbyville, ST]]\n"
+      "===U.S. territories===\n"
+      "* [[Template:Island TV|Island Territory]]\n"
+      "==Canada==\n"
+      "*[[Template:Northtown TV|Northtown]]\n"
+      "==Mexico==\n*[[Template:Southtown TV|Southtown]]\n";
+  auto list = markets::parseMarkets(text);
+  REQUIRE(list.size() == 3);
+  CHECK(list[0].name == "Springfield");
+  CHECK(list[1].name == "Capital City");
+  CHECK(list[2].name == "Island Territory");
+}
+
 TEST_CASE("call signs in a market template, and the fallbacks") {
   auto signs =
       markets::callsignsInWikitext("[[KAAA-TV|KAAA]] [[KBBB]] [[ KAAA ]] [[WXYZ-LP|x]] [[KQ]]");

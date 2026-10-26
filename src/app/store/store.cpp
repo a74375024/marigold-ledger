@@ -1080,22 +1080,37 @@ catalog::LineupPrefs Store::lineupPrefs() const { return impl_->prefs; }
 
 namespace {
 
-// One Wikipedia page's wikitext, on a pool thread.
+// One Wikipedia page's wikitext, on a pool thread. Wikimedia answers 429 to
+// clients whose User-Agent has no contact address (a URL or an email), and
+// to bursts: the agent names the project's page, and a 429 waits as long as
+// the server asks (or 3, 8, then 15 s) before trying again.
 std::optional<std::string> wikitext(http::Client& pool, const std::string& title, http::Priority priority) {
   http::Request q;
   q.url = guide::stations::wikiRequestUrl(title);
-  q.headers.push_back("User-Agent: Marigold/0.1 (webOS TV; personal use)");
+  q.headers.push_back("User-Agent: " + std::string(guide::stations::kUserAgent));
   q.tag = "wiki";
   q.timeoutMs = 60000;
   q.maxBytes = 8u << 20;
   q.priority = priority;
-  for (int attempt = 0; attempt < 3; ++attempt) {
-    if (attempt > 0) usleep(static_cast<useconds_t>(attempt) * 2000000u);
+  static const unsigned kBackoffS[] = {3, 8, 15};
+  for (int attempt = 0; attempt < 4; ++attempt) {
     http::Response r = pool.fetchNow(q);
-    if (r.status == 429) continue;  // rate limited: wait and try again
+    if (r.status == 429 || r.status == 503) {
+      if (attempt == 3) {
+        MLOG_W("wiki", "page request rate limited (status %d)", r.status);
+        break;
+      }
+      unsigned wait = std::max<unsigned>(kBackoffS[attempt], static_cast<unsigned>(std::clamp(r.retryAfterS, 0, 30)));
+      usleep(wait * 1000000u);
+      continue;
+    }
     if (!r.ok) {
       MLOG_W("wiki", "page request failed (status %d, %s)", r.status, r.error.c_str());
-      continue;
+      if (attempt < 2) {
+        usleep(2000000u);
+        continue;
+      }
+      break;
     }
     auto text = guide::stations::wikitextFromResponse(r.body);
     if (!text) MLOG_W("wiki", "page answer unreadable (status %d, %zu bytes)", r.status, r.body.size());

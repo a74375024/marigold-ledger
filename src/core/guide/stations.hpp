@@ -42,6 +42,11 @@ inline bool isFresh(time::Seconds modified, time::Seconds now, bool empty) {
 std::string toJson(const std::vector<Station>& stations);
 std::optional<std::vector<Station>> fromJson(std::string_view text);
 
+// Wikimedia asks every client for a User-Agent with contact information
+// (https://meta.wikimedia.org/wiki/User-Agent_policy) and rate-limits ones
+// without it: every Wikipedia request sends this.
+constexpr const char* kUserAgent = "Marigold/0.1 (https://github.com/a74375024/marigold-ledger; webOS TV app)";
+
 // The Wikipedia API request for a page's wikitext, and the text out of its
 // answer ({"parse": {"wikitext": {"*": "..."}}}).
 std::string wikiRequestUrl(std::string_view title);

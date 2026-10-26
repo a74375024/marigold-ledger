@@ -20,11 +20,29 @@ std::vector<std::string> partsOf(const std::string& name) {
 
 }  // namespace
 
+// The page's "==United States==" section, up to the next level-2 heading
+// (Canada, Mexico... follow). The whole text when it has no such heading.
+static std::string_view usSection(std::string_view wikitext) {
+  size_t start = wikitext.find("==United States==");
+  if (start == std::string_view::npos) return wikitext;
+  size_t from = start + 17;
+  size_t end = from;
+  while ((end = wikitext.find("\n==", end)) != std::string_view::npos) {
+    if (end + 3 < wikitext.size() && wikitext[end + 3] != '=') break;  // "\n==X", not "\n===X"
+    end += 3;
+  }
+  return wikitext.substr(start, end == std::string_view::npos ? std::string_view::npos : end - start);
+}
+
 std::vector<Market> parseMarkets(std::string_view wikitext) {
   std::vector<Market> list;
-  std::unordered_set<std::string> seen;
-  for (const rx::Match& m : rx::all("\\[\\[\\s*(Template:[^|\\]]+)\\|([^\\]]+)\\]\\]", wikitext)) {
+  std::unordered_set<std::string> seen, seenTemplates;
+  // Marigold: US markets only (the page now lists all of North America),
+  // and each market once: the FCC's TMA list repeats the DMAs' templates
+  // under longer names.
+  for (const rx::Match& m : rx::all("\\[\\[\\s*(Template:[^|\\]]+)\\|([^\\]]+)\\]\\]", usSection(wikitext))) {
     std::string templ(str::trimUnicode(m.group(1)));
+    if (seenTemplates.count(templ)) continue;
     std::string name = rx::replace(m.group(2), "\\s*\\(\\d+\\)\\s*$", "");
     name = std::string(str::trimUnicode(name));
     name = str::replaceAll(name, "&nbsp;", " ");
@@ -34,6 +52,7 @@ std::vector<Market> parseMarkets(std::string_view wikitext) {
         text::contains(lowerName, "template") || !seen.insert(lowerName).second) {
       continue;
     }
+    seenTemplates.insert(templ);
     list.push_back({name, templ});
   }
   return list;
