@@ -22,16 +22,16 @@ option(MARIGOLD_BUILD_APP "Build the webOS app" ${MARIGOLD_WEBOS})
 include(cmake/warnings.cmake)
 include(cmake/sanitizers.cmake)
 
-# Pure logic: no platform or vendor headers. Built for the TV and for tests.
-add_library(marigold_core STATIC
-  src/core/input/keys.cpp
-  src/core/util/log.cpp
-  src/core/util/redact.cpp
-)
+add_subdirectory(vendor/pcre2)
+
+# Pure logic: no platform headers. Built for the TV and for tests. Sources are
+# globbed so modules can be added without touching this file.
+file(GLOB_RECURSE MARIGOLD_CORE_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/core/*.cpp)
+add_library(marigold_core STATIC ${MARIGOLD_CORE_SOURCES})
 target_include_directories(marigold_core PUBLIC src)
 marigold_warnings(marigold_core)
 find_package(Threads REQUIRED)
-target_link_libraries(marigold_core PUBLIC Threads::Threads)
+target_link_libraries(marigold_core PUBLIC Threads::Threads pcre2)
 
 # Legacy headers that are pure C and safe to test on the host.
 add_library(legacy_pure INTERFACE)
