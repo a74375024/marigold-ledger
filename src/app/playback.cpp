@@ -1,9 +1,13 @@
 #include "app/playback.hpp"
 
+#include <time.h>
+
 #include <algorithm>
+#include <cstdio>
 
 #include "app/app.hpp"
 #include "app/store/store.hpp"
+#include "platform/storage.hpp"
 #include "core/util/log.hpp"
 #include "core/util/strings.hpp"
 
@@ -24,15 +28,71 @@ bool looksHls(const std::string& url) {
   return str::endsWith(path, ".m3u8") || str::endsWith(path, ".m3u");
 }
 
+constexpr const char* kLogFile = "playback-log.json";
+constexpr uint32_t kLogSaveMs = 10000;
+
+// Wall clock in ms, for the log's times.
+int64_t wallMs() {
+  timespec ts{};
+  clock_gettime(CLOCK_REALTIME, &ts);
+  return static_cast<int64_t>(ts.tv_sec) * 1000 + ts.tv_nsec / 1000000;
+}
+
 }  // namespace
 
 Playback::Playback(App& app) : app_(app) {
   if (!proxy_.start()) MLOG_W("play", "TS proxy unavailable; HLS feeds play directly");
+  if (auto text = app_.storage().read(kLogFile)) log_.restore(*text);
+  logSaved_ = log_.revision();
+}
+
+void Playback::logEvent(std::string_view event, std::string_view detail) {
+  std::string channel, feed, provider;
+  if (const GuideChannel* g = app_.store().channels()->find(entry_)) channel = g->name;
+  else if (const EventTile* t = app_.store().eventTile(entry_)) channel = t->heroTitle.empty() ? t->title : t->heroTitle;
+  size_t i = rec_.feedIndex();
+  if (i < feeds_.size()) {
+    feed = feeds_[i].label;
+    provider = app_.store().providerName(feeds_[i].channelId);
+  }
+  log_.add(wallMs(), event, session_, channel, feed, provider, detail);
+}
+
+void Playback::saveLog(uint32_t ms) {
+  if (log_.revision() == logSaved_ || ms < logSaveAt_) return;
+  logSaved_ = log_.revision();
+  logSaveAt_ = ms + kLogSaveMs;
+  std::string text = log_.toJson();
+  std::string path = app_.storage().path(kLogFile);
+  app_.pool().post(
+      [path, text] {
+        std::string tmp = path + ".tmp";
+        std::FILE* f = std::fopen(tmp.c_str(), "wb");
+        if (!f) return;
+        bool ok = std::fwrite(text.data(), 1, text.size(), f) == text.size();
+        ok = std::fclose(f) == 0 && ok;
+        if (ok) std::rename(tmp.c_str(), path.c_str());
+      },
+      nullptr, http::Priority::Background);
+}
+
+std::string Playback::playingChannel() const {
+  size_t i = rec_.feedIndex();
+  return entry_.empty() || i >= feeds_.size() ? std::string() : feeds_[i].channelId;
+}
+
+bool Playback::tuneCamera(std::vector<Feed> feeds) {
+  if (entry_.empty() || feeds.empty()) return false;
+  std::string entry = entry_;
+  bool ok = begin(entry, std::move(feeds), {});
+  camera_ = ok;
+  if (ok) logEvent("camera");
+  return ok;
 }
 
 void Playback::rememberGame() {
   // Leaving or switching a game: its source starts it next time (6 h).
-  if (entry_.empty() || feeds_.empty() || !app_.store().isEvent(entry_)) return;
+  if (entry_.empty() || feeds_.empty() || camera_ || !app_.store().isEvent(entry_)) return;
   size_t i = rec_.feedIndex();
   if (i < feeds_.size()) app_.store().noteEventFeed(entry_, feeds_[i].channelId, ready());
 }
@@ -44,14 +104,17 @@ bool Playback::begin(const std::string& entryId, std::vector<Feed> feeds, const 
     return false;
   }
   rememberGame();
+  camera_ = false;
   entry_ = entryId;
   feeds_ = std::move(feeds);
+  session_ = log_.newSession();
   proxyFailed_.clear();
   failMessage_.clear();
   tunedAt_ = app_.ms();
   if (full_) watched();
   std::vector<playback::FeedInfo> infos;
   for (const Feed& f : feeds_) infos.push_back({f.channelId, kindOf(f)});
+  logEvent("tune", std::to_string(feeds_.size()) + (feeds_.size() == 1 ? " feed" : " feeds"));
   apply(rec_.tune(app_.ms(), std::move(infos)));
   return true;
 }
@@ -97,6 +160,7 @@ void Playback::apply(const playback::Actions& actions) {
       case playback::Action::Kind::GiveUp:
         app_.video().stop();
         failMessage_ = a.text;
+        logEvent("gave up", a.text);
         MLOG_W("play", "gave up: %s", playback::safeMessage(a.text).c_str());
         break;
       case playback::Action::Kind::Note:
@@ -108,9 +172,17 @@ void Playback::apply(const playback::Actions& actions) {
       case playback::Action::Kind::RecordFeed:
         if (a.feed < feeds_.size()) app_.store().recordFeed(feeds_[a.feed].channelId, a.worked);
         break;
-      case playback::Action::Kind::Log:
+      case playback::Action::Kind::Log: {
         MLOG_I("play", "%s %s", a.text.c_str(), playback::safeMessage(a.detail).c_str());
+        std::string channel, feed, provider;
+        if (const GuideChannel* g = app_.store().channels()->find(entry_)) channel = g->name;
+        if (a.feed < feeds_.size()) {
+          feed = feeds_[a.feed].label;
+          provider = app_.store().providerName(feeds_[a.feed].channelId);
+        }
+        log_.add(wallMs(), a, session_, channel, feed, provider);
         break;
+      }
     }
   }
 }
@@ -164,6 +236,7 @@ bool Playback::retryDirect() {
   proxy_.stop();
   if (redirected) return false;
   MLOG_I("play", "proxy didn't start this feed; playing it directly");
+  logEvent("proxy failed", "playing directly");
   sawFailed_ = sawEnded_ = false;
   app_.video().play(f.url, f.headers, f.loadMode);
   return true;
@@ -227,6 +300,7 @@ void Playback::setCorner(gfx::Rect r) {
 }
 
 bool Playback::tick(uint32_t ms) {
+  saveLog(ms);
   if (entry_.empty()) return false;
   platform::VideoState s = app_.video().state();
   // Report changes of the player's flags only.

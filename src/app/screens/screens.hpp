@@ -36,8 +36,13 @@ std::unique_ptr<Screen> makeEventDetail(App& app, const std::string& eventId);
 std::unique_ptr<Screen> makeWhereToWatch(App& app, const std::string& eventId);
 // Left in the player while watching a game: that sport's games.
 std::unique_ptr<Screen> makeEventGuide(App& app);
+// Down while watching a race: its cameras.
+std::unique_ptr<Screen> makeCameraPanel(App& app);
 // My Sports setup: leagues, favourite teams, review.
 std::unique_ptr<Screen> makeMySports(App& app);
+// Options › Help: share a file with a phone on the home network.
+enum class ExportKind { ChannelReport, PlaybackLog };
+std::unique_ptr<Screen> makeExport(App& app, ExportKind kind);
 // The M0 diagnostics screen (Options › Help).
 std::unique_ptr<Screen> makeDiagnostics(App& app);
 

@@ -36,6 +36,9 @@ struct Account;
 }
 namespace sports {
 struct MySportsPrefs;
+namespace cameras {
+struct CameraPanel;
+}
 struct SportsTeam;
 namespace schedule {
 struct Context;
@@ -168,6 +171,8 @@ class Store {
   void toggleLineup(const std::string& entryId);
   void noteWatched(const std::string& entryId);
 
+  // The provider a raw channel comes from, by the name it was given.
+  std::string providerName(const std::string& channelId) const;
   // The guide entry a raw provider channel belongs to ("" when none).
   std::string entryOfChannel(const std::string& channelId) const;
   // Feeds for an entry, best first ("Always start with" honoured).
@@ -251,6 +256,22 @@ class Store {
   bool shouldPromptMySports() const;
   void markMySportsPrompted();
 
+  // Race cameras (store_race.cpp): Down while watching a race.
+  bool hasCameras(const std::string& eventId);
+  // The panel for a race; `opening` asks for what it is missing (drivers,
+  // photos) once.
+  sports::cameras::CameraPanel cameraPanel(const std::string& eventId, const std::string& playingChannel, bool opening);
+  // Bumped when drivers, photos or followed drivers change.
+  int camerasRevision() const;
+  bool toggleFollowDriver(const std::string& name);  // true = now followed
+  // Feeds for a camera, best first; nullopt when it is already on screen.
+  std::optional<std::vector<Feed>> cameraFeeds(const std::string& channelId, const std::vector<std::string>& alternates,
+                                               const std::string& playingChannel) const;
+
+  // Options › Help › Export Channel Report: the CSV, built on a worker.
+  // `done` runs on the UI thread (null on failure).
+  void buildChannelReport(std::function<void(std::shared_ptr<std::string>)> done);
+
   const Settings& settings() const { return settings_; }
   void setSettings(const Settings& s);
 
@@ -313,6 +334,11 @@ class Store {
   void pumpScores(uint32_t ms);
   void saveEvents();
   sports::schedule::Context scheduleContext() const;
+  void loadRace();
+  void pumpRace(uint32_t ms);
+  void pumpPhotos(uint32_t ms);
+  void savePhotos();
+  std::vector<Channel> eventFeedChannels(const std::string& eventId) const;
 
   App& app_;
   std::unique_ptr<Impl> impl_;

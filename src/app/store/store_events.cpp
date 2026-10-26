@@ -12,6 +12,8 @@
 #include "app/store/store_impl.hpp"
 #include "core/sports/leagues.hpp"
 #include "core/sports/network_map.hpp"
+#include "core/sports/special_feeds.hpp"
+#include "platform/logo_cache.hpp"
 #include "core/util/log.hpp"
 #include "core/util/strings.hpp"
 
@@ -67,6 +69,12 @@ EventSide toSide(const sb::SideLine& s) {
   o.leads = s.leads.value_or(false);
   o.trails = s.leads && !*s.leads;
   o.ball = s.possession;
+  std::vector<std::string> photos;
+  if (s.photoSmallUrl) photos.push_back(*s.photoSmallUrl);
+  if (s.photoUrl) photos.push_back(*s.photoUrl);
+  o.photoUrl = logos::LogoCache::chain(photos);
+  o.initials = s.initials;
+  o.doubles = s.doubles;
   return o;
 }
 
@@ -112,6 +120,7 @@ EventTile toTile(const sb::Tile& t, const sports::SportsEvent* event, const time
   o.title = t.title;
   o.subtitle = t.boutLine.value_or(t.podiumLabel.value_or(t.subtitle.value_or("")));
   for (const sb::PartLine& p : t.parts) o.parts.push_back({p.text.empty() ? p.label : p.text, p.fill, p.current});
+  for (const sb::PodiumDriver& d : t.podium) o.podium.push_back({d.code, hexColor(d.color, 0x8A8D93)});
   o.symbol = glyphFor(t.icon);
   o.channelName = t.channelDisplay.value_or(t.channelName.value_or(""));
   o.channelLogo = t.channelLogos.empty() ? std::string() : t.channelLogos.front();
@@ -162,6 +171,7 @@ void Store::loadEvents() {
   if (auto text = st.read(kMemoryFile)) e.memory = ss::SourceMemory(ss::SourceMemory::fromJson(*text));
   if (auto text = st.read(kSeenFile))
     if (auto v = json::parse(*text)) e.seen = sports::sportFeedsSeenFromJson(*v);
+  loadRace();
 }
 
 void Store::saveEvents() {
@@ -364,6 +374,18 @@ void Store::rebuildEvents() {
   auto channels = m.channels;
   auto index = std::make_shared<std::unordered_map<std::string, size_t>>(m.indexByID);
   in->channelExists = [index](const std::string& id) { return index->count(id) > 0; };
+  in->isCameraName = sports::special_feeds::isCameraName;
+  // F1 sessions are also on the F1 channels, while the schedule has one.
+  if (sports::special_feeds::wantsF1Sources(in->games)) {
+    std::set<std::string> lineupIds(m.lineup.lineupIDs.begin(), m.lineup.lineupIDs.end());
+    std::string f1Key = sports::special_feeds::f1ChannelsKey(m.lineupRevision, m.lineup.entries.size(), lineupIds,
+                                                           m.hiddenGroups);
+    if (f1Key != e.f1Key) {
+      e.f1Key = f1Key;
+      e.f1Sources = sports::special_feeds::f1ChannelSources(m.lineup.entries, infos, m.hiddenGroups, "Other", lineupIds);
+    }
+    in->f1Sources = e.f1Sources;
+  }
   auto stop = m.stopJobs;
   in->shouldStop = [stop]() -> std::optional<std::string> {
     if (stop->load()) return std::string("closing");
@@ -434,8 +456,19 @@ void Store::buildBoard() {
   in.zone = app_.zone();
   in.settings.showsUnwatchable = settings_.showUnwatchable;
   in.settings.showsScores = settings_.showScores;
+  in.settings.twelveHour = !settings_.clock24;
   in.channelFor = makeChannelFor(*this, m, channels_);
+  in.isCameraName = sports::special_feeds::isCameraName;
+  in.cameraRace = sports::special_feeds::cameraRace;
+  in.podium = e.race.podiumHook();
+  in.playerPhoto = e.photos.photoHook();
+  e.raceSeen = e.race.revision();
+  e.photosSeen = e.photos.revision();
   e.board = sb::build(in);
+  // Race weekends on the board ask for drivers and results; tennis players
+  // for their photos (spaced and capped by the rules behind these calls).
+  sports::race_data::refreshForBoard(e.race, e.board, settings_.showScores, now);
+  e.photos.request(e.board.tennisPlayers, now);
   e.statusesRevision = e.scores.revision();
   e.boardDirty = false;
   e.boardBuiltMs = app_.ms();
@@ -497,6 +530,8 @@ void Store::eventsTick(uint32_t ms) {
       dueReminderAt_ = ms;
     }
   }
+  pumpRace(ms);
+  pumpPhotos(ms);
   if (eventsOpen_ <= 0 && !e.events.empty()) return;
   if (m.channels->empty()) return;
   if (eventsOpen_ > 0) {

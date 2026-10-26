@@ -17,6 +17,7 @@
 
 #include "app/store/model.hpp"
 #include "core/playback/recovery.hpp"
+#include "core/report/playback_log.hpp"
 #include "platform/gfx.hpp"
 #include "platform/ts_proxy.hpp"
 
@@ -38,6 +39,12 @@ class Playback {
   bool tuneEventVia(const std::string& eventId, const std::string& via, const std::vector<std::string>& flip = {});
   // Plays a specific feed of the current entry (Sources panel).
   bool useFeed(size_t index);
+  // A race camera: these feeds, while the race stays the entry (the event
+  // guide, Up / Down and the cameras panel keep working). Not remembered as
+  // the game's source.
+  bool tuneCamera(std::vector<Feed> feeds);
+  // The raw channel playing now ("" when none).
+  std::string playingChannel() const;
   void stop();
 
   // Moves through the flip list: +1 next, -1 previous. Returns the entry.
@@ -65,6 +72,9 @@ class Playback {
   // The small note at the top right ("Reconnecting…"); empty = none.
   const std::string& note() const { return rec_.note(); }
   uint32_t tunedAt() const { return tunedAt_; }
+  // Options › Help › Export Playback Log.
+  const report::PlaybackLog& log() const { return log_; }
+  void clearLog() { log_.clear(); }
 
  private:
   bool begin(const std::string& entryId, std::vector<Feed> feeds, const std::vector<std::string>& flip);
@@ -95,6 +105,13 @@ class Playback {
   bool viaProxy_ = false;
   size_t playingFeed_ = 0;
   std::set<std::string> proxyFailed_;
+  bool camera_ = false;  // a race camera is playing (not the game's own source)
+  report::PlaybackLog log_;
+  int session_ = 0;
+  uint64_t logSaved_ = 0;
+  uint32_t logSaveAt_ = 0;
+  void logEvent(std::string_view event, std::string_view detail = {});
+  void saveLog(uint32_t ms);
 };
 
 }  // namespace marigold::app

@@ -10,6 +10,10 @@
 #include "app/store/store_impl.hpp"
 #include "core/catalog/catalog.hpp"
 #include "core/guide/outside.hpp"
+#include "core/guide/names.hpp"
+#include "core/guide/provider.hpp"
+#include "core/report/channel_report.hpp"
+#include "core/sources/account.hpp"
 #include "core/sports/network_map.hpp"
 #include "core/util/log.hpp"
 #include "core/util/redact.hpp"
@@ -292,6 +296,110 @@ void Store::markMySportsPrompted() {
   if (p.prompted) return;
   p.prompted = true;
   setMySports(p);
+}
+
+}  // namespace marigold::app
+
+// ------------------------------------------------------------ channel report
+
+namespace marigold::app {
+
+void Store::buildChannelReport(std::function<void(std::shared_ptr<std::string>)> done) {
+  const Impl& m = *impl_;
+  // Copies of everything the report reads; the worker owns them.
+  struct Job {
+    std::shared_ptr<const std::vector<Channel>> channels;
+    std::shared_ptr<const CatalogResult> catalog;
+    std::set<std::string> lineup, hidden, countries;
+    std::unordered_map<std::string, report::ServerGuideState> guideState;
+    std::unordered_map<std::string, std::vector<Program>> serverPrograms, programs;
+    guide::ProgramsById outside, provider;
+    std::map<std::string, std::string> outsideNotes, providerNotes, names;
+    std::map<std::string, guide::provider::Status> providerStates;
+    guide::StationsByNetwork stations;
+    std::vector<std::string> privateWords;
+    time::Seconds now = 0, windowStart = 0;
+    time::Zone zone = time::Zone::device();
+  };
+  auto job = std::make_shared<Job>();
+  job->channels = m.channels;
+  job->catalog = m.catalog;
+  job->lineup.insert(m.lineup.lineupIDs.begin(), m.lineup.lineupIDs.end());
+  job->hidden = m.hiddenGroups;
+  job->countries = m.prefs.guideCountries();
+  for (const auto& [id, st] : m.guideState) {
+    report::ServerGuideState s = report::ServerGuideState::NotChecked;
+    if (st == Impl::GuideState::Loading) s = report::ServerGuideState::Loading;
+    else if (st == Impl::GuideState::Loaded) s = report::ServerGuideState::Loaded;
+    else if (st == Impl::GuideState::Failed) s = report::ServerGuideState::Failed;
+    job->guideState[id] = s;
+  }
+  job->serverPrograms = m.serverPrograms;
+  job->programs = m.programs;
+  job->outside = m.outsideMatches;
+  if (m.outsideSaved && m.outsideSaved->notes) job->outsideNotes = *m.outsideSaved->notes;
+  job->provider = m.providerMatches;
+  time::Seconds now = time::now();
+  for (const sources::Account& a : m.accounts) {
+    std::string source = a.sourceId();
+    job->names[source] = redact(a.displayName);
+    // Hosts and user names never reach a cell.
+    for (const std::string& w : {a.userName, sources::stripServerSecrets(a.serverUrl),
+                                 sources::stripServerSecrets(a.playlistUrl), sources::stripServerSecrets(a.guideUrl)}) {
+      std::string host = w;
+      size_t scheme = host.find("://");
+      if (scheme != std::string::npos) host = host.substr(scheme + 3);
+      host = host.substr(0, host.find_first_of(":/"));
+      if (host.size() >= 4) job->privateWords.push_back(host);
+    }
+    std::string key = guide::provider::cacheKey("default", source);
+    auto saved = m.providerSaved.find(key);
+    guide::provider::Status st;
+    if (saved != m.providerSaved.end()) {
+      for (const auto& [id, note] : saved->second.notes) job->providerNotes[id] = note;
+      st.kind = guide::provider::Status::Kind::ready;
+      st.matched = static_cast<int>(saved->second.programs.size());
+      st.total = saved->second.channelCount;
+      st.guideChannels = saved->second.guideChannels;
+      st.updated = saved->second.built;
+    } else if (auto p = m.providerProblems.find(key); p != m.providerProblems.end()) {
+      st.kind = guide::provider::Status::Kind::failed;
+      st.message = p->second;
+    } else {
+      st.kind = m.providerRunning ? guide::provider::Status::Kind::updating : guide::provider::Status::Kind::unavailable;
+    }
+    job->providerStates[source] = st;
+  }
+  job->stations = guide::groupByNetwork(*m.stations);
+  job->now = now;
+  job->windowStart = windowStart();
+  job->zone = app_.zone();
+  auto out = std::make_shared<std::string>();
+  app_.pool().post(
+      [job, out] {
+        report::ChannelReportInput in;
+        in.channels = job->channels.get();
+        in.catalog = job->catalog.get();
+        in.lineupIds = &job->lineup;
+        in.hiddenGroups = &job->hidden;
+        in.guideState = &job->guideState;
+        in.serverPrograms = &job->serverPrograms;
+        in.programs = &job->programs;
+        in.outsideMatches = &job->outside;
+        in.outsideNotes = &job->outsideNotes;
+        in.providerMatches = &job->provider;
+        in.providerNotes = &job->providerNotes;
+        in.providerStates = &job->providerStates;
+        in.providerCountries = &job->countries;
+        in.providerNames = &job->names;
+        in.stations = &job->stations;
+        in.now = job->now;
+        in.windowStart = job->windowStart;
+        in.zone = job->zone;
+        in.privateWords = job->privateWords;
+        *out = report::channelReportCSV(in);
+      },
+      [out, done] { done(out->empty() ? nullptr : out); }, http::Priority::Normal);
 }
 
 }  // namespace marigold::app

@@ -296,6 +296,14 @@ std::unique_ptr<Screen> makeOptions(App& app) {
     }
 
     p.items.push_back(ui::PanelItem::header("HELP"));
+    ui::PanelItem report{ui::PanelItem::Kind::Chevron, "Export Channel Report"};
+    report.detail = "A spreadsheet of your channels, to a phone on your Wi-Fi";
+    report.select = [&app] { app.nav().push(makeExport(app, ExportKind::ChannelReport)); };
+    p.items.push_back(report);
+    ui::PanelItem log{ui::PanelItem::Kind::Chevron, "Export Playback Log"};
+    log.detail = "What happened when channels were tuned";
+    log.select = [&app] { app.nav().push(makeExport(app, ExportKind::PlaybackLog)); };
+    p.items.push_back(log);
     ui::PanelItem diag{ui::PanelItem::Kind::Chevron, "Remote and video test"};
     diag.select = [&app] { app.nav().push(makeDiagnostics(app)); };
     p.items.push_back(diag);

@@ -25,6 +25,9 @@
 #include "core/sources/emby.hpp"
 #include "core/sources/m3u.hpp"
 #include "core/sports/board.hpp"
+#include "core/sports/cameras.hpp"
+#include "core/sports/player_photos.hpp"
+#include "core/sports/race_data.hpp"
 #include "core/sports/my_sports.hpp"
 #include "core/sports/reminders.hpp"
 #include "core/sports/schedule.hpp"
@@ -75,6 +78,21 @@ struct EventsState {
   bool watchingSawPicture = false;
   uint32_t nextReminderMs = 0;
   bool rostersHeld = false;
+
+  // Race weekends (drivers, results), tennis player photos and race
+  // cameras (store_race.cpp).
+  sports::race_data::RaceData race;
+  sports::player_photos::PlayerPhotos photos;
+  sports::cameras::CameraIndex cameraIndex;
+  sports::cameras::FollowedDrivers followed;
+  int followRevision = 0;
+  bool raceBusy = false, raceWasRunning = false, photosBusy = false, nascarBusy = false;
+  uint32_t raceAt = 0, photosAt = 0;
+  std::optional<sports::race_data::RaceData::Request> racePending;
+  std::optional<sports::player_photos::PlayerPhotos::Request> photoPending;
+  int raceSeen = 0, photosSeen = 0;  // revisions the board was built with
+  std::string f1Key;
+  std::vector<sports::EventSource> f1Sources;
 };
 
 struct Store::Impl {

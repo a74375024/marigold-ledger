@@ -21,6 +21,8 @@ constexpr uint32_t kBannerMs = 6000;
 constexpr uint32_t kDigitsMs = 1500;
 
 class PlayerScreen : public Screen {
+  bool cameras_ = false;  // the race on screen has cameras (Down opens them)
+
  public:
   explicit PlayerScreen(App& app) : Screen(app) { bannerFrom_ = app.ms() + kBannerDelayMs; }
 
@@ -39,6 +41,13 @@ class PlayerScreen : public Screen {
         flipped(p.flip(-1));
         return true;
       case Key::Down:
+        // A race with cameras: Down opens them (channel keys still flip).
+        if (cameras_ && !p.failed()) {
+          app_.nav().push(makeCameraPanel(app_));
+          return true;
+        }
+        flipped(p.flip(1));
+        return true;
       case Key::ChannelDown:
         flipped(p.flip(1));
         return true;
@@ -103,6 +112,8 @@ class PlayerScreen : public Screen {
       shownEntry_ = p.entry();
       bannerFrom_ = ms + kBannerDelayMs;
       bannerUntil_ = bannerFrom_ + kBannerMs;
+      cameras_ = app_.store().isEvent(shownEntry_) && app_.store().hasCameras(shownEntry_);
+      if (cameras_) app_.toast("Press Down for onboard cameras", true);
     }
     if (!digits_.empty() && ms - digitsAt_ >= kDigitsMs) {
       int n = std::atoi(digits_.c_str());

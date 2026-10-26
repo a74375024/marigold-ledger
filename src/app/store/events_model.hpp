@@ -25,6 +25,16 @@ struct EventSide {
   bool home = false;
   bool leads = false, trails = false;
   bool ball = false;     // possession
+  // Tennis: the player's photo (small first, then full size; logo cache
+  // link list), with `initials` until it loads; doubles get a pair icon.
+  std::string photoUrl;
+  std::string initials;
+  bool doubles = false;
+};
+
+struct EventPodium {  // a finished race session's top three
+  std::string code;   // "VER"
+  uint32_t color = 0x8A8D93;
 };
 
 struct EventPart {  // fight card or race weekend timeline
@@ -48,6 +58,7 @@ struct EventTile {
   std::vector<EventSide> sides;  // two, or none
   std::string title, subtitle;   // tiles with no sides, fight cards
   std::vector<EventPart> parts;
+  std::vector<EventPodium> podium;
   std::string symbol;     // sport icon key for no-sides tiles
   std::string channelName, channelLogo;  // footer channel
   std::string pill2;      // footer pill when no channel ("Event feed")

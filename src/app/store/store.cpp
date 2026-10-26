@@ -2056,6 +2056,12 @@ void Store::runOutsideGuide() {
 
 // ------------------------------------------------------------ playback
 
+std::string Store::providerName(const std::string& channelId) const {
+  for (const sources::Account& a : impl_->accounts)
+    if (str::startsWith(channelId, a.sourceId() + "|")) return redact(a.displayName);
+  return {};
+}
+
 std::string Store::entryOfChannel(const std::string& channelId) const {
   auto it = impl_->catalog->entryOf.find(channelId);
   return it == impl_->catalog->entryOf.end() ? std::string() : it->second;

@@ -40,13 +40,40 @@ void countryChip(ui::Ctx& c, const std::string& code, float x, float y, bool foc
   ui::labelIn(c, code, r, Weight::Bold, 13, focused ? theme::black() : theme::white(), Align::Center);
 }
 
+// A tennis player's round photo; initials (or a pair for doubles) until it loads.
+void playerPhoto(ui::Ctx& c, const EventSide& s, float x, float y, float size, bool focused) {
+  logos::Texture tex;
+  if (c.logos && !s.photoUrl.empty()) tex = c.logos->get(s.photoUrl);
+  Rect r{x, y, size, size};
+  if (tex.id) {
+    c.g.fill(r, focused ? theme::black(0.08f) : theme::white(0.12f), size * 0.5f);
+    c.g.image(tex.id, r, 1.0f, size * 0.5f);
+    return;
+  }
+  Color fill = focused ? theme::black(0.1f) : theme::white(0.16f);
+  Color ink = focused ? theme::black(0.75f) : theme::white(0.85f);
+  if (s.doubles) {
+    float d = size * 0.7f;
+    c.g.fill({x, y + size - d, d, d}, fill, d * 0.5f);
+    c.g.fill({x + size - d, y, d, d}, fill, d * 0.5f);
+    return;
+  }
+  c.g.fill(r, fill, size * 0.5f);
+  ui::labelIn(c, s.initials, r, Weight::Bold, static_cast<int>(size * 0.38f), ink, Align::Center);
+}
+
 void sideLine(ui::Ctx& c, const EventSide& s, Rect r, bool focused) {
   Color ink = focused ? theme::black() : theme::white();
   float x = r.x;
+  bool photo = !s.photoUrl.empty() || !s.initials.empty() || s.doubles;
+  if (photo) {
+    playerPhoto(c, s, x, r.y + 4, 32, focused);
+    x += 40;
+  }
   if (!s.country.empty()) {
     countryChip(c, s.country, x, r.y + 9, focused);
     x += 43;
-  } else {
+  } else if (!photo) {
     badge(c, s, x, r.y + 4, 32, focused);
     x += 43;
   }
@@ -175,7 +202,19 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool showLeague)
       ui::label(c, line, x + 66, ty, Weight::Bold, 24, ink);
       ty += 30;
     }
-    if (!t.subtitle.empty()) ui::label(c, t.subtitle, x + 66, ty, Weight::Regular, 18, ink.withAlpha(0.7f * alpha), w - 66);
+    if (!t.subtitle.empty()) {
+      ui::label(c, t.subtitle, x + 66, ty, Weight::Regular, 18, ink.withAlpha(0.7f * alpha), w - 66);
+      ty += 26;
+    }
+    // A finished session's top three: "1 VER  2 NOR  3 LEC" in team colours.
+    float podX = x + 66;
+    for (size_t i = 0; i < t.podium.size(); ++i) {
+      std::string place = std::to_string(i + 1);
+      podX += ui::label(c, place, podX, ty + 2, Weight::Bold, 16, ink.withAlpha(0.55f * alpha)) + 4;
+      c.g.fill({podX, ty + 4, 4, 18}, theme::hex(t.podium[i].color, alpha), 2);
+      podX += 8;
+      podX += ui::label(c, t.podium[i].code, podX, ty, Weight::Bold, 19, ink) + 14;
+    }
   }
 
   // Footer.
