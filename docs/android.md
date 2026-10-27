@@ -1,4 +1,4 @@
-# Marigold on Android (Fire TV, Android TV)
+# Marigold on Android (Fire TV, any Android TV stick)
 
 The same app as on the LG TV: the same screens, guide, Live Events, playback
 rules and saved data format, built from the same code. Only the layer that
@@ -33,18 +33,29 @@ supported. Both 32-bit and 64-bit ARM are in the APK.
 |---|---|
 | D-pad, select | Move, OK (hold select for the long press) |
 | Back | Back; twice on the guide exits, as on the TV |
-| Menu (☰) | On the guide: the channel's actions (watch, remind, add to My Lineup, choose feed), as holding OK |
-| Play/pause, rewind, fast forward | As on the LG remote |
+| Menu (☰) | Guide: the channel's actions (Watch, Remind Me, My Lineup, Choose Feed), as holding OK. Live Events: Where to Watch. Player: Sources |
+| Play/pause (⏯) | Guide: Live Events. Live Events: back to the guide. Player: as on the LG remote |
+| Rewind, fast forward (⏪ ⏩) | Guide: page up and down. Player: as on the LG remote |
 | Home | The system's (the app keeps running; opening it again is instant) |
 
-The Fire TV remote has no colour keys. What they do on the LG remote is
-reached with the D-pad: Options is the gear at the top right of the guide
-(Up to the tabs, then Right), Live Events is a tab, and a channel's
-sources are under Menu › Choose Feed. The key hints on screen still name
-the LG colour keys.
+The Fire TV remote has no colour, number or CH keys, so on a Fire TV the
+key hints on screen show the keys above (☰, ⏯, ⏪ ⏩) instead of the LG
+colour keys. Options and Search are the icons at the top right of the
+guide (Up to the tabs, then Right). The LG app is unchanged.
 
-Game controllers work too (A is OK, B is Back), and TV remotes with
-channel, colour and number keys get the same keys as the LG remote.
+### Any other Android TV stick or box
+
+The app runs on any Android TV device (Android 7 or newer; Chromecast with
+Google TV, Nvidia Shield, Onn and Xiaomi boxes, TVs with Android TV
+built in). Their remotes differ, so the hints start with only what every
+remote has: hold OK for a channel's actions, Up for Live Events, Search
+and Options, Down then OK in the player for Sources, Back for the guide.
+Every action is reachable that way, with the D-pad alone.
+
+The first time a key is pressed that the remote has (Menu, play/pause,
+rewind and fast forward, CH up and down, number keys, the colour keys),
+the hints add it from then on. A remote with colour keys gets the LG
+hints. Game controllers work too (A is OK, B is Back).
 
 ## How it is built
 

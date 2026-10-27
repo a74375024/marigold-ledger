@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 
+#include "platform/icons.hpp"
 #include "platform/logo_cache.hpp"
 
 namespace marigold::ui {
@@ -81,19 +82,56 @@ void progress(Ctx& c, Rect r, double fraction, Color track, Color fill) {
              r.h * 0.5f);
 }
 
-void keyBar(Ctx& c, const std::vector<KeyHint>& keys, const std::string& hint) {
+float keyCap(Ctx& c, float x, float y, float h, const std::vector<std::string>& icons, const std::string& text,
+             Color fill, Color ink) {
+  float pad = h * 0.24f, icon = h * 0.62f, gap = h * 0.1f;
+  float inner = 0;
+  for (size_t i = 0; i < icons.size(); ++i) inner += icon + (i ? gap : 0);
+  int px = static_cast<int>(h * 0.5f);
+  if (icons.empty()) inner = textWidth(c, text, Weight::Bold, px);
+  float w = std::max(h, inner + 2 * pad);
+  c.g.fill({x, y, w, h}, fill, h * 0.23f);
+  if (icons.empty()) {
+    labelIn(c, text, {x, y, w, h}, Weight::Bold, px, ink, Align::Center);
+    return w;
+  }
+  float ix = x + (w - inner) * 0.5f;
+  for (const std::string& name : icons) {
+    unsigned tex = c.icons ? c.icons->get(name) : 0;
+    if (tex) c.g.textureAlpha(tex, {ix, y + (h - icon) * 0.5f, icon, icon}, ink);
+    ix += icon + gap;
+  }
+  return w;
+}
+
+uint32_t keyColour(hints::Colour colour) {
+  switch (colour) {
+    case hints::Colour::Red: return theme::kKeyRed;
+    case hints::Colour::Green: return theme::kKeyGreen;
+    case hints::Colour::Yellow: return theme::kKeyYellow;
+    case hints::Colour::Blue: return theme::kKeyBlue;
+    case hints::Colour::None: break;
+  }
+  return 0;
+}
+
+void keyBar(Ctx& c, const hints::Bar& bar) {
   float y = gfx::kLayoutHeight - 30 - 44;
   float x = theme::kMarginX;
   Color col = theme::white(0.75f);
-  for (const KeyHint& k : keys) {
-    c.g.fill({x, y + 13, 18, 18}, theme::hex(k.color), 4);
-    x += 28;
+  for (const hints::Hint& k : bar.keys) {
+    if (k.colour != hints::Colour::None) {
+      c.g.fill({x, y + 13, 18, 18}, theme::hex(keyColour(k.colour)), 4);
+      x += 28;
+    } else {
+      x += keyCap(c, x, y + 7, 30, k.icons, k.cap, theme::white(0.16f), theme::white()) + 10;
+    }
     x += label(c, k.label, x, y + 22 - c.t.lineHeight(Weight::Medium, 19) * 0.5f, Weight::Medium, 19, col);
     x += 30;
   }
-  if (!hint.empty()) {
+  if (!bar.right.empty()) {
     float w = gfx::kLayoutWidth - theme::kMarginX - x;
-    labelIn(c, hint, {x, y, w, 44}, Weight::Medium, 19, col, Align::Right);
+    labelIn(c, bar.right, {x, y, w, 44}, Weight::Medium, 19, col, Align::Right);
   }
 }
 

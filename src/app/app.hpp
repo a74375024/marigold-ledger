@@ -69,6 +69,10 @@ class App {
 
   uint32_t ms() const { return ms_; }
 
+  // The keys the remote in use has, for the screens' key hints: the
+  // platform's known set plus any pressed since the app started.
+  const RemoteKeys& remoteKeys() const { return keys_; }
+
  private:
   void handle(const platform::Event& e);
   void dispatch(const KeyEvent& k);
@@ -101,6 +105,8 @@ class App {
   bool okDown_ = false;
   bool okLongSent_ = false;
   uint32_t okDownAt_ = 0;
+
+  RemoteKeys keys_;
 
   bool pointerShown_ = false;
   float pointerX_ = 0, pointerY_ = 0;

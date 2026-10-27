@@ -79,6 +79,11 @@ class Window {
   // app keeps running, as TV apps do) and returns true; webOS does nothing.
   bool leave();
 
+  // The keys this platform's remote is known to have (webOS: the LG
+  // remote's; Android: a Fire TV remote's on Amazon devices, else none
+  // known). The app adds the ones it sees pressed.
+  RemoteKeys remoteKeys() const;
+
   int drawableWidth() const;
   int drawableHeight() const;
   // What runs underneath, for Help and the logs: the TV's SDL version on

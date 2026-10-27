@@ -1,4 +1,4 @@
-# Android: first checks on a Fire TV
+# Android: first checks on a Fire TV (or another Android TV stick)
 
 Install as in `docs/android.md`. Everything else in the TV checklists
 (`m1`, `m3`, `m4`) applies as written: the screens and rules are the same
@@ -23,9 +23,13 @@ code. These rows are what is new on Android.
 | Exit | Back twice on the guide | "Press Back again to exit", then the Fire TV home |
 | Home and return | Home, then open Marigold again | The guide as you left it, at once (the app kept running) |
 | Cold start | Open Marigold after exiting | The guide from the saved list in a few seconds |
-| Menu | ☰ on a channel in the guide | Its actions: Watch, Remind Me, My Lineup, Choose Feed |
-| No colour keys | Up to the tabs, Right to the gear, OK; and the Live Events tab | Options and Live Events open without the LG colour keys |
+| Key hints | Look at the guide's bottom bar | ☰ Channel options, ⏯ Live Events, ⏪ ⏩ Page; no coloured squares |
+| Menu | ☰ on a channel in the guide; ☰ on Live Events; ☰ in the player | The channel's actions (Watch, Remind Me, My Lineup, Choose Feed); Where to Watch; Sources |
+| Play/pause | ⏯ on the guide, then ⏯ again | Live Events opens, then back to the guide |
+| Rewind, fast forward | ⏪ and ⏩ on the guide | A page up, a page down |
+| Options without colour keys | Up to the tabs, Right to the gear, OK | Options opens |
 | Media keys | Play/pause, rewind, fast forward in the player | As on LG |
+| Another Android TV remote | On a non-Fire TV stick: the guide's bar, then press ☰ or ⏯ if it has them | First only "Hold OK · Channel options"; each key pressed joins the bar |
 | Volume, Home | Press them | The system's: volume changes, Home goes home |
 
 ## Keyboard

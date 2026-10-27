@@ -19,7 +19,8 @@ constexpr int kPoolThreads = 4;
 
 App::App(platform::Window& window, platform::Storage& storage, gfx::Renderer& g,
          text::TextRenderer& t, icons::IconSet& icons, platform::Video& video, Build build)
-    : window_(window), storage_(storage), g_(g), t_(t), icons_(icons), video_(video), build_(std::move(build)) {
+    : window_(window), storage_(storage), g_(g), t_(t), icons_(icons), video_(video), build_(std::move(build)),
+      keys_(window.remoteKeys()) {
   // Wakes the loop when a worker has a result, so pump() runs promptly.
   pool_.start(kPoolThreads, [&window] { window.wake(); });
   std::string logoDir = storage_.dir().empty() ? std::string("/tmp/marigold-logos")
@@ -135,6 +136,7 @@ void App::handle(const platform::Event& e) {
         break;
       }
       if (key == Key::Unknown) break;
+      if (keys_.saw(key)) dirty_ = true;  // its hints appear
       if (pointerShown_ && key != Key::Ok) pointerShown_ = false;  // arrows take over
       if (key == Key::Ok) {
         if (!e.repeat) {

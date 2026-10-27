@@ -6,7 +6,6 @@ import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
-import android.os.Build;
 import android.os.Bundle;
 import android.view.KeyEvent;
 import android.view.SurfaceHolder;
@@ -121,10 +120,11 @@ public final class MarigoldActivity extends Activity implements SurfaceHolder.Ca
         | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
   }
 
-  // The fonts and sport icons as plain files (native reads them by path),
-  // unpacked once per app version.
+  // The fonts and icons as plain files (native reads them by path), unpacked
+  // once per install or update (an update with the same version number,
+  // as a local build, still gets its new files).
   private String unpackAssets() {
-    File dir = new File(getFilesDir(), "assets-" + versionCode());
+    File dir = new File(getFilesDir(), "assets-" + installStamp());
     File done = new File(dir, ".done");
     if (done.exists()) return dir.getAbsolutePath();
     File[] old = getFilesDir().listFiles((d, name) -> name.startsWith("assets-"));
@@ -152,11 +152,10 @@ public final class MarigoldActivity extends Activity implements SurfaceHolder.Ca
     return dir.getAbsolutePath();
   }
 
-  @SuppressWarnings("deprecation")
-  private long versionCode() {
+  private long installStamp() {
     try {
       PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
-      return Build.VERSION.SDK_INT >= 28 ? info.getLongVersionCode() : info.versionCode;
+      return info.lastUpdateTime;
     } catch (PackageManager.NameNotFoundException e) {
       return 0;
     }

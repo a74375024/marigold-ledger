@@ -9,6 +9,7 @@
 #include "app/screens/panel_screen.hpp"
 #include "app/screens/screens.hpp"
 #include "app/store/store.hpp"
+#include "core/input/hints.hpp"
 #include "core/model/channel.hpp"
 
 namespace marigold::app {
@@ -597,6 +598,11 @@ bool GuideScreen::key(const KeyEvent& e) {
     if (area_ == Area::Grid) longPress();
     return true;
   }
+  // Keys a remote without colour or CH keys has (Fire TV): play/pause
+  // opens Live Events, rewind and fast forward page.
+  if (k == Key::PlayPause || k == Key::Play) k = Key::Yellow;
+  if (k == Key::Rewind) k = Key::ChannelUp;
+  if (k == Key::FastForward) k = Key::ChannelDown;
   switch (k) {
     case Key::Red: openSources(); return true;
     case Key::Green:
@@ -876,12 +882,7 @@ void GuideScreen::draw(ui::Ctx& c) {
   drawGrid(c);
   if (area_ == Area::Rail) drawRail(c);
   const GuideChannel* g = focusedChannel();
-  ui::keyBar(c,
-             {{theme::kKeyRed, "Sources"},
-              {theme::kKeyGreen, g && g->inLineup ? "Remove from My Lineup" : "Add to My Lineup"},
-              {theme::kKeyYellow, "Live Events"},
-              {theme::kKeyBlue, "Options"}},
-             "CH \xe2\x96\xb2\xe2\x96\xbc page \xc2\xb7 0\xe2\x80\x93" "9 go to channel \xc2\xb7 Hold OK: more");
+  ui::keyBar(c, hints::guide(app_.remoteKeys(), g && g->inLineup));
   drawDigits(c);
 }
 

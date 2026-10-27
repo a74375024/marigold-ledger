@@ -42,6 +42,27 @@ Key keyFromSdl(int scancode, int32_t keycode);
 // `keycode` is android.view.KeyEvent's KEYCODE_* value.
 Key keyFromAndroid(int keycode);
 
+// The keys a remote has beyond the D-pad, OK and Back, which every remote
+// has. Screens offer only these in their key hints, so a Fire TV remote
+// (no colour, number or CH keys) is never told to press one it lacks.
+struct RemoteKeys {
+  bool colour = false;     // red, green, yellow, blue
+  bool menu = false;       // ☰
+  bool playPause = false;  // ⏯
+  bool seek = false;       // ⏪ ⏩
+  bool digits = false;     // 0-9
+  bool channel = false;    // CH + / CH -
+  // A key just pressed: this remote has it, so it is offered from now on.
+  // True when that is news.
+  bool saw(Key key);
+  static RemoteKeys lg();      // the LG remote: all of them
+  static RemoteKeys fireTv();  // menu, play/pause, rewind and fast forward
+  bool operator==(const RemoteKeys& o) const {
+    return colour == o.colour && menu == o.menu && playPause == o.playPause && seek == o.seek && digits == o.digits &&
+           channel == o.channel;
+  }
+};
+
 int digitOf(Key key);  // 0-9, or -1
 const char* keyName(Key key);
 

@@ -66,6 +66,7 @@ struct Window::Impl {
   ANativeWindow* window = nullptr;
   int drawableW = 1920, drawableH = 1080;
   std::string runtime, glRenderer;
+  bool amazon = false;  // a Fire TV: its remote's keys are known
   std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
 
   // App thread: takes up the surface Java offered (or lets the old one go).
@@ -128,8 +129,9 @@ Window::~Window() {
 bool Window::open(const char*) {
   Impl& m = *impl_;
   m.runtime = "Android " + property("ro.build.version.release") + " (API " + property("ro.build.version.sdk") + ")";
-  MLOG_I("window", "%s, %s %s", m.runtime.c_str(), property("ro.product.manufacturer").c_str(),
-         property("ro.product.model").c_str());
+  std::string maker = property("ro.product.manufacturer");
+  m.amazon = maker == "Amazon";
+  MLOG_I("window", "%s, %s %s", m.runtime.c_str(), maker.c_str(), property("ro.product.model").c_str());
   m.display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
   if (m.display == EGL_NO_DISPLAY || !eglInitialize(m.display, nullptr, nullptr)) {
     MLOG_E("window", "eglInitialize failed");
@@ -255,6 +257,10 @@ bool Window::leave() {
   android::caught(e, "leave");
   return true;
 }
+
+// Other Android TV remotes differ (a Chromecast remote has no menu or media
+// keys); their keys are learned as they are pressed.
+RemoteKeys Window::remoteKeys() const { return impl_->amazon ? RemoteKeys::fireTv() : RemoteKeys{}; }
 
 int Window::drawableWidth() const { return impl_->drawableW; }
 int Window::drawableHeight() const { return impl_->drawableH; }

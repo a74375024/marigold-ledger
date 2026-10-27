@@ -12,6 +12,7 @@
 #include "app/screens/panel_screen.hpp"
 #include "app/screens/screens.hpp"
 #include "app/store/store.hpp"
+#include "core/input/hints.hpp"
 
 namespace marigold::app {
 namespace {
@@ -99,9 +100,12 @@ class EventsBoardScreen : public Screen {
         if (const EventTile* t = focused()) select(*t);
         return true;
       case Key::Red:
+      case Key::Menu:  // a remote without colour keys (Fire TV)
         if (const EventTile* t = focused()) app_.nav().push(makeWhereToWatch(app_, t->id));
         return true;
       case Key::Yellow:
+      case Key::PlayPause:
+      case Key::Play:
       case Key::Back:
         close(0);
         return true;
@@ -136,9 +140,7 @@ class EventsBoardScreen : public Screen {
     drawTabs(c);
     drawRows(c);
     if (column_) drawColumn(c);
-    ui::keyBar(c,
-               {{theme::kKeyRed, "Where to Watch"}, {theme::kKeyYellow, "Guide"}, {theme::kKeyBlue, "Options"}},
-               "Hold OK: more \xc2\xb7 \xe2\x97\x80 sports");
+    ui::keyBar(c, hints::eventsBoard(app_.remoteKeys()));
   }
 
  private:

@@ -60,3 +60,35 @@ TEST_CASE("Fire TV and Android TV remotes") {
   CHECK(keyFromAndroid(97) == Key::Back);  // and B
   CHECK(keyFromAndroid(3) == Key::Unknown);  // Home stays the system's
 }
+
+TEST_CASE("a remote's keys: what the hints may offer, learned as they are pressed") {
+  using marigold::RemoteKeys;
+  RemoteKeys fire = RemoteKeys::fireTv();
+  CHECK(fire.menu);
+  CHECK(fire.playPause);
+  CHECK(fire.seek);
+  CHECK_FALSE(fire.colour);
+  CHECK_FALSE(fire.digits);
+  CHECK_FALSE(fire.channel);
+  RemoteKeys lg = RemoteKeys::lg();
+  CHECK((lg.colour && lg.digits && lg.channel && lg.menu));
+
+  // Any other stick starts with none; a key pressed once is offered after.
+  RemoteKeys stick;
+  CHECK_FALSE(stick.saw(Key::Up));
+  CHECK_FALSE(stick.saw(Key::Ok));
+  CHECK(stick.saw(Key::Menu));
+  CHECK(stick.menu);
+  CHECK_FALSE(stick.saw(Key::Menu));  // not news the second time
+  CHECK(stick.saw(Key::FastForward));
+  CHECK(stick.seek);
+  CHECK(stick.saw(Key::Digit7));
+  CHECK(stick.digits);
+  CHECK(stick.saw(Key::Blue));
+  CHECK(stick.colour);
+  CHECK(stick.saw(Key::Pause));
+  CHECK(stick.playPause);
+  CHECK(stick.saw(Key::ChannelDown));
+  CHECK(stick.channel);
+  CHECK(stick == RemoteKeys::lg());
+}

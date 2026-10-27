@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "core/input/hints.hpp"
 #include "core/util/time.hpp"
 #include "platform/gfx.hpp"
 #include "platform/text.hpp"
@@ -105,12 +106,15 @@ void logo(Ctx& c, const std::string& url, const std::string& fallback, Rect r,
 void progress(Ctx& c, Rect r, double fraction, Color track = theme::white(0.18f),
               Color fill = theme::white());
 
-// The bottom colour-key bar: up to four (colour, label) pairs and a hint.
-struct KeyHint {
-  uint32_t color = 0;
-  std::string label;
-};
-void keyBar(Ctx& c, const std::vector<KeyHint>& keys, const std::string& hint);
+// A key cap in a key hint: a rounded square `h` tall with symbols (sport
+// icon set names, "key-menu") or text ("OK", "Back"). Returns its width.
+float keyCap(Ctx& c, float x, float y, float h, const std::vector<std::string>& icons, const std::string& text,
+             Color fill, Color ink);
+// The colour of a colour key in the bars.
+uint32_t keyColour(hints::Colour colour);
+// The bottom key bar: the remote's keys for this screen and a line at the
+// right (core/input/hints.hpp decides which).
+void keyBar(Ctx& c, const hints::Bar& bar);
 
 // A small spinner centred at (x, y).
 void spinner(Ctx& c, float x, float y, float radius, Color col = theme::white(0.8f));

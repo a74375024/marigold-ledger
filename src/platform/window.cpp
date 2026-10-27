@@ -242,6 +242,7 @@ void Window::closeKeyboard() { texto_sistema_fechar(); }
 bool Window::keyboardOpen() const { return texto_sistema_aberto() != 0; }
 
 bool Window::leave() { return false; }
+RemoteKeys Window::remoteKeys() const { return RemoteKeys::lg(); }
 
 int Window::drawableWidth() const { return impl_->drawableW; }
 int Window::drawableHeight() const { return impl_->drawableH; }

@@ -122,6 +122,42 @@ Key keyFromAndroid(int keycode) {
   return Key::Unknown;
 }
 
+bool RemoteKeys::saw(Key key) {
+  bool* has = nullptr;
+  switch (key) {
+    case Key::Red:
+    case Key::Green:
+    case Key::Yellow:
+    case Key::Blue: has = &colour; break;
+    case Key::Menu: has = &menu; break;
+    case Key::PlayPause:
+    case Key::Play:
+    case Key::Pause: has = &playPause; break;
+    case Key::Rewind:
+    case Key::FastForward: has = &seek; break;
+    case Key::ChannelUp:
+    case Key::ChannelDown: has = &channel; break;
+    default:
+      if (digitOf(key) >= 0) has = &digits;
+      break;
+  }
+  if (!has || *has) return false;
+  *has = true;
+  return true;
+}
+
+RemoteKeys RemoteKeys::lg() {
+  RemoteKeys k;
+  k.colour = k.menu = k.playPause = k.seek = k.digits = k.channel = true;
+  return k;
+}
+
+RemoteKeys RemoteKeys::fireTv() {
+  RemoteKeys k;
+  k.menu = k.playPause = k.seek = true;
+  return k;
+}
+
 int digitOf(Key key) {
   int k = static_cast<int>(key);
   int d0 = static_cast<int>(Key::Digit0);

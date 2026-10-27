@@ -258,7 +258,7 @@ The screens follow the tvOS layout, redrawn at 1920×1080 with Legacy's GLES2 re
   - Magic Remote hover moves focus and the wheel scrolls rows.
   - Long OK opens the context menu, which tvOS gets from long-press Select.
 - **Colour keys:** red Sources (Where to Watch on the board), green Add to My Lineup or Remind Me, yellow Live Events or Guide, blue Options.
-  - Remotes without colour keys get the same actions from the on-screen key bar.
+  - Remotes without colour keys see the keys they have instead: ☰, ⏯ and ⏪ ⏩ on a Fire TV; on other Android TV remotes, hold OK and the D-pad until a key is pressed that joins the hints.
 - **Live Events UI never names a data source.** Strings come from one English table, so this is reviewable in one file.
 
 ## 8. CI (GitHub Actions)

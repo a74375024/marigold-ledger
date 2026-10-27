@@ -14,6 +14,8 @@
 #include "app/screens/screens.hpp"
 #include "app/store/store.hpp"
 #include "core/engine/views.hpp"
+#include "core/input/hints.hpp"
+#include "platform/icons.hpp"
 
 namespace marigold::app {
 namespace {
@@ -112,6 +114,7 @@ class PlayerScreen : public Screen {
         else showBanner();
         return true;
       case Key::Red:
+      case Key::Menu:  // a remote without colour keys (Fire TV)
         openSources();
         return true;
       case Key::Blue:
@@ -282,6 +285,7 @@ class PlayerScreen : public Screen {
         activate(pills_[static_cast<size_t>(pill_)]);
         return true;
       case Key::Red:
+      case Key::Menu:
         openSources();
         return true;
       case Key::ChannelUp:
@@ -369,7 +373,8 @@ class PlayerScreen : public Screen {
         }
         return true;
       }
-      case Key::Red: openSources(); return true;
+      case Key::Red:
+      case Key::Menu: openSources(); return true;
       case Key::Up:
       case Key::ChannelUp:
         failButton_ = 0;
@@ -428,6 +433,19 @@ class PlayerScreen : public Screen {
     c.g.fill(r, theme::hex(0x14161B, 0.75f), 10);
     c.g.stroke(r, theme::white(0.28f), 10, 1);
     ui::labelIn(c, glyph, r, Weight::Bold, 17, theme::white(), Align::Center);
+    return 40;
+  }
+  // A key from the hints: the player's colour dot, or a cap with symbols or
+  // text. Returns the width it took.
+  float hintKey(ui::Ctx& c, float x, float y, const hints::Hint& h) {
+    if (h.colour == hints::Colour::Red) return dot(c, x, y, kRed);
+    if (h.colour == hints::Colour::Blue) return dot(c, x, y, kBlue);
+    if (h.icons.empty()) return keyCap(c, x, y, h.cap.c_str());
+    Rect r{x, y, 40, 40};
+    c.g.fill(r, theme::hex(0x14161B, 0.75f), 10);
+    c.g.stroke(r, theme::white(0.28f), 10, 1);
+    if (unsigned tex = c.icons ? c.icons->get(h.icons.front()) : 0)
+      c.g.textureAlpha(tex, {r.x + 9, r.y + 9, 22, 22}, theme::white());
     return 40;
   }
   // Text over the picture: a dark copy 2 px lower keeps it readable on a
@@ -518,11 +536,12 @@ class PlayerScreen : public Screen {
     item(40, cameras_ ? "Cameras & more" : "More", "");
     keyCap(c, x, y, "OK");
     item(40, "Info", "");
-    dot(c, x, y, kRed);
+    const RemoteKeys& keys = app_.remoteKeys();
+    hints::Hint sources = hints::playerSources(keys);
     int b = backups();
-    item(22, "Sources", b > 0 ? std::to_string(b) + (b == 1 ? " backup" : " backups") : std::string());
-    dot(c, x, y, kBlue);
-    item(22, "Options", "");
+    item(hintKey(c, x, y, sources), sources.label,
+         b > 0 ? std::to_string(b) + (b == 1 ? " backup" : " backups") : std::string());
+    if (auto options = hints::playerOptions(keys)) item(hintKey(c, x, y, *options), options->label, "");
     int left = static_cast<int>((bannerUntil_ > app_.ms() ? bannerUntil_ - app_.ms() : 0) / 1000) + 1;
     if (zone_ == Zone::None && x < gfx::kLayoutWidth - kLeft - 360)
       ui::label(c, "Hides in " + std::to_string(std::min(left, 6)) + " s", gfx::kLayoutWidth - kLeft, y + 10,
@@ -601,8 +620,14 @@ class PlayerScreen : public Screen {
                        (q.empty() ? "" : " (" + q + ")") + " took over.";
     ui::paragraph(c, text, r.x + 28, r.y + 74, r.w - 56, Weight::Regular, 20, theme::white(0.72f), 2);
     float dx = r.x + 28;
-    c.g.fill({dx, r.y + 146, 18, 18}, theme::hex(kRed), 9);
-    ui::label(c, "Sources to pick another", dx + 28, r.y + 142, Weight::Bold, 19, theme::white(0.8f));
+    hints::Hint key = hints::playerSources(app_.remoteKeys());
+    if (key.colour != hints::Colour::None) {
+      c.g.fill({dx, r.y + 146, 18, 18}, theme::hex(kRed), 9);
+      dx += 28;
+    } else {
+      dx += ui::keyCap(c, dx, r.y + 140, 30, key.icons, key.cap, theme::white(0.16f), theme::white()) + 10;
+    }
+    ui::label(c, "Sources to pick another", dx, r.y + 142, Weight::Bold, 19, theme::white(0.8f));
   }
 
   // 3A, or the first tune: the dark card while a feed opens.
@@ -626,8 +651,16 @@ class PlayerScreen : public Screen {
       c.g.fill(r, theme::hex(0x14161B, 0.82f), 24);
       ui::labelIn(c, pill, r, Weight::Bold, 20, theme::white(), Align::Center);
       float x = kLeft;
-      c.g.fill({x, gfx::kLayoutHeight - 92, 20, 20}, theme::hex(kRed), 10);
-      x += ui::label(c, "Pick another source", x + 30, gfx::kLayoutHeight - 96, Weight::Bold, 21, theme::white(0.75f)) + 70;
+      if (auto pick = hints::pickAnotherSource(app_.remoteKeys())) {
+        if (pick->colour != hints::Colour::None) {
+          c.g.fill({x, gfx::kLayoutHeight - 92, 20, 20}, theme::hex(kRed), 10);
+          x += 30;
+        } else {
+          x += ui::keyCap(c, x, gfx::kLayoutHeight - 102, 36, pick->icons, pick->cap, theme::white(0.16f),
+                          theme::white()) + 12;
+        }
+        x += ui::label(c, pick->label, x, gfx::kLayoutHeight - 96, Weight::Bold, 21, theme::white(0.75f)) + 70;
+      }
       Rect bk{x, gfx::kLayoutHeight - 102, 56, 36};
       c.g.fill(bk, theme::white(0.16f), 9);
       ui::labelIn(c, "Back", bk, Weight::Bold, 14, theme::white(), Align::Center);
@@ -707,27 +740,17 @@ class PlayerScreen : public Screen {
     ui::label(c, "WATCHING LIVE TV", x, y, Weight::Bold, 18, theme::white(0.5f));
     ui::label(c, "Getting around", x, y + 30, Weight::Bold, 44, theme::white());
     y += 120;
-    struct Tip {
-      const char* glyph;
-      uint32_t color;  // 0: a key cap
-      const char* title;
-      const char* detail;
-    };
-    const Tip tips[] = {
-        {"\xe2\x97\x80", 0, "Guide", "What's on, without leaving"},
-        {"\xe2\x96\xb6", 0, "Last channel", "Jump back and forth"},
-        {"\xe2\x96\xb2\xe2\x96\xbc", 0, "Channels", "Up, or CH + / CH \xe2\x88\x92"},
-        {"OK", 0, "Info", "What's on now and next; \xe2\x96\xbc for more"},
-        {"", kRed, "Sources", "Pick another feed of this channel"},
-        {"123", 0, "Number keys", "Go straight to a channel"},
-    };
+    std::vector<hints::Tip> tips = hints::gettingAround(app_.remoteKeys());
     float colW = (card.w - 128 - 40) / 2;
-    for (size_t i = 0; i < 6; ++i) {
+    for (size_t i = 0; i < tips.size() && i < 6; ++i) {
       float tx = x + static_cast<float>(i % 2) * (colW + 40), ty = y + static_cast<float>(i / 2) * 96;
       Rect cap{tx, ty, 56, 56};
       c.g.fill(cap, theme::white(0.12f), 14);
-      if (tips[i].color) c.g.fill({cap.x + 16, cap.y + 16, 24, 24}, theme::hex(tips[i].color), 12);
-      else ui::labelIn(c, tips[i].glyph, cap, Weight::Bold, 18, theme::white(), Align::Center);
+      const hints::Hint& key = tips[i].key;
+      unsigned icon = !key.icons.empty() && c.icons ? c.icons->get(key.icons.front()) : 0;
+      if (key.colour != hints::Colour::None) c.g.fill({cap.x + 16, cap.y + 16, 24, 24}, theme::hex(kRed), 12);
+      else if (icon) c.g.textureAlpha(icon, {cap.x + 14, cap.y + 14, 28, 28}, theme::white());
+      else ui::labelIn(c, key.cap, cap, Weight::Bold, 18, theme::white(), Align::Center);
       ui::label(c, tips[i].title, tx + 74, ty + 4, Weight::Bold, 25, theme::white(), colW - 74);
       ui::label(c, tips[i].detail, tx + 74, ty + 36, Weight::Regular, 19, theme::white(0.65f), colW - 74);
     }
