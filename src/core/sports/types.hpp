@@ -33,6 +33,9 @@ struct SportsTeam {
   std::optional<std::string> altColor;
   // Poll rank in this game (college, 1-25), or a tennis seed.
   std::optional<int> rank;
+  // A player's country flag image, one per player of a doubles pair
+  // (tennis); `country` is its code for when it hasn't loaded.
+  std::vector<std::string> flags;
   // A fighter's or player's country code ("AUS").
   std::optional<std::string> country;
 

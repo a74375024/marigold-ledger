@@ -86,11 +86,6 @@ std::string PlayerPhotos::smallUrl(const std::string& url) {
   return path + (str::endsWith(path, "/") ? "small" : "/small") + rest;
 }
 
-std::function<std::optional<std::string>(std::string_view)> PlayerPhotos::photoHook() const {
-  auto entries = std::make_shared<const std::map<std::string, Entry>>(saved_.entries);
-  return [entries](std::string_view name) { return lookup(*entries, name); };
-}
-
 bool PlayerPhotos::request(const std::vector<std::string>& names, Seconds now) {
   for (const std::string& name : names) {
     std::string k = key(name);

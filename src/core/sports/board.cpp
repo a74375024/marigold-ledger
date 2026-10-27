@@ -468,7 +468,7 @@ struct Place {
   std::optional<double> liveProgress;
   bool studio = false;
   std::vector<std::string> topSets, bottomSets;
-  bool photos = false;
+  bool flags = false;  // tennis: country flags on the sides
   std::vector<PodiumDriver> podium;
   std::optional<std::string> podiumLabel;
 };
@@ -716,10 +716,10 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
   } else {
     place.footer = "Not in your channels";
   }
-  // Tennis: the court where the match is, and photos.
+  // Tennis: the court where the match is, and the players' flags.
   if (event.game && profile(event.game->league).tile == Profile::Tile::Players) {
     if (event.game->venue) place.footer = *event.game->venue;
-    place.photos = true;
+    place.flags = true;
   }
   // A whip-around: what it's showing across the sport.
   if (whip) {
@@ -736,7 +736,7 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
 }
 
 SideLine sideLine(const SportsTeam& team, bool soccer, bool home, const std::optional<std::string>& score,
-                  std::optional<bool> leads, bool ball, const std::vector<std::string>& sets, bool photo) {
+                  std::optional<bool> leads, bool ball, const std::vector<std::string>& sets, bool flags) {
   SideLine line;
   line.teamID = team.id;
   line.name = shortName(team, soccer);
@@ -753,21 +753,8 @@ SideLine sideLine(const SportsTeam& team, bool soccer, bool home, const std::opt
   line.leads = leads;
   line.possession = ball;
   line.sets = sets;
-  line.photo = photo;
+  if (flags) line.flags = team.flags;
   return line;
-}
-
-// A tennis side's photo (PlayerPhotoView): doubles get no single face; the
-// saved photo, its small size first; the initials of the first two words.
-void addPhoto(SideLine& line, const std::function<std::optional<std::string>(std::string_view)>& playerPhoto) {
-  const std::string& name = line.fullName;
-  line.doubles = name.find('/') != std::string::npos;
-  std::vector<std::string> words = text::words(name);
-  line.initials.clear();
-  for (size_t i = 0; i < words.size() && i < 2; ++i) line.initials += text::firstCharacter(words[i]);
-  if (line.doubles || !playerPhoto) return;
-  line.photoUrl = playerPhoto(name);
-  if (line.photoUrl) line.photoSmallUrl = player_photos::PlayerPhotos::smallUrl(*line.photoUrl);
 }
 
 // 0 when the top line leads, 1 when the bottom does, nil when level or unknown.
@@ -909,14 +896,11 @@ Tile makeTile(const SportsEvent& event, const Place& place, const std::string& r
       bottomLeads = *lead == 1;
     }
     tile.sides.push_back(sideLine(*place.top, soccer, place.homeIsTop == true, place.topScore, topLeads,
-                                  place.possessionTop == true, place.topSets, place.photos));
+                                  place.possessionTop == true, place.topSets, place.flags));
     tile.sides.push_back(sideLine(*place.bottom, soccer, place.homeIsTop == false, place.bottomScore, bottomLeads,
-                                  place.possessionTop == false, place.bottomSets, place.photos));
+                                  place.possessionTop == false, place.bottomSets, place.flags));
     tile.sides[tile.sides.size() - 2].pens = place.topPens;
     tile.sides.back().pens = place.bottomPens;
-    if (place.photos) {
-      for (SideLine& line : tile.sides) addPhoto(line, ctx.in.playerPhoto);
-    }
   } else {
     tile.layout = Tile::Layout::plain;
   }
@@ -1378,15 +1362,7 @@ Board build(const Input& in) {
       board.watchableRaceWeekends.push_back(id);
     }
   }
-  for (const Row& row : board.rows) {
-    for (const std::string& id : row.eventIDs) {
-      const SportsEvent& e = board.events.at(id);
-      if (!e.game || !e.game->isTennis() || e.sources.empty() || !e.start || *e.start >= now + 24 * 3600) continue;
-      for (const SportsTeam* t : {&e.game->away, &e.game->home}) {
-        if (t->name.find('/') == std::string::npos) board.tennisPlayers.push_back(t->name);
-      }
-    }
-  }
+
 
   // The top of the screen shows a game, not a whip-around.
   const SportsEvent* hero = nullptr;

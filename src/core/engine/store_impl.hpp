@@ -90,7 +90,7 @@ struct EventsState {
   uint32_t raceAt = 0, photosAt = 0;
   std::optional<sports::race_data::RaceData::Request> racePending;
   std::optional<sports::player_photos::PlayerPhotos::Request> photoPending;
-  int raceSeen = 0, photosSeen = 0;  // revisions the board was built with
+  int raceSeen = 0;  // the race data revision the board was built with
   std::string f1Key;
   std::vector<sports::EventSource> f1Sources;
 

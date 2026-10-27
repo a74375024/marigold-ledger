@@ -31,7 +31,7 @@ struct Profile {
   // How the event's tile is laid out.
   enum class Tile : uint8_t {
     Teams,        // two teams: badge or logo, score
-    Players,      // two players: photo (initials until it loads), sets
+    Players,      // two players: country flags (the code until they load), sets
     Card,         // a fight card: Prelims / Main timeline
     RaceWeekend,  // a race weekend: sessions, the last one's top three
     Title,        // a title and the sport's icon

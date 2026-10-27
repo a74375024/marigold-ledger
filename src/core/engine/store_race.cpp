@@ -120,7 +120,6 @@ void Store::pumpPhotos(uint32_t ms) {
     EventsState& ev = impl_->ev;
     ev.photosBusy = false;
     ev.photos.onResponse(r.status, *body, time::now());
-    if (ev.photos.revision() != ev.photosSeen) ev.boardDirty = true;
     if (ev.photos.persistDue()) savePhotos();
   });
 }

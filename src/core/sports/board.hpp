@@ -121,9 +121,6 @@ struct Input {
   std::function<std::optional<std::string>(std::string_view)> cameraRace;
   // A finished session's top three (RaceData.top3: race_data::RaceData::podiumHook).
   std::function<std::vector<PodiumDriver>(const std::string& kind, Seconds start)> podium;
-  // A tennis player's saved photo URL by name (PlayerPhotos.photo:
-  // player_photos::PlayerPhotos::photoHook).
-  std::function<std::optional<std::string>(std::string_view name)> playerPhoto;
 };
 
 // MARK: View model
@@ -158,14 +155,9 @@ struct SideLine {
   std::optional<bool> leads;  // false: dimmed score
   bool possession = false;
   std::vector<std::string> sets;  // tennis games per set
-  // Tennis: a player photo in a circle instead of the badge (a country
-  // chip still shows). The small size first, the full one if that fails;
-  // `initials` until one loads; a doubles pair gets a two-person icon.
-  bool photo = false;
-  std::optional<std::string> photoUrl;
-  std::optional<std::string> photoSmallUrl;
-  std::string initials;
-  bool doubles = false;
+  // Tennis: each player's country flag instead of the badge (two for a
+  // doubles pair); the country chip until they load.
+  std::vector<std::string> flags;
 };
 
 struct PartLine {
@@ -296,9 +288,7 @@ struct Board {
   // weekend sessions), in order.
   std::map<std::string, std::vector<SportsEvent>> cards;
   std::set<std::string> studio;
-  // Tennis players on screen (player_photos::PlayerPhotos::request) and race
-  // weekends you can watch (race_data::refreshForBoard).
-  std::vector<std::string> tennisPlayers;
+  // Race weekends you can watch (race_data::refreshForBoard).
   std::vector<std::string> watchableRaceWeekends;
   Seconds now = 0;
 };

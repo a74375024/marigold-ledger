@@ -250,7 +250,8 @@ TEST_CASE("tennis: matches between players and pairs, round and place tag") {
     {"id":"2","date":"2026-10-24T14:00Z",
      "competitors":[
        {"roster":{"athletes":[{"lastName":"One"},{"displayName":"Cy Twoson"}]}},
-       {"roster":{"athletes":[{"lastName":"Three"},{"lastName":"Four"}]}}]},
+       {"roster":{"athletes":[{"lastName":"Three","flag":{"href":"https://example.invalid/c/fra.png"}},
+                              {"lastName":"Four","flag":{"href":"https://example.invalid/c/ger.png"}}]}}]},
     {"id":"3","date":"2026-10-24T16:00Z",
      "competitors":[{"athlete":{"displayName":"TBD"}},{"athlete":{"displayName":"Bea Racket"}}]}
   ]}]}]})JSON";
@@ -264,12 +265,17 @@ TEST_CASE("tennis: matches between players and pairs, round and place tag") {
   CHECK(sf.venue == "Center Court");
   CHECK(sf.home.rank == 3);
   CHECK(sf.home.country == "ITA");
+  CHECK(sf.home.flags == std::vector<std::string>{"https://example.invalid/c/ita.png"});
+  CHECK(sf.away.flags.empty());
   CHECK(sf.home.alternates == std::vector<std::string>{"Player Ann"});
   CHECK(sf.networks.empty());
   CHECK(sf.isTennis());
   const SportsGame& doubles = (*matches)[1];
   CHECK(doubles.home.name == "One / Twoson");
   CHECK(doubles.away.name == "Three / Four");
+  CHECK(doubles.home.flags.empty());  // one partner without a flag: none
+  CHECK(doubles.away.flags == std::vector<std::string>{"https://example.invalid/c/fra.png", "https://example.invalid/c/ger.png"});
+  CHECK_FALSE(doubles.away.country);  // partners from two countries: no single chip
   CHECK(doubles.note == "Harbor Open");
 }
 

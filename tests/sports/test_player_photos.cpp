@@ -3,7 +3,6 @@
 // budget: singles players only, one search each (kept 90 days, a miss a
 // week), 6 s between searches, the daily cap, a 30-minute pause after a
 // failure, saving as it goes, and old entries dropped. Players are invented.
-#include "core/sports/board.hpp"
 #include "core/sports/player_photos.hpp"
 #include "doctest.h"
 #include "sports/helpers.hpp"
@@ -103,12 +102,8 @@ TEST_CASE("searching: one at a time, 6 s apart, saved") {
   PlayerPhotos again(*back);
   CHECK(again.photo("Player Alpha") == std::string("https://example.invalid/a.png"));
   CHECK(toJson(again.saved()) == toJson(*saved));
-  auto hook = again.photoHook();
-  CHECK(hook("PLAYER ALPHA") == std::string("https://example.invalid/a.png"));
-  CHECK_FALSE(hook("Player Bravo"));
-  board::Input in;
-  in.playerPhoto = again.photoHook();  // the board's shape
-  CHECK(in.playerPhoto("Player Alpha"));
+  CHECK(again.photo("PLAYER ALPHA") == std::string("https://example.invalid/a.png"));
+  CHECK_FALSE(again.photo("Player Bravo"));
   CHECK_FALSE(savedFromJson("[]"));
 }
 

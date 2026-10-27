@@ -67,12 +67,7 @@ EventSide toSide(const sb::SideLine& s) {
   o.leads = s.leads.value_or(false);
   o.trails = s.leads && !*s.leads;
   o.ball = s.possession;
-  std::vector<std::string> photos;
-  if (s.photoSmallUrl) photos.push_back(*s.photoSmallUrl);
-  if (s.photoUrl) photos.push_back(*s.photoUrl);
-  o.photoUrl = logos::chain(photos);
-  o.initials = s.initials;
-  o.doubles = s.doubles;
+  o.flags = s.flags;
   return o;
 }
 
@@ -460,14 +455,11 @@ void Store::buildBoard() {
   in.isCameraName = sports::special_feeds::isCameraName;
   in.cameraRace = sports::special_feeds::cameraRace;
   in.podium = e.race.podiumHook();
-  in.playerPhoto = e.photos.photoHook();
   e.raceSeen = e.race.revision();
-  e.photosSeen = e.photos.revision();
   e.board = sb::build(in);
-  // Race weekends on the board ask for drivers and results; tennis players
-  // for their photos (spaced and capped by the rules behind these calls).
+  // Race weekends on the board ask for drivers and results (spaced and
+  // capped by the rules behind this call).
   sports::race_data::refreshForBoard(e.race, e.board, settings_.showScores, now);
-  e.photos.request(e.board.tennisPlayers, now);
   e.statusesRevision = e.scores.revision();
   e.boardDirty = false;
   e.boardBuiltMs = host_.ms();

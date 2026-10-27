@@ -120,3 +120,11 @@ The guide's lists and the playback session now come from the shared engine. Each
 | Runners on base | A live baseball game, scores on | A small diamond before "2 outs · 1-2"; filled bases match the runners |
 | Penalties | A soccer knockout going to penalties, scores on | "(4)" beside each side's score, the shootout's winner bright; footer "Penalties" while it's on |
 | Aggregate | A second leg, scores on | Footer "Aggregate 3–1" (home first, as on the tile); none on a first leg |
+
+## Tennis flags
+
+| Area | How to check | Pass |
+|---|---|---|
+| Singles | Live Events with tennis on | Each player's country flag before the name; the three-letter code until it loads; no photo |
+| Doubles | A doubles match | Two small flags per pair (blank boxes until they load) |
+| Focused | Focus a tennis tile | Flags still clear on the white tile |

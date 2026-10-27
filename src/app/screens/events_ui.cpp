@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 #include "platform/logo_cache.hpp"
 
@@ -67,40 +68,42 @@ void countryChip(ui::Ctx& c, const std::string& code, float x, float y, bool foc
   ui::labelIn(c, code, r, Weight::Bold, 13, focused ? theme::black() : theme::white(), Align::Center);
 }
 
-// A tennis player's round photo; initials (or a pair for doubles) until it loads.
-void playerPhoto(ui::Ctx& c, const EventSide& s, float x, float y, float size, bool focused) {
-  logos::Texture tex;
-  if (c.logos && !s.photoUrl.empty()) tex = c.logos->get(s.photoUrl);
-  Rect r{x, y, size, size};
-  if (tex.id) {
-    c.g.fill(r, focused ? theme::black(0.08f) : theme::white(0.12f), size * 0.5f);
-    c.g.image(tex.id, r, 1.0f, size * 0.5f);
-    return;
+// A tennis player's country flag, or a doubles pair's two, in a row 40 tall
+// at (x, y). The images are square with the flag across the middle, so the
+// square is drawn whole. The country chip (or blank flags) until they load.
+// Returns the width used.
+float flags(ui::Ctx& c, const EventSide& s, float x, float y, bool focused) {
+  bool pair = s.flags.size() >= 2;
+  float size = pair ? 24.0f : 38.0f, step = size + 2;
+  size_t n = pair ? 2 : 1;
+  bool loaded = true;
+  std::vector<logos::Texture> tex(n);
+  for (size_t i = 0; i < n; ++i) {
+    if (c.logos) tex[i] = c.logos->get(s.flags[i]);
+    loaded = loaded && tex[i].id;
   }
-  Color fill = focused ? theme::black(0.1f) : theme::white(0.16f);
-  Color ink = focused ? theme::black(0.75f) : theme::white(0.85f);
-  if (s.doubles) {
-    float d = size * 0.7f;
-    c.g.fill({x, y + size - d, d, d}, fill, d * 0.5f);
-    c.g.fill({x + size - d, y, d, d}, fill, d * 0.5f);
-    return;
+  if (!loaded) {
+    if (!pair && !s.country.empty()) {
+      countryChip(c, s.country, x + 3, y + 9, focused);
+    } else {
+      Color blank = focused ? theme::black(0.1f) : theme::white(0.16f);
+      for (size_t i = 0; i < n; ++i) c.g.fill({x + step * static_cast<float>(i) + 1, y + 12.5f, size - 2, size * 0.64f}, blank, 2);
+    }
+    return pair ? step * 2 - 2 : size - 2;
   }
-  c.g.fill(r, fill, size * 0.5f);
-  ui::labelIn(c, s.initials, r, Weight::Bold, static_cast<int>(size * 0.38f), ink, Align::Center);
+  for (size_t i = 0; i < n; ++i) c.g.image(tex[i].id, {x + step * static_cast<float>(i), y + 20 - size * 0.5f, size, size});
+  return pair ? step * 2 - 2 : size - 2;
 }
 
 void sideLine(ui::Ctx& c, const EventSide& s, Rect r, bool focused) {
   Color ink = focused ? theme::black() : theme::white();
   float x = r.x;
-  bool photo = !s.photoUrl.empty() || !s.initials.empty() || s.doubles;
-  if (photo) {
-    playerPhoto(c, s, x, r.y + 4, 32, focused);
-    x += 40;
-  }
-  if (!s.country.empty()) {
+  if (!s.flags.empty()) {
+    x += flags(c, s, x, r.y, focused) + 11;
+  } else if (!s.country.empty()) {
     countryChip(c, s.country, x, r.y + 9, focused);
     x += 43;
-  } else if (!photo) {
+  } else {
     badge(c, s, x, r.y + 4, 32, focused);
     x += 43;
   }

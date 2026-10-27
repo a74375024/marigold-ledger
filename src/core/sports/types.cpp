@@ -26,7 +26,7 @@ std::string SportsTeam::abbreviation() const {
 bool SportsTeam::operator==(const SportsTeam& o) const {
   return id == o.id && name == o.name && shortName == o.shortName && alternates == o.alternates &&
          badge == o.badge && location == o.location && color == o.color && altColor == o.altColor &&
-         rank == o.rank && country == o.country;
+         rank == o.rank && country == o.country && flags == o.flags;
 }
 
 // MARK: SportsGame
@@ -304,6 +304,7 @@ json::Value toJson(const SportsTeam& t) {
   setOpt(v, "altColor", t.altColor);
   setOpt(v, "rank", t.rank);
   setOpt(v, "country", t.country);
+  if (!t.flags.empty()) v.set("flags", stringArray(t.flags));
   return v;
 }
 
@@ -320,6 +321,7 @@ std::optional<SportsTeam> teamFromJson(const json::Value& v) {
   t.altColor = optString(v["altColor"]);
   t.rank = optInt(v["rank"]);
   t.country = optString(v["country"]);
+  t.flags = strings(v["flags"]);
   return t;
 }
 

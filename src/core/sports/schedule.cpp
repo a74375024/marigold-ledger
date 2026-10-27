@@ -489,6 +489,8 @@ std::optional<std::string> tennisCountry(const json::Value& athlete) {
   return parse::countryFromFlag(text::text(athlete["flag"]["href"]));
 }
 
+std::optional<std::string> tennisFlag(const json::Value& athlete) { return text::text(athlete["flag"]["href"]); }
+
 // A player, or a doubles pair ("Bucsa / Melichar-Martinez").
 std::optional<SportsTeam> tennisSide(const json::Value& competitor) {
   std::vector<const json::Value*> athletes;
@@ -539,15 +541,18 @@ std::optional<SportsTeam> tennisSide(const json::Value& competitor) {
     team.id = "p" + id.value_or(*name);
     team.name = *name;
     team.country = tennisCountry(athlete);
+    if (auto flag = tennisFlag(athlete)) team.flags.push_back(*flag);
     if (seed && *seed > 0 && *seed <= 64) team.rank = seed;
     return team;
   }
   if (athletes.size() >= 2) {
     std::vector<std::string> names;
     std::set<std::string> codes;
+    std::vector<std::string> flags;
     for (const json::Value* a : athletes) {
       if (auto n = lastName(*a)) names.push_back(*n);
       if (auto code = tennisCountry(*a)) codes.insert(*code);
+      if (auto flag = tennisFlag(*a)) flags.push_back(*flag);
     }
     if (names.size() != athletes.size()) return std::nullopt;
     SportsTeam team;
@@ -557,6 +562,7 @@ std::optional<SportsTeam> tennisSide(const json::Value& competitor) {
       if (text::count(n) >= 4) team.alternates.push_back(n);
     }
     if (codes.size() == 1) team.country = *codes.begin();
+    if (flags.size() == athletes.size()) team.flags = std::move(flags);
     if (seed && *seed > 0 && *seed <= 32) team.rank = seed;
     return team;
   }

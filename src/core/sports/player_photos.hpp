@@ -1,8 +1,8 @@
-// Tennis player cut-out photos (PlayerPhotos.swift) for the players on
-// tennis tiles, and F1 drivers when the race data has none, from a free
-// player search. Kept light (the budget is part of the design):
-// - only players in matches you can watch, live or within the next day
-//   (board::Board::tennisPlayers), and singles players (a name with a space);
+// Player cut-out photos (PlayerPhotos.swift) for F1 drivers when the race
+// data has none (the cameras panel), from a free player search. Tennis
+// tiles show flags instead. Kept light (the budget is part of the design):
+// - only the names the caller asks for, and single players (a name with a
+//   space);
 // - one search per player, saved for 90 days (a miss is tried again after a
 //   week); entries older than 120 days are dropped when saving;
 // - one search every 6 seconds at most (the free limit is 30 a minute), at
@@ -11,7 +11,7 @@
 // Only the player's name is sent.
 //
 // No I/O: the caller owns a PlayerPhotos (built from the saved JSON):
-//   if (photos.request(board.tennisPlayers, now))
+//   if (photos.request(names, now))
 //     while (auto r = photos.nextRequest(now, zone)) {
 //       wait r->waitSeconds; send; photos.onResponse(status, body, now);
 //       if (photos.persistDue()) write photos.persist(now);
@@ -82,8 +82,6 @@ class PlayerPhotos {
   std::optional<std::string> photo(std::string_view name) const;
   // The smaller size the tile tries first (the full one if that fails).
   static std::string smallUrl(const std::string& url);
-  // For board::Input::playerPhoto: a copy of the saved photos (safe on a worker).
-  std::function<std::optional<std::string>(std::string_view)> photoHook() const;
 
   // Players on screen: queue the ones not saved yet (or stale). True when
   // the caller should start draining (none running, not paused). Cheap to

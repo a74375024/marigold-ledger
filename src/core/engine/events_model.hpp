@@ -26,11 +26,9 @@ struct EventSide {
   bool home = false;
   bool leads = false, trails = false;
   bool ball = false;     // possession
-  // Tennis: the player's photo (small first, then full size; logo cache
-  // link list), with `initials` until it loads; doubles get a pair icon.
-  std::string photoUrl;
-  std::string initials;
-  bool doubles = false;
+  // Tennis: each player's country flag (two for a doubles pair); the
+  // country chip until they load.
+  std::vector<std::string> flags;
 };
 
 struct EventPodium {  // a finished race session's top three

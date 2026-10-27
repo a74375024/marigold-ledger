@@ -7,7 +7,6 @@
 #include <algorithm>
 
 #include "core/sports/board.hpp"
-#include "core/sports/player_photos.hpp"
 #include "core/sports/race_data.hpp"
 #include "core/util/strings.hpp"
 #include "doctest.h"
@@ -663,39 +662,37 @@ TEST_CASE("cameras and tennis: hooks for later milestones") {
   unwatched.id = "ATP|80|2";
   Board t = build(baseInput({eventOf(match, {feed("xt|t")}), eventOf(unwatched)}));
   CHECK(tile(t, "sev|ATP|80|1").footer == "Center Court");
-  CHECK(tile(t, "sev|ATP|80|1").sides[0].photo);
   CHECK_FALSE(t.tiles.count("sev|ATP|80|2"));  // tennis only shows matches you can watch
-  CHECK(t.tennisPlayers == std::vector<std::string>{"Bea Racket", "Ann Player"});
 }
 
-TEST_CASE("tennis photos and race podiums through the photo and race data hooks") {
-  SportsGame match = game("ATP", "Tennis", "80|1", team("p1", "Ann Player"), team("p2", "Bea Racket"), kNow + 3600);
+TEST_CASE("tennis flags and race podiums") {
+  SportsTeam ann = team("p1", "Ann Player");
+  ann.country = std::string("ESP");
+  ann.flags = {"https://example.invalid/flags/esp.png"};
+  SportsTeam bea = team("p2", "Bea Racket");  // no flag: the badge, as before
+  SportsGame match = game("ATP", "Tennis", "80|1", ann, bea, kNow + 3600);
   match.tennis = true;
-  SportsGame doubles = game("ATP", "Tennis", "80|3", team("d1", "Ann One / Bea Two"),
-                            team("d2", "Cy Three / Di Four"), kNow + 3600);
+  SportsTeam pairA = team("d1", "One / Two");
+  pairA.flags = {"https://example.invalid/flags/fra.png", "https://example.invalid/flags/ger.png"};
+  SportsGame doubles = game("ATP", "Tennis", "80|3", pairA, team("d2", "Three / Four"), kNow + 3600);
   doubles.tennis = true;
-  Input in = baseInput({eventOf(match, {feed("xt|t")}), eventOf(doubles, {feed("xt|d")})});
-  player_photos::Saved saved;
-  saved.entries["bea racket"] = player_photos::Entry{"https://example.invalid/bea.png", kNow};
-  in.playerPhoto = player_photos::PlayerPhotos(saved).photoHook();
-  Board b = build(in);
+  Board b = build(baseInput({eventOf(match, {feed("xt|t")}), eventOf(doubles, {feed("xt|d")})}));
   const Tile& t = tile(b, "sev|ATP|80|1");
   REQUIRE(t.sides.size() == 2);
-  const SideLine& bea = t.sides[0].fullName == "Bea Racket" ? t.sides[0] : t.sides[1];
-  const SideLine& ann = t.sides[0].fullName == "Ann Player" ? t.sides[0] : t.sides[1];
-  CHECK(bea.photo);
-  CHECK(bea.photoUrl == std::string("https://example.invalid/bea.png"));
-  CHECK(bea.photoSmallUrl == std::string("https://example.invalid/bea.png/small"));
-  CHECK(bea.initials == "BR");
-  CHECK_FALSE(ann.photoUrl);  // initials until there is one
-  CHECK(ann.initials == "AP");
+  const SideLine& a = t.sides[0].fullName == "Ann Player" ? t.sides[0] : t.sides[1];
+  const SideLine& z = t.sides[0].fullName == "Bea Racket" ? t.sides[0] : t.sides[1];
+  CHECK(a.flags == std::vector<std::string>{"https://example.invalid/flags/esp.png"});
+  CHECK(a.country == "ESP");  // the chip until the flag loads
+  CHECK(z.flags.empty());
   const Tile& d = tile(b, "sev|ATP|80|3");
-  CHECK(d.sides[0].doubles);
-  CHECK_FALSE(d.sides[0].photoUrl);
-  // Not tennis: no photo fields.
-  SportsGame nfl = game("NFL", "NFL", "1", team("a", "Harbor Rams"), team("b", "Bay Seals"), kNow + 3600);
+  const SideLine& pair = d.sides[0].fullName == "One / Two" ? d.sides[0] : d.sides[1];
+  CHECK(pair.flags.size() == 2);
+  // Not tennis: no flags even when a team carries some.
+  SportsTeam rams = team("a", "Harbor Rams");
+  rams.flags = {"https://example.invalid/flags/usa.png"};
+  SportsGame nfl = game("NFL", "NFL", "1", rams, team("b", "Bay Seals"), kNow + 3600);
   Board n = build(baseInput({eventOf(nfl, {feed("xt|n")})}));
-  CHECK(tile(n, "sev|NFL|1").sides[0].initials.empty());
+  CHECK(tile(n, "sev|NFL|1").sides[0].flags.empty());
 
   // A race weekend with scores on: the latest finished session's top 3.
   auto part = [](const std::string& kind, Seconds start) {
