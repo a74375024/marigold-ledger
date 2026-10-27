@@ -23,7 +23,8 @@ code. These rows are what is new on Android.
 | Exit | Back twice on the guide | "Press Back again to exit", then the Fire TV home |
 | Home and return | Home, then open Marigold again | The guide as you left it, at once (the app kept running) |
 | Cold start | Open Marigold after exiting | The guide from the saved list in a few seconds |
-| Menu | ☰ on the guide | The same as the LG Menu key |
+| Menu | ☰ on a channel in the guide | Its actions: Watch, Remind Me, My Lineup, Choose Feed |
+| No colour keys | Up to the tabs, Right to the gear, OK; and the Live Events tab | Options and Live Events open without the LG colour keys |
 | Media keys | Play/pause, rewind, fast forward in the player | As on LG |
 | Volume, Home | Press them | The system's: volume changes, Home goes home |
 

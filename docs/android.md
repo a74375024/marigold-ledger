@@ -33,9 +33,15 @@ supported. Both 32-bit and 64-bit ARM are in the APK.
 |---|---|
 | D-pad, select | Move, OK (hold select for the long press) |
 | Back | Back; twice on the guide exits, as on the TV |
-| Menu (☰) | Menu |
+| Menu (☰) | On the guide: the channel's actions (watch, remind, add to My Lineup, choose feed), as holding OK |
 | Play/pause, rewind, fast forward | As on the LG remote |
 | Home | The system's (the app keeps running; opening it again is instant) |
+
+The Fire TV remote has no colour keys. What they do on the LG remote is
+reached with the D-pad: Options is the gear at the top right of the guide
+(Up to the tabs, then Right), Live Events is a tab, and a channel's
+sources are under Menu › Choose Feed. The key hints on screen still name
+the LG colour keys.
 
 Game controllers work too (A is OK, B is Back), and TV remotes with
 channel, colour and number keys get the same keys as the LG remote.
@@ -86,14 +92,17 @@ On an Android 9 emulator at 1920x1080 (logcat only, no screenshots), with
 JNI checking on, against a made-up playlist, guide, logos and streams
 served from the build machine:
 
-- Sign in to an M3U account with the remote and the on-screen keyboard.
+- Sign in to an M3U account and to an Xtream account (server address,
+  user name, password) with the remote and the on-screen keyboard.
 - The channel list downloads, sorts and saves; the logos download and
   decode; the XMLTV guide downloads and matches every channel.
-- Playback: an HLS channel, an endless live TS channel (as Xtream serves
-  them) and an HLS playlist with no .m3u8 in its link (played after one
+- Playback: an HLS channel, Xtream's /live/ TS channels and an endless
+  live TS channel and an HLS playlist with no .m3u8 in its link (played after one
   retry as HLS), full screen and in the guide's corner.
 - Home and back, Back twice to exit (a clean shutdown), and a cold start
   from the saved list.
+- Live Events, search, options and the accounts screen open and close
+  with the remote, with no errors.
 
 Not checked there (no outside network): real providers, HTTPS, a LAN
 Emby server, sound and picture quality, and the real Fire TV remote. The
