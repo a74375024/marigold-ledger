@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <iterator>
 
 #include "app/app.hpp"
 #include "app/playback.hpp"
@@ -434,9 +435,17 @@ class PlayerScreen : public Screen {
   }
   float keyCap(ui::Ctx& c, float x, float y, const char* glyph) {
     Rect r{x, y, 40, 40};
-    c.g.fill(r, theme::white(0.16f), 10);
+    c.g.fill(r, theme::hex(0x14161B, 0.75f), 10);
+    c.g.stroke(r, theme::white(0.28f), 10, 1);
     ui::labelIn(c, glyph, r, Weight::Bold, 17, theme::white(), Align::Center);
     return 40;
+  }
+  // Text over the picture: a dark copy 2 px lower keeps it readable on a
+  // bright frame.
+  float shadowed(ui::Ctx& c, const std::string& s, float x, float y, Weight w, int px, Color col,
+                 float maxWidth = 0) {
+    ui::label(c, s, x, y + 2, w, px, theme::black(0.55f * col.a), maxWidth);
+    return ui::label(c, s, x, y, w, px, col, maxWidth);
   }
   float dot(ui::Ctx& c, float x, float y, uint32_t color) {
     c.g.fill({x, y + 9, 22, 22}, theme::hex(color), 11);
@@ -445,11 +454,18 @@ class PlayerScreen : public Screen {
 
   // ---------------------------------------------------------- drawing
   void drawScrim(ui::Ctx& c) {
-    // Darkens the bottom of the picture under the banner.
-    float top = gfx::kLayoutHeight - 520;
-    for (int i = 0; i < 26; ++i) {
-      float t = static_cast<float>(i) / 25.0f;
-      c.g.fill({0, top + 20.0f * static_cast<float>(i), gfx::kLayoutWidth, 20}, theme::black(0.88f * t * t));
+    // Darkens the bottom of the picture under the banner: already about two
+    // thirds dark at the title, so white text reads on a bright frame (snow,
+    // a pitch, a studio); the top half of the picture is left alone.
+    static const float kStops[][2] = {{0.0f, 0.0f}, {0.2f, 0.30f}, {0.4f, 0.66f}, {0.6f, 0.84f}, {1.0f, 0.88f}};
+    float top = gfx::kLayoutHeight - 540;
+    for (int i = 0; i < 27; ++i) {
+      float t = static_cast<float>(i) / 26.0f;
+      size_t k = 1;
+      while (k + 1 < std::size(kStops) && t > kStops[k][0]) ++k;
+      float f = (t - kStops[k - 1][0]) / (kStops[k][0] - kStops[k - 1][0]);
+      float a = kStops[k - 1][1] + (kStops[k][1] - kStops[k - 1][1]) * std::clamp(f, 0.0f, 1.0f);
+      c.g.fill({0, top + 20.0f * static_cast<float>(i), gfx::kLayoutWidth, 20}, theme::black(a));
     }
   }
 
@@ -460,10 +476,10 @@ class PlayerScreen : public Screen {
     // Logo, number and name, LIVE and the show.
     Rect logo{x, top + 8, 150, 64};
     if (g && !g->logoUrl.empty()) {
-      c.g.fill(logo, theme::white(0.12f), 12);
+      c.g.fill(logo, theme::hex(0x14161B, 0.85f), 12);
       ui::logo(c, g->logoUrl, g->name, {logo.x + 10, logo.y + 6, logo.w - 20, logo.h - 12});
     } else {
-      c.g.fill(logo, theme::white(0.12f), 12);
+      c.g.fill(logo, theme::hex(0x14161B, 0.85f), 12);
       ui::labelIn(c, g ? g->name : std::string("LIVE"), {logo.x + 8, logo.y, logo.w - 16, logo.h}, Weight::Bold, 22,
                   theme::white(), Align::Center);
     }
@@ -472,28 +488,23 @@ class PlayerScreen : public Screen {
     const Listing* l = g ? current(g->id, c.now, &next) : nullptr;
     std::string where = g ? (g->number ? std::to_string(*g->number) + " \xc2\xb7 " : std::string()) + g->name : std::string();
     if (const EventTile* t = app_.store().eventTile(p.entry()); t && !g) where = t->leagueChip;
-    ui::label(c, where, tx, top + 2, Weight::Bold, 22, theme::white(0.7f), w - (tx - x));
+    shadowed(c, where, tx, top + 2, Weight::Bold, 22, theme::white(0.9f), w - (tx - x));
     float lx = tx + ui::chip(c, "LIVE", tx, top + 42, 16, theme::hex(kRed), theme::white()) + 12;
     std::string title = l ? l->title : (g ? g->name : std::string());
     if (const EventTile* t = app_.store().eventTile(p.entry()))
       title = t->heroTitle.empty() ? t->title : t->heroTitle;
-    ui::label(c, title, lx, top + 30, Weight::Bold, 44, theme::white(), x + w - lx);
-    // Times, progress, next and the feed.
+    shadowed(c, title, lx, top + 30, Weight::Bold, 44, theme::white(), x + w - lx);
+    // Times, progress and next (the feed is under Sources, not here).
     float y = top + 104;
     float rx = x;
     if (l) {
-      rx += ui::label(c, ui::range(c, l->start, l->end, true), rx, y, Weight::Medium, 22, theme::white(0.75f)) + 18;
+      rx += shadowed(c, ui::range(c, l->start, l->end, true), rx, y, Weight::Medium, 22, theme::white(0.92f)) + 18;
       double frac = static_cast<double>(c.now - l->start) / static_cast<double>(std::max<time::Seconds>(1, l->end - l->start));
-      ui::progress(c, {rx, y + 11, 420, 6}, frac, theme::white(0.18f), theme::white());
+      ui::progress(c, {rx, y + 11, 420, 6}, frac, theme::white(0.28f), theme::white());
       rx += 420 + 22;
     }
-    if (next) rx += ui::label(c, "Next: " + ui::clock(c, next->start) + " " + next->title, rx, y, Weight::Regular, 22,
-                              theme::white(0.6f), 520) + 22;
-    std::string feed = feedLine();
-    if (!feed.empty()) {
-      float fw = ui::chipWidth(c, feed, 17) + 6;
-      if (rx + fw < x + w) ui::chip(c, feed, rx, y - 1, 17, theme::white(0.45f), theme::white(0.75f), true);
-    }
+    if (next) shadowed(c, "Next: " + ui::clock(c, next->start) + " " + next->title, rx, y, Weight::Regular, 22,
+                       theme::white(0.82f), 520);
   }
 
   // 1A: the keys, under the banner (fades with it).
@@ -502,8 +513,8 @@ class PlayerScreen : public Screen {
     c.g.fill({kLeft, kRowY - 8, gfx::kLayoutWidth - 2 * kLeft, 1}, theme::white(0.14f));
     auto item = [&](float glyphW, const std::string& title, const std::string& extra) {
       x += glyphW + 12;
-      x += ui::label(c, title, x, y + 8, Weight::Bold, 22, theme::white());
-      if (!extra.empty()) x += 8 + ui::label(c, extra, x + 8, y + 8, Weight::Medium, 22, theme::white(0.6f));
+      x += shadowed(c, title, x, y + 8, Weight::Bold, 22, theme::white());
+      if (!extra.empty()) x += 8 + shadowed(c, extra, x + 8, y + 8, Weight::Medium, 22, theme::white(0.78f));
       x += 34;
     };
     Playback& p = app_.playback();
@@ -525,7 +536,7 @@ class PlayerScreen : public Screen {
     int left = static_cast<int>((bannerUntil_ > app_.ms() ? bannerUntil_ - app_.ms() : 0) / 1000) + 1;
     if (zone_ == Zone::None && x < gfx::kLayoutWidth - kLeft - 360)
       ui::label(c, "Hides in " + std::to_string(std::min(left, 6)) + " s", gfx::kLayoutWidth - kLeft, y + 10,
-                Weight::Regular, 18, theme::white(0.45f), 300, Align::Right);
+                Weight::Regular, 18, theme::white(0.62f), 300, Align::Right);
   }
 
   // 2A / 3D: the action row.
@@ -552,7 +563,8 @@ class PlayerScreen : public Screen {
         Rect big{r.x - r.w * 0.02f, r.y - 1.5f, r.w * 1.04f, r.h + 3};
         c.g.fill(big, theme::white(), 37);
       } else {
-        c.g.fill(r, theme::white(0.14f), 36);
+        c.g.fill(r, theme::hex(0x14161B, 0.75f), 36);
+        c.g.stroke(r, theme::white(0.22f), 36, 1);
       }
       Color ink = f ? theme::black() : theme::white();
       float tx = r.x + 30;

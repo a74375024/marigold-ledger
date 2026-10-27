@@ -56,7 +56,8 @@ Requests: race drivers and results only for race weekends you can watch
 | Area | How to check | Pass |
 |---|---|---|
 | First time | Play any channel full screen for the first time | "Getting around" card (Guide, Last channel, Channels, Info, Sources, Number keys); OK closes it, it never shows again |
-| Banner | Start a channel, or OK while watching | Logo, number and name, LIVE and the show, times and progress, Next, the feed chip ("FHD · Feed 1 of 3"); under it the keys: ◀ Guide, ▶ Last channel, ▼ More, OK Info, red Sources (backups), blue Options; hides after 6 s |
+| Banner | Start a channel, or OK while watching | Logo on a dark plate, number and name, LIVE and the show, times and progress, Next; under it the keys: ◀ Guide, ▶ Last channel, ▼ More, OK Info, red Sources (backups), blue Options; hides after 6 s |
+| Banner on bright content | Start a channel showing snow, a pitch or a bright studio | Title, channel line, times and keys all readable; the top half of the picture isn't darkened |
 | Action row | Down while the banner is up | Pills: Sources (feed), Guide, Back to the last channel, Favorite, More (Cameras first on a race); Left/Right, OK, Up hides it |
 | Sources | Sources pill or the red key | Side panel over the picture: each feed playing / backup / why it failed lately; OK switches at once |
 | Switching | Pick another feed | "Switching to Feed 2" with the feed and the 20 s rule; then the picture |
