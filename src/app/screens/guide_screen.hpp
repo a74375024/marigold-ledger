@@ -9,6 +9,7 @@
 
 #include "app/screen.hpp"
 #include "app/store/store.hpp"
+#include "core/engine/views.hpp"
 
 namespace marigold::app {
 
@@ -30,9 +31,9 @@ class GuideScreen : public Screen {
   bool focusChannel(const std::string& entryId);
 
  private:
-  enum class Tab { Lineup, Favorites, Recent, Events, All };
+  using Tab = engine::views::Tab;
+  using Filter = engine::views::Filter::Kind;
   enum class Area { Tabs, Buttons, Time, Grid, Rail };
-  enum class Filter { None, SportsNow, NewsNow, MoviesNow, KidsNow, Section, Group };
   struct Line {
     enum class Kind { Header, Channel, Prompt } kind = Kind::Channel;
     int channel = -1;  // index into Channels::all
@@ -48,11 +49,11 @@ class GuideScreen : public Screen {
   void refresh(bool force = false);
   void rebuildLines();
   const std::vector<int>& tabRows() const;
-  bool passesFilter(const GuideChannel& g) const;
+  engine::views::Filter filter() const { return {filter_, filterSection_}; }
   const GuideChannel* focusedChannel() const;
   const Listing* focusedListing() const;
   int programIndex(const std::vector<Listing>& v, time::Seconds t) const;
-  std::vector<std::string> flipList() const;
+  const std::vector<std::string>& flipList() const { return flip_; }
 
   void moveRow(int step);
   void moveProgram(int step);
@@ -99,6 +100,7 @@ class GuideScreen : public Screen {
 
   std::vector<Line> lines_;
   std::vector<Section> sections_;
+  std::vector<std::string> flip_;  // the channel lines' entries, for CH+ / CH-
   float contentH_ = 0;
   int focusLine_ = -1;
   float scroll_ = 0;

@@ -5,6 +5,7 @@
 // rows: no requests of its own, but scores keep refreshing while it's open.
 #include <algorithm>
 
+#include "core/engine/views.hpp"
 #include "app/app.hpp"
 #include "app/playback.hpp"
 #include "app/screens/events_ui.hpp"
@@ -176,20 +177,10 @@ class EventGuide : public Screen {
 
   void build() {
     items_.clear();
-    if (rowIndex_ >= static_cast<int>(board_->rows.size())) return;
     float y = 0;
-    for (const EventGroup& g : board_->rows[static_cast<size_t>(rowIndex_)].groups) {
-      bool header = false;
-      for (const EventTile& t : g.tiles) {
-        if (!t.watchable) continue;  // the guide lists games you can watch
-        if (!header && !g.title.empty()) {
-          items_.push_back({g.title, nullptr, y});
-          y += kHeaderH;
-          header = true;
-        }
-        items_.push_back({"", &t, y});
-        y += kRowH;
-      }
+    for (const engine::views::EventLine& l : engine::views::eventGuide(*board_, static_cast<size_t>(rowIndex_))) {
+      items_.push_back({l.header, l.tile, y});
+      y += l.tile ? kRowH : kHeaderH;
     }
   }
 

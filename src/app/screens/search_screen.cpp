@@ -5,6 +5,7 @@
 // most 80 results.
 #include <algorithm>
 
+#include "core/engine/views.hpp"
 #include "app/app.hpp"
 #include "app/playback.hpp"
 #include "app/screens/screens.hpp"
@@ -22,16 +23,6 @@ namespace theme = ui::theme;
 
 constexpr size_t kMaxResults = 80;
 constexpr float kRowH = 84;
-
-std::string fold(const std::string& s) { return str::lowerAscii(str::foldDiacritics(s)); }
-
-bool wordPrefix(const std::string& hay, const std::string& q) {
-  for (size_t i = 0; i < hay.size(); ++i) {
-    if ((i == 0 || hay[i - 1] == ' ' || hay[i - 1] == '-' || hay[i - 1] == '(') && hay.compare(i, q.size(), q) == 0)
-      return true;
-  }
-  return false;
-}
 
 constexpr size_t kMaxEvents = 40;
 constexpr uint32_t kProgramDelayMs = 450;  // shows are searched once typing pauses
@@ -276,32 +267,11 @@ class SearchScreen : public Screen {
     programs_.clear();
     focus_ = -1;
     scroll_ = 0;
-    std::string q = fold(std::string(str::trim(query_)));
+    std::string q = engine::views::folded(std::string(str::trim(query_)));
     programsAt_ = 0;
     searchingPrograms_ = false;
     if (!q.empty()) {
-      auto ch = app_.store().channels();
-      std::vector<std::pair<int, int>> scored;  // score, index
-      for (size_t i = 0; i < ch->all.size(); ++i) {
-        const GuideChannel& g = ch->all[i];
-        if (!g.browsable) continue;  // another country's, kept for Live Events
-        std::string name = fold(g.name);
-        int score = 0;
-        if (name == q) score = 95;
-        else if (g.number && std::to_string(*g.number) == q) score = 90;
-        else if (name.compare(0, q.size(), q) == 0) score = 80;
-        else if (g.style == GuideChannel::Style::Local && fold(g.subtitle).compare(0, q.size(), q) == 0) score = 75;
-        else if (wordPrefix(name, q)) score = 70;
-        else if (name.find(q) != std::string::npos) score = 50;
-        else if (fold(g.section).find(q) != std::string::npos) score = 20;
-        if (!score) continue;
-        if (g.favorite) score += 5;
-        if (g.inLineup) score += 10;
-        scored.push_back({score, static_cast<int>(i)});
-      }
-      std::stable_sort(scored.begin(), scored.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
-      for (size_t i = 0; i < scored.size() && i < kMaxResults; ++i)
-        channels_.push_back(ch->all[static_cast<size_t>(scored[i].second)].id);
+      channels_ = engine::views::searchChannels(*app_.store().channels(), query_, kMaxResults);
       events_ = app_.store().searchEvents(query_);
       if (events_.size() > kMaxEvents) events_.resize(kMaxEvents);
       if (q.size() >= 2) {
@@ -323,7 +293,7 @@ class SearchScreen : public Screen {
       rows_.push_back({Row::Kind::Header, "LIVE EVENTS (" + std::to_string(events_.size()) + ")", "", {}});
       for (const std::string& id : events_) rows_.push_back({Row::Kind::Event, "", id, {}});
     }
-    if (fold(std::string(str::trim(query_))).size() >= 2) {
+    if (engine::views::folded(std::string(str::trim(query_))).size() >= 2) {
       rows_.push_back({Row::Kind::Header, "SHOWS ON NOW & LATER", "", {}});
       if (programs_.empty())
         rows_.push_back({Row::Kind::Note, searchingPrograms_ ? "Searching the guide\xe2\x80\xa6" : "No shows found in the guide", "", {}});

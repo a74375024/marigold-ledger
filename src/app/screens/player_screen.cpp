@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <iterator>
 
+#include "core/engine/views.hpp"
 #include "app/app.hpp"
 #include "app/playback.hpp"
 #include "app/screens/screens.hpp"
@@ -407,20 +408,9 @@ class PlayerScreen : public Screen {
   }
   const Listing* current(const std::string& id, time::Seconds now, const Listing** next) const {
     listings_ = app_.store().listings();
-    const std::vector<Listing>* v = listings_->forChannel(id);
-    if (next) *next = nullptr;
-    if (!v) return nullptr;
-    for (size_t i = 0; i < v->size(); ++i) {
-      if ((*v)[i].isOn(now)) {
-        if (next && i + 1 < v->size()) *next = &(*v)[i + 1];
-        return &(*v)[i];
-      }
-      if ((*v)[i].start > now) {
-        if (next) *next = &(*v)[i];
-        return nullptr;
-      }
-    }
-    return nullptr;
+    engine::views::NowNext on = engine::views::nowAndNext(*listings_, id, now);
+    if (next) *next = on.next;
+    return on.now;
   }
   std::string feedLine() const {
     Playback& p = app_.playback();

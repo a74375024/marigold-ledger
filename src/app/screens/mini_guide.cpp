@@ -4,6 +4,7 @@
 // playing, OK switches, Left opens the neighborhoods, Back steps out.
 #include <algorithm>
 
+#include "core/engine/views.hpp"
 #include "app/app.hpp"
 #include "app/playback.hpp"
 #include "app/screens/screens.hpp"
@@ -147,17 +148,9 @@ class MiniGuide : public Screen {
       ui::Color sub = f ? theme::black(0.6f) : theme::white(0.6f);
       ui::logo(c, g.logoUrl, g.name, {r.x + 14, r.y + 13, 136, 64}, f);
       float tx = r.x + 170, tw = r.w - 190;
-      const Listing* now = nullptr;
-      const Listing* next = nullptr;
-      if (const std::vector<Listing>* v = li->forChannel(g.id)) {
-        for (size_t k = 0; k < v->size(); ++k) {
-          if ((*v)[k].isOn(c.now)) {
-            now = &(*v)[k];
-            if (k + 1 < v->size()) next = &(*v)[k + 1];
-            break;
-          }
-        }
-      }
+      engine::views::NowNext on = engine::views::nowAndNext(*li, g.id, c.now);
+      const Listing* now = on.now;
+      const Listing* next = on.now ? on.next : nullptr;
       if (g.id == playing) {
         c.g.fill({tx, r.y + 18, 10, 10}, theme::hex(theme::kWatching), 5);
         ui::label(c, "WATCHING", tx + 18, r.y + 13, Weight::Bold, 15, f ? theme::black(0.7f) : theme::hex(theme::kWatching));
@@ -218,23 +211,20 @@ class MiniGuide : public Screen {
       const std::vector<int>& rows = ch_->lineupConfigured ? ch_->lineup : ch_->browse;
       for (int i : rows) ids.push_back(ch_->all[static_cast<size_t>(i)].id);
     }
+    engine::views::List list = engine::views::grouped(*ch_, ids);
     float y = 0;
-    std::string section;
-    for (const std::string& id : ids) {
-      auto it = ch_->byId.find(id);
-      if (it == ch_->byId.end()) continue;
-      const GuideChannel& g = ch_->all[static_cast<size_t>(it->second)];
-      if (lines_.empty() || g.section != section) {
-        section = g.section;
-        std::string up = section;
+    for (const engine::views::Line& l : list.lines) {
+      if (l.kind == engine::views::Line::Kind::Header) {
+        std::string up = l.title;
         for (char& chr : up) chr = static_cast<char>(chr >= 'a' && chr <= 'z' ? chr - 32 : chr);
-        sections_.push_back({section, static_cast<int>(lines_.size())});
         lines_.push_back({-1, up, y});
         y += kHeaderH;
+      } else {
+        lines_.push_back({l.channel, "", y});
+        y += kRowH;
       }
-      lines_.push_back({it->second, "", y});
-      y += kRowH;
     }
+    for (const engine::views::Section& sec : list.sections) sections_.push_back({sec.title, sec.firstLine});
     focus_ = -1;
     for (size_t i = 0; i < lines_.size(); ++i) {
       if (lines_[i].channel >= 0 && ch_->all[static_cast<size_t>(lines_[i].channel)].id == keep) focus_ = static_cast<int>(i);

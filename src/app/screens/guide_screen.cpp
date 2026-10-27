@@ -133,85 +133,40 @@ void GuideScreen::refresh(bool force) {
 
 const std::vector<int>& GuideScreen::tabRows() const {
   static const std::vector<int> kNone;
-  if (!ch_) return kNone;
-  switch (tab_) {
-    // A lineup that is not set up yet shows every channel, under the
-    // setup prompt (tvOS).
-    case Tab::Lineup: return ch_->lineupConfigured ? ch_->lineup : ch_->browse;
-    case Tab::Favorites: return ch_->favorites;
-    case Tab::Recent: return ch_->recent;
-    case Tab::Events: return kNone;  // the board is its own screen
-    // One provider group: hidden ones too (they are only left out of the list).
-    case Tab::All: return filter_ == Filter::Group ? ch_->every : ch_->browse;
-  }
-  return kNone;
-}
-
-bool GuideScreen::passesFilter(const GuideChannel& g) const {
-  if (filter_ == Filter::None) return true;
-  if (filter_ == Filter::Section) return g.section == filterSection_;
-  if (filter_ == Filter::Group) return g.group == filterSection_;
-  uint8_t want = filter_ == Filter::SportsNow ? kGenreSports
-                 : filter_ == Filter::NewsNow ? kGenreNews
-                 : filter_ == Filter::MoviesNow ? kGenreMovie
-                                                : kGenreKids;
-  // "On now": airing now or within 30 minutes with the genre tag; untagged
-  // shows count by the channel's neighborhood (tvOS filter rule).
-  time::Seconds now = time::now();
-  const std::vector<Listing>* v = li_ ? li_->forChannel(g.id) : nullptr;
-  bool tagged = false;
-  if (v) {
-    for (const Listing& l : *v) {
-      if (l.end <= now) continue;
-      if (l.start > now + 1800) break;
-      if (l.genres & want) return true;
-      if (l.genres) tagged = true;
-    }
-  }
-  if (tagged) return false;
-  const char* section = want == kGenreSports ? "Sports"
-                        : want == kGenreNews ? "News"
-                        : want == kGenreMovie ? "Movies"
-                                              : "Kids";
-  return g.section.rfind(section, 0) == 0;
+  return ch_ ? engine::views::tabRows(*ch_, tab_, filter()) : kNone;
 }
 
 void GuideScreen::rebuildLines() {
+  namespace views = engine::views;
   lines_.clear();
   sections_.clear();
+  flip_.clear();
+  views::List list;
+  if (ch_) {
+    list = views::guide(*ch_, li_.get(), tab_, filter(), time::now());
+    flip_ = views::flipList(*ch_, list);
+  }
   float y = 0;
-  if (tab_ == Tab::Lineup && ch_ && !ch_->lineupConfigured && !ch_->all.empty()) {
-    Line p;
-    p.kind = Line::Kind::Prompt;
-    p.y = y;
-    lines_.push_back(p);
-    y += kRowH + kGap;
-  }
-  const std::vector<int>& rows = tabRows();
-  std::string section;
-  bool headers = tab_ != Tab::Recent;
-  for (int idx : rows) {
-    if (idx < 0 || static_cast<size_t>(idx) >= ch_->all.size()) continue;
-    const GuideChannel& g = ch_->all[static_cast<size_t>(idx)];
-    if (!passesFilter(g)) continue;
-    if (headers && (sections_.empty() || g.section != section)) {
-      section = g.section;
-      Line h;
-      h.kind = Line::Kind::Header;
-      h.title = upper(section);
-      if (!lines_.empty()) y += 4;
-      h.y = y;
-      sections_.push_back({section, static_cast<int>(lines_.size()), 0});
-      lines_.push_back(h);
-      y += kHeaderH + kGap;
-    }
-    if (!sections_.empty()) ++sections_.back().count;
+  for (const views::Line& v : list.lines) {
     Line l;
-    l.channel = idx;
-    l.y = y;
-    lines_.push_back(l);
-    y += kRowH + kGap;
+    l.channel = v.channel;
+    if (v.kind == views::Line::Kind::Prompt) {
+      l.kind = Line::Kind::Prompt;
+      l.y = y;
+      y += kRowH + kGap;
+    } else if (v.kind == views::Line::Kind::Header) {
+      l.kind = Line::Kind::Header;
+      l.title = upper(v.title);
+      if (!lines_.empty()) y += 4;
+      l.y = y;
+      y += kHeaderH + kGap;
+    } else {
+      l.y = y;
+      y += kRowH + kGap;
+    }
+    lines_.push_back(std::move(l));
   }
+  for (const views::Section& sec : list.sections) sections_.push_back({sec.title, sec.firstLine, sec.count});
   contentH_ = y;
   // Keep the focus on the same channel when it is still there.
   int found = -1;
@@ -242,16 +197,7 @@ const GuideChannel* GuideScreen::focusedChannel() const {
 }
 
 int GuideScreen::programIndex(const std::vector<Listing>& v, time::Seconds t) const {
-  // The show airing at t, else the next one inside the window, else the
-  // last one that is still visible.
-  auto it = std::upper_bound(v.begin(), v.end(), t, [](time::Seconds x, const Listing& l) { return x < l.end; });
-  time::Seconds we = windowEnd();
-  if (it != v.end() && it->start < we) return static_cast<int>(it - v.begin());
-  if (it != v.begin()) {
-    auto prev = it - 1;
-    if (prev->end > windowStart_) return static_cast<int>(prev - v.begin());
-  }
-  return -1;
+  return engine::views::programAt(v, t, windowStart_, windowEnd());
 }
 
 const Listing* GuideScreen::focusedListing() const {
@@ -261,14 +207,6 @@ const Listing* GuideScreen::focusedListing() const {
   if (!v || v->empty()) return nullptr;
   int i = programIndex(*v, focusTime_);
   return i < 0 ? nullptr : &(*v)[static_cast<size_t>(i)];
-}
-
-std::vector<std::string> GuideScreen::flipList() const {
-  std::vector<std::string> out;
-  for (const Line& l : lines_) {
-    if (l.kind == Line::Kind::Channel) out.push_back(ch_->all[static_cast<size_t>(l.channel)].id);
-  }
-  return out;
 }
 
 void GuideScreen::ensureVisible() {
@@ -551,38 +489,11 @@ void GuideScreen::openFilter() {
     const std::vector<int>& rows = self->tabRows();
     add("All channels", Filter::None, "", rows.size());
     p.items.push_back(ui::PanelItem::header("ON NOW"));
-    Filter saved = self->filter_;
-    std::string savedSection = self->filterSection_;
-    auto countWith = [&](Filter f, const std::string& section) {
-      self->filter_ = f;
-      self->filterSection_ = section;
-      size_t n = 0;
-      for (int i : rows) {
-        if (self->passesFilter(self->ch_->all[static_cast<size_t>(i)])) ++n;
-      }
-      return n;
-    };
-    struct Now {
-      const char* title;
-      Filter f;
-    };
-    for (Now n : {Now{"Sports on now", Filter::SportsNow}, Now{"News on now", Filter::NewsNow},
-                  Now{"Movies on now", Filter::MoviesNow}, Now{"Kids on now", Filter::KidsNow}}) {
-      size_t c = countWith(n.f, "");
-      self->filter_ = saved;
-      self->filterSection_ = savedSection;
-      add(n.title, n.f, "", c);
-    }
+    for (const engine::views::Count& n : engine::views::onNowCounts(*self->ch_, rows, self->li_.get(), time::now()))
+      add(n.title, n.filter.kind, "", n.count);
     p.items.push_back(ui::PanelItem::header("NEIGHBORHOODS"));
-    std::vector<std::pair<std::string, size_t>> sections;
-    for (int i : rows) {
-      const GuideChannel& g = self->ch_->all[static_cast<size_t>(i)];
-      if (sections.empty() || sections.back().first != g.section) sections.push_back({g.section, 0});
-      ++sections.back().second;
-    }
-    for (auto& [title, count] : sections) add(title, Filter::Section, title, count);
-    self->filter_ = saved;
-    self->filterSection_ = savedSection;
+    for (const engine::views::Count& n : engine::views::sectionCounts(*self->ch_, rows))
+      add(n.title, Filter::Section, n.title, n.count);
     if (self->tab_ == Tab::All) {
       std::vector<GroupSummary> groups = app.store().groups();
       p.items.push_back(ui::PanelItem::header("PROVIDER GROUPS (" + std::to_string(groups.size()) + ")"));
