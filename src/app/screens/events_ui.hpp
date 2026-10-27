@@ -16,7 +16,8 @@ void badge(ui::Ctx& c, const EventSide& side, float x, float y, float size, bool
 // The status pill (LIVE, DELAYED, Final...). Returns its width (0 = none).
 float pill(ui::Ctx& c, const EventTile& t, float x, float y, bool focused);
 void tile(ui::Ctx& c, const EventTile& t, ui::Rect r, bool focused, bool showLeague);
-// The focused game's two badges, big and faded, over a blue glow (top right).
-void backdrop(ui::Ctx& c, const EventTile& t);
+// The focused game's two badges, big and faded, over a blue glow (top
+// right). Only the glow when `badges` is off (the corner preview is there).
+void backdrop(ui::Ctx& c, const EventTile& t, bool badges = true);
 
 }  // namespace marigold::app::events_ui

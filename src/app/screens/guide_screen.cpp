@@ -8,6 +8,7 @@
 #include "app/playback.hpp"
 #include "app/screens/panel_screen.hpp"
 #include "app/screens/screens.hpp"
+#include "app/screens/top_bar.hpp"
 #include "app/store/store.hpp"
 #include "core/input/hints.hpp"
 #include "core/model/channel.hpp"
@@ -35,13 +36,13 @@ constexpr float kGridTop = 446;
 constexpr float kGridBottom = 996;
 constexpr float kMinCell = 40;   // narrower segments render as gaps
 constexpr float kTextCell = 110;  // text only from this width
-constexpr Rect kPreview{1440, 80, 400, 225};
+constexpr Rect kPreview = top_bar::kPreview;
 
 constexpr time::Seconds kShift = 90 * 60;       // Right/Left past the edge
 constexpr time::Seconds kMaxAhead = 48 * 3600;  // how far later the grid goes
 constexpr uint32_t kIdleBackToNowMs = 120000;
-constexpr uint32_t kPreviewDelayMs = 2000;
-constexpr uint32_t kPreviewGapMs = 3000;
+constexpr uint32_t kPreviewDelayMs = top_bar::kPreviewDelayMs;
+constexpr uint32_t kPreviewGapMs = top_bar::kPreviewGapMs;
 constexpr uint32_t kDigitsMs = 1500;
 constexpr uint32_t kBackExitMs = 2500;
 
@@ -64,24 +65,6 @@ std::string durationText(time::Seconds s) {
   if (m >= 60) std::snprintf(buf, sizeof buf, "Starts in %ld h %ld m", m / 60, m % 60);
   else std::snprintf(buf, sizeof buf, "Starts in %ld m", m);
   return buf;
-}
-
-// Search, filter and gear icons from rectangles (no vector paths here).
-void iconSearch(gfx::Renderer& g, float cx, float cy, Color c) {
-  g.stroke({cx - 11, cy - 11, 18, 18}, c, 9, 2.4f);
-  for (int i = 0; i < 4; ++i) g.fill({cx + 4 + i * 1.8f, cy + 4 + i * 1.8f, 3.2f, 3.2f}, c, 1.4f);
-}
-void iconFilter(gfx::Renderer& g, float cx, float cy, Color c) {
-  g.fill({cx - 12, cy - 8, 24, 2.6f}, c, 1.3f);
-  g.fill({cx - 7, cy - 1, 14, 2.6f}, c, 1.3f);
-  g.fill({cx - 3, cy + 6, 6, 2.6f}, c, 1.3f);
-}
-void iconGear(gfx::Renderer& g, float cx, float cy, Color c) {
-  g.stroke({cx - 6, cy - 6, 12, 12}, c, 6, 2.2f);
-  for (int i = 0; i < 8; ++i) {
-    float a = static_cast<float>(i) * 0.785398f;
-    g.fill({cx + std::cos(a) * 11 - 1.8f, cy + std::sin(a) * 11 - 1.8f, 3.6f, 3.6f}, c, 1.8f);
-  }
 }
 
 std::string upper(const std::string& s) {
@@ -1004,20 +987,10 @@ void GuideScreen::drawHero(ui::Ctx& c) {
 }
 
 void GuideScreen::drawPreview(ui::Ctx& c) {
-  ui::label(c, ui::clock(c, c.now), kPreview.x, 40, Weight::Medium, 26, theme::white(0.7f), kPreview.w, Align::Right);
+  top_bar::clock(c);
   if (!ch_ || ch_->all.empty()) return;
-  Playback& p = app_.playback();
   const GuideChannel* g = focusedChannel();
-  bool showing = p.active() && !p.full() && p.ready();
-  if (showing) {
-    c.g.hole(kPreview);
-    ui::chip(c, "LIVE", kPreview.x + 12, kPreview.y + 12, 16, theme::hex(theme::kLive), theme::white());
-  } else {
-    c.g.fill(kPreview, theme::white(0.05f), 16);
-    if (g) ui::logo(c, g->logoUrl, g->name, {kPreview.x + 100, kPreview.y + 77, 200, 70});
-    if (p.active() && !p.full() && !p.failed()) ui::spinner(c, kPreview.x + kPreview.w - 30, kPreview.y + kPreview.h - 30, 10);
-  }
-  c.g.stroke(kPreview, theme::white(0.15f), 16, 1);
+  top_bar::preview(c, app_.playback(), g ? g->logoUrl : std::string(), g ? g->name : std::string());
 }
 
 void GuideScreen::drawTabs(ui::Ctx& c) {
@@ -1048,19 +1021,7 @@ void GuideScreen::drawTabs(ui::Ctx& c) {
     ui::chip(c, "BACK returns to Now", 1600 - bw - 24, y + 16, 18, theme::hex(theme::kNowLine, 0.35f), theme::white());
   }
   // Round buttons: search, filter, options.
-  for (int i = 0; i < 3; ++i) {
-    Rect r{gfx::kLayoutWidth - 80 - 60 - static_cast<float>(2 - i) * 76, y, 60, 60};
-    bool focused = area_ == Area::Buttons && button_ == i;
-    c.hit(r, kHitButton + i);
-    c.g.fill(r, focused ? theme::white() : theme::white(0.1f), 30);
-    Color ic = focused ? theme::black() : theme::white();
-    float cx = r.x + 30, cy = r.y + 30;
-    if (i == 0) iconSearch(c.g, cx, cy, ic);
-    else if (i == 1) {
-      iconFilter(c.g, cx, cy, ic);
-      if (filter_ != Filter::None) c.g.fill({r.x + 44, r.y + 6, 12, 12}, theme::hex(theme::kNowLine), 6);
-    } else iconGear(c.g, cx, cy, ic);
-  }
+  top_bar::buttons(c, area_ == Area::Buttons ? button_ : -1, filter_ != Filter::None, kHitButton);
 }
 
 void GuideScreen::drawRuler(ui::Ctx& c) {

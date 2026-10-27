@@ -177,3 +177,16 @@ Events from provider feeds that no schedule game matched.
 | Setting | East/West feeds › East feeds, West feeds, Both | My Lineup changes at once; Both shows both versions; the other version is always in All Channels and search |
 | Added by hand | Add the other version in Edit My Lineup | It stays whichever coast is set |
 | Last feed | Pick another feed for a channel in Where to Watch, leave, then open the channel again | It starts on the feed you watched last (a pinned feed still wins) |
+
+## Live Events: search, filter, options and preview
+
+| Area | How to check | Pass |
+|---|---|---|
+| Same places | Open the guide, then Live Events | The clock, the preview corner and the three round buttons sit exactly where the guide has them; the settings button is a gear |
+| Buttons | Up to the tabs, Right past Live Events | Search, Filter, Options in turn; OK opens each; Left from Search goes back to the tabs; Down or Back returns to the tiles |
+| Filter | Filter › Live now, My teams, or a sport | Only those tiles, each sport in its own row; a "● Live now ×" chip after the tabs and a red dot on the filter button; Back clears it |
+| Not in my channels | Filter › Games not in my channels | The same switch as in Options; the board updates |
+| Preview | Rest 2 s on a live game in your channels | It plays in the corner (no big faded badges then); OK goes full screen on the same stream with no re-tune |
+| No preview | Rest on an upcoming or final game, or a game you can't watch | No corner; the badges show as before; a preview that was playing stops |
+| Setting | Options › Preview channels off | No preview anywhere |
+| Leaving | Back to the guide, or Back from a game you watched | The guide's preview doesn't carry into Live Events; back from full screen the game returns to the corner |

@@ -328,14 +328,14 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool showLeague)
   }
 }
 
-void backdrop(ui::Ctx& c, const EventTile& t) {
+void backdrop(ui::Ctx& c, const EventTile& t, bool badges) {
   // A soft blue glow, top right (concentric translucent ovals).
   for (int i = 0; i < 10; ++i) {
     float k = static_cast<float>(i) / 10.0f;
     float w = 1100 * (1 - k * 0.6f), h = 380 * (1 - k * 0.6f);
     c.g.fill({gfx::kLayoutWidth - w * 0.85f, -h * 0.2f, w, h}, theme::hex(0x2850A0, 0.05f), h * 0.5f);
   }
-  if (t.sides.size() != 2) return;
+  if (!badges || t.sides.size() != 2) return;
   EventSide a = t.sides[0], b = t.sides[1];
   float size = 230, y = 40, x = gfx::kLayoutWidth - 160 - size * 2 - 120;
   badge(c, a, x, y, size, false, 0.4f);
