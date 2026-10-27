@@ -146,3 +146,16 @@ Pick each in Options › My Sports (More sports).
 | Cricket | Pick Cricket (or have cricket feeds); a match on one of your channels | Home first; scores "278/8" and "166/4" with the batting side marked; footer "Need 113 from 65 balls" in a chase, else the overs; "3rd ODI" in the tag; Stumps, rain delays and innings in the status |
 | Cricket, not watchable | Many matches under way (domestic cricket) | Only matches you can watch get tiles |
 | Tests | A Test match on day 3 | Still live, and day-3 feeds are on its tile |
+
+## Title tiles and sport icons
+
+Events from provider feeds that no schedule game matched.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Matchups | A feed titled like "Rugby: A vs B - Six Nations" or "Cricket: A v B - 3rd ODI" | Two sides, each with a coloured badge (the same colour every time); "Six Nations" or "3rd ODI" in the tag |
+| People | Darts, boxing or snooker feeds ("A. Name vs B. Name") | Initials in a plain circle, no team colours; "Night 12" or the weight class in the tag |
+| Events | Golf, MotoGP, Olympics or other event feeds | The sport's icon (not a dot or star) in the box; a clean name ("The Masters", "Men's 100m"); the series or discipline under it; the round or stage ("Round 2", "Race", "Final") in the tag |
+| Icons | Look across sports: football to cycling | Each sport has its own line icon, white on the tile and black when focused |
+| Chips | A mixed row (search results, Live now) with boxing, Olympics or other events | BOXING, OLYMPICS, MOTOGP, or EVENT for anything else |
+| Long names | A studio show ("The ... Show: Preview") | The show's name as the title, the rest under it |

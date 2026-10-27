@@ -9,6 +9,7 @@
 #include "core/sports/player_photos.hpp"
 #include "core/sports/profiles.hpp"
 #include "core/sports/text.hpp"
+#include "core/sports/titles.hpp"
 
 namespace marigold::sports::board {
 
@@ -51,8 +52,6 @@ std::string weekdayName(Seconds t, const time::Zone& zone, bool longName) {
 std::string countText(int n, const char* one, const char* many) {
   return n == 1 ? std::string(one) : std::to_string(n) + " " + many;
 }
-
-std::string capitalizeFirst(const std::string& s) { return str::upper(text::prefix(s, 1)) + text::dropPrefix(s, 1); }
 
 // MARK: Card parts
 
@@ -407,33 +406,25 @@ std::map<std::string, WhipInfo> addWhipArounds(std::vector<SportsEvent>& all, st
 
 // MARK: Describe
 
-// "A vs B", "A vs. B", "A at B" in a title with no schedule game.
-std::optional<std::tuple<std::string, std::string, bool>> sidesIn(const std::string& eventTitle) {
-  std::vector<std::string> pieces = text::components(eventTitle, ": ");
-  std::string body = eventTitle;
-  if (pieces.size() > 1) {
-    std::vector<std::string> rest(pieces.begin() + 1, pieces.end());
-    body = str::join(rest, ": ");
-  }
-  const std::pair<const char*, bool> separators[] = {
-      {" vs. ", false}, {" vs ", false}, {" v ", false}, {" at ", true}, {" @ ", true}};
-  for (const auto& [separator, homeSecond] : separators) {
-    std::vector<std::string> parts = text::components(body, separator);
-    if (parts.size() != 2) continue;
-    std::string a(str::trimUnicode(parts[0])), b(str::trimUnicode(parts[1]));
-    size_t na = text::count(a), nb = text::count(b);
-    if (na < 2 || nb < 2 || na > 40 || nb > 40) continue;
-    return std::make_tuple(a, b, homeSecond);
-  }
-  return std::nullopt;
-}
-
 SportsTeam namedSide(const std::string& prefix, const std::string& name,
                      const std::optional<std::string>& country = std::nullopt) {
   SportsTeam t;
   t.id = prefix + name;
   t.name = name;
   t.country = country;
+  return t;
+}
+
+// A side named only in a title: a badge colour of its own, the same one
+// every time it's named.
+SportsTeam titleSide(const std::string& name) {
+  static const char* const kPalette[] = {"1F7A4D", "2E4FA3", "8A1F2B", "4B3A8F", "B5652A",
+                                         "1D6F86", "6B4A2E", "2F5D3A", "7A2E6B", "3E5872"};
+  SportsTeam t = namedSide("t|", name);
+  uint32_t h = 2166136261u;  // FNV-1a over the name
+  for (unsigned char ch : str::lower(name)) h = (h ^ ch) * 16777619u;
+  t.color = kPalette[h % (sizeof(kPalette) / sizeof(kPalette[0]))];
+  t.altColor = "FFFFFF";
   return t;
 }
 
@@ -472,6 +463,10 @@ struct Place {
   bool flags = false;  // tennis: country flags on the sides
   std::vector<PodiumDriver> podium;
   std::optional<std::string> podiumLabel;
+  // Read from the title of an event with no game.
+  std::string icon;                  // a sport icon it names; empty: the league's
+  std::optional<std::string> chip;   // a sport or series it names
+  bool players = false;              // its sides are people: initials, no colours
 };
 
 struct Context {
@@ -506,32 +501,23 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
     if (!game.cardKey && !game.isTennis()) place.homeIsTop = game.homeFirst;
     std::string full = game.customTitle.value_or(event.title);
     place.title = std::string(str::trimUnicode(text::components(full, ":").front()));
-  } else if (event.teams && event.teams->size() == 2) {
-    place.top = (*event.teams)[0];
-    place.bottom = (*event.teams)[1];
-    place.title = event.title;
-  } else if (auto pair = sidesIn(event.title)) {
-    place.top = namedSide("t|", std::get<0>(*pair));
-    place.bottom = namedSide("t|", std::get<1>(*pair));
-    if (std::get<2>(*pair)) place.homeIsTop = false;
-    place.title = event.title;
   } else {
-    std::vector<std::string> pieces = text::components(event.title, ": ");
-    if (pieces.size() >= 2) {
-      std::string head(str::trimUnicode(pieces[0]));
-      std::vector<std::string> restParts(pieces.begin() + 1, pieces.end());
-      std::string rest(str::trimUnicode(str::join(restParts, ": ")));
-      // "F1: Mexico Grand Prix" -> the race first; "Some Show: ..." -> the show first.
-      if (text::count(head) <= 12) {
-        place.title = rest;
-        place.subtitle = capitalizeFirst(head);
-      } else {
-        place.title = head;
-        place.subtitle = rest;
-      }
-    } else {
-      place.title = event.title;
-      if (!event.league.empty() && event.league != event.title) place.subtitle = event.league;
+    titles::Title read = titles::read(event.title, event.league);
+    place.tag = read.stage;
+    place.chip = read.chip;
+    place.icon = read.icon;
+    place.title = read.name;
+    place.subtitle = read.subtitle;
+    if (event.teams && event.teams->size() == 2) {
+      place.top = (*event.teams)[0];
+      place.bottom = (*event.teams)[1];
+    } else if (read.sides) {
+      place.players = read.players;
+      place.top = read.players ? namedSide("t|", read.sides->first) : titleSide(read.sides->first);
+      place.bottom = read.players ? namedSide("t|", read.sides->second) : titleSide(read.sides->second);
+      if (read.homeSecond) place.homeIsTop = false;
+    } else if (!place.subtitle && !event.league.empty() && event.league != "Other" && event.league != place.title) {
+      place.subtitle = event.league;
     }
   }
 
@@ -799,7 +785,7 @@ Tile makeTile(const SportsEvent& event, const Place& place, const std::string& r
   tile.favorite = place.favorite;
   tile.tag = place.tag;
   tile.tagAlert = place.tagAlert;
-  if (!tile.tag && showLeague) tile.leagueChip = event.leagueShort;
+  if (!tile.tag && showLeague) tile.leagueChip = place.chip.value_or(event.leagueShort);
 
   // Status pill.
   switch (state) {
@@ -873,7 +859,7 @@ Tile makeTile(const SportsEvent& event, const Place& place, const std::string& r
   // Middle.
   tile.title = place.title;
   tile.subtitle = place.subtitle;
-  tile.icon = symbol(event.league);
+  tile.icon = place.icon.empty() ? symbol(event.league) : place.icon;
   bool soccer = event.game ? event.game->homeFirst : true;
   if (!place.parts.empty()) {
     tile.layout = Tile::Layout::card;
@@ -907,6 +893,7 @@ Tile makeTile(const SportsEvent& event, const Place& place, const std::string& r
                                   place.possessionTop == false, place.bottomSets, place.flags));
     tile.sides[tile.sides.size() - 2].pens = place.topPens;
     tile.sides.back().pens = place.bottomPens;
+    tile.sides[tile.sides.size() - 2].plain = tile.sides.back().plain = place.players;
   } else {
     tile.layout = Tile::Layout::plain;
     tile.podium = place.podium;

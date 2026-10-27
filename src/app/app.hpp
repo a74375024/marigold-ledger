@@ -12,6 +12,7 @@
 #include "core/util/time.hpp"
 #include "platform/gfx.hpp"
 #include "platform/http.hpp"
+#include "platform/icons.hpp"
 #include "platform/logo_cache.hpp"
 #include "platform/storage.hpp"
 #include "platform/text.hpp"
@@ -37,7 +38,7 @@ struct Build {
 class App {
  public:
   App(platform::Window& window, platform::Storage& storage, gfx::Renderer& g,
-      text::TextRenderer& t, platform::Video& video, Build build);
+      text::TextRenderer& t, icons::IconSet& icons, platform::Video& video, Build build);
   ~App();
 
   void run();
@@ -82,6 +83,7 @@ class App {
   platform::Storage& storage_;
   gfx::Renderer& g_;
   text::TextRenderer& t_;
+  icons::IconSet& icons_;
   platform::Video& video_;
   Build build_;
   time::Zone zone_ = time::Zone::device();

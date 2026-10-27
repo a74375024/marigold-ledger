@@ -20,8 +20,8 @@ constexpr int kPoolThreads = 4;
 }  // namespace
 
 App::App(platform::Window& window, platform::Storage& storage, gfx::Renderer& g,
-         text::TextRenderer& t, platform::Video& video, Build build)
-    : window_(window), storage_(storage), g_(g), t_(t), video_(video), build_(std::move(build)) {
+         text::TextRenderer& t, icons::IconSet& icons, platform::Video& video, Build build)
+    : window_(window), storage_(storage), g_(g), t_(t), icons_(icons), video_(video), build_(std::move(build)) {
   wakeEvent_ = SDL_RegisterEvents(1);
   uint32_t wake = wakeEvent_;
   pool_.start(kPoolThreads, [wake] {
@@ -246,7 +246,7 @@ void App::drawReminder(ui::Ctx& c) {
 
 void App::frame() {
   hits_.clear();
-  ui::Ctx c{g_, t_, logos_.get(), time::now(), ms_, &zone_, &hits_, pointerShown_, store_->settings().clock24};
+  ui::Ctx c{g_, t_, logos_.get(), &icons_, time::now(), ms_, &zone_, &hits_, pointerShown_, store_->settings().clock24};
   g_.beginFrame(ui::theme::hex(ui::theme::kBackground));
   nav_.draw(c);
   drawToast(c);

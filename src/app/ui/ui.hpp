@@ -15,6 +15,10 @@
 #include "platform/gfx.hpp"
 #include "platform/text.hpp"
 
+namespace marigold::icons {
+class IconSet;
+}
+
 namespace marigold::logos {
 class LogoCache;
 }
@@ -62,6 +66,7 @@ struct Ctx {
   gfx::Renderer& g;
   text::TextRenderer& t;
   logos::LogoCache* logos = nullptr;
+  icons::IconSet* icons = nullptr;  // the sport icons
   time::Seconds now = 0;        // wall clock
   uint32_t ms = 0;              // monotonic ms (animations)
   const time::Zone* zone = nullptr;

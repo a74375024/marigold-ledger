@@ -14,6 +14,7 @@
 #include "core/util/log.hpp"
 #include "core/util/memory.hpp"
 #include "platform/gfx.hpp"
+#include "platform/icons.hpp"
 #include "platform/stdout_capture.hpp"
 #include "platform/storage.hpp"
 #include "platform/text.hpp"
@@ -89,7 +90,9 @@ int main(int argc, char** argv) {
   build.build = MARIGOLD_BUILD;
   build.webosMajor = nv_webos_major();
   {
-    app::App app(window, storage, g, text, video, build);
+    icons::IconSet icons;  // GL textures: gone before the renderer shuts down
+    icons.init(appDir + "/icons");
+    app::App app(window, storage, g, text, icons, video, build);
     if (app.store().accounts().empty()) app.nav().push(app::makeAccounts(app, true));
     else app.nav().push(std::make_unique<app::GuideScreen>(app));
     app.nav().settle();

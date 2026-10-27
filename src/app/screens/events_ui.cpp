@@ -4,6 +4,7 @@
 #include <cmath>
 #include <vector>
 
+#include "platform/icons.hpp"
 #include "platform/logo_cache.hpp"
 
 namespace marigold::app::events_ui {
@@ -159,6 +160,14 @@ void badge(ui::Ctx& c, const EventSide& side, float x, float y, float size, bool
     return;
   }
   Rect r{x, y, size, size};
+  if (side.plain) {
+    // A person: initials in a plain circle, no colours of a team.
+    Color ink = focused ? theme::black() : theme::white();
+    Rect in{x + 2, y + 2, size - 4, size - 4};
+    c.g.fill(in, ink.withAlpha((focused ? 0.1f : 0.16f) * opacity), in.w * 0.5f);
+    ui::labelIn(c, side.abbr, in, Weight::Bold, static_cast<int>(size * 0.38f), ink.withAlpha(0.85f * opacity), Align::Center);
+    return;
+  }
   c.g.fill(r, theme::hex(side.color, opacity), size * 0.5f);
   float ring = std::max(2.0f, size * 0.06f);
   c.g.stroke(r, theme::hex(side.alt, opacity), size * 0.5f, ring);
@@ -253,8 +262,13 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool showLeague)
   } else {
     Rect box{x, my + 6, 52, 52};
     c.g.fill(box, ink.withAlpha(focused ? 0.08f : 0.12f), 12);
-    std::string glyph = t.symbol.empty() ? "\xe2\x97\x8f" : t.symbol;
-    ui::labelIn(c, glyph, box, Weight::Bold, 22, ink, Align::Center);
+    // The sport's icon in the ink colour; its glyph if the file is missing.
+    if (unsigned icon = c.icons ? c.icons->get(t.icon) : 0) {
+      c.g.textureAlpha(icon, {box.x + 11, box.y + 11, 30, 30}, ink);
+    } else {
+      std::string glyph = t.symbol.empty() ? "\xe2\x97\x8f" : t.symbol;
+      ui::labelIn(c, glyph, box, Weight::Bold, 22, ink, Align::Center);
+    }
     std::vector<std::string> lines = c.t.wrap(t.title, Weight::Bold, 24, w - 66, t.subtitle.empty() ? 2 : 1);
     float ty = my + (lines.size() > 1 || !t.subtitle.empty() ? 4 : 18);
     for (const std::string& line : lines) {

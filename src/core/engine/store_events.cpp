@@ -68,6 +68,7 @@ EventSide toSide(const sb::SideLine& s) {
   o.trails = s.leads && !*s.leads;
   o.ball = s.possession;
   o.flags = s.flags;
+  o.plain = s.plain;
   return o;
 }
 
@@ -87,12 +88,12 @@ EventTile::Pill toPill(sb::Pill p) {
   return EventTile::Pill::None;
 }
 
-// The sport icon key board.cpp gives (SF Symbol names in tvOS) as a glyph
-// the bundled font has.
+// A glyph the bundled font has for a sport icon, until the icons load.
 std::string glyphFor(const std::string& icon) {
-  if (icon.find("racing") != std::string::npos || icon.find("car") != std::string::npos) return "\xe2\x96\xb6";
-  if (icon.find("tennis") != std::string::npos) return "\xe2\x97\x8f";
-  if (icon.find("figure") != std::string::npos) return "\xe2\x98\x85";
+  if (icon == "motorsport") return "\xe2\x96\xb6";
+  for (const char* figure : {"golf", "rugby", "cricket", "fighting", "lacrosse", "fieldHockey", "athletics", "cycling"}) {
+    if (icon == figure) return "\xe2\x98\x85";
+  }
   return "\xe2\x97\x8f";
 }
 
@@ -115,6 +116,7 @@ EventTile toTile(const sb::Tile& t, const sports::SportsEvent* event, const time
   for (const sb::PartLine& p : t.parts) o.parts.push_back({p.text.empty() ? p.label : p.text, p.fill, p.current});
   for (const sb::PodiumDriver& d : t.podium) o.podium.push_back({d.code, hexColor(d.color, 0x8A8D93)});
   for (const auto& l : t.leaders) o.leaders.push_back({l.pos, l.name, l.flag, l.score, l.thru});
+  o.icon = t.icon;
   o.symbol = glyphFor(t.icon);
   o.channelName = t.channelDisplay.value_or(t.channelName.value_or(""));
   o.channelLogo = t.channelLogos.empty() ? std::string() : t.channelLogos.front();

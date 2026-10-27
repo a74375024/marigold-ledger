@@ -16,6 +16,7 @@ add_executable(marigold
   ${MARIGOLD_APP_SOURCES}
   platform/gfx.cpp
   platform/http.cpp
+  platform/icons.cpp
   platform/image.cpp
   platform/lan_share.cpp
   platform/logo_cache.cpp

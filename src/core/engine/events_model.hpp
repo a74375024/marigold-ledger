@@ -29,6 +29,7 @@ struct EventSide {
   // Tennis: each player's country flag (two for a doubles pair); the
   // country chip until they load.
   std::vector<std::string> flags;
+  bool plain = false;    // a person named only in a title: initials in a plain circle
 };
 
 struct EventLeader {  // a golf leaderboard line
@@ -67,7 +68,8 @@ struct EventTile {
   std::vector<EventPart> parts;
   std::vector<EventPodium> podium;
   std::vector<EventLeader> leaders;  // golf: the top two, instead of sides
-  std::string symbol;     // sport icon key for no-sides tiles
+  std::string icon;       // sport icon for no-sides tiles: an app/icons name ("golf")
+  std::string symbol;     // a glyph in its place until the icons load
   std::string channelName, channelLogo;  // footer channel
   std::string pill2;      // footer pill when no channel ("Event feed")
   bool pill2Outlined = false;

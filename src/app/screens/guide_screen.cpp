@@ -453,7 +453,7 @@ void GuideScreen::openTimeMenu() {
     p.subtitle = "GO TO";
     for (const Preset& pr : presets) {
       ui::PanelItem it{ui::PanelItem::Kind::Check, pr.title};
-      ui::Ctx tmp{app.renderer(), app.textRenderer(), nullptr, now, 0, &z};
+      ui::Ctx tmp{app.renderer(), app.textRenderer(), nullptr, nullptr, now, 0, &z};
       it.value = std::string(pr.title) == "Now" ? ui::clock(tmp, now) : ui::clock(tmp, pr.t);
       it.on = pr.t / 1800 * 1800 == current || (std::string(pr.title) == "Now" && current == now / 1800 * 1800);
       time::Seconds t = pr.t;

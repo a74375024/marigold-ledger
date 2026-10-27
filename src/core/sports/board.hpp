@@ -158,6 +158,7 @@ struct SideLine {
   // Tennis: each player's country flag instead of the badge (two for a
   // doubles pair); the country chip until they load.
   std::vector<std::string> flags;
+  bool plain = false;  // a person named in a title: initials in a plain circle
 };
 
 struct PartLine {

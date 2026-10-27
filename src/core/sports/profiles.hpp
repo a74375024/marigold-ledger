@@ -82,7 +82,7 @@ struct Profile {
   Tile tile = Tile::Teams;
   bool podium = false;  // a finished session's top three on the tile (F1, from its race data)
   bool podiumFromScores = false;  // the same from the scoreboard's finishing order (NASCAR, IndyCar)
-  std::string symbol = "sportscourt.fill";  // icon on title-only tiles
+  std::string symbol = "other";  // icon on title-only tiles: an app/icons name
   std::string chip;  // short league chip ("NCAAF"); empty = the league upper-cased
 };
 

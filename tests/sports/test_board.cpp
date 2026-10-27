@@ -429,8 +429,47 @@ TEST_CASE("sides: short names, abbreviations, colors, scores, possession, ranks;
   CHECK(tile(plain, "p2").layout == Tile::Layout::plain);
   CHECK(tile(plain, "p2").title == "Harbor Grand Prix");
   CHECK(tile(plain, "p2").subtitle == "F1");
-  CHECK(tile(plain, "p2").icon == "flag.checkered");
+  CHECK(tile(plain, "p2").icon == "motorsport");
   CHECK(tile(plain, "p3").subtitle == "Golf");
+}
+
+TEST_CASE("title tiles: stages as tags, team colours, people, icons") {
+  Board b = build(baseInput({
+      plainEvent("r", "Rugby: Harbor Sharks vs Coast Kings - Six Nations", "Rugby", kNow + 3600, {feed("a")}),
+      plainEvent("d", "Darts: Premier League Night 12 - A. Harbor vs B. Valley", "Darts", kNow + 3600, {feed("b")}),
+      plainEvent("o", "Olympics: Athletics - Men's 100m Final", "Other", kNow + 3600, {feed("c")}),
+      plainEvent("g", "Golf: The Harbor Classic - Round 2", "Golf", kNow + 3600, {feed("e")})}));
+  const Tile& rugby = tile(b, "r");
+  CHECK(rugby.layout == Tile::Layout::sides);
+  CHECK(rugby.tag == "Six Nations");
+  REQUIRE(rugby.sides.size() == 2);
+  CHECK(rugby.sides[0].name == "Harbor Sharks");
+  CHECK(rugby.sides[1].name == "Coast Kings");
+  // A colour of its own, the same every time.
+  REQUIRE(rugby.sides[0].color);
+  CHECK(rugby.sides[0].color == tile(build(baseInput({plainEvent("r2", "Harbor Sharks vs Valley Bears", "Rugby",
+                                                                kNow + 3600, {feed("a")})})),
+                                     "r2").sides[0].color);
+  CHECK_FALSE(rugby.sides[0].plain);
+
+  const Tile& darts = tile(b, "d");
+  CHECK(darts.tag == "Night 12");
+  REQUIRE(darts.sides.size() == 2);
+  CHECK(darts.sides[0].plain);
+  CHECK(darts.sides[0].abbreviation == "AH");
+  CHECK(darts.icon == "darts");
+
+  const Tile& games = tile(b, "o");
+  CHECK(games.layout == Tile::Layout::plain);
+  CHECK(games.title == "Men's 100m");
+  CHECK(games.subtitle == "Athletics");
+  CHECK(games.tag == "Final");
+  CHECK(games.icon == "athletics");
+
+  const Tile& golf = tile(b, "g");
+  CHECK(golf.title == "The Harbor Classic");
+  CHECK(golf.tag == "Round 2");
+  CHECK(golf.icon == "golf");
 }
 
 TEST_CASE("fight cards become one tile: parts, the part on now, what Select plays") {
@@ -747,7 +786,7 @@ TEST_CASE("formatting helpers") {
   CHECK(isStreaming("Peacock"));
   CHECK(isStreaming("Prime Video Channels"));
   CHECK_FALSE(isStreaming("FOX"));
-  CHECK(symbol("Soccer") == "soccerball");
+  CHECK(symbol("Soccer") == "soccer");
   CHECK_FALSE(isLight(std::string("00274C")));
 }
 

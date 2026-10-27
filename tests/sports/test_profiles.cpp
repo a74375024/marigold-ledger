@@ -3,6 +3,7 @@
 // edit of its entry.
 #include <doctest.h>
 
+#include <fstream>
 #include <optional>
 #include <set>
 #include <string>
@@ -123,19 +124,29 @@ TEST_CASE("profiles: clocks") {
 }
 
 TEST_CASE("profiles: icons and chips") {
-  CHECK(board::symbol("NFL") == "football.fill");
-  CHECK(board::symbol("College Basketball") == "basketball.fill");
-  CHECK(board::symbol("MiLB") == "baseball.fill");
-  CHECK(board::symbol("MLS") == "soccerball");
-  CHECK(board::symbol("Golf") == "figure.golf");
-  CHECK(board::symbol("Curling") == "sportscourt.fill");
-  CHECK(board::symbol("Football") == "football.fill");
-  CHECK(board::symbol("Basketball") == "basketball.fill");
+  CHECK(board::symbol("NFL") == "football");
+  CHECK(board::symbol("College Basketball") == "basketball");
+  CHECK(board::symbol("MiLB") == "baseball");
+  CHECK(board::symbol("MLS") == "soccer");
+  CHECK(board::symbol("Golf") == "golf");
+  CHECK(board::symbol("Curling") == "other");
+  CHECK(board::symbol("Football") == "football");
+  CHECK(board::symbol("Basketball") == "basketball");
   CHECK(matcher::shortLeague("College Basketball") == "NCAAB");
   CHECK(matcher::shortLeague("Fighting") == "FIGHT");
   CHECK(matcher::shortLeague("Field Hockey") == "FIELD H.");
   CHECK(matcher::shortLeague("Curling") == "CURLING");
   CHECK(matcher::shortLeague("") == "EVENT");
+  CHECK(matcher::shortLeague("Other") == "EVENT");
+  CHECK(matcher::shortLeague("Darts") == "DARTS");
+  CHECK(board::symbol("Darts") == "darts");
+  CHECK(board::symbol("Softball") == "softball");
+  // Every sport's icon ships with the app.
+  for (const Profile& p : profiles()) {
+    std::string png = std::string(MARIGOLD_SOURCE_DIR) + "/app/icons/" + p.symbol + ".png";
+    INFO(p.league, " ", p.symbol);
+    CHECK(std::ifstream(png).good());
+  }
 }
 
 namespace {

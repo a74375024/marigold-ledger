@@ -1221,7 +1221,7 @@ std::optional<std::string> pairKey(std::string_view title) {
 }
 
 std::string shortLeague(std::string_view league) {
-  if (league.empty()) return "EVENT";
+  if (league.empty() || league == "Other") return "EVENT";
   const Profile& p = profile(league);
   return p.chip.empty() ? str::upper(league) : p.chip;
 }
