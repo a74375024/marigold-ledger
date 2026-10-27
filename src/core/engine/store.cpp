@@ -271,6 +271,7 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
       for (const json::Value& x : (*v)["recents"].items())
         if (x.isString()) m.recents.push_back(x.asString());
       for (const auto& [k, x] : (*v)["pinned"].fields()) m.pinned[k] = x.asString();
+      for (const auto& [k, x] : (*v)["lastFeed"].fields()) m.lastFeed[k] = x.asString();
       for (const auto& [k, x] : (*v)["reliability"].fields())
         m.reliability[k] = {static_cast<int>(x[size_t(0)].asInt()), static_cast<int>(x[size_t(1)].asInt())};
     }
@@ -322,6 +323,9 @@ void Store::saveLists() {
   json::Value pinned = json::Value::object();
   for (const auto& [k, x] : m.pinned) pinned.set(k, x);
   v.set("pinned", pinned);
+  json::Value last = json::Value::object();
+  for (const auto& [k, x] : m.lastFeed) last.set(k, x);
+  v.set("lastFeed", last);
   json::Value rel = json::Value::object();
   for (const auto& [k, x] : m.reliability) {
     json::Value pair = json::Value::array();
@@ -2246,14 +2250,18 @@ double Store::reliabilityOf(const std::string& channelId) const {
 }
 
 std::vector<std::string> Store::versionsOf(const std::string& id) const {
-  // An entry's own versions, best first, the pinned one first; a raw
+  // An entry's own versions, best first, the pinned (or last played) one
+  // first; a raw
   // channel alone (sports::store::baseVersions, LiveTVStore.baseVersions).
   const Impl& m = *impl_;
   auto info = m.entryInfo.find(id);
   const EntryInfo* ei = info == m.entryInfo.end() ? nullptr : &m.catalog->entries[info->second];
+  // First: the pinned version, else the one that played last.
   auto pin = m.pinned.find(id);
+  auto last = m.lastFeed.find(id);
   std::optional<std::string> pinned;
   if (pin != m.pinned.end()) pinned = pin->second;
+  else if (last != m.lastFeed.end()) pinned = last->second;
   return sports::store::baseVersions(
       id, ei, pinned, [this](const std::string& c) { return reliabilityOf(c); },
       [&m](const std::string& c) { return m.indexByID.count(c) > 0; });
@@ -2391,6 +2399,16 @@ void Store::recordFeed(const std::string& channelId, bool worked) {
   auto& counts = m.reliability[tag];
   if (counts.size() < 2) counts = {0, 0};
   ++counts[worked ? 0 : 1];
+  saveLists();
+}
+
+void Store::rememberFeed(const std::string& entryId, const std::string& channelId) {
+  Impl& m = *impl_;
+  // Channels only: a game keeps its own memory (rememberGame).
+  if (!m.entryInfo.count(entryId)) return;
+  auto it = m.lastFeed.find(entryId);
+  if (it != m.lastFeed.end() && it->second == channelId) return;
+  m.lastFeed[entryId] = channelId;
   saveLists();
 }
 

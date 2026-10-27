@@ -63,7 +63,7 @@ std::unique_ptr<Screen> makeSources(App& app, const std::string& entryId) {
       // "Always start with" (pinned feed): Automatic, or one version.
       p.items.push_back(ui::PanelItem::header("ALWAYS START WITH"));
       ui::PanelItem automatic{ui::PanelItem::Kind::Check, "Automatic"};
-      automatic.detail = "The most reliable feed first";
+      automatic.detail = "The feed that played last, else the most reliable";
       automatic.on = pinned.empty();
       automatic.select = [&app, id] {
         app.store().pinFeed(id, "");

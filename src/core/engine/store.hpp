@@ -184,6 +184,9 @@ class Store {
   void closeStream();
   // Feed outcomes move reliable sources up.
   void recordFeed(const std::string& channelId, bool worked);
+  // The version of a channel that just played: it starts first next time
+  // (unless one is pinned with pinFeed).
+  void rememberFeed(const std::string& entryId, const std::string& channelId);
   void pinFeed(const std::string& entryId, const std::string& channelId);  // "" = automatic
   std::string pinnedFeed(const std::string& entryId) const;
 

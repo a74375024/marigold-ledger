@@ -203,3 +203,28 @@ TEST_CASE("session: the playback log is saved and read back") {
   Session again(*r.store, r.tv.host(), std::make_unique<FakePlayer>(r.player), {});
   CHECK(again.log().entries().size() == r.session->log().entries().size());
 }
+
+TEST_CASE("session: the feed that played last starts first next time, unless one is pinned") {
+  Rig r;
+  auto ids = r.entries(2);
+  REQUIRE(ids.size() >= 2);
+  auto feeds = r.store->feeds(ids[0]);
+  r.session->setShowingFull(true);
+  REQUIRE(r.session->tune(ids[0]));
+  r.run(500);
+  // The viewer picks the second feed and it plays.
+  r.session->useFeed(1);
+  r.run(500);
+  r.picture();
+  r.run(60'000);
+  // Another channel, then back: the second feed starts.
+  REQUIRE(r.session->tune(ids[1]));
+  r.run(1000);
+  REQUIRE(r.session->tune(ids[0]));
+  r.run(500);
+  CHECK(r.player->plays.back() == feeds[1].channelId);
+  CHECK(r.store->feeds(ids[0])[0].channelId == feeds[1].channelId);
+  // A pinned feed still wins.
+  r.store->pinFeed(ids[0], feeds[0].channelId);
+  CHECK(r.store->feeds(ids[0])[0].channelId == feeds[0].channelId);
+}

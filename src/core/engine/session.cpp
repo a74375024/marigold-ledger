@@ -182,6 +182,7 @@ void Session::apply(const playback::Actions& actions) {
           const std::string& id = feeds_[a.feed].channelId;
           store_.recordFeed(id, a.worked);
           if (a.worked) {
+            store_.rememberFeed(entry_, id);
             problems_.erase(id);
           } else {
             lastFailed_ = a.feed;

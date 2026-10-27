@@ -116,6 +116,9 @@ struct Store::Impl {
   std::set<std::string> favorites;   // entry ids (Xtream and M3U have no favorites API)
   std::vector<std::string> recents;  // entry ids, newest first
   std::map<std::string, std::string> pinned;  // entry id -> raw channel id
+  // Entry id -> the version that last played on it: it starts first next
+  // time unless one is pinned.
+  std::map<std::string, std::string> lastFeed;
   std::map<std::string, std::vector<int>> reliability;  // source tag -> {worked, failed}
   std::set<std::string> hiddenGroups;  // provider groups left out of All Channels
   catalog::LineupPrefs prefs;
