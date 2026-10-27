@@ -947,7 +947,7 @@ void Store::fetchStations() {
         for (const guide::stations::Page& page : guide::stations::pages()) {
           for (const std::string& title : page.titles) {
             if (stop->load()) return;
-            if (!first) usleep(guide::stations::kRequestSpacingMs * 1000);
+            if (!first) pool.pause(guide::stations::kRequestSpacingMs);
             first = false;
             if (auto text = wikitext(pool, title, http::Priority::Background)) {
               texts.push_back({page.network, std::move(*text)});
@@ -1202,13 +1202,13 @@ std::optional<std::string> wikitext(http::Pool& pool, const std::string& title, 
         break;
       }
       unsigned wait = std::max<unsigned>(kBackoffS[attempt], static_cast<unsigned>(std::clamp(r.retryAfterS, 0, 30)));
-      usleep(wait * 1000000u);
+      pool.pause(wait * 1000u);
       continue;
     }
     if (!r.ok) {
       MLOG_W("wiki", "page request failed (status %d, %s)", r.status, r.error.c_str());
       if (attempt < 2) {
-        usleep(2000000u);
+        pool.pause(2000);
         continue;
       }
       break;
@@ -1299,7 +1299,7 @@ void Store::resolveMarkets(const std::vector<std::string>& names, const catalog:
           choice.templateName = mk.templateName;
           if (mk.templateName) {
             // Wikipedia rate-limits bursts.
-            if (!first) usleep(guide::stations::kRequestSpacingMs * 1000);
+            if (!first) pool.pause(guide::stations::kRequestSpacingMs);
             first = false;
             if (auto page = wikitext(pool, *mk.templateName))
               choice.callsigns = catalog::markets::callsignsInWikitext(*page);

@@ -54,6 +54,10 @@ class Pool final : public http::Pool {
 
   void cancelAll() override { queue_.clear(); }
 
+  // No waiting on the pretend TV; the waits are counted.
+  void pause(unsigned ms) override { paused += ms; }
+  uint64_t paused = 0;
+
   // Runs everything queued, including what the queued work queues. Returns
   // the number of steps; a test can bound it to catch a loop.
   size_t drain(size_t limit = 10000) {

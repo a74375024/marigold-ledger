@@ -4,11 +4,13 @@
 // answers from canned bodies). Nothing here does I/O.
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace marigold::http {
@@ -72,6 +74,9 @@ class Pool {
   // Drops every queued and running request (account switch, exit). Their
   // callbacks never run.
   virtual void cancelAll() = 0;
+  // Waits on a pool thread: the back-off before a retry, the spacing
+  // between requests to one site. A test pool returns at once.
+  virtual void pause(unsigned ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); }
 };
 
 }  // namespace marigold::http

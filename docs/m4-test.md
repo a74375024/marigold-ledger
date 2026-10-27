@@ -85,3 +85,18 @@ Requests: race drivers and results only for race weekends you can watch
 | Unchanged launch | Quit and reopen the app (the provider's list unchanged) | "channel list checked" rather than "channels sorted" after the download; the first screen opens as fast as before |
 | Startup memory | Export the playback log after a launch | The "memory" lines after loading and the guide builds stay well under the earlier peaks |
 | No restarts | A long session browsing and watching | No "restart to free up memory" |
+
+## Engine move (nothing should look different)
+
+The guide's lists and the playback session now come from the shared engine. Each row should behave exactly as before.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Guide tabs | My Lineup, Favorites, Recent, All Channels | Same channels, order and neighborhood headers as before; Recent has no headers |
+| Filters | Filter › Sports on now, a neighborhood, a provider group | Same counts beside each choice; the grid shows only those channels; Back clears it |
+| Search | Type a channel name, a channel number and a local station ("nbc") | Exact name first, then the number, then names that start with it |
+| Mini guide | Down in the player | The list the channel was picked from, under its headers, the playing one focused |
+| Flip and LAST | CH+ / CH− past the end of the list, then ▶ Last channel | Wraps around; LAST goes back to the channel watched before |
+| Backup takes over | A channel whose first feed fails | Same retries, then the next feed; the corner card says which feed took over |
+| HLS and Emby | A channel with an HLS feed, and an Emby channel | Both start as before (HLS through the local relay, Emby opened on the server) |
+| Playback log | Export Playback Log after the above | Tunes, retries and memory lines as before; no links |

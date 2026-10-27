@@ -1,0 +1,312 @@
+#include "core/engine/session.hpp"
+
+#include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <utility>
+
+#include "core/engine/store.hpp"
+#include "core/util/log.hpp"
+#include "core/util/memory.hpp"
+#include "core/util/strings.hpp"
+
+namespace marigold::engine {
+namespace {
+
+playback::FeedKind kindOf(const Feed& f) {
+  if (f.needsOpen) return playback::FeedKind::Emby;
+  if (str::startsWith(f.channelId, "xt:")) return playback::FeedKind::Xtream;
+  return playback::FeedKind::Playlist;
+}
+
+constexpr const char* kLogFile = "playback-log.json";
+constexpr uint32_t kLogSaveMs = 10000;
+constexpr uint32_t kMemoryEveryMs = 5 * 60 * 1000;
+
+// Wall clock in ms, for the log's times.
+int64_t wallMs() {
+  using namespace std::chrono;
+  return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+}
+
+}  // namespace
+
+Session::Session(Store& store, Host host, std::unique_ptr<Player> player, Hooks hooks)
+    : store_(store), host_(std::move(host)), player_(std::move(player)), hooks_(std::move(hooks)) {
+  if (auto text = host_.files.read(kLogFile)) log_.restore(*text);
+  logSaved_ = log_.revision();
+}
+
+void Session::logEvent(std::string_view event, std::string_view detail) {
+  std::string channel, feed, provider;
+  if (const GuideChannel* g = store_.channels()->find(entry_)) channel = g->name;
+  else if (const EventTile* t = store_.eventTile(entry_)) channel = t->heroTitle.empty() ? t->title : t->heroTitle;
+  size_t i = rec_.feedIndex();
+  if (i < feeds_.size()) {
+    feed = feeds_[i].label;
+    provider = store_.providerName(feeds_[i].channelId);
+  }
+  log_.add(wallMs(), event, session_, channel, feed, provider, detail);
+}
+
+void Session::logMemory(std::string_view what) {
+  std::string reading = memory::describe(memory::read());
+  if (reading.empty()) return;
+  std::string detail = what.empty() ? reading : std::string(what) + ": " + reading;
+  log_.add(wallMs(), "memory", 0, {}, {}, {}, detail);
+}
+
+void Session::saveLog(uint32_t now) {
+  if (log_.revision() == logSaved_ || now < logSaveAt_) return;
+  logSaved_ = log_.revision();
+  logSaveAt_ = now + kLogSaveMs;
+  std::string text = log_.toJson();
+  std::string path = host_.files.path(kLogFile);
+  host_.pool.post(
+      [path, text] {
+        std::string tmp = path + ".tmp";
+        std::FILE* f = std::fopen(tmp.c_str(), "wb");
+        if (!f) return;
+        bool ok = std::fwrite(text.data(), 1, text.size(), f) == text.size();
+        ok = std::fclose(f) == 0 && ok;
+        if (ok) std::rename(tmp.c_str(), path.c_str());
+      },
+      nullptr, http::Priority::Background);
+}
+
+std::optional<Session::FeedProblem> Session::feedProblem(const std::string& channelId) const {
+  auto it = problems_.find(channelId);
+  if (it == problems_.end()) return std::nullopt;
+  return it->second;
+}
+
+std::string Session::playingChannel() const {
+  size_t i = rec_.feedIndex();
+  return entry_.empty() || i >= feeds_.size() ? std::string() : feeds_[i].channelId;
+}
+
+bool Session::tuneCamera(std::vector<Feed> feeds) {
+  if (entry_.empty() || feeds.empty()) return false;
+  std::string entry = entry_;
+  bool ok = begin(entry, std::move(feeds), {});
+  camera_ = ok;
+  if (ok) logEvent("camera");
+  return ok;
+}
+
+void Session::rememberGame() {
+  // Leaving or switching a game: its source starts it next time (6 h).
+  if (entry_.empty() || feeds_.empty() || camera_ || !store_.isEvent(entry_)) return;
+  size_t i = rec_.feedIndex();
+  if (i < feeds_.size()) store_.noteEventFeed(entry_, feeds_[i].channelId, ready());
+}
+
+bool Session::begin(const std::string& entryId, std::vector<Feed> feeds, const std::vector<std::string>& flip) {
+  if (!flip.empty()) flip_ = flip;
+  if (feeds.empty()) {
+    MLOG_W("play", "no feeds for this channel");
+    return false;
+  }
+  rememberGame();
+  logMemory("before tuning");
+  camera_ = false;
+  hadPicture_ = false;
+  backup_.reset();
+  entry_ = entryId;
+  feeds_ = std::move(feeds);
+  session_ = log_.newSession();
+  player_->beginTune();
+  failMessage_.clear();
+  tunedAt_ = ms();
+  if (full_) watched();
+  std::vector<playback::FeedInfo> infos;
+  for (const Feed& f : feeds_) infos.push_back({f.channelId, kindOf(f)});
+  logEvent("tune", std::to_string(feeds_.size()) + (feeds_.size() == 1 ? " feed" : " feeds"));
+  apply(rec_.tune(ms(), std::move(infos)));
+  return true;
+}
+
+bool Session::tune(const std::string& entryId, const std::vector<std::string>& flip) {
+  if (!flip.empty()) flip_ = flip;
+  if (entryId == entry_ && !failed()) return true;
+  return begin(entryId, store_.feeds(entryId), flip);
+}
+
+bool Session::tuneEventVia(const std::string& eventId, const std::string& via, const std::vector<std::string>& flip) {
+  return begin(eventId, store_.eventFeeds(eventId, via), flip);
+}
+
+bool Session::useFeed(size_t index) {
+  if (index >= feeds_.size()) return false;
+  apply(rec_.pick(ms(), index));
+  return true;
+}
+
+void Session::stop() {
+  if (entry_.empty()) return;
+  rememberGame();
+  apply(rec_.stop(ms()));
+  player_->stop();
+  store_.closeStream();
+  entry_.clear();
+  feeds_.clear();
+}
+
+void Session::apply(const playback::Actions& actions) {
+  for (const playback::Action& a : actions) {
+    switch (a.kind) {
+      case playback::Action::Kind::Play:
+      case playback::Action::Kind::Reconnect:
+        playFeed(a.feed, a.token);
+        break;
+      case playback::Action::Kind::CloseStream:
+        store_.closeStream();
+        player_->streamClosed();
+        break;
+      case playback::Action::Kind::GiveUp:
+        player_->stop();
+        failMessage_ = a.text;
+        logEvent("gave up", a.text);
+        MLOG_W("play", "gave up: %s", playback::safeMessage(a.text).c_str());
+        break;
+      case playback::Action::Kind::Note:
+        if (hooks_.changed) hooks_.changed();
+        break;
+      case playback::Action::Kind::Toast:
+        // A backup's picture came up: the corner card says what happened.
+        if (full_ && hadPicture_) backup_ = BackupNotice{lastFailed_, rec_.feedIndex(), ms()};
+        else if (full_ && hooks_.toast) hooks_.toast(a.text);
+        break;
+      case playback::Action::Kind::RecordFeed:
+        if (a.feed < feeds_.size()) {
+          const std::string& id = feeds_[a.feed].channelId;
+          store_.recordFeed(id, a.worked);
+          if (a.worked) {
+            problems_.erase(id);
+          } else {
+            lastFailed_ = a.feed;
+            std::string why = "no picture after 20 s";
+            if (sawPicture_ && pictureAt_) {
+              uint32_t ran = (ms() - pictureAt_) / 1000;
+              why = ran >= 120 ? "stopped after " + std::to_string(ran / 60) + " min"
+                               : "stopped after " + std::to_string(std::max<uint32_t>(1, ran)) + " s";
+            } else if (sawFailed_) {
+              why = "the server answered with an error";
+            }
+            problems_[id] = FeedProblem{time::now(), why};
+          }
+        }
+        break;
+      case playback::Action::Kind::Log: {
+        MLOG_I("play", "%s %s", a.text.c_str(), playback::safeMessage(a.detail).c_str());
+        std::string channel, feed, provider;
+        if (const GuideChannel* g = store_.channels()->find(entry_)) channel = g->name;
+        if (a.feed < feeds_.size()) {
+          feed = feeds_[a.feed].label;
+          provider = store_.providerName(feeds_[a.feed].channelId);
+        }
+        log_.add(wallMs(), a, session_, channel, feed, provider);
+        break;
+      }
+    }
+  }
+}
+
+void Session::playFeed(size_t index, uint64_t token) {
+  if (index >= feeds_.size()) return;
+  sawPicture_ = sawBuffering_ = sawFailed_ = sawEnded_ = false;
+  player_->attempt();
+  const Feed& f = feeds_[index];
+  MLOG_I("play", "feed %zu of %zu (%s)", index + 1, feeds_.size(), f.label.c_str());
+  if (f.needsOpen) {
+    // Emby / Jellyfin open the stream on the server first. Every open
+    // reports back exactly once; a superseded one is closed again.
+    store_.open(f, [this, token, index](std::optional<Feed> opened) {
+      uint32_t now = ms();
+      if (!opened) {
+        apply(rec_.openFailed(now, token, "The server couldn't open this channel."));
+        return;
+      }
+      if (rec_.isCurrent(token) && index < feeds_.size()) {
+        feeds_[index] = *opened;
+        player_->play(*opened, true);
+      }
+      apply(rec_.streamHanded(now, token));
+    });
+    return;
+  }
+  player_->play(f, false);
+  apply(rec_.streamHanded(ms(), token));
+}
+
+void Session::watched() {
+  if (entry_.empty() || entry_ == lastWatched_) return;
+  if (!lastWatched_.empty()) previous_ = lastWatched_;
+  lastWatched_ = entry_;
+  store_.noteWatched(entry_);
+}
+
+std::string Session::flip(int step) {
+  if (flip_.empty()) return {};
+  auto it = std::find(flip_.begin(), flip_.end(), entry_);
+  long n = static_cast<long>(flip_.size());
+  long i = it == flip_.end() ? 0 : (it - flip_.begin());
+  i = ((i + step) % n + n) % n;
+  std::string next = flip_[static_cast<size_t>(i)];
+  tune(next);
+  return next;
+}
+
+std::string Session::previous() {
+  if (previous_.empty()) return {};
+  std::string target = previous_;
+  tune(target);
+  return target;
+}
+
+void Session::setShowingFull(bool full) {
+  full_ = full;
+  if (full) watched();
+}
+
+bool Session::tick(uint32_t now) {
+  if (now >= memoryAt_) {
+    if (memoryAt_) logMemory();
+    memoryAt_ = now + kMemoryEveryMs;
+  }
+  saveLog(now);
+  if (entry_.empty()) return false;
+  PlayerState s = player_->state();
+  // Report changes of the player's flags only.
+  if (s.picture && !sawPicture_) {
+    sawPicture_ = true;
+    hadPicture_ = true;
+    pictureAt_ = now;
+    apply(rec_.firstFrame(now));
+    if (hooks_.picture) hooks_.picture();
+  }
+  if (s.buffering != sawBuffering_) {
+    sawBuffering_ = s.buffering;
+    apply(s.buffering ? rec_.bufferingStarted(now) : rec_.bufferingEnded(now));
+  }
+  if ((s.failed || s.ended) && !sawPicture_) {
+    if (auto retry = player_->retryAnotherWay()) {
+      logEvent(retry->event, retry->detail);
+      sawFailed_ = sawEnded_ = false;
+      return true;
+    }
+  }
+  if (s.failed && !sawFailed_) {
+    sawFailed_ = true;
+    apply(rec_.playerError(now, s.error));
+  }
+  if (s.ended && !sawEnded_) {
+    sawEnded_ = true;
+    apply(rec_.ended(now));
+  }
+  if (sawPicture_) apply(rec_.position(now, s.position, s.bufferEnd));
+  apply(rec_.tick(now));
+  return (!ready() && !failed()) || !note().empty();
+}
+
+}  // namespace marigold::engine

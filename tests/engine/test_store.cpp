@@ -8,45 +8,16 @@
 #include <string>
 
 #include "core/engine/store.hpp"
-#include "engine/fake_host.hpp"
+#include "engine/loaded_store.hpp"
 #include "sources/mock_provider.hpp"
 
 using marigold::engine::AccountForm;
 using marigold::engine::Store;
 using marigold::engine::StoreStatus;
 
-namespace {
-
-constexpr const char* kPlaylist = "http://mock.example.invalid:8080/playlist.m3u";
-
-AccountForm m3uForm() {
-  AccountForm f;
-  f.kind = AccountForm::Kind::M3U;
-  f.name = "Test playlist";
-  f.server = kPlaylist;
-  return f;
-}
-
-// Lets everything settle: queued work runs, then the engine ticks as the
-// app's frame loop would, ten seconds on (past every short delay).
-void settle(Store& store, fake::Tv& tv) {
-  for (int i = 0; i < 100; ++i) {
-    tv.pool.drain();
-    tv.ms += 100;
-    store.tick(tv.ms);
-  }
-  tv.pool.drain();
-}
-
-// Adds the playlist account and lets everything it starts settle.
-std::string addPlaylist(Store& store, fake::Tv& tv) {
-  std::string problem = "(not answered)";
-  store.addAccount(m3uForm(), [&](std::string p) { problem = std::move(p); });
-  settle(store, tv);
-  return problem;
-}
-
-}  // namespace
+using fake::addPlaylist;
+using fake::kPlaylist;
+using fake::settle;
 
 TEST_CASE("engine: an M3U account loads its channels") {
   fake::Tv tv;
