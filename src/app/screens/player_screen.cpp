@@ -532,15 +532,18 @@ class PlayerScreen : public Screen {
       keyCap(c, x, y, "\xe2\x96\xb6");
       item(40, "Last channel", nameOf(p.previousEntry()));
     }
-    keyCap(c, x, y, "\xe2\x96\xbc");
-    item(40, cameras_ ? "Cameras & more" : "More", "");
-    keyCap(c, x, y, "OK");
-    item(40, "Info", "");
     const RemoteKeys& keys = app_.remoteKeys();
     hints::Hint sources = hints::playerSources(keys);
     int b = backups();
-    item(hintKey(c, x, y, sources), sources.label,
-         b > 0 ? std::to_string(b) + (b == 1 ? " backup" : " backups") : std::string());
+    std::string backupsLine = b > 0 ? std::to_string(b) + (b == 1 ? " backup" : " backups") : std::string();
+    // Without a colour key or Menu, Sources is the row's first pill: one ▼.
+    bool sourcesInRow = sources.colour == hints::Colour::None && sources.icons.empty();
+    keyCap(c, x, y, "\xe2\x96\xbc");
+    if (sourcesInRow) item(40, cameras_ ? "Cameras, Sources & more" : "Sources & more", backupsLine);
+    else item(40, cameras_ ? "Cameras & more" : "More", "");
+    keyCap(c, x, y, "OK");
+    item(40, "Info", "");
+    if (!sourcesInRow) item(hintKey(c, x, y, sources), sources.label, backupsLine);
     if (auto options = hints::playerOptions(keys)) item(hintKey(c, x, y, *options), options->label, "");
     int left = static_cast<int>((bannerUntil_ > app_.ms() ? bannerUntil_ - app_.ms() : 0) / 1000) + 1;
     if (zone_ == Zone::None && x < gfx::kLayoutWidth - kLeft - 360)
