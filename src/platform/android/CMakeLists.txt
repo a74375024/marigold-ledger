@@ -25,6 +25,7 @@ add_library(marigold SHARED
   ${src}/platform/http.cpp
   ${src}/platform/icons.cpp
   ${src}/platform/image.cpp
+  ${src}/platform/lan_server.cpp
   ${src}/platform/lan_share.cpp
   ${src}/platform/logo_cache.cpp
   ${src}/platform/text.cpp

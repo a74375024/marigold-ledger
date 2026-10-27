@@ -91,3 +91,20 @@ TEST_CASE("hints: the Siri Remote gets hold OK and play/pause") {
   CHECK(playerSources(k).cap == "\xe2\x96\xbc");
   CHECK_FALSE(pickAnotherSource(k));
 }
+
+TEST_CASE("hints: setup screens use each remote's own keys") {
+  using marigold::RemoteKeys;
+  auto lg = marigold::hints::setup(RemoteKeys::lg(), true);
+  REQUIRE(lg.keys.size() == 3);
+  CHECK(lg.keys[0].cap == "OK");
+  CHECK(lg.keys[2].cap.rfind("CH", 0) == 0);
+  auto fire = marigold::hints::setup(RemoteKeys::fireTv(), true);
+  REQUIRE(fire.keys.size() == 3);
+  CHECK(fire.keys[2].icons == std::vector<std::string>{"key-rewind", "key-forward"});
+  auto apple = marigold::hints::setup(RemoteKeys::appleTv(), true);
+  REQUIRE(apple.keys.size() == 2);
+  CHECK(apple.keys[0].cap == "Click");
+  CHECK(apple.right == "Swipe to move faster");
+  CHECK(marigold::hints::setup(RemoteKeys::fireTv(), false).keys.size() == 2);
+  CHECK(marigold::hints::setup(RemoteKeys(), true).keys.size() == 2);
+}

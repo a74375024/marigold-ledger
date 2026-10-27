@@ -1,13 +1,16 @@
 // My Sports setup (MySportsSetupView): 1. what do you watch (leagues and
 // other sports, with how many events your channels carry), 2. favourite
-// teams per league, 3. review with "Remind me before my teams play".
-// Nothing is saved until Done.
+// teams, a league at a time from the rail on the left, 3. review with
+// "Remind me before my teams play". In first-run setup these are steps 5
+// and 6 of 7 (the reminder switch is on the teams screen, and the summary
+// follows). Nothing is saved until the last step.
 #include <algorithm>
 #include <map>
 
 #include "app/app.hpp"
 #include "app/screens/events_ui.hpp"
 #include "app/screens/screens.hpp"
+#include "app/screens/setup_ui.hpp"
 #include "app/store/store.hpp"
 #include "core/sports/leagues.hpp"
 #include "core/sports/my_sports.hpp"
@@ -24,10 +27,15 @@ namespace theme = ui::theme;
 constexpr float kLeft = 80, kTop = 50;
 constexpr int kLeagueCols = 4;
 constexpr float kLeagueW = 400, kLeagueH = 96, kLeagueGap = 24;
-constexpr int kTeamCols = 6;
-constexpr float kTeamW = 250, kTeamH = 180, kTeamGap = 22;
+constexpr int kTeamCols = 5;
+constexpr float kTeamX = 540, kTeamW = 238, kTeamH = 170, kTeamGap = 20;
+constexpr float kRailW = 400;
 const char* kSections[] = {"Football", "Basketball", "Baseball", "Hockey", "Soccer"};
 constexpr int kHitTile = 100, kHitButton = 10, kHitTab = 20, kHitReminder = 30;
+// Focus on the teams screen besides a tile (>= 0).
+constexpr int kRail = -1, kButtons = -2, kReminder = -3;
+// First run: this many of the busiest leagues are picked to start with.
+constexpr size_t kPrePicks = 4;
 
 struct Pick {
   std::string id, name, section;
@@ -35,7 +43,7 @@ struct Pick {
 
 class MySportsSetup : public Screen {
  public:
-  explicit MySportsSetup(App& app) : Screen(app), draft_(app.store().mySports()) {
+  MySportsSetup(App& app, bool onboarding) : Screen(app), onboarding_(onboarding), draft_(app.store().mySports()) {
     counts_ = app.store().sportSuggestions();
     // Leagues by section, then the other sports.
     for (const char* section : kSections)
@@ -46,6 +54,9 @@ class MySportsSetup : public Screen {
       if (!known) picks_.push_back({l.shortName, l.name, "More sports"});
     }
     for (const sports::OtherSport& o : sports::otherSports()) picks_.push_back({o.id, o.name, "More sports"});
+    if (onboarding_ && !draft_.configured && draft_.leagues.empty()) prePick();
+    initialTeams_ = draft_.teams;
+    button_ = nextIndex();
     layoutPicks();
   }
   ~MySportsSetup() override { app_.store().releaseRosters(); }
@@ -62,13 +73,13 @@ class MySportsSetup : public Screen {
     return step_ == 2 && teams_.empty();
   }
 
-  // Pointer: ids 100+ tiles, 10/11 the two buttons, 20+ league tabs, 30 the
+  // Pointer: ids 100+ tiles, 10/11 the two buttons, 20+ the leagues, 30 the
   // reminders row.
   void hover(int id) override {
     if (id == kHitButton || id == kHitButton + 1) {
       button_ = id - kHitButton;
       if (step_ == 1) focus_ = static_cast<int>(picks_.size());
-      else if (step_ == 2) focus_ = -2;
+      else if (step_ == 2) focus_ = kButtons;
       else reviewRow_ = 1;
     } else if (step_ == 1 && id >= kHitTile && id - kHitTile < static_cast<int>(picks_.size())) {
       focus_ = id - kHitTile;
@@ -76,13 +87,14 @@ class MySportsSetup : public Screen {
       focus_ = id - kHitTile;
     } else if (step_ == 2 && id >= kHitTab && id < kHitTab + 10) {
       int tab = id - kHitTab;
-      focus_ = -1;
+      focus_ = kRail;
       if (tab != tab_ && tab < static_cast<int>(teamLeagues().size())) {
         tab_ = tab;
         loadTeams();
       }
-    } else if (step_ == 3 && id == kHitReminder) {
-      reviewRow_ = 0;
+    } else if (id == kHitReminder) {
+      if (step_ == 2) focus_ = kReminder;
+      else reviewRow_ = 0;
     }
   }
 
@@ -95,13 +107,22 @@ class MySportsSetup : public Screen {
   void draw(ui::Ctx& c) override {
     c.g.fill({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight}, theme::hex(theme::kBackground));
     const char* label[] = {"", "MY SPORTS \xc2\xb7 STEP 1 OF 3", "MY SPORTS \xc2\xb7 STEP 2 OF 3", "MY SPORTS \xc2\xb7 STEP 3 OF 3"};
-    ui::label(c, label[step_], kLeft, kTop, Weight::Bold, 18, theme::white(0.5f));
+    std::string kick = onboarding_ ? setup_ui::kicker(step_ == 1 ? setup_ui::Step::Sports : setup_ui::Step::Teams)
+                                   : std::string(label[step_]);
+    ui::label(c, kick, kLeft, kTop, Weight::Bold, 18, theme::white(0.5f));
     if (step_ == 1) drawLeagues(c);
     else if (step_ == 2) drawTeams(c);
     else drawReview(c);
+    if (onboarding_) setup_ui::stepBar(c, step_ == 1 ? setup_ui::Step::Sports : setup_ui::Step::Teams);
+    setup_ui::keys(c, app_.remoteKeys(), step_ == 2 && focus_ >= 0);
   }
 
  private:
+  // Continue is the first button in first-run setup (as on its other
+  // screens); Next is the second one here.
+  int nextIndex() const { return onboarding_ ? 0 : 1; }
+  float bottom() const { return onboarding_ ? setup_ui::kContentBottom : 990; }
+
   bool picked(const std::string& id) const {
     return std::find(draft_.leagues.begin(), draft_.leagues.end(), id) != draft_.leagues.end();
   }
@@ -118,6 +139,27 @@ class MySportsSetup : public Screen {
       if (l && !l->fights && !l->racing && !l->tennis) out.push_back(id);
     }
     return out;
+  }
+
+  // The busiest leagues on the user's channels, in the screen's order.
+  void prePick() {
+    std::vector<std::pair<int, size_t>> busy;
+    for (size_t i = 0; i < picks_.size(); ++i) {
+      auto n = counts_.find(picks_[i].id);
+      if (n != counts_.end() && n->second > 0) busy.push_back({n->second, i});
+    }
+    std::stable_sort(busy.begin(), busy.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    if (busy.size() > kPrePicks) busy.resize(kPrePicks);
+    std::sort(busy.begin(), busy.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
+    for (const auto& [n, i] : busy) draft_.leagues.push_back(picks_[i].id);
+  }
+
+  // The end of first-run setup's sports: saved, then the summary.
+  void finishOnboarding() {
+    draft_.configured = true;
+    draft_.prompted = true;
+    app_.store().setMySports(draft_);
+    app_.nav().push(makeSetupDone(app_));
   }
 
   // ---------------------------------------------------------- step 1
@@ -145,11 +187,9 @@ class MySportsSetup : public Screen {
     }
   }
 
-  int buttonsRow() const { return static_cast<int>(picks_.size()); }  // focus index of the buttons
-
   bool leaguesKey(const KeyEvent& e) {
     int n = static_cast<int>(picks_.size());
-    if (focus_ >= n) {  // buttons: Cancel / Next
+    if (focus_ >= n) {  // the buttons
       switch (e.key) {
         case Key::Left: button_ = 0; return true;
         case Key::Right: button_ = 1; return true;
@@ -157,8 +197,15 @@ class MySportsSetup : public Screen {
           if (!rows_.empty()) focus_ = rows_.back().front();
           return true;
         case Key::Ok:
-          if (button_ == 0) app_.nav().pop();
-          else goTeams();
+          if (button_ == nextIndex()) {
+            goTeams();
+          } else if (onboarding_) {
+            // Skip: no sports picked; Live Events won't ask again.
+            app_.store().markMySportsPrompted();
+            app_.nav().push(makeSetupDone(app_));
+          } else {
+            app_.nav().pop();
+          }
           return true;
         default: return e.key != Key::Back;
       }
@@ -183,7 +230,7 @@ class MySportsSetup : public Screen {
           focus_ = below[static_cast<size_t>(std::min(col, static_cast<int>(below.size()) - 1))];
         } else {
           focus_ = n;
-          button_ = 1;
+          button_ = nextIndex();
         }
         return true;
       case Key::Ok:
@@ -196,6 +243,10 @@ class MySportsSetup : public Screen {
   void goTeams() {
     std::vector<std::string> leagues = teamLeagues();
     if (leagues.empty()) {
+      if (onboarding_) {
+        finishOnboarding();
+        return;
+      }
       step_ = 3;
       button_ = 1;
       return;
@@ -203,18 +254,21 @@ class MySportsSetup : public Screen {
     app_.store().requestRosters(std::set<std::string>(leagues.begin(), leagues.end()));
     step_ = 2;
     tab_ = 0;
-    focus_ = -1;  // the league tabs
+    focus_ = kRail;
     loadTeams();
   }
 
   void drawLeagues(ui::Ctx& c) {
     ui::label(c, "What do you watch?", kLeft, kTop + 34, Weight::Bold, 52, theme::white());
-    ui::label(c, "Your teams lead Live Events, each pick gets a row, and the schedule is only looked up for these.",
+    ui::label(c,
+              onboarding_ ? "Each pick gets its own row in Live Events, your teams lead, and the schedule is only looked "
+                            "up for these. The busiest on your channels are picked for you."
+                          : "Your teams lead Live Events, each pick gets a row, and the schedule is only looked up for these.",
               kLeft, kTop + 108, Weight::Regular, 22, theme::white(0.65f), 1760);
     // Grid with section headings; scrolled only when the focus would leave
     // the view (so tiles stay put under the pointer).
     float y = kTop + 160;
-    float visible = gfx::kLayoutHeight - y - 140;
+    float visible = bottom() - 90 - y;
     if (focus_ >= 0 && focus_ < static_cast<int>(picks_.size())) {
       float fy = ys_[static_cast<size_t>(focus_)];
       if (fy - 50 < scroll_) scroll_ = std::max(0.0f, fy - 50);
@@ -250,22 +304,14 @@ class MySportsSetup : public Screen {
       }
     }
     c.g.popClip();
-    drawButtons(c, "Cancel", teamLeagues().empty() ? "Next: review" : "Next: favorite teams",
-                focus_ >= static_cast<int>(picks_.size()));
+    std::vector<std::string> titles;
+    if (onboarding_) titles = {"Continue", "Skip"};
+    else titles = {"Cancel", teamLeagues().empty() ? "Next: review" : "Next: favorite teams"};
+    drawButtons(c, titles, focus_ >= static_cast<int>(picks_.size()));
   }
 
-  void drawButtons(ui::Ctx& c, const std::string& a, const std::string& b, bool focusedRow) {
-    float x = kLeft, y = gfx::kLayoutHeight - 110;
-    for (int i = 0; i < 2; ++i) {
-      const std::string& t = i == 0 ? a : b;
-      float w = ui::chipWidth(c, t, 24) + 50;
-      Rect r{x, y, w, 64};
-      c.hit(r, kHitButton + i);
-      bool f = focusedRow && button_ == i;
-      c.g.fill(r, f ? theme::white() : theme::white(0.12f), 32);
-      ui::labelIn(c, t, r, Weight::Bold, 24, f ? theme::black() : theme::white(), Align::Center);
-      x += w + 20;
-    }
+  void drawButtons(ui::Ctx& c, const std::vector<std::string>& titles, bool focusedRow) {
+    setup_ui::buttons(c, kLeft, bottom() - 70, titles, focusedRow ? button_ : -1, kHitButton);
   }
 
   // ---------------------------------------------------------- step 2
@@ -277,88 +323,180 @@ class MySportsSetup : public Screen {
     std::sort(teams_.begin(), teams_.end(), [](const sports::SportsTeam& a, const sports::SportsTeam& b) { return a.name < b.name; });
   }
 
+  void setTab(int tab) {
+    if (tab == tab_) return;
+    tab_ = tab;
+    teamScroll_ = 0;
+    loadTeams();
+  }
+
+  void leaveTeams(bool next) {
+    if (next) {
+      if (onboarding_) finishOnboarding();
+      else {
+        step_ = 3;
+        button_ = 1;
+      }
+      return;
+    }
+    step_ = 1;
+    focus_ = 0;
+    button_ = nextIndex();
+  }
+
   bool teamsKey(const KeyEvent& e) {
     std::vector<std::string> leagues = teamLeagues();
+    int nLeagues = static_cast<int>(leagues.size());
     int n = static_cast<int>(teams_.size());
     if (teams_.empty()) loadTeams();
-    if (focus_ == -1) {  // league tabs
+    if (e.key == Key::Back) {
+      step_ = 1;
+      focus_ = 0;
+      button_ = nextIndex();
+      return true;
+    }
+    if (focus_ == kRail) {
       switch (e.key) {
-        case Key::Left: if (tab_ > 0) { --tab_; loadTeams(); } return true;
-        case Key::Right: if (tab_ + 1 < static_cast<int>(leagues.size())) { ++tab_; loadTeams(); } return true;
-        case Key::Down: focus_ = n > 0 ? 0 : -2; button_ = 1; return true;
-        case Key::Back: step_ = 1; focus_ = 0; return true;
+        case Key::Up: if (tab_ > 0) setTab(tab_ - 1); return true;
+        case Key::Down:
+          if (tab_ + 1 < nLeagues) setTab(tab_ + 1);
+          else {
+            focus_ = onboarding_ ? kReminder : kButtons;
+            button_ = nextIndex();
+          }
+          return true;
+        case Key::Right:
+        case Key::Ok: if (n > 0) focus_ = 0; return true;
         default: return true;
       }
     }
-    if (focus_ == -2) {  // buttons: Back / Next
+    if (focus_ == kReminder) {
+      switch (e.key) {
+        case Key::Up: focus_ = kRail; return true;
+        case Key::Down: focus_ = kButtons; button_ = nextIndex(); return true;
+        case Key::Right: if (n > 0) focus_ = 0; return true;
+        case Key::Ok: draft_.reminders = !draft_.reminders; return true;
+        default: return true;
+      }
+    }
+    if (focus_ == kButtons) {
       switch (e.key) {
         case Key::Left: button_ = 0; return true;
         case Key::Right: button_ = 1; return true;
-        case Key::Up: focus_ = n > 0 ? n - 1 : -1; return true;
+        case Key::Up: focus_ = onboarding_ ? kReminder : kRail; return true;
         case Key::Ok:
-          if (button_ == 0) { step_ = 1; focus_ = 0; }
-          else { step_ = 3; button_ = 1; }
+          // First run: Continue or Skip both move on (Skip leaves the teams
+          // as they were);
+          // otherwise Back or Next.
+          if (onboarding_ && button_ != nextIndex()) draft_.teams = initialTeams_;
+          leaveTeams(onboarding_ || button_ == nextIndex());
           return true;
-        case Key::Back: step_ = 1; focus_ = 0; return true;
         default: return true;
       }
     }
+    // The grid of teams.
+    if (int dir = setup_ui::letterStep(e.key); dir != 0) {
+      std::vector<std::string> names;
+      for (const sports::SportsTeam& t : teams_) names.push_back(t.name);
+      focus_ = setup_ui::nextLetter(names, focus_, dir);
+      return true;
+    }
     switch (e.key) {
-      case Key::Left: if (focus_ % kTeamCols > 0) --focus_; return true;
+      case Key::Left:
+        if (focus_ % kTeamCols > 0) --focus_;
+        else focus_ = kRail;
+        return true;
       case Key::Right: if (focus_ + 1 < n && (focus_ + 1) % kTeamCols != 0) ++focus_; return true;
-      case Key::Up: focus_ = focus_ >= kTeamCols ? focus_ - kTeamCols : -1; return true;
-      case Key::Down: if (focus_ + kTeamCols < n) focus_ += kTeamCols; else { focus_ = -2; button_ = 1; } return true;
+      case Key::Up: if (focus_ >= kTeamCols) focus_ -= kTeamCols; return true;
+      case Key::Down:
+        if (focus_ + kTeamCols < n) focus_ += kTeamCols;
+        else {
+          focus_ = kButtons;
+          button_ = nextIndex();
+        }
+        return true;
       case Key::Ok: {
-        if (focus_ < 0 || focus_ >= n || tab_ >= static_cast<int>(leagues.size())) return true;
+        if (focus_ < 0 || focus_ >= n || tab_ >= nLeagues) return true;
         std::string key = sports::teamKey(leagues[static_cast<size_t>(tab_)], teams_[static_cast<size_t>(focus_)].id);
         auto it = std::find(draft_.teams.begin(), draft_.teams.end(), key);
         if (it != draft_.teams.end()) draft_.teams.erase(it);
         else draft_.teams.push_back(key);
         return true;
       }
-      case Key::Back: step_ = 1; focus_ = 0; return true;
       default: return true;
     }
   }
 
   void drawTeams(ui::Ctx& c) {
     if (teams_.empty()) loadTeams();
-    ui::label(c, "Your favorite teams", kLeft, kTop + 34, Weight::Bold, 52, theme::white());
+    ui::label(c, onboarding_ ? "Your teams" : "Your favorite teams", kLeft, kTop + 34, Weight::Bold, 52, theme::white());
+    ui::label(c, "Their games lead Live Events.", kLeft, kTop + 108, Weight::Regular, 22, theme::white(0.65f), kRailW);
     std::vector<std::string> leagues = teamLeagues();
-    float x = kLeft, y = kTop + 120;
+
+    // The rail: the picked leagues, then (first run) the reminders switch.
+    float y = kTop + 170;
+    ui::label(c, "YOUR LEAGUES", kLeft + 6, y, Weight::Bold, 16, theme::white(0.5f));
+    y += 32;
     for (size_t i = 0; i < leagues.size(); ++i) {
       const sports::League* l = sports::leagueByShort(leagues[i]);
       std::string t = l ? l->shortName : leagues[i];
-      float w = ui::chipWidth(c, t, 22) + 30;
-      Rect r{x, y, w, 52};
-      c.hit(r, kHitTab + static_cast<int>(i));
+      Rect r{kLeft, y, kRailW, 60};
+      c.hit(r, kHitTab + static_cast<int>(std::min<size_t>(i, 9)));
       bool sel = static_cast<int>(i) == tab_;
-      bool f = sel && focus_ == -1;
-      c.g.fill(r, f ? theme::white() : sel ? theme::white(0.25f) : theme::white(0.1f), 26);
-      ui::labelIn(c, t, r, Weight::Bold, 22, f ? theme::black() : theme::white(), Align::Center);
-      x += w + 14;
+      bool f = sel && focus_ == kRail;
+      c.g.fill(r, f ? theme::white() : sel ? theme::white(0.2f) : theme::white(0.07f), 16);
+      Color ink = f ? theme::black() : theme::white();
+      ui::labelIn(c, t, {r.x + 22, r.y, r.w - 90, r.h}, Weight::Bold, 23, ink);
+      int count = static_cast<int>(std::count_if(draft_.teams.begin(), draft_.teams.end(), [&](const std::string& k) {
+        return k.rfind(leagues[i] + "|", 0) == 0;
+      }));
+      if (count > 0)
+        ui::labelIn(c, std::to_string(count), {r.x, r.y, r.w - 22, r.h}, Weight::Medium, 19,
+                    f ? theme::black(0.6f) : theme::white(0.6f), Align::Right);
+      y += 70;
+      if (y > bottom() - 250) break;
     }
-    y += 80;
+    if (onboarding_) {
+      y += 14;
+      Rect row{kLeft, y, kRailW, 84};
+      c.hit(row, kHitReminder);
+      bool f = focus_ == kReminder;
+      c.g.fill(row, f ? theme::white() : theme::white(0.07f), 16);
+      Color ink = f ? theme::black() : theme::white();
+      ui::label(c, "Remind me before", row.x + 22, row.y + 14, Weight::Bold, 21, ink);
+      ui::label(c, "my teams play", row.x + 22, row.y + 44, Weight::Bold, 21, ink);
+      Rect knob{row.x + row.w - 88, row.y + 23, 66, 38};
+      bool on = draft_.reminders;
+      c.g.fill(knob, on ? theme::hex(theme::kToggleOn) : (f ? theme::black(0.2f) : theme::white(0.25f)), 19);
+      c.g.fill({on ? knob.x + knob.w - 34 : knob.x + 4, knob.y + 4, 30, 30}, theme::white(), 15);
+    }
+
+    // The grid.
+    std::string league = tab_ < static_cast<int>(leagues.size()) ? leagues[static_cast<size_t>(tab_)] : "";
+    const sports::League* l = sports::leagueByShort(league);
+    float gy = kTop + 100;
+    if (l) ui::label(c, l->name, kTeamX, gy, Weight::Bold, 30, theme::white(), 900);
+    if (!teams_.empty())
+      ui::label(c, std::to_string(teams_.size()) + " teams, A to Z", kTeamX, gy + 44, Weight::Regular, 20, theme::white(0.55f));
+    gy += 90;
     if (teams_.empty()) {
-      ui::spinner(c, kLeft + 20, y + 40, 16);
-      ui::label(c, "Looking up the teams\xe2\x80\xa6", kLeft + 50, y + 26, Weight::Medium, 24, theme::white(0.6f));
+      ui::spinner(c, kTeamX + 20, gy + 40, 16);
+      ui::label(c, "Looking up the teams\xe2\x80\xa6", kTeamX + 50, gy + 26, Weight::Medium, 24, theme::white(0.6f));
     }
-    float visible = gfx::kLayoutHeight - y - 140;
+    float visible = bottom() - gy;
     if (focus_ >= 0) {
       float fy = static_cast<float>(focus_ / kTeamCols) * (kTeamH + kTeamGap);
       if (fy < teamScroll_) teamScroll_ = fy;
       if (fy + kTeamH > teamScroll_ + visible) teamScroll_ = fy + kTeamH - visible;
-    } else if (focus_ == -1) {
-      teamScroll_ = 0;
     }
     float scroll = teamScroll_;
-    c.g.pushClip({0, y - 4, gfx::kLayoutWidth, visible + 8});
-    std::string league = tab_ < static_cast<int>(leagues.size()) ? leagues[static_cast<size_t>(tab_)] : "";
+    c.g.pushClip({kTeamX - 10, gy - 4, gfx::kLayoutWidth - kTeamX, visible + 8});
     for (size_t i = 0; i < teams_.size(); ++i) {
       const sports::SportsTeam& t = teams_[i];
       int row = static_cast<int>(i) / kTeamCols, col = static_cast<int>(i) % kTeamCols;
-      Rect r{kLeft + static_cast<float>(col) * (kTeamW + kTeamGap), y + static_cast<float>(row) * (kTeamH + kTeamGap) - scroll, kTeamW, kTeamH};
-      if (r.y > y + visible || r.y + r.h < y) continue;
+      Rect r{kTeamX + static_cast<float>(col) * (kTeamW + kTeamGap), gy + static_cast<float>(row) * (kTeamH + kTeamGap) - scroll,
+             kTeamW, kTeamH};
+      if (r.y > gy + visible || r.y + r.h < gy) continue;
       c.hit(r, kHitTile + static_cast<int>(i));
       bool f = static_cast<int>(i) == focus_;
       bool on = std::find(draft_.teams.begin(), draft_.teams.end(), sports::teamKey(league, t.id)) != draft_.teams.end();
@@ -373,8 +511,8 @@ class MySportsSetup : public Screen {
       };
       side.color = hex(t.color, 0x3A3D44);
       side.alt = hex(t.altColor, 0xFFFFFF);
-      events_ui::badge(c, side, r.x + (r.w - 84) * 0.5f, r.y + 20, 84, f);
-      ui::label(c, t.name, r.x + 12, r.y + 122, Weight::Medium, 21, f ? theme::black() : theme::white(), r.w - 24, Align::Center);
+      events_ui::badge(c, side, r.x + (r.w - 78) * 0.5f, r.y + 18, 78, f);
+      ui::label(c, t.name, r.x + 12, r.y + 116, Weight::Medium, 21, f ? theme::black() : theme::white(), r.w - 24, Align::Center);
       if (on) {
         Rect check{r.x + r.w - 40, r.y + 10, 30, 30};
         c.g.fill(check, theme::hex(theme::kToggleOn), 15);
@@ -382,7 +520,10 @@ class MySportsSetup : public Screen {
       }
     }
     c.g.popClip();
-    drawButtons(c, "Back", "Next: review", focus_ == -2);
+    std::vector<std::string> titles;
+    if (onboarding_) titles = {"Continue", "Skip"};
+    else titles = {"Back", "Next: review"};
+    drawButtons(c, titles, focus_ == kButtons);
   }
 
   // ---------------------------------------------------------- step 3
@@ -398,7 +539,7 @@ class MySportsSetup : public Screen {
           if (!draft_.teams.empty()) draft_.reminders = !draft_.reminders;
         } else if (button_ == 0) {
           step_ = teamLeagues().empty() ? 1 : 2;
-          focus_ = step_ == 1 ? 0 : -1;
+          focus_ = step_ == 1 ? 0 : kRail;
         } else {
           draft_.configured = true;
           draft_.prompted = true;
@@ -409,7 +550,7 @@ class MySportsSetup : public Screen {
         return true;
       case Key::Back:
         step_ = teamLeagues().empty() ? 1 : 2;
-        focus_ = step_ == 1 ? 0 : -1;
+        focus_ = step_ == 1 ? 0 : kRail;
         return true;
       default: return true;
     }
@@ -440,7 +581,7 @@ class MySportsSetup : public Screen {
     bool on = draft_.reminders && enabled;
     c.g.fill(knob, on ? theme::hex(theme::kToggleOn) : (f ? theme::black(0.2f) : theme::white(0.25f)), 19);
     c.g.fill({on ? knob.x + knob.w - 34 : knob.x + 4, knob.y + 4, 30, 30}, theme::white(), 15);
-    drawButtons(c, "Back", "Done", reviewRow_ == 1);
+    drawButtons(c, {"Back", "Done"}, reviewRow_ == 1);
   }
 
   static std::string str_join(const std::vector<std::string>& v) {
@@ -449,10 +590,12 @@ class MySportsSetup : public Screen {
     return out;
   }
 
+  bool onboarding_;
   sports::MySportsPrefs draft_;
   std::map<std::string, int> counts_;
   std::vector<Pick> picks_;
   std::vector<sports::SportsTeam> teams_;
+  std::vector<std::string> initialTeams_;
   int step_ = 1;
   int focus_ = 0;
   int button_ = 1;
@@ -468,6 +611,6 @@ class MySportsSetup : public Screen {
 
 }  // namespace
 
-std::unique_ptr<Screen> makeMySports(App& app) { return std::make_unique<MySportsSetup>(app); }
+std::unique_ptr<Screen> makeMySports(App& app, bool onboarding) { return std::make_unique<MySportsSetup>(app, onboarding); }
 
 }  // namespace marigold::app

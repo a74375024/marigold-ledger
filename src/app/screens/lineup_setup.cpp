@@ -1,15 +1,17 @@
-// My Lineup setup (LineupSetupView in tvOS):
-//   1. "Where do you watch?": TV markets, so their local stations join;
-//   2. "What do you want in My Lineup?": countries and languages, kinds of
-//      channels, "Only channels with a guide";
-//   3. "My Lineup is ready": the counts per kind.
-// Nothing is saved until Build My Lineup.
+// My Lineup setup (LineupSetupView in tvOS), one screen per step:
+//   1. Area: "Where do you watch?": TV markets, so their local stations join;
+//   2. Languages: the countries and languages channels are kept from;
+//   3. Channels: kinds of channels, "Only channels with a guide";
+// then "My Lineup is ready" with the counts per kind. In first-run setup
+// these are steps 2-4 of 7 and Channels carries on to My Sports instead.
+// Nothing is saved until the last step.
 #include <algorithm>
 #include <map>
 #include <set>
 
 #include "app/app.hpp"
 #include "app/screens/screens.hpp"
+#include "app/screens/setup_ui.hpp"
 #include "app/store/store.hpp"
 #include "app/ui/panel.hpp"
 #include "core/catalog/lineup.hpp"
@@ -22,20 +24,24 @@ using ui::Align;
 using ui::Rect;
 using ui::Weight;
 namespace theme = ui::theme;
+using setup_ui::kLeft;
 
-constexpr float kLeftX = 80, kLeftW = 620;
-constexpr float kListX = 760;
+constexpr float kLeftW = 760;
+constexpr float kListX = 960;
 constexpr int kHitButton = 10;  // + index
 
 class LineupSetup : public Screen {
  public:
-  explicit LineupSetup(App& app) : Screen(app), draft_(app.store().lineupPrefs()) {
+  LineupSetup(App& app, bool onboarding) : Screen(app), onboarding_(onboarding), draft_(app.store().lineupPrefs()) {
     for (const catalog::MarketChoice& m : draft_.markets) selected_.push_back(m.name);
+    initial_ = draft_;
     std::weak_ptr<bool> alive = alive_;
     app_.store().loadMarkets([this, alive](TvMarkets markets) {
       if (alive.expired()) return;
       markets_ = std::move(markets);
       loading_ = false;
+      // First run: the area the channel names point to most, picked.
+      if (onboarding_ && selected_.empty() && !markets_.suggested.empty()) selected_.push_back(markets_.suggested.front());
       build();
     });
     build();
@@ -44,23 +50,34 @@ class LineupSetup : public Screen {
 
   bool key(const KeyEvent& e) override {
     if (busy_ || step_ == Step::Building) return true;
+    int n = static_cast<int>(buttonTitles().size());
+    if (int dir = setup_ui::letterStep(e.key); dir != 0 && step_ == Step::Market) {
+      jumpLetter(dir);
+      return true;
+    }
     switch (e.key) {
       case Key::Left:
         if (focusList_) {
           focusList_ = false;
           button_ = 0;
+        } else if (button_ > 0) {
+          --button_;
         }
         return true;
       case Key::Right:
-        if (!focusList_) focusList_ = true;
+        if (!focusList_) {
+          if (button_ + 1 < n) ++button_;
+          else focusList_ = true;
+        }
         return true;
       case Key::Up:
       case Key::Down:
         if (focusList_) return list_.key(e.key);
-        button_ = std::clamp(button_ + (e.key == Key::Up ? -1 : 1), 0, buttonCount() - 1);
         return true;
       case Key::Ok:
-        if (focusList_) {
+        if (step_ == Step::Summary) {
+          press(0);
+        } else if (focusList_) {
           list_.key(Key::Ok);
           build();
         } else {
@@ -72,11 +89,8 @@ class LineupSetup : public Screen {
           app_.closeKeyboard();
           return true;
         }
-        if (step_ == Step::Categories) {
-          step_ = Step::Market;
-          focusList_ = true;
-          build();
-          list_.focusFirst();
+        if (step_ == Step::Channels || step_ == Step::Languages) {
+          go(step_ == Step::Channels ? Step::Languages : Step::Market);
           return true;
         }
         return false;
@@ -117,7 +131,7 @@ class LineupSetup : public Screen {
   }
 
   void draw(ui::Ctx& c) override {
-    c.g.fill({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight}, theme::black());
+    c.g.fill({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight}, theme::hex(theme::kBackground));
     if (step_ == Step::Building) {
       ui::spinner(c, gfx::kLayoutWidth * 0.5f, 430, 30);
       ui::label(c, "Building My Lineup\xe2\x80\xa6", 0, 500, Weight::Bold, 44, theme::white(), gfx::kLayoutWidth,
@@ -128,50 +142,95 @@ class LineupSetup : public Screen {
       drawSummary(c);
       return;
     }
-    float y = 80;
-    ui::label(c, step_ == Step::Market ? "STEP 1 OF 2" : "STEP 2 OF 2", kLeftX, y, Weight::Bold, 18, theme::white(0.5f));
-    y += 40;
-    y += ui::paragraph(c, step_ == Step::Market ? "Where do you watch?" : "What do you want in My Lineup?", kLeftX, y,
-                       kLeftW, Weight::Bold, 52, theme::white(), 2, 1.2f) + 20;
-    const char* detail = step_ == Step::Market
-                             ? "Pick your TV market to keep its local stations (ABC, CBS, NBC, FOX, PBS\xe2\x80\xa6) in My "
-                               "Lineup. Other cities' locals stay out of the way. You can pick more than one."
-                             : "Each channel appears once, however many copies your providers have; the extra copies "
-                               "become automatic backups. Everything you leave out stays available under All Channels "
-                               "and Search.";
-    y += ui::paragraph(c, detail, kLeftX, y, kLeftW, Weight::Regular, 24, theme::white(0.7f), 6) + 24;
+    float y = setup_ui::heading(c, kicker(), heading(), lead(), kLeftW);
+    setup_ui::buttons(c, kLeft, y, buttonTitles(), focusList_ ? -1 : button_, kHitButton);
+    if (busy_) ui::spinner(c, kLeft + 420, y + 35, 14);
+    y += 110;
+    y += ui::paragraph(c, note(), kLeft, y, kLeftW, Weight::Regular, 22, theme::white(0.55f), 4) + 20;
     if (step_ == Step::Market) {
       for (const std::string& name : selected_) {
-        ui::label(c, "\xe2\x9c\x93  " + name, kLeftX, y, Weight::Medium, 22, theme::white(), kLeftW);
+        if (y > bottom() - 40) break;
+        ui::label(c, "\xe2\x9c\x93  " + name, kLeft, y, Weight::Medium, 22, theme::white(), kLeftW);
         y += 36;
-        if (y > 760) break;
       }
     }
-    // Buttons at the bottom of the left column.
-    float by = gfx::kLayoutHeight - 80 - static_cast<float>(buttonCount()) * 86;
-    for (int i = 0; i < buttonCount(); ++i) {
-      std::string title = buttonTitle(i);
-      bool f = !focusList_ && button_ == i;
-      Rect r{kLeftX, by, std::max(260.0f, ui::chipWidth(c, title, 26) + 60), 70};
-      c.hit(r, kHitButton + i);
-      c.g.fill(r, f ? theme::white() : theme::white(0.12f), 35);
-      ui::labelIn(c, title, r, Weight::Bold, 26, f ? theme::black() : theme::white(), Align::Center);
-      if (i == 0 && busy_) ui::spinner(c, r.x + r.w + 36, r.y + 35, 14);
-      by += 86;
-    }
-    if (!problem_.empty()) ui::label(c, problem_, kLeftX, gfx::kLayoutHeight - 60, Weight::Medium, 20, theme::hex(theme::kWarning), kLeftW);
+    if (!problem_.empty())
+      ui::label(c, problem_, kLeft, bottom() - 30, Weight::Medium, 20, theme::hex(theme::kWarning), kLeftW);
 
-    list_.draw(c, {kListX, 70, gfx::kLayoutWidth - kListX - 80, gfx::kLayoutHeight - 130}, ui::ListPanel::kHitBase,
-               focusList_);
+    list_.draw(c, {kListX, 70, gfx::kLayoutWidth - kListX - 80, bottom() - 70}, ui::ListPanel::kHitBase, focusList_);
+    if (onboarding_) setup_ui::stepBar(c, stepOf());
+    setup_ui::keys(c, app_.remoteKeys(), step_ == Step::Market && focusList_);
   }
 
  private:
-  enum class Step { Market, Categories, Building, Summary };
+  enum class Step { Market, Languages, Channels, Building, Summary };
 
-  int buttonCount() const { return step_ == Step::Summary ? 1 : 2; }
-  std::string buttonTitle(int i) const {
-    if (step_ == Step::Market) return i == 0 ? (selected_.empty() ? "Skip Local Stations" : "Continue") : "Not Now";
-    return i == 0 ? "Build My Lineup" : "Back";
+  float bottom() const { return onboarding_ ? setup_ui::kContentBottom : 990; }
+
+  setup_ui::Step stepOf() const {
+    return step_ == Step::Market ? setup_ui::Step::Area
+           : step_ == Step::Languages ? setup_ui::Step::Languages
+                                      : setup_ui::Step::Channels;
+  }
+
+  std::string kicker() const {
+    if (onboarding_) return setup_ui::kicker(stepOf());
+    int n = step_ == Step::Market ? 1 : step_ == Step::Languages ? 2 : 3;
+    return "MY LINEUP \xc2\xb7 STEP " + std::to_string(n) + " OF 3";
+  }
+
+  std::string heading() const {
+    switch (step_) {
+      case Step::Market: return "Where do you watch?";
+      case Step::Languages: return "Countries & languages";
+      default: return "What kinds of channels?";
+    }
+  }
+
+  std::string lead() const {
+    switch (step_) {
+      case Step::Market:
+        return "Your local stations (ABC, CBS, NBC, FOX, PBS\xe2\x80\xa6) and regional sports join My Lineup. East or West "
+               "feeds follow the area's time zone.";
+      case Step::Languages:
+        return "Which channels My Lineup, All Channels and Live Events include. Everything else is still in Search.";
+      default:
+        return "My Lineup suggests these. Each channel appears once, however many copies your providers have; the extra "
+               "copies become automatic backups.";
+    }
+  }
+
+  std::string note() const {
+    switch (step_) {
+      case Step::Market:
+        return "Pick more than one if you split your time between places; the first is home for Live Events. Other "
+               "cities' locals stay out of the way.";
+      case Step::Languages:
+        return "Your area's country is picked for you. Each one you add brings its own channels and sports.";
+      default: {
+        catalog::Coast coast = catalog::resolveCoast(draft_);
+        std::string feeds = coast == catalog::Coast::west ? "West" : coast == catalog::Coast::east ? "East" : "Both";
+        return "East/West premium feeds: " + feeds + " here. Change it any time in Options \xe2\x80\xba My Lineup.";
+      }
+    }
+  }
+
+  std::vector<std::string> buttonTitles() const {
+    if (step_ == Step::Summary) return {"Start Watching"};
+    if (onboarding_) return {"Continue", "Skip"};
+    switch (step_) {
+      case Step::Market: return {selected_.empty() ? "Skip Local Stations" : "Continue", "Not Now"};
+      case Step::Languages: return {"Continue", "Back"};
+      default: return {"Build My Lineup", "Back"};
+    }
+  }
+
+  void go(Step s) {
+    step_ = s;
+    focusList_ = true;
+    button_ = 0;
+    build();
+    list_.focusFirst();
   }
 
   void press(int i) {
@@ -179,37 +238,70 @@ class LineupSetup : public Screen {
       app_.nav().pop();
       return;
     }
-    if (step_ == Step::Market) {
-      if (i == 1) {
-        app_.nav().pop();
+    bool skip = onboarding_ && i == 1;
+    if (!onboarding_ && i == 1) {
+      // Not Now / Back.
+      if (step_ == Step::Market) app_.nav().pop();
+      else go(step_ == Step::Channels ? Step::Languages : Step::Market);
+      return;
+    }
+    switch (step_) {
+      case Step::Market: {
+        if (skip) selected_.clear();  // no local stations
+        // Look up each picked market's stations.
+        busy_ = true;
+        problem_.clear();
+        std::weak_ptr<bool> alive = alive_;
+        app_.store().resolveMarkets(selected_, draft_, [this, alive](std::vector<catalog::MarketChoice> choices) {
+          if (alive.expired()) return;
+          busy_ = false;
+          draft_.markets = std::move(choices);
+          go(Step::Languages);
+          app_.invalidate();
+        });
         return;
       }
-      // Continue: look up each picked market's stations.
-      busy_ = true;
-      problem_.clear();
-      std::weak_ptr<bool> alive = alive_;
-      app_.store().resolveMarkets(selected_, draft_, [this, alive](std::vector<catalog::MarketChoice> choices) {
-        if (alive.expired()) return;
-        busy_ = false;
-        draft_.markets = std::move(choices);
-        step_ = Step::Categories;
-        focusList_ = true;
-        build();
-        list_.focusFirst();
-        app_.invalidate();
-      });
+      case Step::Languages:
+        if (skip) draft_.countries = initial_.countries;
+        go(Step::Channels);
+        return;
+      case Step::Channels:
+        if (skip) {
+          draft_.categories = initial_.categories;
+          draft_.requireGuide = initial_.requireGuide;
+        }
+        builtFrom_ = app_.store().channels()->version;
+        app_.store().buildLineup(draft_);
+        if (onboarding_) {
+          // The lineup builds while the sports are picked.
+          app_.nav().push(makeMySports(app_, true));
+          return;
+        }
+        step_ = Step::Building;
+        return;
+      default:
+        return;
+    }
+  }
+
+  // CH + / CH - (or rewind / fast forward): the next letter of the A-to-Z
+  // market list.
+  void jumpLetter(int dir) {
+    std::vector<std::string> names(list_.items.size());
+    int all = -1;
+    for (size_t i = 0; i < list_.items.size(); ++i) {
+      const ui::PanelItem& it = list_.items[i];
+      if (it.kind == ui::PanelItem::Kind::Header && str::startsWith(it.title, "ALL")) all = static_cast<int>(i);
+      if (all >= 0 && it.kind == ui::PanelItem::Kind::Check) names[i] = it.title;
+    }
+    if (all < 0) return;
+    focusList_ = true;
+    int from = list_.focused();
+    if (from < 0 || from >= static_cast<int>(names.size()) || names[static_cast<size_t>(from)].empty()) {
+      list_.focusIndex(all + 1);
       return;
     }
-    if (i == 1) {
-      step_ = Step::Market;
-      focusList_ = true;
-      build();
-      list_.focusFirst();
-      return;
-    }
-    builtFrom_ = app_.store().channels()->version;
-    app_.store().buildLineup(draft_);
-    step_ = Step::Building;
+    list_.focusIndex(setup_ui::nextLetter(names, from, dir));
   }
 
   void build() {
@@ -248,16 +340,19 @@ class LineupSetup : public Screen {
       std::vector<std::string> shown;
       for (const std::string& name : markets_.all)
         if (q.empty() || str::lowerAscii(name).find(q) != std::string::npos) shown.push_back(name);
+      // A to Z, so the letter keys can jump.
+      std::sort(shown.begin(), shown.end(),
+                [](const std::string& a, const std::string& b) { return str::lowerAscii(a) < str::lowerAscii(b); });
       if (!markets_.all.empty()) {
-        list_.items.push_back(ui::PanelItem::header("ALL MARKETS (" + std::to_string(shown.size()) + ")"));
+        list_.items.push_back(ui::PanelItem::header("ALL AREAS, A TO Z (" + std::to_string(shown.size()) + ")"));
         for (const std::string& name : shown) row(name);
       }
-    } else if (step_ == Step::Categories) {
+    } else if (step_ == Step::Languages) {
       Store& s = app_.store();
-      list_.items.push_back(ui::PanelItem::header("COUNTRIES AND LANGUAGES"));
+      list_.items.push_back(ui::PanelItem::header("IN YOUR CHANNEL LIST"));
       for (const MarketSummary& m : s.countries(draft_.countries)) {
         ui::PanelItem it{ui::PanelItem::Kind::Check, m.name};
-        it.value = std::to_string(m.count);
+        it.value = std::to_string(m.count) + " channels";
         it.on = m.on;
         std::string code = m.code;
         it.select = [self, code] {
@@ -271,6 +366,8 @@ class LineupSetup : public Screen {
         };
         list_.items.push_back(it);
       }
+    } else if (step_ == Step::Channels) {
+      Store& s = app_.store();
       list_.items.push_back(ui::PanelItem::header("KINDS OF CHANNELS"));
       for (const CategorySummary& cat : s.categories(draft_)) {
         ui::PanelItem it{ui::PanelItem::Kind::Toggle, cat.title};
@@ -322,13 +419,11 @@ class LineupSetup : public Screen {
       tx += 168;
       if (tx + 150 > gfx::kLayoutWidth - 80) break;
     }
-    Rect b{x, y + 210, 320, 70};
-    c.hit(b, kHitButton);
-    c.g.fill(b, theme::white(), 35);
-    ui::labelIn(c, "Start Watching", b, Weight::Bold, 26, theme::black(), Align::Center);
+    setup_ui::buttons(c, x, y + 210, buttonTitles(), 0, kHitButton);
   }
 
-  catalog::LineupPrefs draft_;
+  bool onboarding_;
+  catalog::LineupPrefs draft_, initial_;
   Step step_ = Step::Market;
   TvMarkets markets_;
   bool loading_ = true;
@@ -346,6 +441,8 @@ class LineupSetup : public Screen {
 
 }  // namespace
 
-std::unique_ptr<Screen> makeLineupSetup(App& app) { return std::make_unique<LineupSetup>(app); }
+std::unique_ptr<Screen> makeLineupSetup(App& app, bool onboarding) {
+  return std::make_unique<LineupSetup>(app, onboarding);
+}
 
 }  // namespace marigold::app

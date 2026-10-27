@@ -47,7 +47,7 @@ int run(platform::Window& window, platform::Storage& storage, platform::Video& v
     icons::IconSet icons;  // GL textures: gone before the renderer shuts down
     icons.init(assetDir + "/icons");
     App app(window, storage, g, text, icons, video, std::move(build));
-    if (app.store().accounts().empty()) app.nav().push(makeAccounts(app, true));
+    if (app.store().accounts().empty()) app.nav().push(makeWelcome(app));
     else app.nav().push(std::make_unique<GuideScreen>(app));
     app.nav().settle();
     app.run();

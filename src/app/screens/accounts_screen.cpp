@@ -1,12 +1,14 @@
 // Providers: the list of accounts and the add form (Xtream, Emby or an M3U
-// playlist). Text goes in with the TV keyboard. Passwords show as dots and,
-// like playlist links, are kept in the secrets file only.
+// playlist). Text goes in with the TV keyboard, or the form is filled in on
+// a phone (makePhoneSignIn). Passwords show as dots and, like playlist
+// links, are kept in the secrets file only. In first-run setup this is the
+// remote's way through the Provider step.
 #include <algorithm>
 
 #include "app/app.hpp"
-#include "app/screens/guide_screen.hpp"
 #include "app/screens/panel_screen.hpp"
 #include "app/screens/screens.hpp"
+#include "app/screens/setup_ui.hpp"
 #include "app/store/store.hpp"
 
 namespace marigold::app {
@@ -54,7 +56,7 @@ class AccountsScreen : public Screen {
  private:
   // ----- list
   bool listKey(const KeyEvent& e) {
-    int n = static_cast<int>(list_.size()) + 1;  // + "Add a Provider"
+    int n = static_cast<int>(list_.size()) + 2;  // + "Add a Provider", "Add from your phone"
     switch (e.key) {
       case Key::Up:
         focus_ = std::max(0, focus_ - 1);
@@ -64,6 +66,7 @@ class AccountsScreen : public Screen {
         return true;
       case Key::Ok:
         if (focus_ == static_cast<int>(list_.size())) startForm();
+        else if (focus_ == static_cast<int>(list_.size()) + 1) app_.nav().push(makePhoneSignIn(app_, false));
         else if (focus_ < static_cast<int>(list_.size())) accountMenu(list_[static_cast<size_t>(focus_)]);
         return true;
       default:
@@ -101,7 +104,7 @@ class AccountsScreen : public Screen {
     ui::paragraph(c, "Where your channels come from. Each one keeps its own login on this TV.", x, y, 1100,
                   Weight::Regular, 24, theme::white(0.65f), 2);
     y += 80;
-    for (size_t i = 0; i <= list_.size(); ++i) {
+    for (size_t i = 0; i <= list_.size() + 1; ++i) {
       Rect r{x, y, 1100, 96};
       c.hit(r, 10 + static_cast<int>(i));
       bool f = static_cast<int>(i) == focus_;
@@ -112,8 +115,12 @@ class AccountsScreen : public Screen {
         ui::label(c, a.kind + " \xc2\xb7 " + a.state, r.x + 32, r.y + 56, Weight::Medium, 20,
                   f ? theme::black(0.6f) : theme::white(0.6f), 900);
       } else {
-        ui::labelIn(c, "+  Add a Provider", {r.x + 32, r.y, r.w - 64, r.h}, Weight::Bold, 27,
-                    f ? theme::black() : theme::white());
+        bool phone = i > list_.size();
+        ui::labelIn(c, phone ? "+  Add from your phone" : "+  Add a Provider", {r.x + 32, r.y, r.w - 64, r.h},
+                    Weight::Bold, 27, f ? theme::black() : theme::white());
+        if (phone)
+          ui::labelIn(c, "Type the server and password on your phone", {r.x + 32, r.y, r.w - 64, r.h}, Weight::Medium,
+                      20, f ? theme::black(0.55f) : theme::white(0.55f), Align::Right);
       }
       y += 108;
     }
@@ -188,7 +195,7 @@ class AccountsScreen : public Screen {
           focus_ = 0;
           return true;
         }
-        return !firstRun_ ? false : true;
+        return false;  // first run: back to the welcome
       default:
         return true;
     }
@@ -218,7 +225,7 @@ class AccountsScreen : public Screen {
       }
       self->data_.password.clear();
       if (first) {
-        app.nav().replaceAll(std::make_unique<GuideScreen>(app));
+        app.nav().replaceAll(makeLineupSetup(app, true));
       } else {
         self->form_ = false;
         self->list_ = app.store().accounts();
@@ -234,7 +241,12 @@ class AccountsScreen : public Screen {
 
   void drawForm(ui::Ctx& c) {
     float x = 120, y = 80;
-    ui::label(c, firstRun_ ? "Welcome to Marigold" : "Add a Provider", x, y, Weight::Bold, 52, theme::white());
+    if (firstRun_) {
+      ui::label(c, setup_ui::kicker(setup_ui::Step::Provider), x, y - 34, Weight::Bold, 18, theme::white(0.5f));
+      setup_ui::stepBar(c, setup_ui::Step::Provider);
+      setup_ui::keys(c, app_.remoteKeys(), false);
+    }
+    ui::label(c, firstRun_ ? "Add your provider" : "Add a Provider", x, y, Weight::Bold, 52, theme::white());
     y += 84;
     ui::paragraph(c,
                   firstRun_ ? "Add the provider your channels come from. You can add more later in Options."

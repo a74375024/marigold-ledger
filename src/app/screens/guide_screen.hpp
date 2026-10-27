@@ -30,6 +30,8 @@ class GuideScreen : public Screen {
   void backOut();
   // Focus a channel row (search, number keys, back from the player).
   bool focusChannel(const std::string& entryId);
+  // The Live Events board, over the guide (also from the end of setup).
+  void openEvents();
 
  private:
   using Tab = engine::views::Tab;
@@ -69,7 +71,6 @@ class GuideScreen : public Screen {
   void openSources();
   void openSearch();
   void openLineupSetup();
-  void openEvents();
   void digit(int d);
   void requestVisibleListings();
 

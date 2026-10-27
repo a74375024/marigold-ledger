@@ -21,10 +21,19 @@ std::unique_ptr<Screen> makeProgramDetail(App& app, const std::string& entryId, 
 std::unique_ptr<Screen> makeSearch(App& app, std::function<void(const std::string&)> pick);
 // Options (blue key).
 std::unique_ptr<Screen> makeOptions(App& app);
-// Accounts list and the add-account form. On first run it is the root.
+// Accounts list and the add-account form. `firstRun`: the form, as the
+// remote's way through first-run setup's Provider step.
 std::unique_ptr<Screen> makeAccounts(App& app, bool firstRun);
-// My Lineup setup wizard.
-std::unique_ptr<Screen> makeLineupSetup(App& app);
+// First-run setup (onboarding.cpp): the welcome (the root until a provider
+// is added), signing in from a phone, and the summary at the end.
+std::unique_ptr<Screen> makeWelcome(App& app);
+// The provider from a phone on the home network. `firstRun` carries on to
+// My Lineup's Area step; otherwise it closes once the channels are in.
+std::unique_ptr<Screen> makePhoneSignIn(App& app, bool firstRun);
+std::unique_ptr<Screen> makeSetupDone(App& app);
+// My Lineup setup: Area, Languages, Channels. `onboarding` is first-run
+// setup's steps 2-4, which carries on to My Sports.
+std::unique_ptr<Screen> makeLineupSetup(App& app, bool onboarding = false);
 // Sources for a channel (red key).
 std::unique_ptr<Screen> makeSources(App& app, const std::string& entryId);
 // Live Events: the board (Live Events tab). `pickTab` gets the guide tab to
@@ -38,8 +47,9 @@ std::unique_ptr<Screen> makeWhereToWatch(App& app, const std::string& eventId);
 std::unique_ptr<Screen> makeEventGuide(App& app);
 // Down while watching a race: its cameras.
 std::unique_ptr<Screen> makeCameraPanel(App& app);
-// My Sports setup: leagues, favourite teams, review.
-std::unique_ptr<Screen> makeMySports(App& app);
+// My Sports setup: leagues, favourite teams, review. `onboarding` is
+// first-run setup's Sports and Teams steps, which end on the summary.
+std::unique_ptr<Screen> makeMySports(App& app, bool onboarding = false);
 // Options › Help: share a file with a phone on the home network.
 enum class ExportKind { ChannelReport, PlaybackLog };
 std::unique_ptr<Screen> makeExport(App& app, ExportKind kind);

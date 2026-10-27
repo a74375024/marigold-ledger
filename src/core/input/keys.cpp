@@ -176,7 +176,7 @@ RemoteKeys RemoteKeys::fireTv() {
 // Its Menu button is Back; it has no media keys but play/pause.
 RemoteKeys RemoteKeys::appleTv() {
   RemoteKeys k;
-  k.playPause = true;
+  k.playPause = k.clickpad = true;
   return k;
 }
 

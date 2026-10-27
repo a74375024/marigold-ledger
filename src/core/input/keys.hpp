@@ -56,6 +56,8 @@ struct RemoteKeys {
   bool seek = false;       // ⏪ ⏩
   bool digits = false;     // 0-9
   bool channel = false;    // CH + / CH -
+  // The Siri Remote: a clickpad that is clicked (not an OK key) and swiped.
+  bool clickpad = false;
   // A key just pressed: this remote has it, so it is offered from now on.
   // True when that is news.
   bool saw(Key key);
@@ -64,7 +66,7 @@ struct RemoteKeys {
   static RemoteKeys appleTv();  // the Siri Remote: play/pause
   bool operator==(const RemoteKeys& o) const {
     return colour == o.colour && menu == o.menu && playPause == o.playPause && seek == o.seek && digits == o.digits &&
-           channel == o.channel;
+           channel == o.channel && clickpad == o.clickpad;
   }
 };
 

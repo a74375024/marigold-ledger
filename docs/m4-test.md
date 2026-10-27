@@ -190,3 +190,24 @@ Events from provider feeds that no schedule game matched.
 | No preview | Rest on an upcoming or final game, or a game you can't watch | No corner; the badges show as before; a preview that was playing stops |
 | Setting | Options › Preview channels off | No preview anywhere |
 | Leaving | Back to the guide, or Back from a game you watched | The guide's preview doesn't carry into Live Events; back from full screen the game returns to the corner |
+
+## First-run setup and phone sign-in
+
+Start with no providers (a fresh install, or remove them all in Options › Providers).
+
+| Area | How to check | Pass |
+|---|---|---|
+| Welcome | Open the app | "Welcome" with "Add it from your phone" focused and "Use the remote"; seven steps along the bottom; the key line shows OK (LG, Fire TV) or Click (Apple TV) |
+| Scan | Pick "Add it from your phone" | A QR code, the TV's address and a 6-digit code, three numbered lines, "Waiting for your phone…" with the minutes left |
+| Phone page | Scan the code with a phone on the same Wi-Fi | A page headed "Marigold · your TV" with Xtream / Emby / Jellyfin / M3U; the TV changes to "Phone connected" |
+| No camera | Open the address on a phone or computer, type the code | The same page; five wrong codes bring a new code on the TV |
+| Sign in | Fill in a provider and tap Send to TV | The TV shows "Got it from your phone", signs in and loads channels, then moves on to Area by itself; the phone says "Signed in" |
+| Wrong password | Send a wrong password | The phone marks the user name and password fields and says why; the TV says the same; send again from the phone |
+| Remote way | Back to Welcome, "Use the remote" | Today's form with "STEP 1 OF 7"; signing in moves on to Area |
+| Area, Languages, Channels | Continue through them | One screen each; the busiest area is picked; LG CH ▲▼ / Fire TV ⏪ ⏩ jump a letter in the A to Z list; Back goes to the step before |
+| Sports, Teams | Continue | The busiest leagues are picked; teams in a rail by league with the reminder switch; letter keys jump in the team grid |
+| Done | Continue | Channel count, today's games, your teams; "Start watching" opens the guide, "Go to Live Events" the board; My Sports doesn't pop up later |
+| Skip | Skip any step after the provider | It moves on and keeps that step's defaults |
+| From Options | Options › Providers › "Add from your phone" | The same scan screen; it closes with "Provider added" once the channels are in |
+| Network | Put the phone on mobile data | The page doesn't open; "Use the remote instead" works |
+| Apple TV | First scan screen on Apple TV | tvOS asks once to allow local network access; after allowing, the phone page opens |

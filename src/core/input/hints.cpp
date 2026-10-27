@@ -66,6 +66,18 @@ Bar eventsBoard(const RemoteKeys& k) {
   return b;
 }
 
+Bar setup(const RemoteKeys& k, bool letters) {
+  Bar b;
+  b.keys.push_back(cap(k.clickpad ? "Click" : "OK", "Pick"));
+  b.keys.push_back(cap("Back", "Previous step"));
+  if (letters) {
+    if (k.channel) b.keys.push_back(cap(std::string("CH ") + kUp + kDown, "Next letter"));
+    else if (k.seek) b.keys.push_back(icons({"key-rewind", "key-forward"}, "Next letter"));
+  }
+  if (letters && k.clickpad) b.right = "Swipe to move faster";
+  return b;
+}
+
 Hint playerSources(const RemoteKeys& k) {
   if (k.colour) return colour(Colour::Red, "Sources");
   if (k.menu) return icons({"key-menu"}, "Sources");

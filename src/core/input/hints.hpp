@@ -39,6 +39,12 @@ Bar guide(const RemoteKeys& k, bool inLineup);
 // Live Events' bottom bar.
 Bar eventsBoard(const RemoteKeys& k);
 
+// The setup screens (first run, My Lineup, My Sports): how to pick and go
+// back, and on A-to-Z lists the keys that jump a letter, if the remote has
+// any (CH + / CH - on LG, rewind / fast forward on Fire TV; the Siri Remote
+// swipes instead).
+Bar setup(const RemoteKeys& k, bool letters);
+
 // The player: the Sources key (the action row, which opens on Sources, is
 // the way in without a colour key or Menu), Options (only a colour key), and
 // "pick another source" while a feed opens (nothing without either: the row

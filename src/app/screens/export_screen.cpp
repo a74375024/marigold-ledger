@@ -9,6 +9,7 @@
 #include "app/app.hpp"
 #include "app/playback.hpp"
 #include "app/screens/screens.hpp"
+#include "app/screens/setup_ui.hpp"
 #include "app/store/store.hpp"
 #include "core/report/qr.hpp"
 #include "core/report/share.hpp"
@@ -191,26 +192,8 @@ class ExportScreen : public Screen {
   }
 
   void drawQr(ui::Ctx& c, Rect r) {
-    c.g.fill(r, theme::white(), 16);
-    if (!qr_) return;
-    int n = qr_->size + 2 * report::kQuietZone;
-    float module = std::floor(r.w / static_cast<float>(n));
-    float ox = r.x + std::round((r.w - module * static_cast<float>(n)) * 0.5f) + module * report::kQuietZone;
-    float oy = r.y + std::round((r.h - module * static_cast<float>(n)) * 0.5f) + module * report::kQuietZone;
-    for (int yy = 0; yy < qr_->size; ++yy) {
-      // Runs of dark modules as one rectangle.
-      int run = -1;
-      for (int xx = 0; xx <= qr_->size; ++xx) {
-        bool dark = xx < qr_->size && qr_->at(xx, yy);
-        if (dark && run < 0) run = xx;
-        if (!dark && run >= 0) {
-          c.g.fill({ox + module * static_cast<float>(run), oy + module * static_cast<float>(yy),
-                    module * static_cast<float>(xx - run), module},
-                   theme::black());
-          run = -1;
-        }
-      }
-    }
+    if (qr_) setup_ui::qr(c, r, *qr_);
+    else c.g.fill(r, theme::white(), 16);
   }
 
   ExportKind kind_;
