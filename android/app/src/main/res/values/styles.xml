@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- Fullscreen, the app's own background while it starts. -->
+  <style name="Marigold" parent="@android:style/Theme.Material.NoActionBar.Fullscreen">
+    <item name="android:windowBackground">@color/background</item>
+    <item name="android:windowNoTitle">true</item>
+    <item name="android:windowFullscreen">true</item>
+    <item name="android:windowAnimationStyle">@null</item>
+  </style>
+  <color name="background">#121418</color>
+</resources>

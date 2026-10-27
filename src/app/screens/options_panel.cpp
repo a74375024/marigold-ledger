@@ -305,7 +305,7 @@ std::unique_ptr<Screen> makeOptions(App& app) {
     log.detail = "What happened when channels were tuned";
     log.select = [&app] { app.nav().push(makeExport(app, ExportKind::PlaybackLog)); };
     p.items.push_back(log);
-    ui::PanelItem diag{ui::PanelItem::Kind::Chevron, "Remote and video test"};
+    ui::PanelItem diag{ui::PanelItem::Kind::Chevron, diagnosticsTitle()};
     diag.select = [&app] { app.nav().push(makeDiagnostics(app)); };
     p.items.push_back(diag);
     std::string inUse = memory::describe(memory::read());

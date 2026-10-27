@@ -75,6 +75,10 @@ class Window {
   void closeKeyboard();
   bool keyboardOpen() const;
 
+  // Back with nothing left to close: Android goes to the home screen (the
+  // app keeps running, as TV apps do) and returns true; webOS does nothing.
+  bool leave();
+
   int drawableWidth() const;
   int drawableHeight() const;
   // What runs underneath, for Help and the logs: the TV's SDL version on

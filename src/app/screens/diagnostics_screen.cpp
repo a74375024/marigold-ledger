@@ -50,5 +50,6 @@ class DiagnosticsScreen : public Screen {
 }  // namespace
 
 std::unique_ptr<Screen> makeDiagnostics(App& app) { return std::make_unique<DiagnosticsScreen>(app); }
+const char* diagnosticsTitle() { return "Remote and video test"; }
 
 }  // namespace marigold::app

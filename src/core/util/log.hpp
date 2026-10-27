@@ -30,6 +30,11 @@ void writev(Level level, const char* tag, const char* fmt, va_list args)
 #endif
     ;
 
+// Also hands every line (already redacted) to `mirror`, e.g. Android's
+// logcat. Called under the log's lock; nullptr stops it.
+using Mirror = void (*)(Level level, const std::string& line);
+void setMirror(Mirror mirror);
+
 // The newest lines (already redacted), oldest first.
 std::vector<std::string> recent(size_t max = 50);
 

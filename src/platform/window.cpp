@@ -241,6 +241,8 @@ void Window::openKeyboard(const std::string& value) { texto_sistema_abrir(value.
 void Window::closeKeyboard() { texto_sistema_fechar(); }
 bool Window::keyboardOpen() const { return texto_sistema_aberto() != 0; }
 
+bool Window::leave() { return false; }
+
 int Window::drawableWidth() const { return impl_->drawableW; }
 int Window::drawableHeight() const { return impl_->drawableH; }
 const std::string& Window::runtime() const { return impl_->sdlRuntime; }

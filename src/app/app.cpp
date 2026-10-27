@@ -93,6 +93,7 @@ void App::dispatch(const KeyEvent& k) {
   bool used = top->key(k);
   if (!used && k.key == Key::Back) {
     if (nav_.size() > 1) nav_.pop();
+    else window_.leave();
   }
   if (k.key == Key::Exit) quit_ = true;
 }

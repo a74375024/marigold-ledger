@@ -32,7 +32,7 @@ constexpr uint32_t kDigitsMs = 1500;
 constexpr float kLeft = 96;
 constexpr float kBannerBottom = 870;  // the banner's lower edge
 constexpr float kRowY = 952;          // the key guide or the action row
-constexpr uint32_t kRed = 0xE5372B, kBlue = 0x3D7BFF, kAmber = 0xF5A623, kGreen = 0x34C759;
+constexpr uint32_t kRed = 0xE5372B, kBlue = 0x3D7BFF, kGreen = 0x34C759;
 
 // Pointer targets.
 constexpr int kHitPill = 1;      // + pill index

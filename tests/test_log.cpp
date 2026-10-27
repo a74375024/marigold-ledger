@@ -24,3 +24,19 @@ TEST_CASE("logging from many threads") {
   for (auto& th : threads) th.join();
   CHECK(marigold::log::recent(500).size() == 200);  // the ring keeps the newest 200
 }
+
+namespace {
+std::vector<std::string> gMirrored;
+void mirrorInto(marigold::log::Level, const std::string& line) { gMirrored.push_back(line); }
+}  // namespace
+
+TEST_CASE("the mirror gets each line, redacted") {
+  gMirrored.clear();
+  marigold::log::setMirror(mirrorInto);
+  MLOG_I("test", "playing http://example.invalid/live/user/pass/1.ts");
+  marigold::log::setMirror(nullptr);
+  MLOG_I("test", "not mirrored");
+  REQUIRE(gMirrored.size() == 1);
+  CHECK(gMirrored[0].find("example.invalid") == std::string::npos);
+  CHECK(gMirrored[0].find("[test]") != std::string::npos);
+}

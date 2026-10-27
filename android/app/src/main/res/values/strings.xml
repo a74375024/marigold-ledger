@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="app_name">Marigold</string>
+  <string name="keyboard_ok">OK</string>
+  <string name="keyboard_cancel">Cancel</string>
+</resources>

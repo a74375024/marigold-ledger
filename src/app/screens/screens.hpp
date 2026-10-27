@@ -43,7 +43,10 @@ std::unique_ptr<Screen> makeMySports(App& app);
 // Options › Help: share a file with a phone on the home network.
 enum class ExportKind { ChannelReport, PlaybackLog };
 std::unique_ptr<Screen> makeExport(App& app, ExportKind kind);
-// The M0 diagnostics screen (Options › Help).
+// The platform's diagnostics screen (Options › Help): the key and video
+// test on webOS, the system and video state on Android.
 std::unique_ptr<Screen> makeDiagnostics(App& app);
+// Its name in Options › Help (each platform has its own screen).
+const char* diagnosticsTitle();
 
 }  // namespace marigold::app

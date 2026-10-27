@@ -19,6 +19,7 @@ struct State {
   size_t maxBytes = 0;
   size_t written = 0;
   std::deque<std::string> recent;
+  Mirror mirror = nullptr;
 };
 
 State& state() {
@@ -109,6 +110,7 @@ void writev(Level level, const char* tag, const char* fmt, va_list args) {
   std::lock_guard<std::mutex> lock(s.mu);
   s.recent.push_back(line);
   if (s.recent.size() > kRecentMax) s.recent.pop_front();
+  if (s.mirror) s.mirror(level, line);
   if (s.file) {
     std::fprintf(s.file, "%s\n", line.c_str());
     std::fflush(s.file);
@@ -122,6 +124,12 @@ void write(Level level, const char* tag, const char* fmt, ...) {
   va_start(args, fmt);
   writev(level, tag, fmt, args);
   va_end(args);
+}
+
+void setMirror(Mirror mirror) {
+  State& s = state();
+  std::lock_guard<std::mutex> lock(s.mu);
+  s.mirror = mirror;
 }
 
 std::vector<std::string> recent(size_t max) {

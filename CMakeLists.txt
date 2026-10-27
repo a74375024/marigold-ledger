@@ -11,7 +11,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 option(MARIGOLD_WEBOS "Building for webOS (set by the toolchain file)" OFF)
-if(MARIGOLD_WEBOS)
+if(MARIGOLD_WEBOS OR ANDROID)
   set(_tests_default OFF)
 else()
   set(_tests_default ON)
@@ -42,6 +42,11 @@ target_include_directories(legacy_pure SYSTEM INTERFACE vendor/legacy/src)
 if(MARIGOLD_BUILD_APP)
   add_subdirectory(vendor/legacy)
   add_subdirectory(src)
+endif()
+
+# The Android app's native library (the Gradle project in android/ builds it).
+if(ANDROID)
+  add_subdirectory(src/platform/android)
 endif()
 
 if(MARIGOLD_BUILD_TESTS)

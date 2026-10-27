@@ -85,3 +85,53 @@ jobs:
           path: build-webos/ipk/*.ipk
           if-no-files-found: error
           retention-days: 30
+
+  android:
+    runs-on: ubuntu-24.04
+    needs: [hygiene, host]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Java 17 (the runner's)
+        run: echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+      - name: Install the NDK and CMake the build pins
+        run: >
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          "ndk;27.2.12479018" "cmake;3.22.1" "platforms;android-35" "build-tools;35.0.0" > /dev/null
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('android/**/*.gradle', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+      # Without a release key, builds are signed with one debug key kept here,
+      # so each build installs over the last (a new key would need an uninstall).
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/.android/debug.keystore
+          key: android-debug-key-v1
+      - name: Release key (if the repository has one)
+        env:
+          KEYSTORE_B64: ${{ secrets.MARIGOLD_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "MARIGOLD_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          fi
+      - name: Build the APK
+        working-directory: android
+        env:
+          MARIGOLD_BUILD_NUMBER: ${{ github.run_number }}
+          MARIGOLD_KEYSTORE_PASSWORD: ${{ secrets.MARIGOLD_KEYSTORE_PASSWORD }}
+          MARIGOLD_KEY_ALIAS: ${{ secrets.MARIGOLD_KEY_ALIAS }}
+          MARIGOLD_KEY_PASSWORD: ${{ secrets.MARIGOLD_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --console=plain --no-daemon
+      - name: Check the JNI calls on both sides
+        run: python3 tools/android-jni-check.py android/app/build/intermediates/javac/release/compileReleaseJavaWithJavac/classes
+      - name: Name the APK
+        run: cp android/app/build/outputs/apk/release/app-release.apk "marigold-${{ github.run_number }}.apk"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: marigold-android-${{ github.run_number }}
+          path: marigold-${{ github.run_number }}.apk
+          if-no-files-found: error
+          retention-days: 30

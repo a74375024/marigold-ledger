@@ -1,0 +1,98 @@
+// The Android (Fire TV, Android TV) app: a thin Java shell around the same
+// native app as webOS, built from the repository's CMakeLists.txt.
+plugins {
+  id 'com.android.application'
+}
+
+// CI passes the run number; local builds are build 1.
+def buildNumber = (System.getenv('MARIGOLD_BUILD_NUMBER') ?: '1').toInteger()
+
+android {
+  namespace 'org.marigold.app'
+  compileSdk 35
+  ndkVersion '27.2.12479018'
+
+  defaultConfig {
+    applicationId 'org.marigold.app'
+    minSdk 24          // Fire OS 6 and newer, Android TV 7+
+    targetSdk 35
+    versionCode buildNumber
+    versionName "0.1.${buildNumber}"
+    ndk {
+      // Fire TV sticks run 32-bit apps even on 64-bit chips; newer boxes take
+      // both. -PmarigoldAbis=x86_64 builds for an emulator.
+      abiFilters(*((project.findProperty('marigoldAbis') ?: 'armeabi-v7a,arm64-v8a').split(',')))
+    }
+    externalNativeBuild {
+      cmake {
+        arguments '-DANDROID_STL=c++_static'
+        targets 'marigold'
+      }
+    }
+  }
+
+  externalNativeBuild {
+    cmake {
+      path file('../../CMakeLists.txt')
+      version '3.22.1'
+    }
+  }
+
+  // A release key from the environment when there is one (CI secrets);
+  // otherwise the debug key, which is fine for sideloading.
+  signingConfigs {
+    release {
+      def store = System.getenv('MARIGOLD_KEYSTORE')
+      if (store && file(store).exists()) {
+        storeFile file(store)
+        storePassword System.getenv('MARIGOLD_KEYSTORE_PASSWORD')
+        keyAlias System.getenv('MARIGOLD_KEY_ALIAS')
+        keyPassword System.getenv('MARIGOLD_KEY_PASSWORD')
+      }
+    }
+  }
+
+  buildTypes {
+    release {
+      minifyEnabled false
+      signingConfig signingConfigs.release.storeFile ? signingConfigs.release : signingConfigs.debug
+    }
+  }
+
+  sourceSets {
+    main {
+      assets.srcDirs += files("$buildDir/generated/marigold-assets")
+    }
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  packagingOptions {
+    jniLibs {
+      useLegacyPackaging true  // .so files stored compressed: a smaller download
+    }
+  }
+}
+
+// The same fonts and sport icons as the TV package.
+tasks.register('marigoldAssets', Copy) {
+  from('../../app/fonts') {
+    include '*.ttf'
+    into 'fonts'
+  }
+  from('../../app/icons') {
+    include '*.png'
+    into 'icons'
+  }
+  into "$buildDir/generated/marigold-assets"
+}
+preBuild.dependsOn 'marigoldAssets'
+
+dependencies {
+  implementation 'androidx.media3:media3-exoplayer:1.5.1'
+  implementation 'androidx.media3:media3-exoplayer-hls:1.5.1'
+  implementation 'androidx.media3:media3-datasource:1.5.1'
+}
