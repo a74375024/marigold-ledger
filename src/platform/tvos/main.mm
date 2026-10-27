@@ -98,10 +98,23 @@ marigold::platform::Event keyEvent(marigold::Key key, bool down, bool repeat) {
 }
 @end
 
+// The hidden field the system keyboard edits. Never focusable: when the
+// keyboard closes, tvOS would leave focus on it, and the focused field would
+// then take the remote's presses (arrows would move nothing and a click would
+// edit it instead of reaching the app), so no other field could be filled.
+@interface MGHiddenField : UITextField
+@end
+
+@implementation MGHiddenField
+- (BOOL)canBecomeFocused {
+  return NO;
+}
+@end
+
 @interface MGViewController : UIViewController <UITextFieldDelegate>
 @property(nonatomic, strong) UIView* videoView;
 @property(nonatomic, strong) MGUIView* uiView;
-@property(nonatomic, strong) UITextField* field;
+@property(nonatomic, strong) MGHiddenField* field;
 @property(nonatomic) BOOL fieldConfirmed;
 @property(nonatomic, strong) NSTimer* repeatTimer;
 @property(nonatomic) marigold::Key repeatKey;
@@ -138,7 +151,7 @@ static MGViewController* gController;
   [root addSubview:self.uiView];
 
   // The system keyboard opens over the app for this field; it is never seen.
-  self.field = [[UITextField alloc] initWithFrame:CGRectMake(-100, -100, 10, 10)];
+  self.field = [[MGHiddenField alloc] initWithFrame:CGRectMake(-100, -100, 10, 10)];
   self.field.alpha = 0.01;
   self.field.delegate = self;
   self.field.autocorrectionType = UITextAutocorrectionTypeNo;
@@ -162,6 +175,17 @@ static MGViewController* gController;
   self.view = root;
   // The 1920x1080 views fill a 4K screen the same way (tvOS lays out in points).
   [self layoutForScreen];
+}
+
+// The controller takes the remote's presses whenever the keyboard is closed.
+- (BOOL)canBecomeFirstResponder {
+  return YES;
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+  [super viewDidAppear:animated];
+  [self becomeFirstResponder];
+  if ([NSUserDefaults.standardUserDefaults boolForKey:@"MarigoldKeyboardSelfTest"]) [self keyboardSelfTest];
 }
 
 - (void)viewDidLayoutSubviews {
@@ -255,7 +279,13 @@ static MGViewController* gController;
   [self stopRepeat];
   self.fieldConfirmed = NO;
   self.field.text = value;
-  [self.field becomeFirstResponder];
+  if ([self.field becomeFirstResponder]) {
+    MLOG_I("keyboard", "open");
+  } else {
+    // The app must not wait for a keyboard that isn't there.
+    MLOG_W("keyboard", "the system keyboard didn't open");
+    [self sendText:YES];
+  }
 }
 
 - (void)closeKeyboard {
@@ -283,6 +313,55 @@ static MGViewController* gController;
 
 - (void)textFieldDidEndEditing:(UITextField*)textField {
   [self sendText:YES];
+  MLOG_I("keyboard", "closed");
+  // The remote's presses come back to the app, for the next field.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self becomeFirstResponder];
+  });
+}
+
+// Started with -MarigoldKeyboardSelfTest YES (tools/tvos-smoke.sh): opens
+// and closes the keyboard twice and checks the field never keeps the focus.
+- (void)keyboardSelfTest {
+  __weak MGViewController* weakSelf = self;
+  auto after = [](double seconds, void (^block)(void)) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(seconds * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), block);
+  };
+  __block bool ok = true;
+  // False when the field has the focus (the bug this guards against).
+  auto check = ^bool(const char* step) {
+    MGViewController* me = weakSelf;
+    if (!me) return false;
+    UIFocusSystem* focus = [UIFocusSystem focusSystemForEnvironment:me];
+    bool fieldFocused = focus.focusedItem == me.field;
+    bool fieldEditing = me.field.isFirstResponder;
+    MLOG_I("keyboard", "self-test %s: field editing %d, field focused %d, app has the remote %d", step,
+           fieldEditing ? 1 : 0, fieldFocused ? 1 : 0, me.isFirstResponder ? 1 : 0);
+    return !fieldFocused;
+  };
+  after(4, ^{ [weakSelf openKeyboard:@"first"]; });
+  after(7, ^{
+    ok = check("first open") && ok;
+    ok = ok && weakSelf.field.isFirstResponder;
+    [weakSelf closeKeyboard];
+  });
+  after(10, ^{
+    ok = check("first close") && ok;
+    ok = ok && !weakSelf.field.isFirstResponder && weakSelf.isFirstResponder;
+    [weakSelf openKeyboard:@"second"];
+  });
+  after(13, ^{
+    ok = check("second open") && ok;
+    ok = ok && weakSelf.field.isFirstResponder;
+    [weakSelf closeKeyboard];
+  });
+  after(16, ^{
+    ok = check("second close") && ok;
+    ok = ok && !weakSelf.field.isFirstResponder && weakSelf.isFirstResponder;
+    if (ok) MLOG_I("keyboard", "self-test: ok");
+    else MLOG_W("keyboard", "self-test: FAILED");
+  });
 }
 
 @end

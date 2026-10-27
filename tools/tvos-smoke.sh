@@ -1,7 +1,9 @@
 #!/bin/bash
 # Starts the Apple TV app in a tvOS Simulator and reads its log: it must open
-# its window, compile its shader, show a frame and still be running after
-# half a minute. No screenshots; the log never holds a link.
+# its window, compile its shader, show a frame, open and close the system
+# keyboard twice with the remote coming back to the app each time (its
+# keyboard self-test), and still be running after half a minute. No
+# screenshots; the log never holds a link.
 #   bash tools/tvos-smoke.sh path/to/Marigold.app
 set -euo pipefail
 app="$1"
@@ -19,13 +21,13 @@ trap 'xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true; xcrun simctl delete
 xcrun simctl boot "$udid"
 xcrun simctl bootstatus "$udid" -b >/dev/null
 xcrun simctl install "$udid" "$app"
-xcrun simctl launch "$udid" org.marigold.app
+xcrun simctl launch "$udid" org.marigold.app -MarigoldKeyboardSelfTest YES
 sleep 30
 log="$(xcrun simctl spawn "$udid" log show --style compact --last 5m --predicate 'subsystem == "org.marigold.app"' || true)"
 echo "$log" | tail -n 40
 fail=0
 xcrun simctl spawn "$udid" launchctl list | grep -q "org.marigold.app" || { echo "smoke: the app is not running"; fail=1; }
-for want in "window\] tvOS" "GPU " "first frame shown"; do
+for want in "window\] tvOS" "GPU " "first frame shown" "keyboard\] self-test: ok"; do
   echo "$log" | grep -q "$want" || { echo "smoke: no \"$want\" in the log"; fail=1; }
 done
 if echo "$log" | grep -qE "renderer init failed|shader compile failed|pipeline failed|no Metal layer"; then
