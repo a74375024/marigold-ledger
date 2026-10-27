@@ -98,3 +98,32 @@ TEST_CASE("engine: a changed playlist is sorted again") {
   CHECK(store.channels().get() != first.get());
   CHECK(store.channels()->all.size() > first->all.size());
 }
+
+TEST_CASE("engine: an M3U account's guide link is read, and again after the next launch") {
+  constexpr const char* kList = "http://mock.example.invalid:8080/harbor.m3u";
+  constexpr const char* kGuide = "http://mock.example.invalid:8080/harbor.xml";
+  fake::Tv tv;
+  tv.pool.answer(kList,
+                 "#EXTM3U\n"
+                 "#EXTINF:-1 tvg-id=\"harbor.news\" group-title=\"Harbor TV\",Harbor News HD\n"
+                 "http://mock.example.invalid:8080/a.m3u8\n"
+                 "#EXTINF:-1 tvg-id=\"valley.sports\" group-title=\"Harbor TV\",Valley Sports\n"
+                 "http://mock.example.invalid:8080/b.ts\n");
+  {
+    Store store(tv.host());
+    AccountForm form = fake::m3uForm();
+    form.server = kList;
+    form.guideUrl = kGuide;
+    std::string problem = "(not answered)";
+    store.addAccount(form, [&](std::string p) { problem = std::move(p); });
+    settle(store, tv);
+    settle(store, tv);
+    CHECK(problem.empty());
+    CHECK(tv.pool.asked[kGuide] == 1);
+  }
+  // The guide didn't answer: the next launch, from the saved list, tries again.
+  Store again(tv.host());
+  settle(again, tv);
+  settle(again, tv);
+  CHECK(tv.pool.asked[kGuide] == 2);
+}

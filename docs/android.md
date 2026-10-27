@@ -32,10 +32,10 @@ supported. Both 32-bit and 64-bit ARM are in the APK.
 | Fire TV remote | Does |
 |---|---|
 | D-pad, select | Move, OK (hold select for the long press) |
-| Back | Back; on the guide, goes to the Fire TV home (the app keeps running) |
+| Back | Back; twice on the guide exits, as on the TV |
 | Menu (☰) | Menu |
 | Play/pause, rewind, fast forward | As on the LG remote |
-| Home | The system's |
+| Home | The system's (the app keeps running; opening it again is instant) |
 
 Game controllers work too (A is OK, B is Back), and TV remotes with
 channel, colour and number keys get the same keys as the LG remote.
@@ -79,6 +79,25 @@ What differs on Android:
   the log; the TV's key test screen is webOS only.
 - **Log:** the same file in the app's data, and logcat (tag `marigold`),
   redacted the same way.
+
+## What has been checked without a Fire TV
+
+On an Android 9 emulator at 1920x1080 (logcat only, no screenshots), with
+JNI checking on, against a made-up playlist, guide, logos and streams
+served from the build machine:
+
+- Sign in to an M3U account with the remote and the on-screen keyboard.
+- The channel list downloads, sorts and saves; the logos download and
+  decode; the XMLTV guide downloads and matches every channel.
+- Playback: an HLS channel, an endless live TS channel (as Xtream serves
+  them) and an HLS playlist with no .m3u8 in its link (played after one
+  retry as HLS), full screen and in the guide's corner.
+- Home and back, Back twice to exit (a clean shutdown), and a cold start
+  from the saved list.
+
+Not checked there (no outside network): real providers, HTTPS, a LAN
+Emby server, sound and picture quality, and the real Fire TV remote. The
+Fire TV checklist is `docs/android-test.md`.
 
 ## Build locally
 

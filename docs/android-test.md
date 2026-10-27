@@ -19,8 +19,10 @@ code. These rows are what is new on Android.
 | Area | How to check | Pass |
 |---|---|---|
 | D-pad and select | Move around the guide; OK a channel | Moves and tunes; holding select gives the long press (as holding OK on LG) |
-| Back | Back from a panel, the player, then the guide | Closes each; on the guide, the Fire TV home appears |
-| Return | Open Marigold again after Back | The guide as you left it, quickly (the app kept running) |
+| Back | Back from a panel, then the player | Closes each, back to the guide |
+| Exit | Back twice on the guide | "Press Back again to exit", then the Fire TV home |
+| Home and return | Home, then open Marigold again | The guide as you left it, at once (the app kept running) |
+| Cold start | Open Marigold after exiting | The guide from the saved list in a few seconds |
 | Menu | ☰ on the guide | The same as the LG Menu key |
 | Media keys | Play/pause, rewind, fast forward in the player | As on LG |
 | Volume, Home | Press them | The system's: volume changes, Home goes home |
