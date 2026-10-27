@@ -102,14 +102,4 @@ set_target_properties(Marigold PROPERTIES
   XCODE_EMBED_FRAMEWORKS "${MARIGOLD_VLCKIT}"
   XCODE_EMBED_FRAMEWORKS_CODE_SIGN_ON_COPY OFF
   XCODE_EMBED_FRAMEWORKS_REMOVE_HEADERS_ON_COPY ON)
-
-# The same fonts and sport icons as the TV package, as plain files.
-add_custom_command(TARGET Marigold POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:Marigold>/assets/fonts"
-  COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:Marigold>/assets/icons"
-  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/app/fonts/InterDisplay-Regular.ttf
-          ${CMAKE_SOURCE_DIR}/app/fonts/InterDisplay-Medium.ttf ${CMAKE_SOURCE_DIR}/app/fonts/InterDisplay-Bold.ttf
-          "$<TARGET_BUNDLE_DIR:Marigold>/assets/fonts/"
-  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/app/icons "$<TARGET_BUNDLE_DIR:Marigold>/assets/icons"
-  COMMAND ${CMAKE_COMMAND} -E rm -rf "$<TARGET_BUNDLE_DIR:Marigold>/assets/icons/src"
-  VERBATIM)
+# The fonts, icons and licences go in when tools/build-tvos.sh packs the app.

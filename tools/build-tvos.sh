@@ -38,11 +38,16 @@ cmake --build "$out" --config Release --target Marigold -- -quiet CODE_SIGNING_A
 app="$out/src/platform/tvos/Release-$sdk/Marigold.app"
 [ -x "$app/Marigold" ] || { echo "build-tvos: no $app" >&2; exit 1; }
 [ -f "$app/Frameworks/TVVLCKit.framework/TVVLCKit" ] || { echo "build-tvos: TVVLCKit not embedded" >&2; exit 1; }
-[ -f "$app/assets/fonts/InterDisplay-Regular.ttf" ] || { echo "build-tvos: fonts missing" >&2; exit 1; }
+# The same fonts and sport icons as the TV package, as plain files.
+mkdir -p "$app/assets/fonts" "$app/assets/icons" "$app/licenses"
+cp "$root"/app/fonts/InterDisplay-{Regular,Medium,Bold}.ttf "$app/assets/fonts/"
+cp "$root"/app/icons/*.png "$app/assets/icons/"
+[ -f "$app/Assets.car" ] || echo "build-tvos: warning: no Assets.car (the app icon and Top Shelf are missing)" >&2
 # VLC's licence travels with it.
-mkdir -p "$app/licenses"
 cp "$cache/$MARIGOLD_VLCKIT_VERSION/TVVLCKit-binary/COPYING.txt" "$app/licenses/TVVLCKit-COPYING.txt"
 cp "$root/app/fonts/InterDisplay-OFL.txt" "$app/licenses/"
+
+ls -la "$app" >&2
 
 if [ "$kind" = device ]; then
   stage="$(mktemp -d)"
