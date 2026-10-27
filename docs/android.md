@@ -96,9 +96,9 @@ served from the build machine:
   user name, password) with the remote and the on-screen keyboard.
 - The channel list downloads, sorts and saves; the logos download and
   decode; the XMLTV guide downloads and matches every channel.
-- Playback: an HLS channel, Xtream's /live/ TS channels and an endless
-  live TS channel and an HLS playlist with no .m3u8 in its link (played after one
-  retry as HLS), full screen and in the guide's corner.
+- Playback, full screen and in the guide's corner: an HLS channel,
+  Xtream's /live/ TS channels (endless live streams), and an HLS playlist
+  with no .m3u8 in its link (played after one retry as HLS).
 - Home and back, Back twice to exit (a clean shutdown), and a cold start
   from the saved list.
 - Live Events, search, options and the accounts screen open and close
