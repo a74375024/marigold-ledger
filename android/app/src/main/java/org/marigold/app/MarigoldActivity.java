@@ -33,7 +33,6 @@ public final class MarigoldActivity extends Activity implements SurfaceHolder.Ca
   @Override
   protected void onCreate(Bundle state) {
     super.onCreate(state);
-    getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     hideSystemBars();
 
     FrameLayout root = new FrameLayout(this);
@@ -107,6 +106,13 @@ public final class MarigoldActivity extends Activity implements SurfaceHolder.Ca
   }
 
   // ---- Helpers ----
+
+  // While a picture plays the screen saver stays away (the TV holds it the
+  // same way); on the guide it may start as usual.
+  void keepScreenOn(boolean on) {
+    if (on) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+    else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+  }
 
   @SuppressWarnings("deprecation")
   private void hideSystemBars() {

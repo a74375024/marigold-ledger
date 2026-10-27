@@ -31,6 +31,12 @@ final class Bridge {
     if (activity == a) activity = null;
   }
 
+  /** UI thread. */
+  static void keepScreenOn(boolean on) {
+    MarigoldActivity a = activity;
+    if (a != null) a.keepScreenOn(on);
+  }
+
   static void onUi(Runnable r) {
     if (Looper.myLooper() == Looper.getMainLooper()) r.run();
     else ui.post(r);

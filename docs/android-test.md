@@ -45,6 +45,8 @@ code. These rows are what is new on Android.
 | Headers | A provider that needs its referer or user agent | Plays |
 | Failover | A channel that is down | The same backup feed and messages as on the TV |
 | Background | Home while playing, then back | The picture stopped while away; the guide when back |
+| Screen saver | Leave the guide idle; then leave a channel playing | The Fire TV screen saver starts on the guide, never over a playing picture |
+| Alexa | Ask Alexa something while a channel plays | The sound ducks or pauses, then comes back |
 
 ## Data and network
 

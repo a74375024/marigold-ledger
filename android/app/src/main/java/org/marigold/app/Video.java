@@ -10,6 +10,7 @@ import android.view.SurfaceView;
 import android.view.View;
 import android.widget.FrameLayout;
 
+import androidx.media3.common.AudioAttributes;
 import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
@@ -74,6 +75,13 @@ final class Video {
       sources = new DefaultMediaSourceFactory(context).setDataSourceFactory(http);
       DefaultRenderersFactory renderers = new DefaultRenderersFactory(context).setEnableDecoderFallback(true);
       player = new ExoPlayer.Builder(context, renderers).setMediaSourceFactory(sources).build();
+      // Audio focus: another app's sound (or the voice assistant) ducks or
+      // pauses this one, and it comes back after.
+      AudioAttributes audio = new AudioAttributes.Builder()
+          .setUsage(C.USAGE_MEDIA)
+          .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+          .build();
+      player.setAudioAttributes(audio, true);
       player.addListener(listener);
     }
     player.setVideoSurfaceView(view);
@@ -96,6 +104,7 @@ final class Video {
         width = height = 0;
         error = "";
       }
+      Bridge.keepScreenOn(true);
       start();
       tick();
     });
@@ -108,6 +117,7 @@ final class Video {
         player.clearMediaItems();
       }
       url = "";
+      Bridge.keepScreenOn(false);
       synchronized (lock) {
         active = ready = playing = failed = ended = firstFrame = buffering = false;
         width = height = 0;
