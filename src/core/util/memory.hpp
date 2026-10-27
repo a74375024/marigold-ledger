@@ -12,7 +12,8 @@ struct Reading {
   int64_t peakKB = 0;  // most since the app started
 };
 
-// From /proc/self/status; zeros where it can't be read.
+// From /proc/self/status (Apple: the task's memory footprint); zeros where
+// it can't be read.
 Reading read();
 // "212 MB (peak 340 MB)"; empty for a zero reading.
 std::string describe(const Reading& r);

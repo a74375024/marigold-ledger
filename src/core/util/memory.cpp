@@ -5,12 +5,25 @@
 
 #if defined(__GLIBC__)
 #include <malloc.h>
+#elif defined(__APPLE__)
+#include <mach/mach.h>
+#include <malloc/malloc.h>
 #endif
 
 namespace marigold::memory {
 
 Reading read() {
   Reading r;
+#if defined(__APPLE__)
+  // The footprint is what the system counts against an app's memory limit.
+  task_vm_info_data_t vm{};
+  mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+  if (task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&vm), &count) == KERN_SUCCESS) {
+    r.rssKB = static_cast<int64_t>(vm.phys_footprint / 1024);
+    if (count >= TASK_VM_INFO_REV4_COUNT) r.peakKB = static_cast<int64_t>(vm.ledger_phys_footprint_peak / 1024);
+  }
+  return r;
+#endif
   std::ifstream f("/proc/self/status");
   std::string line;
   while (std::getline(f, line)) {
@@ -40,6 +53,8 @@ void configure() {
 void release() {
 #if defined(__GLIBC__)
   malloc_trim(0);
+#elif defined(__APPLE__)
+  malloc_zone_pressure_relief(nullptr, 0);
 #endif
 }
 

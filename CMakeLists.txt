@@ -11,7 +11,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 option(MARIGOLD_WEBOS "Building for webOS (set by the toolchain file)" OFF)
-if(MARIGOLD_WEBOS OR ANDROID)
+if(MARIGOLD_WEBOS OR ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "tvOS")
   set(_tests_default OFF)
 else()
   set(_tests_default ON)
@@ -47,6 +47,11 @@ endif()
 # The Android app's native library (the Gradle project in android/ builds it).
 if(ANDROID)
   add_subdirectory(src/platform/android)
+endif()
+
+# The Apple TV app (tools/build-tvos.sh builds it).
+if(CMAKE_SYSTEM_NAME STREQUAL "tvOS")
+  add_subdirectory(src/platform/tvos)
 endif()
 
 if(MARIGOLD_BUILD_TESTS)

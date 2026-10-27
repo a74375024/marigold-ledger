@@ -1,5 +1,6 @@
-// Android: no TS proxy. ExoPlayer follows HLS playlists itself, so feeds
-// play directly (TsProxy::wanted() is false and the rest does nothing).
+// Android and tvOS: no TS proxy. ExoPlayer and VLC follow HLS playlists
+// themselves, so feeds play directly (TsProxy::wanted() is false and the rest
+// does nothing).
 #include "platform/ts_proxy.hpp"
 
 #include "core/util/strings.hpp"

@@ -28,15 +28,18 @@ add_library(marigold SHARED
   ${src}/platform/lan_share.cpp
   ${src}/platform/logo_cache.cpp
   ${src}/platform/text.cpp
+  # Shared with tvOS.
+  ${src}/platform/diagnostics_basic.cpp
+  ${src}/platform/files_posix.cpp
+  ${src}/platform/http_groups.cpp
+  ${src}/platform/ts_proxy_none.cpp
   # Android backends.
-  diagnostics_screen.cpp
   http.cpp
   image.cpp
   jni.cpp
   main.cpp
   storage.cpp
   text.cpp
-  ts_proxy.cpp
   video.cpp
   window.cpp
 )

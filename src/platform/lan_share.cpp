@@ -18,6 +18,14 @@
 
 #include "core/util/log.hpp"
 
+// A closed peer must not raise SIGPIPE: Linux says so per send, Apple per
+// socket (SO_NOSIGPIPE, set on each connection).
+#if defined(MSG_NOSIGNAL)
+constexpr int kSendFlags = MSG_NOSIGNAL;
+#else
+constexpr int kSendFlags = 0;
+#endif
+
 namespace marigold::platform {
 namespace {
 
@@ -256,7 +264,7 @@ void LanShare::run(int listenFd, std::shared_ptr<const std::string> body, std::s
             data = body->data() + (c.sent - c.head.size());
             left = total - c.sent;
           }
-          ssize_t n = ::send(c.fd, data, std::min(left, kSendChunk), MSG_NOSIGNAL);
+          ssize_t n = ::send(c.fd, data, std::min(left, kSendChunk), kSendFlags);
           if (n > 0) {
             c.sent += static_cast<size_t>(n);
             c.last = now;
@@ -293,6 +301,10 @@ void LanShare::run(int listenFd, std::shared_ptr<const std::string> body, std::s
           ::close(fd);
           continue;
         }
+#if defined(SO_NOSIGPIPE)
+        int one = 1;
+        ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
+#endif
         Connection c;
         c.fd = fd;
         c.last = now;

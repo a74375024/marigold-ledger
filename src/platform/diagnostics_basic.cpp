@@ -1,6 +1,6 @@
-// Android: Options › Help › Diagnostics shows what the app runs on. (The TV's
-// key and video test screen, app/screens/diagnostics_screen.cpp, reads raw
-// SDL events and is webOS only.)
+// Android and tvOS: Options › Help › Diagnostics shows what the app runs on.
+// (The TV's key and video test screen, app/screens/diagnostics_screen.cpp,
+// reads raw SDL events and is webOS only.)
 #include <string>
 #include <vector>
 

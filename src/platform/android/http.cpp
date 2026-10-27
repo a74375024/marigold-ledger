@@ -1,29 +1,13 @@
 // Android: one transfer over the system's HttpURLConnection (Bridge.http in
 // Java). Java hands the body over in pieces as it arrives and asks between
 // reads whether to stop; the caps and cancellation are decided here, as
-// webOS's rede decides them in C.
+// webOS's rede decides them in C. Groups and handles: http_groups.cpp.
 #include <algorithm>
-#include <atomic>
-#include <memory>
 
 #include "platform/android/jni.hpp"
 #include "platform/http_transport.hpp"
 
 namespace marigold::http::transport {
-
-struct GroupState {
-  std::atomic<uint64_t> generation{0};
-  std::atomic<bool> cancelled{false};
-};
-struct Group {
-  std::shared_ptr<GroupState> state = std::make_shared<GroupState>();
-};
-struct Handle {
-  std::shared_ptr<GroupState> group;
-  uint64_t generation = 0;
-  std::atomic<bool> cancelled{false};
-};
-
 namespace {
 
 // What Java's callbacks reach, by address (a jlong).
@@ -42,29 +26,6 @@ Call* callOf(jlong p) { return reinterpret_cast<Call*>(static_cast<intptr_t>(p))
 }  // namespace
 
 void prepare() {}
-Group* createGroup() { return new Group; }
-void cancelGroup(Group* g) { g->state->cancelled = true; }
-void advanceGroup(Group* g) { g->state->generation += 1; }
-void releaseGroup(Group* g) { delete g; }
-
-Handle* createHandle(Group* g) {
-  auto* h = new Handle;
-  if (g) {
-    h->group = g->state;
-    h->generation = g->state->generation.load();
-  }
-  return h;
-}
-
-void cancelHandle(Handle* h) { h->cancelled = true; }
-
-bool live(const Handle* h) {
-  if (!h) return true;
-  if (h->cancelled) return false;
-  return !h->group || (!h->group->cancelled && h->group->generation.load() == h->generation);
-}
-
-void releaseHandle(Handle* h) { delete h; }
 
 Result fetch(const Request& q, Handle*, size_t wireCap, const std::function<bool(std::string_view)>& receive,
              const std::function<bool()>& stop) {

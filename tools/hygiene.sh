@@ -19,10 +19,12 @@ if [ -n "$bad" ]; then
   fail=1
 fi
 
-text=$(git grep -I -l '' -- . || true)
+# Text files as an array: names can hold spaces and dashes (the Apple TV
+# asset catalog's do).
+mapfile -t text < <(git grep -I -l '' -- . || true)
 # Xtream live links and playlist/API links that carry a login. The reserved
 # .invalid domain is allowed (tests use it).
-links=$(grep -nEI 'https?://[^ "'"'"']+/live/[^/ "'"'"']+/[^/ "'"'"']+/[0-9]+|(get|player_api|xmltv)\.php\?[^ "'"'"']*(username|password)=' $text 2>/dev/null \
+links=$(grep -nEI 'https?://[^ "'"'"']+/live/[^/ "'"'"']+/[^/ "'"'"']+/[0-9]+|(get|player_api|xmltv)\.php\?[^ "'"'"']*(username|password)=' -- "${text[@]}" 2>/dev/null \
         | grep -v '\.invalid' || true)
 if [ -n "$links" ]; then
   echo "hygiene: stream links or login links in tracked files:" >&2
@@ -30,7 +32,7 @@ if [ -n "$links" ]; then
   fail=1
 fi
 exempt=$(grep -v '^#' "$allow" | sed '/^$/d')
-creds=$(grep -nEI '[?&](username|password|passwd|token)=[A-Za-z0-9%._-]{3,}' $text 2>/dev/null \
+creds=$(grep -nEI '[?&](username|password|passwd|token)=[A-Za-z0-9%._-]{3,}' -- "${text[@]}" 2>/dev/null \
         | grep -vF -f <(sed 's/$/:/' <<<"$exempt") || true)
 if [ -n "$creds" ]; then
   echo "hygiene: login parameters in tracked files:" >&2
