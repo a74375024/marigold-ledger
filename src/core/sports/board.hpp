@@ -199,6 +199,8 @@ struct Tile {
   std::optional<std::string> boutLine;   // "Now: Pereira vs. Hill"
   bool boutNow = false;
   std::vector<PodiumDriver> podium;
+  // Golf: the top of the leaderboard (scores on).
+  std::vector<LiveStatus::Leader> leaders;
   std::optional<std::string> podiumLabel;
 
   // Footer.

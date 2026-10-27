@@ -31,6 +31,14 @@ struct EventSide {
   std::vector<std::string> flags;
 };
 
+struct EventLeader {  // a golf leaderboard line
+  std::string pos;    // "1", "T2"
+  std::string name;
+  std::string flagUrl;
+  std::string score;  // to par
+  std::string thru;   // "14", "F"; empty when not known
+};
+
 struct EventPodium {  // a finished race session's top three
   std::string code;   // "VER"
   uint32_t color = 0x8A8D93;
@@ -58,6 +66,7 @@ struct EventTile {
   std::string title, subtitle;   // tiles with no sides, fight cards
   std::vector<EventPart> parts;
   std::vector<EventPodium> podium;
+  std::vector<EventLeader> leaders;  // golf: the top two, instead of sides
   std::string symbol;     // sport icon key for no-sides tiles
   std::string channelName, channelLogo;  // footer channel
   std::string pill2;      // footer pill when no channel ("Event feed")

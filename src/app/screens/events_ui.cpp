@@ -128,6 +128,27 @@ void sideLine(ui::Ctx& c, const EventSide& s, Rect r, bool focused) {
   }
 }
 
+// A golf leaderboard line: position, flag, name, holes played, score to
+// par (the second line's score dimmed).
+void leaderLine(ui::Ctx& c, const EventLeader& l, Rect r, bool focused, bool dim) {
+  Color ink = focused ? theme::black() : theme::white();
+  float x = r.x;
+  ui::label(c, l.pos, x, r.y + 9, Weight::Bold, 18, ink.withAlpha(0.55f), 26);
+  x += 30;
+  logos::Texture tex;
+  if (c.logos && !l.flagUrl.empty()) tex = c.logos->get(l.flagUrl);
+  if (tex.id) c.g.image(tex.id, {x, r.y + 5, 30, 30});  // square, the flag across its middle
+  else c.g.fill({x + 1, r.y + 10.5f, 28, 19}, focused ? theme::black(0.1f) : theme::white(0.16f), 2);
+  x += 40;
+  float scoreW = ui::textWidth(c, l.score, Weight::Bold, 27) + 8;
+  std::string thru = l.thru.empty() ? std::string() : l.thru == "F" ? std::string("F") : "thru " + l.thru;
+  float thruW = thru.empty() ? 0 : ui::textWidth(c, thru, Weight::Medium, 16) + 10;
+  float right = r.x + r.w - scoreW - thruW;
+  ui::label(c, l.name, x, r.y + 6, Weight::Bold, 23, ink, right - x);
+  if (!thru.empty()) ui::label(c, thru, right, r.y + 12, Weight::Medium, 16, ink.withAlpha(0.6f));
+  ui::label(c, l.score, r.x + r.w - scoreW, r.y + 2, Weight::Bold, 27, ink.withAlpha(dim ? 0.55f : 1.0f), scoreW, Align::Right);
+}
+
 }  // namespace
 
 void badge(ui::Ctx& c, const EventSide& side, float x, float y, float size, bool focused, float opacity) {
@@ -223,6 +244,9 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool showLeague)
       ui::label(c, p.label, bx, my + 80, p.current ? Weight::Bold : Weight::Regular, 16, ink.withAlpha(p.current ? 1 : 0.65f), pw);
       bx += pw + 8;
     }
+  } else if (!t.leaders.empty()) {
+    for (size_t i = 0; i < t.leaders.size() && i < 2; ++i)
+      leaderLine(c, t.leaders[i], {x, my - 4 + 42 * static_cast<float>(i), w, 40}, focused, i > 0);
   } else if (t.sides.size() == 2) {
     sideLine(c, t.sides[0], {x, my - 4, w, 40}, focused);
     sideLine(c, t.sides[1], {x, my + 38, w, 40}, focused);

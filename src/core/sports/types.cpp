@@ -42,7 +42,7 @@ bool SportsGame::operator==(const SportsGame& o) const {
          networks == o.networks && venue == o.venue && postponed == o.postponed &&
          completed == o.completed && customTitle == o.customTitle && cardKey == o.cardKey &&
          tournament == o.tournament &&
-         note == o.note && racing == o.racing && tennis == o.tennis;
+         note == o.note && racing == o.racing && tennis == o.tennis && golf == o.golf;
 }
 
 // MARK: LivePhase / LiveStatus
@@ -74,7 +74,8 @@ bool LiveStatus::operator==(const LiveStatus& o) const {
          boutsTotal == o.boutsTotal && boutA == o.boutA && boutB == o.boutB &&
          boutACountry == o.boutACountry && boutBCountry == o.boutBCountry && homeSets == o.homeSets &&
          awaySets == o.awaySets && suspended == o.suspended && homePens == o.homePens && awayPens == o.awayPens &&
-         homeAggregate == o.homeAggregate && awayAggregate == o.awayAggregate && top3 == o.top3;
+         homeAggregate == o.homeAggregate && awayAggregate == o.awayAggregate && top3 == o.top3 &&
+         leaders == o.leaders;
 }
 
 // MARK: SportsEvent
@@ -346,6 +347,7 @@ json::Value toJson(const SportsGame& g) {
   setOpt(v, "note", g.note);
   setOpt(v, "racing", g.racing);
   setOpt(v, "tennis", g.tennis);
+  setOpt(v, "golf", g.golf);
   return v;
 }
 
@@ -375,6 +377,7 @@ std::optional<SportsGame> gameFromJson(const json::Value& v) {
   g.note = optString(v["note"]);
   g.racing = optBool(v["racing"]);
   g.tennis = optBool(v["tennis"]);
+  g.golf = optBool(v["golf"]);
   return g;
 }
 

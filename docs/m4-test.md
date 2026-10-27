@@ -141,3 +141,5 @@ Pick each in Options › My Sports (More sports).
 | Softball | Pick Softball; a college game | Innings ("Bot 5th"), outs and count, runners on base |
 | PFL | Pick UFC, PFL, boxing & wrestling | PFL cards with Prelims and Main Card, like UFC |
 | IndyCar, NASCAR | Pick Racing; after a race, scores on | The race tile shows the top three ("1 BEL 2 GIB 3 RED") |
+| Golf | Pick Golf (or have golf feeds); a PGA Tour, LPGA, LIV or DP World round | The top two: position (T2 for ties), flag, name, holes played, score to par; the tournament in the tag; "Round 3" while it's on, "Round 3 done" between rounds |
+| Golf feeds | A provider golf channel naming the tournament or the tour | Its feeds are on that tournament's tile |

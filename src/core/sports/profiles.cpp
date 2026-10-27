@@ -160,8 +160,10 @@ const std::vector<Profile>& table() {
     tennis.suspendResumes = true;
     v.push_back(tennis);
     // All-day coverage: live for as long as the guide listing says.
-    Profile golf = base("Golf", 4 * 3600, "figure.golf");
+    Profile golf = base("Golf", 4 * 3600, "figure.golf", Tile::Leaderboard);
     golf.listingCap = 12 * 3600;
+    golf.parts = Parts::GolfRound;
+    golf.longLength = 11 * 3600;  // a scheduled round: 07:00 to 18:00 US Eastern
     golf.suspendResumes = true;
     v.push_back(golf);
     Profile cricket = base("Cricket", 12'600, "figure.cricket");  // 3.5 h, a T20
@@ -225,6 +227,7 @@ time::Seconds overrunOf(std::string_view league, const SportsGame* game) {
 
 time::Seconds lengthOf(std::string_view league, const SportsGame* game) {
   const Profile& p = profile(league, game ? std::string_view(game->leagueShort) : std::string_view());
+  if (p.parts == Parts::GolfRound && game && game->isGolf()) return p.longLength;
   // Men's singles at a Grand Slam: best of five sets.
   if (p.parts == Parts::TennisMatches && game && game->leagueShort == "ATP" && game->tournament &&
       isGrandSlam(*game->tournament) && game->home.name.find(" / ") == std::string::npos &&

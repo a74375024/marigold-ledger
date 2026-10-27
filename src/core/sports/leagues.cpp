@@ -215,10 +215,27 @@ const std::vector<League>& teamSportLeagues() {
   return kAll;
 }
 
+const std::vector<League>& golfLeagues() {
+  static const std::vector<League> kGolf = [] {
+    auto tour = [](const char* path, const char* shortName, const char* name, std::vector<std::string> words) {
+      League l = make(path, "Golf", shortName, name, "Golf", false);
+      l.mode = League::Mode::current;
+      l.keywords = std::move(words);
+      l.golf = true;
+      return l;
+    };
+    return std::vector<League>{tour("golf/pga", "PGA", "PGA Tour", {"pga tour"}),
+                               tour("golf/lpga", "LPGA", "LPGA Tour", {"lpga"}),
+                               tour("golf/liv", "LIV", "LIV Golf", {"liv golf"}),
+                               tour("golf/eur", "DPWT", "DP World Tour", {"dp world", "european tour"})};
+  }();
+  return kGolf;
+}
+
 const std::vector<League>& allLeagues() {
   static const std::vector<League> kAll = [] {
     std::vector<League> v = leagues();
-    for (const auto* list : {&fightLeagues(), &racingLeagues(), &tennisLeagues(), &teamSportLeagues()}) {
+    for (const auto* list : {&fightLeagues(), &racingLeagues(), &tennisLeagues(), &golfLeagues(), &teamSportLeagues()}) {
       v.insert(v.end(), list->begin(), list->end());
     }
     return v;
@@ -238,6 +255,7 @@ json::Value toJson(const SportFeedsSeen& seen) {
   if (seen.racing) v.set("racing", static_cast<int64_t>(*seen.racing));
   if (seen.tennis) v.set("tennis", static_cast<int64_t>(*seen.tennis));
   if (seen.nascar) v.set("nascar", static_cast<int64_t>(*seen.nascar));
+  if (seen.golf) v.set("golf", static_cast<int64_t>(*seen.golf));
   return v;
 }
 
@@ -246,6 +264,7 @@ SportFeedsSeen sportFeedsSeenFromJson(const json::Value& v) {
   if (v["racing"].isNumber()) seen.racing = v["racing"].asInt();
   if (v["tennis"].isNumber()) seen.tennis = v["tennis"].asInt();
   if (v["nascar"].isNumber()) seen.nascar = v["nascar"].asInt();
+  if (v["golf"].isNumber()) seen.golf = v["golf"].asInt();
   return seen;
 }
 
@@ -259,6 +278,7 @@ std::vector<League> activeLeagues(const MySportsPrefs& prefs, const SportFeedsSe
     }
     out.insert(out.end(), racingLeagues().begin(), racingLeagues().end());
     if (tennisSeen) out.insert(out.end(), tennisLeagues().begin(), tennisLeagues().end());
+    if (seen.golfSeen(now)) out.insert(out.end(), golfLeagues().begin(), golfLeagues().end());
     return out;
   }
   std::set<std::string> picked(prefs.leagues.begin(), prefs.leagues.end());
@@ -274,6 +294,7 @@ std::vector<League> activeLeagues(const MySportsPrefs& prefs, const SportFeedsSe
   if (picked.count("S:Tennis") || tennisSeen) {
     out.insert(out.end(), tennisLeagues().begin(), tennisLeagues().end());
   }
+  if (picked.count("S:Golf") || seen.golfSeen(now)) out.insert(out.end(), golfLeagues().begin(), golfLeagues().end());
   for (const SportList& list : sportLists()) {
     if (picked.count(list.id)) out.insert(out.end(), list.leagues.begin(), list.leagues.end());
   }
@@ -296,6 +317,7 @@ bool noteSportFeeds(SportFeedsSeen& seen, std::optional<time::Seconds>& checkedA
   });
   bool nascar = std::any_of(events.begin(), events.end(),
                             [](const catalog::LiveEvent& e) { return str::icontains(e.title, "nascar"); });
+  bool golf = std::any_of(events.begin(), events.end(), [](const catalog::LiveEvent& e) { return e.league == "Golf"; });
   bool changed = false;
   if (nascar) {
     changed = changed || !seen.nascarSeen(now);
@@ -308,6 +330,10 @@ bool noteSportFeeds(SportFeedsSeen& seen, std::optional<time::Seconds>& checkedA
   if (tennis) {
     changed = changed || !seen.tennisSeen(now);
     seen.tennis = now;
+  }
+  if (golf) {
+    changed = changed || !seen.golfSeen(now);
+    seen.golf = now;
   }
   return changed;
 }

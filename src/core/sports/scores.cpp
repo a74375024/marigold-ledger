@@ -357,7 +357,77 @@ Statuses tennisStatuses(std::string_view body, const League& league) {
   return result;
 }
 
+// Golf: the round on now ("Round 3"), "Round 3 done" between rounds, and the
+// top two of the leaderboard with ties ("T2"), flags and holes played.
+Statuses golfStatuses(std::string_view body, const League& league) {
+  Statuses result;
+  parse::forEachEvent(body, [&](const json::Value& event) {
+    auto id = text::text(event["id"]);
+    const json::Value& competition = event["competitions"][size_t{0}];
+    if (!id || !competition.isObject()) return;
+    const json::Value& status = competition["status"].isObject() ? competition["status"] : event["status"];
+    const json::Value& type = status["type"];
+    std::string name = str::upper(text::text(type["name"]).value_or(""));
+    int round = std::max(1, intOf(status["period"]).value_or(1));
+    bool suspended = false;
+    LiveStatus live;
+    live.phase = livePhase(league, text::text(type["state"]), name, &suspended);
+    if (live.phase == LivePhase::pre && text::flag(type["completed"])) live.phase = LivePhase::final;
+    live.suspended = suspended;
+    std::string roundText = "Round " + std::to_string(round);
+    if (name.find("PLAY_COMPLETE") != std::string::npos) {
+      // The round is over for the day: the next one is still to come.
+      live.phase = LivePhase::pre;
+      live.detail = roundText + " done";
+    } else if (live.phase == LivePhase::final) {
+      live.detail = "Final";
+    } else if (live.phase == LivePhase::live || live.phase == LivePhase::delayed) {
+      live.detail = roundText;
+    }
+    struct Row {
+      int order;
+      std::string score;
+      const json::Value* competitor;
+    };
+    std::vector<Row> rows;
+    std::map<std::string, int> sameScore;
+    for (const json::Value& c : competition["competitors"].items()) {
+      auto order = intOf(c["order"]);
+      auto score = text::text(c["score"]);
+      if (!order || !score) continue;
+      rows.push_back({*order, *score, &c});
+      sameScore[*score] += 1;
+    }
+    std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.order < b.order; });
+    if (live.phase != LivePhase::pre || name.find("PLAY_COMPLETE") != std::string::npos) {
+      std::map<std::string, int> firstPlace;
+      for (size_t i = 0; i < rows.size(); ++i) firstPlace.emplace(rows[i].score, static_cast<int>(i) + 1);
+      for (size_t i = 0; i < rows.size() && i < 2; ++i) {
+        const json::Value& c = *rows[i].competitor;
+        const json::Value& athlete = c["athlete"];
+        LiveStatus::Leader leader;
+        int place = firstPlace[rows[i].score];
+        leader.pos = (sameScore[rows[i].score] > 1 ? "T" : "") + std::to_string(place);
+        leader.name = text::text(athlete["shortName"]).value_or(text::text(athlete["displayName"]).value_or(""));
+        leader.flag = text::text(athlete["flag"]["href"]).value_or("");
+        leader.score = rows[i].score;
+        // Holes played in the round on now, when the tour sends them.
+        const json::Value::Array& rounds = c["linescores"].items();
+        if (static_cast<size_t>(round) <= rounds.size()) {
+          size_t holes = rounds[static_cast<size_t>(round - 1)]["linescores"].items().size();
+          if (holes >= 18) leader.thru = "F";
+          else if (holes > 0) leader.thru = std::to_string(holes);
+        }
+        if (!leader.name.empty()) live.leaders.push_back(std::move(leader));
+      }
+    }
+    result[league.shortName + "|" + *id] = std::move(live);
+  });
+  return result;
+}
+
 Statuses statuses(std::string_view body, const League& league) {
+  if (league.golf) return golfStatuses(body, league);
   if (league.racing) return raceStatuses(body, league);
   if (league.tennis) return tennisStatuses(body, league);
   return league.fights ? fightStatuses(body, league) : gameStatuses(body, league);

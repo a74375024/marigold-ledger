@@ -495,3 +495,31 @@ TEST_CASE("doubleheaders: a feed with no time goes to the game on now, or the on
   REQUIRE(n1);
   CHECK(ids(n1->sources) == std::vector<std::string>{"xt|8"});
 }
+
+TEST_CASE("golf feeds go to the tournament they name, on its tour and day") {
+  auto tournament = [](const std::string& tour, const std::string& id, const std::string& name, Seconds start) {
+    SportsTeam side = team("g" + id, name);
+    SportsGame g = game(tour, "Golf", id, side, side, start, {});
+    g.golf = true;
+    return g;
+  };
+  Seconds round = utc(2026, 4, 11, 11, 0);
+  BuildInput in;
+  in.games = {tournament("PGA", "401", "Harbor Championship", round),
+              tournament("LPGA", "501", "Valley Ladies Classic", round)};
+  in.now = round + 3600;
+  in.zone = time::Zone::usEastern();
+  auto target = [&](const std::string& title, std::optional<Seconds> start = std::nullopt) -> std::string {
+    in.events = {provider("p", title, "Golf", start, {"xt|g"}, "golf")};
+    auto out = build(in);
+    REQUIRE(out);
+    for (const SportsEvent& e : out->events)
+      if (e.game && !e.sources.empty()) return e.game->id;
+    return "";
+  };
+  CHECK(target("Golf: Harbor Championship - Round 3") == "PGA|401");
+  CHECK(target("LPGA: Valley Ladies Classic Featured Groups") == "LPGA|501");
+  CHECK(target("PGA Tour Live: Featured Holes") == "PGA|401");   // names the tour only
+  CHECK(target("Golf: Harbor Championship", round + 3 * 86'400).empty());  // another day
+  CHECK(target("Golf: Some Other Open").empty());
+}

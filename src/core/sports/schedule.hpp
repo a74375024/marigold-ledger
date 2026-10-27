@@ -99,6 +99,7 @@ struct FightCards {
 std::optional<FightCards> parseFightCards(std::string_view body, const League& league);
 // One game per session of each race weekend in the current listing.
 std::optional<std::vector<SportsGame>> parseRaceWeekends(std::string_view body, const League& league);
+std::optional<std::vector<SportsGame>> parseGolfTournaments(std::string_view body, const League& league);
 // One game per match of the tournaments in the listing.
 std::optional<std::vector<SportsGame>> parseTennisMatches(std::string_view body, const League& league);
 

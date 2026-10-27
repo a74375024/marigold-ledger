@@ -464,6 +464,7 @@ struct Place {
   bool redZone = false;
   std::optional<std::vector<bool>> bases;
   std::optional<int> topPens, bottomPens;
+  std::vector<LiveStatus::Leader> leaders;  // golf
   std::optional<std::string> lastPlay;
   std::optional<double> liveProgress;
   bool studio = false;
@@ -494,8 +495,8 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
   if (event.game) place.tag = event.game->note;
 
   // Sides, or a title.
-  if (event.game && event.game->isRacing()) {
-    // A race weekend: the Grand Prix and its circuit.
+  if (event.game && (event.game->isRacing() || event.game->isGolf())) {
+    // A race weekend (the Grand Prix and its circuit) or a golf tournament.
     place.title = event.game->home.name;
     place.subtitle = event.game->venue;
   } else if (event.game) {
@@ -629,6 +630,7 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
     if (s.phase == LivePhase::pre && event.start && now > *event.start) place.notStarted = true;
     if (s.phase == LivePhase::final) place.endedAt = endedAt;
     if (isLivePhase(s.phase)) place.liveProgress = clockProgress(s, game.league, game.leagueShort);
+    if (showsScores && game.isGolf()) place.leaders = s.leaders;
     if (showsScores && game.isRacing() && s.top3.size() == 3 && profile(game.league, game.leagueShort).podiumFromScores) {
       for (const std::string& code : s.top3) place.podium.push_back({code, std::nullopt});
       place.podiumLabel = race_session::name("race");
@@ -909,6 +911,10 @@ Tile makeTile(const SportsEvent& event, const Place& place, const std::string& r
     tile.layout = Tile::Layout::plain;
     tile.podium = place.podium;
     tile.podiumLabel = place.podiumLabel;
+    tile.leaders = place.leaders;
+    // A golf tournament without its leaderboard: the name is the title, not
+    // also the tag.
+    if (event.game && event.game->isGolf() && tile.leaders.empty()) tile.tag.reset();
   }
 
   // Footer.

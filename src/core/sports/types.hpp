@@ -75,9 +75,12 @@ struct SportsGame {
   std::optional<bool> racing;
   // A tennis match: both sides are players (or doubles pairs).
   std::optional<bool> tennis;
+  // A golf tournament's round: both sides are the tournament.
+  std::optional<bool> golf;
 
   bool isRacing() const { return racing.value_or(false); }
   bool isTennis() const { return tennis.value_or(false); }
+  bool isGolf() const { return golf.value_or(false); }
   std::string title() const;
   bool operator==(const SportsGame& o) const;
   bool operator!=(const SportsGame& o) const { return !(*this == o); }
@@ -119,6 +122,18 @@ struct LiveStatus {
   // A finished race's top three, as three-letter codes ("BEL"), from the
   // scoreboard's finishing order (NASCAR, IndyCar).
   std::vector<std::string> top3;
+  // Golf: the top of the leaderboard (two lines on the tile).
+  struct Leader {
+    std::string pos;    // "1", "T2"
+    std::string name;   // "S. Harbor"
+    std::string flag;   // country flag image
+    std::string score;  // to par: "-12", "E", "+1"
+    std::string thru;   // holes played this round: "14", "F"; empty when not known
+    bool operator==(const Leader& o) const {
+      return pos == o.pos && name == o.name && flag == o.flag && score == o.score && thru == o.thru;
+    }
+  };
+  std::vector<Leader> leaders;
   // Tennis: games won in each set so far, per side.
   std::optional<std::vector<std::string>> homeSets;
   std::optional<std::vector<std::string>> awaySets;

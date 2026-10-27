@@ -4,6 +4,7 @@
 #include <set>
 
 #include "core/sports/my_sports.hpp"
+#include "core/sports/profiles.hpp"
 #include "core/sports/schedule.hpp"
 #include "doctest.h"
 #include "sports/helpers.hpp"
@@ -396,11 +397,18 @@ TEST_CASE("sport feeds seen: F1, NASCAR and tennis, at most every 6 hours") {
   CHECK(seen.nascar == now + 7 * 3600);
   // Seen again, nothing new.
   CHECK_FALSE(noteSportFeeds(seen, checked, events, now + 14 * 3600));
-  // "Golf" isn't F1.
+  // "Golf" isn't F1, but golf feeds turn the golf tours on.
   SportFeedsSeen other;
   std::optional<Seconds> otherChecked;
-  CHECK_FALSE(noteSportFeeds(other, otherChecked,
-                             {sportsdata::liveEvent("4", "Golf: Final Round", "Golf", now, {"g"})}, now));
+  CHECK(noteSportFeeds(other, otherChecked,
+                       {sportsdata::liveEvent("4", "Golf: Final Round", "Golf", now, {"g"})}, now));
+  CHECK_FALSE(other.racingSeen(now));
+  CHECK(other.golfSeen(now));
+  MySportsPrefs open;
+  std::set<std::string> tours;
+  for (const League& l : activeLeagues(open, other, now)) tours.insert(l.shortName);
+  CHECK(tours.count("PGA"));
+  CHECK(tours.count("LPGA"));
 }
 
 namespace {
@@ -642,4 +650,26 @@ TEST_CASE("teams to pick: the schedule's, plus schools for college") {
   CHECK(teams[1].name == "Beta U");
   CHECK(teams[2].name == "Zeta Tech");
   CHECK(schedule.teams(nfl()).empty());
+}
+
+TEST_CASE("golf: a tournament as its round on now") {
+  std::string body = R"({"events":[{"id":"401","name":"Harbor Championship","shortName":"Harbor Champ.","date":"2026-04-09T04:00Z",
+    "competitions":[{"status":{"period":3,"type":{"name":"STATUS_IN_PROGRESS","state":"in"}},"competitors":[]}]},
+    {"id":"402","name":"Gone Classic","date":"2026-04-09T04:00Z","competitions":[{"status":{"period":0,"type":{"name":"STATUS_CANCELED","state":"post"}}}]}]})";
+  auto games = parseGolfTournaments(body, *leagueByShort("PGA"));
+  REQUIRE(games);
+  REQUIRE(games->size() == 1);  // a cancelled one isn't kept
+  const SportsGame& g = games->front();
+  CHECK(g.id == "PGA|401");
+  CHECK(g.isGolf());
+  CHECK(g.home.name == "Harbor Championship");
+  CHECK(g.note == "Harbor Champ.");
+  CHECK(g.start == utc(2026, 4, 11, 11, 0));  // round 3: two days on, 07:00 Eastern
+  CHECK_FALSE(g.completed);
+  CHECK(lengthOf("Golf", &g) == 11 * 3600);
+  CHECK(lengthOf("Golf", nullptr) == 4 * 3600);  // a golf feed without a schedule
+  // Saved and read back.
+  auto back = gameFromJson(toJson(g));
+  REQUIRE(back);
+  CHECK(back->isGolf());
 }

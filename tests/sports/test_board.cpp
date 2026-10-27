@@ -815,3 +815,28 @@ TEST_CASE("new sports on the board: rugby home first, a race's top three") {
   Board quiet = build(r);
   CHECK(tile(quiet, "sev|NASCAR|9|1").podium.empty());
 }
+
+TEST_CASE("golf on the board: the leaderboard with scores on, the name without") {
+  SportsTeam side = team("g401", "Harbor Championship");
+  SportsGame g = game("PGA", "Golf", "401", side, side, kNow - 3600);
+  g.golf = true;
+  g.note = std::string("Harbor Champ.");
+  Input in = baseInput({eventOf(g, {lineup("e|1")})});
+  LiveStatus s = status(LivePhase::live, "Round 3");
+  s.leaders = {{"1", "S. Harbor", "https://example.invalid/f/irl.png", "-12", "14"},
+               {"T2", "M. Valley", "https://example.invalid/f/esp.png", "-10", "F"}};
+  in.statuses["PGA|401"] = s;
+  Board b = build(in);
+  const Tile& t = tile(b, "sev|PGA|401");
+  REQUIRE(t.leaders.size() == 2);
+  CHECK(t.leaders[1].pos == "T2");
+  CHECK(t.tag == std::string("Harbor Champ."));
+  CHECK(t.statusText == "Round 3");
+  CHECK(t.state == State::live);
+  in.settings.showsScores = false;
+  Board quiet = build(in);
+  const Tile& q = tile(quiet, "sev|PGA|401");
+  CHECK(q.leaders.empty());
+  CHECK(q.title == "Harbor Championship");
+  CHECK_FALSE(q.tag);  // the name is the title, not also the tag
+}

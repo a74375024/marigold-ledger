@@ -32,13 +32,15 @@ struct Profile {
   enum class Tile : uint8_t {
     Teams,        // two teams: badge or logo, score
     Players,      // two players: country flags (the code until they load), sets
+    Leaderboard,  // a tournament's top two: position, flag, score to par, holes played
     Card,         // a fight card: Prelims / Main timeline
     RaceWeekend,  // a race weekend: sessions, the last one's top three
     Title,        // a title and the sport's icon
   };
   // Parts of an event with lengths of their own.
   // Tennis matches: best of five sets (men's Grand Slam singles) run longer.
-  enum class Parts : uint8_t { None, FightCard, RaceSessions, TennisMatches };
+  // A golf tournament's round runs the day (longLength).
+  enum class Parts : uint8_t { None, FightCard, RaceSessions, TennisMatches, GolfRound };
 
   std::string league;       // row group / event league this entry is for
   std::string leagueShort;  // one league within the group ("NASCAR"); empty = the whole group
@@ -49,7 +51,7 @@ struct Profile {
   // 0 = the usual overrun. `cup`: every match is treated as one.
   time::Seconds knockoutOverrun = 0;
   bool cup = false;
-  time::Seconds longLength = 0;          // TennisMatches: a best-of-five match
+  time::Seconds longLength = 0;          // TennisMatches: a best-of-five match; GolfRound: a day's play
   // "Suspended" means play stops and resumes later (rain in baseball,
   // tennis, cricket, golf): the game stays live with a SUSPENDED pill.
   // Elsewhere a suspended game counts as postponed.

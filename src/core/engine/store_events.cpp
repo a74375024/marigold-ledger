@@ -114,6 +114,7 @@ EventTile toTile(const sb::Tile& t, const sports::SportsEvent* event, const time
   o.subtitle = t.boutLine.value_or(t.podiumLabel.value_or(t.subtitle.value_or("")));
   for (const sb::PartLine& p : t.parts) o.parts.push_back({p.text.empty() ? p.label : p.text, p.fill, p.current});
   for (const sb::PodiumDriver& d : t.podium) o.podium.push_back({d.code, hexColor(d.color, 0x8A8D93)});
+  for (const auto& l : t.leaders) o.leaders.push_back({l.pos, l.name, l.flag, l.score, l.thru});
   o.symbol = glyphFor(t.icon);
   o.channelName = t.channelDisplay.value_or(t.channelName.value_or(""));
   o.channelLogo = t.channelLogos.empty() ? std::string() : t.channelLogos.front();

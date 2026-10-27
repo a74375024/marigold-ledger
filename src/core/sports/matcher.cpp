@@ -159,6 +159,40 @@ std::optional<int> raceTarget(const ProviderEvent& event, const std::vector<int>
   return std::nullopt;
 }
 
+// The golf tournament a provider feed is ("Golf: The Masters - Round 2",
+// "PGA Tour: Genesis Championship"): the one whose distinctive name words
+// the title has most of, on the tour it names if it names one, on that day.
+std::optional<int> golfTarget(const ProviderEvent& event, const std::vector<int>& tournaments,
+                              const std::vector<SportsGame>& games) {
+  if (tournaments.empty() || event.league != "Golf") return std::nullopt;
+  static const std::set<std::string> kStop = {"championship", "championships", "classic", "invitational",
+                                              "tournament",   "golf",          "presented", "series",
+                                              "stroke",       "play",          "the",       "tour"};
+  static const std::vector<std::pair<const char*, const char*>> kTours = {
+      {" pga tour ", "PGA"}, {" lpga ", "LPGA"}, {" liv golf ", "LIV"}, {" dp world ", "DPWT"}};
+  std::string title = normalized(event.title + " " + event.family);
+  std::optional<std::string> tour;
+  for (const auto& [words, shortName] : kTours) {
+    if (has(title, words)) tour = shortName;
+  }
+  const bool hasStart = !event.guessed && event.start.has_value();
+  std::optional<std::pair<int, int>> best;  // index, words matched
+  for (int index : tournaments) {
+    const SportsGame& game = games[static_cast<size_t>(index)];
+    if (tour && game.leagueShort != *tour) continue;
+    // The day's play runs from the round's start into the evening.
+    if (hasStart && (*event.start < game.start - 4 * 3600 || *event.start > game.start + 14 * 3600)) continue;
+    int matched = 0;
+    for (const std::string& w : splitWords(normalized(game.home.name))) {
+      if (text::count(w) >= 3 && !kStop.count(w) && has(title, " " + w + " ")) matched += 1;
+    }
+    if (matched == 0 && !tour) continue;
+    if (!best || matched > best->second) best = std::make_pair(index, matched);
+  }
+  if (!best) return std::nullopt;
+  return best->first;
+}
+
 int64_t elapsedMs(std::chrono::steady_clock::time_point since) {
   return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - since)
       .count();
@@ -318,10 +352,12 @@ std::optional<BuildResult> build(const BuildInput& in) {
     if (parts.size() != 3) continue;
     cards[parts[0] + "|" + parts[1]].push_back(static_cast<int>(i));
   }
-  // Race weekend sessions, for feeds named after a session.
-  std::vector<int> raceSessions;
+  // Race weekend sessions, for feeds named after a session; golf
+  // tournaments, for feeds named after one.
+  std::vector<int> raceSessions, golfTournaments;
   for (size_t i = 0; i < gameCount; ++i) {
     if (games[i].isRacing()) raceSessions.push_back(static_cast<int>(i));
+    if (games[i].isGolf()) golfTournaments.push_back(static_cast<int>(i));
   }
   // Other races (NASCAR) are found by their name's distinctive words and
   // number ("YellaWood 500" -> yellawood, 500).
@@ -369,6 +405,21 @@ std::optional<BuildResult> build(const BuildInput& in) {
           } else {
             value.sources.push_back(source);
           }
+        }
+        if (!value.family) value.family = event.family;
+        byGame[t] = std::move(value);
+        if (!firstProviderID[t]) firstProviderID[t] = event.id;
+        stats.matchedEvents += 1;
+        continue;
+      }
+    }
+    if (inWindow) {
+      if (auto target = golfTarget(event, golfTournaments, games)) {
+        size_t t = static_cast<size_t>(*target);
+        stats.filtered += 1;
+        SportsEvent value = entry(t);
+        for (const std::string& feed : event.feeds) {
+          if (!containsSource(value.sources, feed)) value.sources.push_back(providerSource(feed, event.spanish));
         }
         if (!value.family) value.family = event.family;
         byGame[t] = std::move(value);

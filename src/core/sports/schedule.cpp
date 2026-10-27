@@ -678,9 +678,58 @@ std::vector<SportsGame> keeping(const std::vector<SportsGame>& games, Seconds cu
   return out;
 }
 
+// A golf tournament as its round on now (or next): the event's date is the
+// first day, so round N is N-1 days later, from 07:00 US Eastern (the
+// scoreboard's status says when it is really on).
+std::optional<std::vector<SportsGame>> parseGolfTournaments(std::string_view body, const League& league) {
+  std::vector<SportsGame> games;
+  bool found = parse::forEachEvent(body, [&](const json::Value& event) {
+    auto id = text::text(event["id"]);
+    auto name = text::text(event["name"]);
+    auto first = text::date(text::text(event["date"]));
+    if (!id || !name || !first) return;
+    const json::Value& competition = event["competitions"][size_t{0}];
+    const json::Value& status = competition["status"];
+    std::string state = str::lower(text::text(status["type"]["state"]).value_or(""));
+    std::string statusName = str::upper(text::text(status["type"]["name"]).value_or(""));
+    if (statusName.find("CANCEL") != std::string::npos) return;
+    int round = 1;
+    if (auto period = text::text(status["period"])) round = std::max(1, text::toInt(*period).value_or(1));
+    SportsTeam side;
+    side.id = "g" + *id;
+    side.name = *name;
+    SportsGame game;
+    game.id = league.shortName + "|" + *id;
+    game.league = league.group;
+    game.leagueShort = league.shortName;
+    game.homeFirst = profile(league.group).homeFirst;
+    game.home = side;
+    game.away = side;
+    Seconds day = *first - *first % 86'400;
+    game.start = day + (round - 1) * 86'400 + 11 * 3600;
+    game.networks = parse::networks(competition);
+    game.completed = text::flag(status["type"]["completed"]) || state == "post";
+    game.customTitle = *name;
+    game.note = text::text(event["shortName"]).value_or(*name);
+    game.golf = true;
+    games.push_back(std::move(game));
+  });
+  if (!found) return std::nullopt;
+  return games;
+}
+
 std::optional<LeagueResult> parseLeague(std::string_view body, const League& league, Seconds from, Seconds to) {
   LeagueResult result;
   auto inWindow = [&](const SportsGame& g) { return g.start >= from && g.start <= to; };
+  if (league.golf) {
+    auto tournaments = parseGolfTournaments(body, league);
+    if (!tournaments) return std::nullopt;
+    result.total = tournaments->size();
+    for (SportsGame& g : *tournaments) {
+      if (inWindow(g)) result.games.push_back(std::move(g));
+    }
+    return result;
+  }
   if (league.tennis) {
     auto matches = parseTennisMatches(body, league);
     if (!matches) return std::nullopt;

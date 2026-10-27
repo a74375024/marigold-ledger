@@ -437,3 +437,32 @@ TEST_CASE("new sports: rugby minutes, lacrosse quarters, volleyball sets, race t
   CHECK(statuses(race, L("NASCAR")).at("NASCAR|5|9").top3 == std::vector<std::string>{"BEL", "GIB", "RED"});
   CHECK(statuses(race, L("IRL")).at("IRL|5|9").top3.size() == 3);
 }
+
+TEST_CASE("golf: the round, the top two with ties, flags and holes played") {
+  std::string body = R"({"events":[{"id":"401","name":"Harbor Championship","shortName":"Harbor Champ.","date":"2026-04-09T04:00Z",
+    "competitions":[{"status":{"period":3,"type":{"name":"STATUS_IN_PROGRESS","state":"in"}},
+      "competitors":[
+        {"order":2,"score":"-10","athlete":{"shortName":"M. Valley","flag":{"href":"https://example.invalid/f/esp.png"}},
+         "linescores":[{"period":1},{"period":2},{"period":3,"linescores":[{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}]}]},
+        {"order":1,"score":"-12","athlete":{"shortName":"S. Harbor","flag":{"href":"https://example.invalid/f/irl.png"}},
+         "linescores":[{"period":1},{"period":2},{"period":3,"linescores":[{},{},{},{},{},{},{},{},{},{},{},{},{},{}]}]},
+        {"order":3,"score":"-10","athlete":{"shortName":"P. Third"}}]}]}]})";
+  LiveStatus s = statuses(body, L("PGA")).at("PGA|401");
+  CHECK(s.phase == LivePhase::live);
+  CHECK(s.detail == "Round 3");
+  REQUIRE(s.leaders.size() == 2);
+  CHECK(s.leaders[0].pos == "1");
+  CHECK(s.leaders[0].name == "S. Harbor");
+  CHECK(s.leaders[0].score == "-12");
+  CHECK(s.leaders[0].thru == "14");
+  CHECK(s.leaders[0].flag == "https://example.invalid/f/irl.png");
+  CHECK(s.leaders[1].pos == "T2");  // level with the third
+  CHECK(s.leaders[1].thru == "F");
+  // Between rounds: the next one is to come, the leaderboard stays.
+  std::string done = body;
+  done.replace(done.find("STATUS_IN_PROGRESS"), 18, "STATUS_PLAY_COMPLETE");
+  LiveStatus between = statuses(done, L("PGA")).at("PGA|401");
+  CHECK(between.phase == LivePhase::pre);
+  CHECK(between.detail == "Round 3 done");
+  CHECK(between.leaders.size() == 2);
+}
