@@ -100,6 +100,10 @@ struct LiveStatus {
   bool redZone = false;
   // Runners on first, second and third (baseball).
   std::optional<std::vector<bool>> bases;
+  // Soccer knockouts: penalty shootout goals, and the aggregate over both
+  // legs (second legs only).
+  std::optional<int> homePens, awayPens;
+  std::optional<int> homeAggregate, awayAggregate;
   std::optional<std::string> lastPlay;
   // A fight card part: fights done and in all, the fight on now (or next).
   // Never who won.

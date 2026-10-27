@@ -753,3 +753,33 @@ TEST_CASE("formatting helpers") {
   CHECK(symbol("Soccer") == "soccerball");
   CHECK_FALSE(isLight(std::string("00274C")));
 }
+
+TEST_CASE("soccer knockouts on the tile: penalties beside the score, the winner leads") {
+  SportsGame g = game("UCL", "Soccer", "9", team("h9", "Harbor United", std::string("HBU")),
+                      team("a9", "Valley Rovers", std::string("VAR")), kNow - 2 * 3600, {}, std::nullopt, true);
+  Input in = baseInput({eventOf(g, {lineup("e|9")})});
+  LiveStatus s = status(LivePhase::live, "Pens");
+  s.homeScore = "1";
+  s.awayScore = "1";
+  s.homePens = 4;
+  s.awayPens = 3;
+  s.situation = std::string("Penalties");
+  in.statuses["UCL|9"] = s;
+  Board b = build(in);
+  const Tile& t = tile(b, "sev|UCL|9");
+  REQUIRE(t.sides.size() == 2);
+  // Soccer: the home side on top.
+  CHECK(t.sides[0].name == "Harbor United");
+  CHECK(t.sides[0].pens == 4);
+  CHECK(t.sides[1].pens == 3);
+  CHECK(t.sides[0].leads == true);
+  CHECK(t.sides[1].leads == false);
+  CHECK(t.situation == "Penalties");
+  // Scores off: no score, no shootout.
+  in.settings.showsScores = false;
+  Board quiet = build(in);
+  const Tile& q = tile(quiet, "sev|UCL|9");
+  REQUIRE(q.sides.size() == 2);
+  CHECK_FALSE(q.sides[0].pens);
+  CHECK_FALSE(q.situation);
+}

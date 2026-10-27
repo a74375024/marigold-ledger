@@ -22,6 +22,7 @@ struct EventSide {
   uint32_t color = 0x3A3D44, alt = 0xFFFFFF;  // badge fill and ring
   std::string rank;      // "12" for ranked college teams
   std::string score;     // empty before the game
+  std::string pens;      // penalty shootout goals ("4"), shown "(4)" beside the score
   bool home = false;
   bool leads = false, trails = false;
   bool ball = false;     // possession

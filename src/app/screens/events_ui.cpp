@@ -106,7 +106,9 @@ void sideLine(ui::Ctx& c, const EventSide& s, Rect r, bool focused) {
   }
   if (!s.rank.empty()) x += ui::label(c, s.rank, x, r.y + 9, Weight::Bold, 18, ink.withAlpha(0.55f)) + 6;
   float scoreW = s.score.empty() ? 0 : ui::textWidth(c, s.score, Weight::Bold, 27) + 8;
-  float right = r.x + r.w - scoreW - (s.ball ? 18 : 0);
+  std::string pens = s.pens.empty() || s.score.empty() ? std::string() : "(" + s.pens + ")";
+  float pensW = pens.empty() ? 0 : ui::textWidth(c, pens, Weight::Bold, 19) + 8;
+  float right = r.x + r.w - scoreW - pensW - (s.ball ? 18 : 0);
   float nameW = ui::label(c, s.name, x, r.y + 6, Weight::Bold, 23, ink, right - x - (s.home ? 50 : 0));
   if (s.home) ui::label(c, "home", x + nameW + 8, r.y + 12, Weight::Regular, 16, ink.withAlpha(0.5f));
   if (!s.score.empty()) {
@@ -118,6 +120,8 @@ void sideLine(ui::Ctx& c, const EventSide& s, Rect r, bool focused) {
     }
     ui::label(c, s.score, r.x + r.w - scoreW, r.y + 2, Weight::Bold, 27, ink.withAlpha(s.trails ? 0.55f : 1.0f), scoreW,
               Align::Right);
+    if (!pens.empty())
+      ui::label(c, pens, r.x + r.w - scoreW - pensW, r.y + 9, Weight::Bold, 19, ink.withAlpha(s.trails ? 0.5f : 0.85f));
   }
 }
 

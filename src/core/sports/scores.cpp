@@ -1,6 +1,7 @@
 #include "core/sports/scores.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 #include <unordered_set>
 
@@ -86,6 +87,7 @@ std::string liveDetail(const League& league, LivePhase phase, std::string_view n
 namespace {
 
 std::optional<int> intOf(const json::Value& v) {
+  if (v.isNumber()) return static_cast<int>(std::lround(v.asNumber()));  // "aggregateScore": 2.0
   auto t = text::text(v);
   if (!t) return std::nullopt;
   return text::toInt(*t);
@@ -112,17 +114,31 @@ Statuses gameStatuses(std::string_view body, const League& league) {
     live.phase = phase;
     live.suspended = suspended;
     live.detail = liveDetail(league, phase, name, period, clock, text::text(type["shortDetail"]));
+    // A second leg's aggregate; a first leg's is only its own score.
+    bool secondLeg = intOf(competition["leg"]["value"]).value_or(0) >= 2;
     for (const json::Value& competitor : competition["competitors"].items()) {
       if (!competitor.isObject()) continue;
-      if (text::text(competitor["homeAway"]) == std::optional<std::string>("home")) {
-        live.homeScore = text::text(competitor["score"]);
-      } else {
-        live.awayScore = text::text(competitor["score"]);
-      }
+      bool home = text::text(competitor["homeAway"]) == std::optional<std::string>("home");
+      (home ? live.homeScore : live.awayScore) = text::text(competitor["score"]);
+      (home ? live.homePens : live.awayPens) = intOf(competitor["shootoutScore"]);
+      if (secondLeg) (home ? live.homeAggregate : live.awayAggregate) = intOf(competitor["aggregateScore"]);
     }
+    if (!live.homePens || !live.awayPens) live.homePens = live.awayPens = std::nullopt;
+    if (!live.homeAggregate || !live.awayAggregate) live.homeAggregate = live.awayAggregate = std::nullopt;
     if (phase == LivePhase::pre) {
       live.homeScore.reset();
       live.awayScore.reset();
+      live.homePens = live.awayPens = std::nullopt;
+      live.homeAggregate = live.awayAggregate = std::nullopt;
+    }
+    // Soccer has no situation line: the shootout while it's on, else the
+    // aggregate ("Aggregate 2–2", home first as soccer tiles are).
+    bool on = phase == LivePhase::live || phase == LivePhase::delayed;
+    if (on && live.homePens) {
+      live.situation = std::string("Penalties");
+    } else if (live.homeAggregate) {
+      live.situation = "Aggregate " + std::to_string(*live.homeAggregate) + "\xE2\x80\x93" +
+                       std::to_string(*live.awayAggregate);
     }
     const json::Value& situation = competition["situation"];
     if ((phase == LivePhase::live || phase == LivePhase::delayed) && situation.isObject()) {

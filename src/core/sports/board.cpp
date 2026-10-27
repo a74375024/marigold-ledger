@@ -463,6 +463,7 @@ struct Place {
   std::optional<std::string> situation;
   bool redZone = false;
   std::optional<std::vector<bool>> bases;
+  std::optional<int> topPens, bottomPens;
   std::optional<std::string> lastPlay;
   std::optional<double> liveProgress;
   bool studio = false;
@@ -653,6 +654,8 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
       place.redZone = s.redZone;
       place.bases = s.bases;
       place.lastPlay = s.lastPlay;
+      place.topPens = topIsHome ? s.homePens : s.awayPens;
+      place.bottomPens = topIsHome ? s.awayPens : s.homePens;
     }
   } else if (parts && event.live == LivePhase::final) {
     place.clock = std::string("Final");
@@ -897,6 +900,9 @@ Tile makeTile(const SportsEvent& event, const Place& place, const std::string& r
   } else if (place.top && place.bottom) {
     tile.layout = Tile::Layout::sides;
     std::optional<int> lead = leader(place.topScore, place.bottomScore);
+    // Level after extra time: the shootout decides who leads.
+    if (!lead && place.topPens && place.bottomPens && *place.topPens != *place.bottomPens)
+      lead = *place.topPens > *place.bottomPens ? 0 : 1;
     std::optional<bool> topLeads, bottomLeads;
     if (lead) {
       topLeads = *lead == 0;
@@ -906,6 +912,8 @@ Tile makeTile(const SportsEvent& event, const Place& place, const std::string& r
                                   place.possessionTop == true, place.topSets, place.photos));
     tile.sides.push_back(sideLine(*place.bottom, soccer, place.homeIsTop == false, place.bottomScore, bottomLeads,
                                   place.possessionTop == false, place.bottomSets, place.photos));
+    tile.sides[tile.sides.size() - 2].pens = place.topPens;
+    tile.sides.back().pens = place.bottomPens;
     if (place.photos) {
       for (SideLine& line : tile.sides) addPhoto(line, ctx.in.playerPhoto);
     }

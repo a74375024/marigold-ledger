@@ -352,3 +352,48 @@ TEST_CASE("suspended: resumes later in baseball and tennis, postponed elsewhere"
   CHECK(f.phase == LivePhase::postponed);
   CHECK_FALSE(f.suspended);
 }
+
+TEST_CASE("soccer knockouts: penalties and the aggregate over two legs") {
+  // Shaped like a real second leg that went to penalties: aggregate and
+  // shootout goals as numbers, the leg as an object.
+  std::string pens = R"({"events":[{"id":"9","competitions":[{
+      "status":{"displayClock":"120'","period":5,"type":{"name":"STATUS_FINAL_PEN","state":"post","completed":true,"shortDetail":"FT-Pens"}},
+      "leg":{"value":2,"displayValue":"2nd Leg"},
+      "competitors":[{"homeAway":"home","score":"2","aggregateScore":2.0,"shootoutScore":3},
+                     {"homeAway":"away","score":"1","aggregateScore":2.0,"shootoutScore":2}]}]}]})";
+  LiveStatus s = statuses(pens, L("UCL")).at("UCL|9");
+  CHECK(s.phase == LivePhase::final);
+  CHECK(s.detail == "FT-Pens");
+  CHECK(s.homePens == 3);
+  CHECK(s.awayPens == 2);
+  CHECK(s.homeAggregate == 2);
+  CHECK(s.awayAggregate == 2);
+  CHECK(s.situation == "Aggregate 2\xE2\x80\x93" "2");  // over: the aggregate, not "Penalties"
+
+  // The shootout on now.
+  std::string shootout = R"({"events":[{"id":"10","competitions":[{
+      "status":{"period":5,"type":{"name":"STATUS_SHOOTOUT","state":"in","shortDetail":"Pens"}},
+      "leg":{"value":2},
+      "competitors":[{"homeAway":"home","score":"1","aggregateScore":3,"shootoutScore":4},
+                     {"homeAway":"away","score":"1","aggregateScore":3,"shootoutScore":3}]}]}]})";
+  LiveStatus live = statuses(shootout, L("UCL")).at("UCL|10");
+  CHECK(live.situation == "Penalties");
+
+  // A second leg without a shootout; a first leg shows no aggregate.
+  std::string second = R"({"events":[{"id":"11","competitions":[{
+      "status":{"displayClock":"67'","period":2,"type":{"name":"STATUS_IN_PROGRESS","state":"in","shortDetail":"67'"}},
+      "leg":{"value":2,"displayValue":"2nd Leg"},
+      "competitors":[{"homeAway":"home","score":"2","aggregateScore":3.0},
+                     {"homeAway":"away","score":"0","aggregateScore":1.0}]}]}]})";
+  LiveStatus leg2 = statuses(second, L("UCL")).at("UCL|11");
+  CHECK_FALSE(leg2.homePens);
+  CHECK(leg2.situation == "Aggregate 3\xE2\x80\x93" "1");
+  std::string first = R"({"events":[{"id":"12","competitions":[{
+      "status":{"period":2,"type":{"name":"STATUS_IN_PROGRESS","state":"in","shortDetail":"67'"}},
+      "leg":{"value":1,"displayValue":"1st Leg"},
+      "competitors":[{"homeAway":"home","score":"1","aggregateScore":1.0},
+                     {"homeAway":"away","score":"0","aggregateScore":0.0}]}]}]})";
+  LiveStatus leg1 = statuses(first, L("UCL")).at("UCL|12");
+  CHECK_FALSE(leg1.homeAggregate);
+  CHECK_FALSE(leg1.situation);
+}

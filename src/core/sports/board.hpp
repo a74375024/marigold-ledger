@@ -154,6 +154,7 @@ struct SideLine {
   std::optional<std::string> logoUrl;
   bool home = false;        // "home" after the name
   std::optional<std::string> score;
+  std::optional<int> pens;    // penalty shootout goals, beside the score
   std::optional<bool> leads;  // false: dimmed score
   bool possession = false;
   std::vector<std::string> sets;  // tennis games per set

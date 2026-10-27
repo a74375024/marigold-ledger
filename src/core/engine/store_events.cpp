@@ -63,6 +63,7 @@ EventSide toSide(const sb::SideLine& s) {
   if (!s.sets.empty()) o.score = str::join(s.sets, " ");
   else o.score = s.score.value_or("");
   o.home = s.home;
+  if (s.pens) o.pens = std::to_string(*s.pens);
   o.leads = s.leads.value_or(false);
   o.trails = s.leads && !*s.leads;
   o.ball = s.possession;

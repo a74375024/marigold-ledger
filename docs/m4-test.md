@@ -118,3 +118,5 @@ The guide's lists and the playback session now come from the shared engine. Each
 | Suspended | A baseball or tennis game suspended by rain (scores on) | Yellow SUSPENDED pill, still in Live now; football or soccer "suspended" still reads POSTPONED |
 | Doubleheader | An MLB doubleheader with provider feeds that give no time | Game 1's tile has them until game 2 starts, then game 2's; a "Game 2" feed goes to game 2 |
 | Runners on base | A live baseball game, scores on | A small diamond before "2 outs · 1-2"; filled bases match the runners |
+| Penalties | A soccer knockout going to penalties, scores on | "(4)" beside each side's score, the shootout's winner bright; footer "Penalties" while it's on |
+| Aggregate | A second leg, scores on | Footer "Aggregate 3–1" (home first, as on the tile); none on a first leg |
