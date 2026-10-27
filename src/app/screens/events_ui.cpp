@@ -34,6 +34,33 @@ float smallPill(ui::Ctx& c, const std::string& text, float x, float y, Color fil
   return w;
 }
 
+// A base as a diamond `half` wide each way from its centre, drawn in thin
+// rows (the renderer has no rotation): filled for a runner, an outline
+// otherwise.
+void base(ui::Ctx& c, float cx, float cy, float half, bool runner, Color ink) {
+  constexpr float kRow = 1.0f, kEdge = 2.0f;
+  for (float dy = -half; dy < half; dy += kRow) {
+    float mid = dy + kRow * 0.5f;
+    float w = half - std::fabs(mid);
+    if (w <= 0) continue;
+    float y = cy + dy;
+    if (runner || w <= kEdge * 1.5f) {
+      c.g.fill({cx - w, y, 2 * w, kRow}, runner ? ink : ink.withAlpha(0.45f));
+    } else {
+      c.g.fill({cx - w, y, kEdge, kRow}, ink.withAlpha(0.45f));
+      c.g.fill({cx + w - kEdge, y, kEdge, kRow}, ink.withAlpha(0.45f));
+    }
+  }
+}
+
+// Runners on base: second at the top, third left, first right (30 x 24).
+void bases(ui::Ctx& c, const std::vector<bool>& on, float x, float y, Color ink) {
+  constexpr float kHalf = 6.0f;
+  base(c, x + 15.0f, y + 6.5f, kHalf, on[1], ink);
+  base(c, x + 6.5f, y + 15.5f, kHalf, on[2], ink);
+  base(c, x + 23.5f, y + 15.5f, kHalf, on[0], ink);
+}
+
 void countryChip(ui::Ctx& c, const std::string& code, float x, float y, bool focused) {
   Rect r{x, y, 32, 22};
   c.g.fill(r, focused ? theme::black(0.12f) : theme::white(0.16f), 4);
@@ -233,6 +260,10 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool showLeague)
   } else if (!t.pill2.empty()) {
     fx += smallPill(c, t.pill2, fx, fy + 1, t.pill2Outlined ? ink.withAlpha(0.6f) : theme::white(0.18f),
                     t.pill2Outlined ? ink : theme::white(), t.pill2Outlined) + 10;
+  }
+  if (t.bases.size() == 3) {
+    bases(c, t.bases, fx, fy + 2, ink.withAlpha(0.95f * alpha));
+    fx += 30 + 10;
   }
   if (!t.situation.empty()) {
     Color sc = t.redZone ? (focused ? theme::hex(0xBF1A26) : theme::hex(theme::kWatching)) : ink.withAlpha(0.85f * alpha);

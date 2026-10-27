@@ -124,6 +124,7 @@ EventTile toTile(const sb::Tile& t, const sports::SportsEvent* event, const time
   o.pill2 = t.footerPill.value_or("");
   o.pill2Outlined = t.footerPillOutlined;
   o.footer = t.footer;
+  if (t.bases && t.bases->size() == 3) o.bases = *t.bases;
   o.situation = t.situation.value_or("");
   o.redZone = t.redZone;
   o.progress = t.progress.value_or(-1);

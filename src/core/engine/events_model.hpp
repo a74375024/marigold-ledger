@@ -65,6 +65,7 @@ struct EventTile {
   bool pill2Outlined = false;
   std::string footer;     // "In your lineup", "+ 3 backup feeds"
   std::string situation;  // "2nd & 6 at LAC 41"
+  std::vector<bool> bases;  // baseball: runners on first, second, third; empty = none
   bool redZone = false;
   double progress = -1;   // live progress strip, -1 = none
   bool watchable = false;
