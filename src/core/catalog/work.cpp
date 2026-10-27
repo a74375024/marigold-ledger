@@ -191,6 +191,7 @@ LineupOutput lineup(const LineupInput& input) {
     return &input.channels[it->second];
   };
   LineupOutput out;
+  CoastFeeds coasts = CoastFeeds::of(input.infos, input.coast);
   for (const EntryInfo& info : input.infos) {
     if (prefs.removed.count(info.id)) continue;
     bool favorite =
@@ -206,7 +207,7 @@ LineupOutput lineup(const LineupInput& input) {
                       [&](const std::string& m) { return input.guideIDs.count(m) > 0; });
       // Suggestions are worked out live, so channels join as their listings
       // load (and core networks / market locals always).
-      if (suggests(info, prefs, hasGuide, info.name)) out.lineupIDs.insert(info.id);
+      if (suggests(info, prefs, hasGuide, info.name, coasts)) out.lineupIDs.insert(info.id);
     }
   }
   // No channel numbers: channels come and go, and the remote can't dial.

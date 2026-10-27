@@ -180,3 +180,92 @@ TEST_CASE("suggests: national channels by category and guide") {
   CHECK(suggests(intl, p, true, intl.name));
   CHECK_FALSE(suggests(intl, p, false, intl.name));
 }
+
+TEST_CASE("East/West feeds: which markets get the West feeds") {
+  CHECK(marketIsWest("San Francisco–Oakland–San Jose") == true);
+  CHECK(marketIsWest("San Francisco-Oakland-San Jose") == true);
+  CHECK(marketIsWest("Denver") == true);              // Mountain: the West feeds
+  CHECK(marketIsWest("Phoenix (Prescott)") == true);
+  CHECK(marketIsWest("Honolulu") == true);
+  CHECK(marketIsWest("Anchorage") == true);
+  CHECK(marketIsWest("Portland, OR") == true);
+  CHECK(marketIsWest("Portland-Auburn") == false);    // Maine
+  CHECK(marketIsWest("New York") == false);
+  CHECK(marketIsWest("Chicago") == false);             // Central: the East feeds
+  CHECK(marketIsWest("Dallas–Fort Worth") == false);   // spelled as the list page does
+  CHECK(marketIsWest("St. Louis") == false);
+  CHECK(marketIsWest("North Platte") == false);
+  CHECK_FALSE(marketIsWest("Somewhere Else").has_value());
+}
+
+TEST_CASE("East/West feeds: Automatic follows the home market, then the time zone") {
+  constexpr int pacific = -8 * 3600, mountain = -7 * 3600, central = -6 * 3600, london = 0;
+  LineupPrefs p = bayArea();
+  CHECK(resolveCoast(p, london) == Coast::west);
+  p.markets.push_back({"New York", std::nullopt, {}});
+  CHECK(resolveCoast(p, pacific) == Coast::west);  // the first market is home
+  p.homeMarket = "New York";
+  CHECK(resolveCoast(p, pacific) == Coast::east);
+  p.coast = Coast::west;
+  CHECK(resolveCoast(p, central) == Coast::west);
+  p.coast = Coast::both;
+  CHECK(resolveCoast(p, central) == Coast::both);
+
+  LineupPrefs none;
+  CHECK(resolveCoast(none, pacific) == Coast::west);
+  CHECK(resolveCoast(none, mountain) == Coast::west);
+  CHECK(resolveCoast(none, central) == Coast::east);
+  CHECK(resolveCoast(none, london) == Coast::east);
+  none.markets = {{"Somewhere Else", std::nullopt, {}}};
+  CHECK(resolveCoast(none, pacific) == Coast::west);
+}
+
+TEST_CASE("East/West feeds: one version of each pair is suggested") {
+  auto core = [](std::string id, std::string name) {
+    EntryInfo e = entry(LineupCategory::movies);
+    e.id = std::move(id);
+    e.name = name;
+    e.core = name;
+    return e;
+  };
+  std::vector<EntryInfo> entries = {core("e|core:HBO", "HBO"), core("e|core:HBO~west", "HBO"),
+                                    core("e|core:Starz~west", "Starz"),  // only the West version
+                                    core("e|core:Cinemax", "Cinemax")};
+  LineupPrefs p = bayArea();
+  p.categories.insert(LineupCategory::movies);
+  auto picked = [&](Coast coast) {
+    CoastFeeds coasts = CoastFeeds::of(entries, coast);
+    std::set<std::string> out;
+    for (const EntryInfo& e : entries) {
+      if (suggests(e, p, true, e.name, coasts)) out.insert(e.id);
+    }
+    return out;
+  };
+  CHECK(CoastFeeds::of(entries, Coast::west).paired == std::set<std::string>{"e|core:HBO"});
+  CHECK(picked(Coast::west) ==
+        std::set<std::string>{"e|core:HBO~west", "e|core:Starz~west", "e|core:Cinemax"});
+  CHECK(picked(Coast::east) ==
+        std::set<std::string>{"e|core:HBO", "e|core:Starz~west", "e|core:Cinemax"});
+  CHECK(picked(Coast::both).size() == 4);
+  // Not passing the pairs keeps the old rule (both).
+  for (const EntryInfo& e : entries) CHECK(suggests(e, p, true, e.name));
+}
+
+TEST_CASE("East/West feeds: the setting is saved, and old saves read as Automatic") {
+  LineupPrefs p = bayArea();
+  CHECK(p.coast == Coast::automatic);
+  for (Coast c : {Coast::east, Coast::west, Coast::both, Coast::automatic}) {
+    p.coast = c;
+    auto back = lineupPrefsFromJson(toJson(p));
+    REQUIRE(back);
+    CHECK(back->coast == c);
+    CHECK(*back == p);
+  }
+  auto old = lineupPrefsFromJson(R"({"configured":true})");
+  REQUIRE(old);
+  CHECK(old->coast == Coast::automatic);
+  auto later = lineupPrefsFromJson(R"({"configured":true,"coast":"mountain"})");
+  REQUIRE(later);
+  CHECK(later->coast == Coast::automatic);
+  CHECK_FALSE(lineupPrefsFromJson(R"({"configured":true,"coast":3})"));
+}

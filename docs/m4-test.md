@@ -167,3 +167,13 @@ Events from provider feeds that no schedule game matched.
 | Shows stay out | Live Events on a weekday, in NFL, NBA and College Football | No tiles for shows about the sport ("NBA Today", "NFL Insiders", "College Football Live") or replays and classics of old games; only the day's real games |
 | Fight cards | Live Events the week after a UFC card | No tiles for last week's card ("UFC 333 Prelims"); next card under its day |
 | Kept | The same rows | Whip-arounds (RedZone) on Sundays; games the schedule doesn't list (smaller conferences) still shown |
+
+## East/West feeds and the last feed
+
+| Area | How to check | Pass |
+|---|---|---|
+| West market | My Lineup with a Pacific or Mountain market (San Francisco, Denver) | Premium channels your provider has twice (HBO, HBO West) appear once, as the West version; Options › My Lineup › East/West feeds reads "Automatic: West" |
+| East market | Set the market to an Eastern or Central one (New York, Chicago) | The East versions instead |
+| Setting | East/West feeds › East feeds, West feeds, Both | My Lineup changes at once; Both shows both versions; the other version is always in All Channels and search |
+| Added by hand | Add the other version in Edit My Lineup | It stays whichever coast is set |
+| Last feed | Pick another feed for a channel in Where to Watch, leave, then open the channel again | It starts on the feed you watched last (a pinned feed still wins) |

@@ -1147,6 +1147,7 @@ void Store::rebuildEntries() {
   input->channels = *m.channels;
   input->indexByID = m.indexByID;
   input->prefs = m.prefs;
+  input->coast = catalog::resolveCoast(m.prefs);
   input->otherGroup = kOtherGroup;
   for (const auto& [id, list] : m.outsideMatches) input->guideIDs.insert(id);
   for (const auto& [id, list] : m.providerMatches) input->guideIDs.insert(id);
@@ -1372,10 +1373,11 @@ std::vector<CategorySummary> Store::categories(const catalog::LineupPrefs& draft
   catalog::LineupPrefs everything = draft;
   everything.categories = std::set<catalog::LineupCategory>(catalog::kAllCategories.begin(), catalog::kAllCategories.end());
   std::map<catalog::LineupCategory, std::pair<int, int>> counts;
+  auto coasts = catalog::CoastFeeds::of(m.catalog->entries, catalog::resolveCoast(draft));
   for (const EntryInfo& info : m.catalog->entries) {
     auto& c = counts[info.category];
     ++c.second;
-    if (catalog::suggests(info, everything, entryHasGuide(info.id), info.name)) ++c.first;
+    if (catalog::suggests(info, everything, entryHasGuide(info.id), info.name, coasts)) ++c.first;
   }
   std::vector<CategorySummary> out;
   for (catalog::LineupCategory cat : catalog::kAllCategories) {
@@ -1395,8 +1397,9 @@ void Store::buildLineup(catalog::LineupPrefs draft) {
   Impl& m = *impl_;
   if (draft.countries.empty()) draft.countries = catalog::LineupPrefs::defaultCountries();
   draft.suggested.clear();
+  auto coasts = catalog::CoastFeeds::of(m.catalog->entries, catalog::resolveCoast(draft));
   for (const EntryInfo& info : m.catalog->entries) {
-    if (catalog::suggests(info, draft, entryHasGuide(info.id), info.name)) draft.suggested.insert(info.id);
+    if (catalog::suggests(info, draft, entryHasGuide(info.id), info.name, coasts)) draft.suggested.insert(info.id);
   }
   draft.configured = true;
   draft.builtAt = time::now();

@@ -86,6 +86,8 @@ struct LineupInput {
   // Raw channel ids that have any guide data.
   std::set<std::string> guideIDs;
   std::string otherGroup;
+  // The coast whose East/West versions are suggested (resolveCoast(prefs)).
+  Coast coast = Coast::both;
 };
 
 struct LineupOutput {

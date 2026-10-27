@@ -27,6 +27,7 @@ struct Program;
 namespace catalog {
 struct CatalogResult;
 struct LineupPrefs;
+enum class Coast : int;
 struct MarketChoice;
 namespace cache {
 struct Saved;
@@ -243,6 +244,11 @@ class Store {
   void setGroupHidden(const std::string& name, bool hidden);
   void setLineupCountries(const std::set<std::string>& countries);
   void refreshSuggestions();
+  // East/West feeds: the setting, what Automatic stands for here, and the
+  // channels that have both versions (their names, East first).
+  void setCoast(catalog::Coast coast);
+  catalog::Coast resolvedCoast() const;
+  std::vector<std::string> coastPairNames() const;
   // Home city for Live Events (only with more than one market).
   std::string homeMarketName() const;
   void cycleHomeMarket();

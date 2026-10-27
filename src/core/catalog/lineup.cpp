@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "core/catalog/markets.hpp"
 #include "core/catalog/text.hpp"
 #include "core/util/rx.hpp"
 #include "core/util/strings.hpp"
@@ -159,11 +160,111 @@ std::set<std::string> LineupPrefs::marketPlaces() const {
   return places;
 }
 
+const MarketChoice* LineupPrefs::home() const {
+  if (homeMarket) {
+    for (const MarketChoice& m : markets) {
+      if (m.name == *homeMarket) return &m;
+    }
+  }
+  return markets.empty() ? nullptr : &markets.front();
+}
+
 bool LineupPrefs::operator==(const LineupPrefs& o) const {
   return configured == o.configured && markets == o.markets && categories == o.categories &&
          requireGuide == o.requireGuide && suggested == o.suggested && added == o.added &&
          removed == o.removed && showHidden == o.showHidden && builtAt == o.builtAt &&
-         countries == o.countries && homeMarket == o.homeMarket;
+         countries == o.countries && homeMarket == o.homeMarket && coast == o.coast;
+}
+
+namespace {
+
+constexpr std::string_view kWestSuffix = "~west";
+
+const char* coastName(Coast c) {
+  switch (c) {
+    case Coast::east: return "east";
+    case Coast::west: return "west";
+    case Coast::both: return "both";
+    case Coast::automatic: break;
+  }
+  return "automatic";
+}
+
+std::string firstCity(std::string_view marketName) {
+  MarketChoice m;
+  m.name = std::string(marketName);
+  std::vector<std::string> parts = m.cityParts();
+  return parts.empty() ? std::string() : parts.front();
+}
+
+}  // namespace
+
+std::optional<bool> marketIsWest(std::string_view marketName) {
+  // The markets on Pacific, Mountain, Alaska and Hawaii time, by their first
+  // city (the list page and the built-in list spell the rest differently).
+  static const std::set<std::string> kWest = {
+      "los angeles", "san francisco", "phoenix", "seattle", "denver", "sacramento",
+      "salt lake city", "san diego", "las vegas", "albuquerque", "fresno", "tucson",
+      "spokane", "honolulu", "colorado springs", "el paso", "boise", "reno", "yakima",
+      "eugene", "santa barbara", "bakersfield", "monterey", "chico", "medford",
+      "palm springs", "anchorage", "idaho falls", "missoula", "yuma", "billings",
+      "rapid city", "butte", "bend", "grand junction", "twin falls", "great falls",
+      "cheyenne", "eureka", "casper", "fairbanks", "helena", "juneau", "glendive"};
+  std::string city = firstCity(marketName);
+  if (city.empty()) return std::nullopt;
+  if (city == "portland") {
+    // Portland, OR; Portland–Auburn is Maine's.
+    std::string lower = str::lower(marketName);
+    return lower.find("oregon") != std::string::npos || lower.find(", or") != std::string::npos;
+  }
+  if (kWest.count(city)) return true;
+  for (const markets::Market& m : markets::builtinMarkets()) {
+    if (firstCity(m.name) == city) return false;
+  }
+  return std::nullopt;
+}
+
+Coast resolveCoast(const LineupPrefs& prefs, int winterOffset) {
+  if (prefs.coast != Coast::automatic) return prefs.coast;
+  if (const MarketChoice* home = prefs.home()) {
+    if (auto west = marketIsWest(home->name)) return *west ? Coast::west : Coast::east;
+  }
+  return winterOffset <= -7 * 3600 ? Coast::west : Coast::east;
+}
+
+Coast resolveCoast(const LineupPrefs& prefs) {
+  // Mid-January, so daylight time doesn't move Mountain into Central.
+  time::Civil now = time::civilFromSeconds(time::now());
+  time::Civil january{};
+  january.year = now.year;
+  january.month = 1;
+  january.day = 15;
+  january.hour = 12;
+  return resolveCoast(prefs, time::Zone::device().offsetAt(time::secondsFromCivil(january)));
+}
+
+CoastFeeds CoastFeeds::of(const std::vector<EntryInfo>& entries, Coast resolved) {
+  CoastFeeds out;
+  out.coast = resolved;
+  if (resolved == Coast::both) return out;
+  std::set<std::string> ids;
+  for (const EntryInfo& e : entries) ids.insert(e.id);
+  for (const std::string& id : ids) {
+    if (str::endsWith(id, kWestSuffix)) {
+      std::string east = id.substr(0, id.size() - kWestSuffix.size());
+      if (ids.count(east)) out.paired.insert(std::move(east));
+    }
+  }
+  return out;
+}
+
+bool CoastFeeds::skips(const EntryInfo& entry) const {
+  if (paired.empty() || coast == Coast::both) return false;
+  bool west = str::endsWith(entry.id, kWestSuffix);
+  if (west) {
+    return coast == Coast::east && paired.count(entry.id.substr(0, entry.id.size() - kWestSuffix.size()));
+  }
+  return coast == Coast::west && paired.count(entry.id);
 }
 
 std::string toJson(const LineupPrefs& prefs) {
@@ -183,6 +284,7 @@ std::string toJson(const LineupPrefs& prefs) {
   if (prefs.builtAt) v.set("builtAt", *prefs.builtAt);
   v.set("countries", stringArray(prefs.countries));
   if (prefs.homeMarket) v.set("homeMarket", *prefs.homeMarket);
+  v.set("coast", coastName(prefs.coast));
   return json::write(v);
 }
 
@@ -224,13 +326,21 @@ std::optional<LineupPrefs> lineupPrefsFromJson(std::string_view textIn) {
     if (!v["homeMarket"].isString()) return std::nullopt;
     p.homeMarket = v["homeMarket"].asString();
   }
+  if (v.has("coast") && !v["coast"].isNull()) {
+    if (!v["coast"].isString()) return std::nullopt;
+    // A name from a later version: Automatic.
+    for (Coast c : {Coast::east, Coast::west, Coast::both}) {
+      if (v["coast"].asString() == coastName(c)) p.coast = c;
+    }
+  }
   return p;
 }
 
 bool suggests(const EntryInfo& entry, const LineupPrefs& prefs, bool hasGuide,
-              std::string_view name) {
+              std::string_view name, const CoastFeeds& coasts) {
   // Only the chosen countries / languages.
   if (!prefs.includes(entry.market)) return false;
+  if (coasts.skips(entry)) return false;
   auto on = [&](LineupCategory c) { return prefs.categories.count(c) > 0; };
   switch (entry.kind) {
     case ChannelKind::channel:

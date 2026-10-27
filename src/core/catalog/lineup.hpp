@@ -34,6 +34,10 @@ struct MarketChoice {
 json::Value toJson(const MarketChoice& m);
 std::optional<MarketChoice> marketChoiceFromJson(const json::Value& v);
 
+// Channels with an East and a West feed (HBO, HBO West): which one My
+// Lineup suggests. Automatic goes by the home market's time zone.
+enum class Coast : int { automatic, east, west, both };
+
 struct LineupPrefs {
   bool configured = false;
   std::vector<MarketChoice> markets;
@@ -54,6 +58,7 @@ struct LineupPrefs {
   // The market Live Events treats as home (its stations come first); empty =
   // the first market picked.
   std::optional<std::string> homeMarket;
+  Coast coast = Coast::automatic;
 
   static std::set<std::string> defaultCountries() { return {"US"}; }
 
@@ -66,6 +71,8 @@ struct LineupPrefs {
   // Places that count as "here" for regional channels: the market's cities
   // plus common names for the area ("Bay Area", "California").
   std::set<std::string> marketPlaces() const;
+  // The home market (homeMarket, else the first picked).
+  const MarketChoice* home() const;
 
   bool operator==(const LineupPrefs& o) const;
 };
@@ -77,8 +84,33 @@ struct LineupPrefs {
 std::string toJson(const LineupPrefs& prefs);
 std::optional<LineupPrefs> lineupPrefsFromJson(std::string_view text);
 
+// Whether a market is on Pacific, Mountain, Alaska or Hawaii time, where
+// cable carries the West feeds (a network's West feed is its Pacific
+// schedule; Mountain systems mostly take it too). nullopt: a market this
+// doesn't know.
+std::optional<bool> marketIsWest(std::string_view marketName);
+
+// The coast Automatic stands for: the home market's, else the device's time
+// zone (`winterOffset`: its UTC offset in January, seconds; -7 h or less is
+// West).
+Coast resolveCoast(const LineupPrefs& prefs, int winterOffset);
+Coast resolveCoast(const LineupPrefs& prefs);  // with the device's zone
+
+// The entries that have both an East and a West version ("e|core:HBO" and
+// "e|core:HBO~west"), and the coast whose version is suggested.
+struct CoastFeeds {
+  std::set<std::string> paired;  // the East entry ids
+  Coast coast = Coast::both;
+
+  static CoastFeeds of(const std::vector<EntryInfo>& entries, Coast resolved);
+  // A version of a pair that isn't this coast's.
+  bool skips(const EntryInfo& entry) const;
+};
+
 // Whether an entry belongs in the suggested lineup (LineupEngine.suggests).
+// Marigold: only one of a channel's East and West versions, unless the user
+// asked for both.
 bool suggests(const EntryInfo& entry, const LineupPrefs& prefs, bool hasGuide,
-              std::string_view name);
+              std::string_view name, const CoastFeeds& coasts = {});
 
 }  // namespace marigold::catalog

@@ -227,3 +227,36 @@ TEST_CASE("lineup: membership, guide order, browse list and groups") {
   CHECK(out.groups[1] == std::make_pair(std::string("Other"), 2));
   CHECK(out.groups[2] == std::make_pair(std::string("Ent"), 1));
 }
+
+TEST_CASE("lineup: one of a channel's East and West versions, unless added by hand") {
+  std::vector<Channel> channels = {channel("1", "US: HBO"), channel("2", "US: HBO West"),
+                                   channel("3", "US: AMC")};
+  auto core = [](const std::string& id, const std::string& name, const std::string& member) {
+    EntryInfo e;
+    e.id = id;
+    e.name = name;
+    e.category = LineupCategory::movies;
+    e.members = {member};
+    e.market = "US";
+    e.core = "HBO";
+    return e;
+  };
+  LineupInput input;
+  input.infos = {core("e|core:HBO", "HBO", "xt:1|1"), core("e|core:HBO~west", "HBO West", "xt:1|2"),
+                 core("e|core:AMC", "AMC", "xt:1|3")};
+  input.channels = channels;
+  for (size_t i = 0; i < channels.size(); ++i) input.indexByID[channels[i].id] = i;
+  input.prefs.configured = true;
+  input.prefs.categories.insert(LineupCategory::movies);
+  input.coast = Coast::west;
+  CHECK(lineup(input).lineupIDs == std::set<std::string>{"e|core:HBO~west", "e|core:AMC"});
+  input.coast = Coast::east;
+  CHECK(lineup(input).lineupIDs == std::set<std::string>{"e|core:HBO", "e|core:AMC"});
+  // Still in the browse list, and the user can add the other one back.
+  CHECK(lineup(input).browseEntries.size() == 3);
+  input.prefs.added = {"e|core:HBO~west"};
+  CHECK(lineup(input).lineupIDs.size() == 3);
+  input.prefs.added.clear();
+  input.coast = Coast::both;
+  CHECK(lineup(input).lineupIDs.size() == 3);
+}

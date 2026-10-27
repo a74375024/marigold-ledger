@@ -81,6 +81,30 @@ void Store::setLineupCountries(const std::set<std::string>& countries) {
 
 void Store::refreshSuggestions() { buildLineup(impl_->prefs); }
 
+void Store::setCoast(catalog::Coast coast) {
+  catalog::LineupPrefs p = impl_->prefs;
+  if (p.coast == coast) return;
+  p.coast = coast;
+  setPrefs(p);
+  impl_->ev.boardDirty = true;
+}
+
+catalog::Coast Store::resolvedCoast() const { return catalog::resolveCoast(impl_->prefs); }
+
+std::vector<std::string> Store::coastPairNames() const {
+  const Impl& m = *impl_;
+  std::vector<std::string> names;
+  if (!m.catalog) return names;
+  // Only the chosen countries' channels: the rest are never suggested.
+  for (const std::string& id : catalog::CoastFeeds::of(m.catalog->entries, catalog::Coast::east).paired) {
+    auto it = m.entryInfo.find(id);
+    if (it == m.entryInfo.end()) continue;
+    const EntryInfo& info = m.catalog->entries[it->second];
+    if (m.prefs.includes(info.market)) names.push_back(info.name);
+  }
+  return names;
+}
+
 std::string Store::homeMarketName() const {
   const catalog::LineupPrefs& p = impl_->prefs;
   if (p.homeMarket) return *p.homeMarket;

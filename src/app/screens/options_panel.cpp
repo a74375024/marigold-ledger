@@ -90,6 +90,69 @@ std::unique_ptr<Screen> makeEditLineup(App& app) {
   });
 }
 
+const char* coastLabel(catalog::Coast c) {
+  switch (c) {
+    case catalog::Coast::east: return "East";
+    case catalog::Coast::west: return "West";
+    case catalog::Coast::both: return "Both";
+    case catalog::Coast::automatic: break;
+  }
+  return "Automatic";
+}
+
+std::string coastSummary(const Store& s) {
+  catalog::Coast set = s.lineupPrefs().coast;
+  if (set != catalog::Coast::automatic) return coastLabel(set);
+  return std::string("Automatic: ") + coastLabel(s.resolvedCoast());
+}
+
+// East/West Feeds: which version of a channel the provider has twice
+// (HBO, HBO West) My Lineup keeps.
+std::unique_ptr<Screen> makeCoast(App& app) {
+  return page(app, [&app](ui::ListPanel& p) {
+    Store& s = app.store();
+    catalog::LineupPrefs prefs = s.lineupPrefs();
+    p.subtitle = "OPTIONS";
+    p.title = "East/West Feeds";
+    p.items.push_back(ui::PanelItem::note(
+        "For channels your provider has in both versions. West feeds air three hours after East."));
+    auto choice = [&](catalog::Coast c, std::string title, std::string detail) {
+      ui::PanelItem it{ui::PanelItem::Kind::Check, std::move(title)};
+      it.detail = std::move(detail);
+      it.on = prefs.coast == c;
+      it.select = [&app, c] { app.store().setCoast(c); };
+      p.items.push_back(it);
+    };
+    std::string why;
+    catalog::Coast resolved = catalog::resolveCoast([&] {
+      catalog::LineupPrefs a = prefs;
+      a.coast = catalog::Coast::automatic;
+      return a;
+    }());
+    const catalog::MarketChoice* home = prefs.home();
+    std::optional<bool> marketWest = home ? catalog::marketIsWest(home->name) : std::nullopt;
+    if (marketWest) {
+      why = shortMarket(home->name) + (*marketWest ? " gets the West feeds" : " gets the East feeds");
+    } else {
+      why = "From this TV's time zone";
+    }
+    choice(catalog::Coast::automatic, "Automatic", std::string(coastLabel(resolved)) + " here: " + why);
+    choice(catalog::Coast::east, "East feeds", "Shows at their Eastern times");
+    choice(catalog::Coast::west, "West feeds", "Shows at their Pacific times");
+    choice(catalog::Coast::both, "Both", "Keep both versions in My Lineup");
+    std::vector<std::string> pairs = s.coastPairNames();
+    if (pairs.empty()) {
+      p.items.push_back(ui::PanelItem::note("None of your channels have both versions right now."));
+    } else {
+      std::string some;
+      for (size_t i = 0; i < pairs.size() && i < 4; ++i) some += (i ? ", " : "") + pairs[i];
+      std::string count = std::to_string(pairs.size()) + (pairs.size() == 1 ? " channel has" : " channels have");
+      p.items.push_back(ui::PanelItem::note(count + " both here (" + some + (pairs.size() > 4 ? " and more" : "") +
+                                            "). The other version is in All Channels and search."));
+    }
+  });
+}
+
 std::unique_ptr<Screen> makeCountries(App& app) {
   // Sections as they were when the page opened, so rows don't jump.
   auto atOpen = std::make_shared<std::set<std::string>>(app.store().lineupPrefs().countries);
@@ -233,6 +296,10 @@ std::unique_ptr<Screen> makeOptions(App& app) {
       edit.select = [&app] { app.nav().push(makeEditLineup(app)); };
       p.items.push_back(edit);
     }
+    ui::PanelItem coast{ui::PanelItem::Kind::Chevron, "East/West feeds"};
+    coast.value = coastSummary(s);
+    coast.select = [&app] { app.nav().push(makeCoast(app)); };
+    p.items.push_back(coast);
     ui::PanelItem countries{ui::PanelItem::Kind::Chevron, "Countries & Languages"};
     countries.value = countriesSummary(prefs.countries);
     countries.select = [&app] { app.nav().push(makeCountries(app)); };
