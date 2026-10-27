@@ -139,7 +139,7 @@ jobs:
   # The Apple TV app: the host tests again with Apple's compiler, an unsigned
   # .ipa for a signing service to install, and a start in the tvOS Simulator.
   tvos:
-    runs-on: macos-26
+    runs-on: macos-latest
     needs: [hygiene, host]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
