@@ -12,7 +12,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include "app/store/store.hpp"
+#include "core/engine/store.hpp"
 #include "core/catalog/lineup.hpp"
 #include "core/catalog/markets.hpp"
 #include "core/catalog/types.hpp"
@@ -34,7 +34,7 @@
 #include "core/sports/scores.hpp"
 #include "core/sports/store.hpp"
 
-namespace marigold::app {
+namespace marigold::engine {
 
 using catalog::CatalogResult;
 using catalog::EntryInfo;
@@ -207,4 +207,4 @@ struct Fetched {
   bool done = false;
 };
 
-}  // namespace marigold::app
+}  // namespace marigold::engine

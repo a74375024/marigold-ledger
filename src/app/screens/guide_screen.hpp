@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "app/screen.hpp"
-#include "app/store/model.hpp"
+#include "app/store/store.hpp"
 
 namespace marigold::app {
 

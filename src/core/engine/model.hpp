@@ -12,7 +12,7 @@
 
 #include "core/util/time.hpp"
 
-namespace marigold::app {
+namespace marigold::engine {
 
 // One guide row: a real-world channel, with its feeds as backups.
 struct GuideChannel {
@@ -104,4 +104,4 @@ struct Feed {
   bool needsOpen = false;
 };
 
-}  // namespace marigold::app
+}  // namespace marigold::engine

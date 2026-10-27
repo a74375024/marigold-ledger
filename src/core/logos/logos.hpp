@@ -82,6 +82,9 @@ struct LogoSpec {
   }
 };
 
+// The links a row tries, in one string, one per line (the logo cache's key).
+std::string chain(const std::vector<std::string>& urls);
+
 // The library's national logo file for a channel name ("MTV2" ->
 // "mtv-2-us.png"), when it has one.
 std::optional<std::string> logoSetFile(std::string_view name);

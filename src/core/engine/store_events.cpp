@@ -6,18 +6,15 @@
 #include <algorithm>
 #include <cstdlib>
 
-#include "app/app.hpp"
-#include "app/playback.hpp"
-#include "app/store/store.hpp"
-#include "app/store/store_impl.hpp"
+#include "core/engine/store.hpp"
+#include "core/engine/store_impl.hpp"
 #include "core/sports/leagues.hpp"
 #include "core/sports/network_map.hpp"
 #include "core/sports/special_feeds.hpp"
-#include "platform/logo_cache.hpp"
 #include "core/util/log.hpp"
 #include "core/util/strings.hpp"
 
-namespace marigold::app {
+namespace marigold::engine {
 namespace {
 
 namespace sb = sports::board;
@@ -72,7 +69,7 @@ EventSide toSide(const sb::SideLine& s) {
   std::vector<std::string> photos;
   if (s.photoSmallUrl) photos.push_back(*s.photoSmallUrl);
   if (s.photoUrl) photos.push_back(*s.photoUrl);
-  o.photoUrl = logos::LogoCache::chain(photos);
+  o.photoUrl = logos::chain(photos);
   o.initials = s.initials;
   o.doubles = s.doubles;
   return o;
@@ -158,12 +155,12 @@ EventTile toTile(const sb::Tile& t, const sports::SportsEvent* event, const time
 void Store::loadEvents() {
   Impl& m = *impl_;
   EventsState& e = m.ev;
-  platform::Storage& st = app_.storage();
+  Files& st = host_.files;
   time::Seconds now = time::now();
   sports::schedule::Saved saved;
   if (auto text = st.read(kScheduleFile))
     if (auto s = sports::schedule::savedFromJson(*text)) saved = std::move(*s);
-  e.schedule = sports::schedule::Schedule(std::move(saved), app_.build().build);
+  e.schedule = sports::schedule::Schedule(std::move(saved), host_.build);
   if (auto text = st.read(kMySportsFile))
     if (auto p = sports::mySportsFromJson(*text)) e.mySports = *p;
   if (auto text = st.read(kRemindersFile))
@@ -176,11 +173,11 @@ void Store::loadEvents() {
 
 void Store::saveEvents() {
   EventsState& e = impl_->ev;
-  platform::Storage& st = app_.storage();
+  Files& st = host_.files;
   if (e.schedule.takeDirty()) {
     std::string text = sports::schedule::toJson(e.schedule.saved());
     std::string path = st.path(kScheduleFile);
-    app_.pool().post([path, text] {
+    host_.pool.post([path, text] {
       std::FILE* f = std::fopen((path + ".tmp").c_str(), "wb");
       if (!f) return;
       std::fwrite(text.data(), 1, text.size(), f);
@@ -199,7 +196,7 @@ sports::schedule::Context Store::scheduleContext() const {
   ctx.seen = impl_->ev.seen;
   ctx.enabled = settings_.scheduleEnabled;
   ctx.now = time::now();
-  ctx.zone = app_.zone();
+  ctx.zone = host_.zone();
   return ctx;
 }
 
@@ -214,7 +211,7 @@ void Store::eventsOpen(bool open) {
     if (sports::noteSportFeeds(e.seen, e.seenCheckedAt, impl_->catalog->events, time::now()))
       e.schedule.leaguesChanged(scheduleContext());
     e.schedule.refreshIfNeeded(scheduleContext());
-    if (e.scores.start(sports::scores::Holder::board, settings_.scheduleEnabled)) e.scoresAt = app_.ms();
+    if (e.scores.start(sports::scores::Holder::board, settings_.scheduleEnabled)) e.scoresAt = host_.ms();
     if (ss::listingsNeedRead(e.listingsAt, 0, 0, time::now())) e.listingsAt.reset();
     e.nextCheckMs = 0;
     e.boardDirty = true;
@@ -258,7 +255,7 @@ void Store::pumpSchedule(uint32_t ms) {
     r.body.clear();
   };
   uint64_t gen = impl_->generation;
-  app_.pool().submit(std::move(q), [this, gen, answer](http::Response&& r) {
+  host_.pool.submit(std::move(q), [this, gen, answer](http::Response&& r) {
     EventsState& ev = impl_->ev;
     ev.scheduleBusy = false;
     if (gen != impl_->generation) return;
@@ -273,10 +270,10 @@ void Store::pumpScores(uint32_t ms) {
   if (!e.scoresRound) {
     sports::scores::RoundInput in;
     in.games = e.schedule.publish(scheduleContext()).games;
-    in.watching = app_.playback().active() && app_.playback().full();
+    in.watching = host_.playingFull();
     in.showsScores = settings_.showScores;
     in.now = now;
-    in.zone = app_.zone();
+    in.zone = host_.zone();
     for (const auto& [id, tile] : e.board.tiles) {
       auto ev = e.board.events.find(id);
       if (ev != e.board.events.end() && ev->second.game && ev->second.game->isTennis() && tile.watchable)
@@ -303,7 +300,7 @@ void Store::pumpScores(uint32_t ms) {
   auto body = std::make_shared<std::string>();
   http::Request q = toHttp(send.request, "events.scores");
   q.afterTransfer = [body](http::Response& r) { body->swap(r.body); };
-  app_.pool().submit(std::move(q), [this, body](http::Response&& r) {
+  host_.pool.submit(std::move(q), [this, body](http::Response&& r) {
     EventsState& ev = impl_->ev;
     ev.scoresBusy = false;
     ev.scores.onResponse(r.status, *body, time::now());
@@ -370,7 +367,7 @@ void Store::rebuildEvents() {
   in->channelIndex = sports::network_map::channelIndex(m.lineup.lineupIDs, m.lineup.lineupEntries, m.lineup.browseEntries,
                                                        m.lineup.entries, infos, {}, rosters, markets);
   in->now = now;
-  in->zone = app_.zone();
+  in->zone = host_.zone();
   auto channels = m.channels;
   auto index = std::make_shared<std::unordered_map<std::string, size_t>>(m.indexByID);
   in->channelExists = [index](const std::string& id) { return index->count(id) > 0; };
@@ -394,7 +391,7 @@ void Store::rebuildEvents() {
   e.rebuilding = true;
   auto out = std::make_shared<std::optional<ss::RebuildResult>>();
   uint64_t gen = m.generation;
-  app_.pool().post([in, out] { *out = ss::rebuild(*in); },
+  host_.pool.post([in, out] { *out = ss::rebuild(*in); },
                    [this, gen, out] {
                      EventsState& ev = impl_->ev;
                      ev.rebuilding = false;
@@ -407,7 +404,7 @@ void Store::rebuildEvents() {
                      std::vector<sports::matcher::GuideListing> listings = ev.listings;
                      if (auto saved = ss::resultToSave(ev.events, impl_->catalog->events, listings, true, time::now(),
                                                        ev.lastSaved))
-                       app_.storage().write(kResultFile, ss::toJson(*saved));
+                       host_.files.write(kResultFile, ss::toJson(*saved));
                    },
                    http::Priority::Normal);
 }
@@ -453,7 +450,7 @@ void Store::buildBoard() {
   in.finalSeen = e.scores.finalSeen();
   in.whips = sb::whipChannels(m.lineup.entries, m.lineup.lineupIDs);
   in.now = now;
-  in.zone = app_.zone();
+  in.zone = host_.zone();
   in.settings.showsUnwatchable = settings_.showUnwatchable;
   in.settings.showsScores = settings_.showScores;
   in.settings.twelveHour = !settings_.clock24;
@@ -471,7 +468,7 @@ void Store::buildBoard() {
   e.photos.request(e.board.tennisPlayers, now);
   e.statusesRevision = e.scores.revision();
   e.boardDirty = false;
-  e.boardBuiltMs = app_.ms();
+  e.boardBuiltMs = host_.ms();
 
   auto out = std::make_shared<EventsBoard>();
   out->version = events_->version + 1;
@@ -489,7 +486,7 @@ void Store::buildBoard() {
       group.title = g.label;
       for (const sb::Tile& t : g.tiles) {
         auto ev = e.board.events.find(t.id);
-        group.tiles.push_back(toTile(t, ev == e.board.events.end() ? nullptr : &ev->second, app_.zone()));
+        group.tiles.push_back(toTile(t, ev == e.board.events.end() ? nullptr : &ev->second, host_.zone()));
       }
       if (!group.tiles.empty()) row.groups.push_back(std::move(group));
     }
@@ -540,7 +537,7 @@ void Store::eventsTick(uint32_t ms) {
   }
   if (!e.restoredTried) {
     e.restoredTried = true;
-    if (auto text = app_.storage().read(kResultFile)) {
+    if (auto text = host_.files.read(kResultFile)) {
       if (auto saved = ss::savedResultFromJson(*text)) {
         if (auto r = ss::restore(*saved, m.catalog->events, time::now())) {
           e.events = std::move(r->events);
@@ -711,7 +708,7 @@ void Store::setMySports(const sports::MySportsPrefs& prefs) {
   EventsState& e = impl_->ev;
   sports::MySportsChange change = sports::compare(e.mySports, prefs);
   e.mySports = prefs;
-  app_.storage().write(kMySportsFile, sports::toJson(prefs));
+  host_.files.write(kMySportsFile, sports::toJson(prefs));
   if (change.leaguesChanged) e.schedule.leaguesChanged(scheduleContext());
   e.lastFingerprint.clear();
   e.nextCheckMs = 0;
@@ -749,7 +746,7 @@ void Store::requestRosters(const std::set<std::string>& shorts) {
     q.afterTransfer = [teams](http::Response& r) {
       if (r.ok && r.status == 200) *teams = sports::schedule::parseTeams(r.body);
     };
-    app_.pool().submit(std::move(q), [this, id, teams](http::Response&&) {
+    host_.pool.submit(std::move(q), [this, id, teams](http::Response&&) {
       EventsState& ev = impl_->ev;
       ev.leagueTeamsBusy.erase(id);
       ev.leagueTeamsAt[id] = time::now();
@@ -782,4 +779,4 @@ void Store::refreshSchedule() {
   impl_->ev.rostersHeld = true;  // released when the fetch finishes
 }
 
-}  // namespace marigold::app
+}  // namespace marigold::engine

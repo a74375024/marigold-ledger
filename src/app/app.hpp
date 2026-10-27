@@ -20,9 +20,13 @@
 
 union SDL_Event;
 
+namespace marigold::engine {
+class Store;
+}  // namespace marigold::engine
+
 namespace marigold::app {
 
-class Store;
+using engine::Store;
 class Playback;
 
 struct Build {

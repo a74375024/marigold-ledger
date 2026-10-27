@@ -17,7 +17,7 @@
 #include <string>
 #include <vector>
 
-#include "app/store/model.hpp"
+#include "app/store/store.hpp"
 #include "core/playback/recovery.hpp"
 #include "core/report/playback_log.hpp"
 #include "platform/gfx.hpp"

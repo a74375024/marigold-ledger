@@ -77,6 +77,16 @@ std::vector<std::string> logoSetKeys(std::string_view name) {
 
 }  // namespace
 
+std::string chain(const std::vector<std::string>& urls) {
+  std::string out;
+  for (const std::string& u : urls) {
+    if (u.empty() || u.find('\n') != std::string::npos) continue;
+    if (!out.empty()) out += '\n';
+    out += u;
+  }
+  return out;
+}
+
 std::optional<std::string> logoSetFile(std::string_view name) {
   static const std::unordered_set<std::string_view> kNames(logoSetNames().begin(), logoSetNames().end());
   for (const std::string& key : logoSetKeys(name)) {

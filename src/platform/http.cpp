@@ -135,19 +135,19 @@ void Client::stop() {
   }
 }
 
-Ticket Client::submit(Request req, Done done) {
+void Client::submit(Request req, Done done) {
   auto job = std::make_shared<Ticket::Job>();
   job->req = std::move(req);
   job->done = std::move(done);
-  return enqueue(std::move(job));
+  enqueue(std::move(job));
 }
 
-Ticket Client::post(std::function<void()> work, std::function<void()> done, Priority priority) {
+void Client::post(std::function<void()> work, std::function<void()> done, Priority priority) {
   auto job = std::make_shared<Ticket::Job>();
   job->work = std::move(work);
   job->workDone = std::move(done);
   job->req.priority = priority;
-  return enqueue(std::move(job));
+  enqueue(std::move(job));
 }
 
 Ticket Client::enqueue(std::shared_ptr<Ticket::Job> job) {

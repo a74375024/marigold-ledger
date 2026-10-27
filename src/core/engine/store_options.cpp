@@ -5,9 +5,8 @@
 #include <map>
 #include <set>
 
-#include "app/app.hpp"
-#include "app/store/store.hpp"
-#include "app/store/store_impl.hpp"
+#include "core/engine/store.hpp"
+#include "core/engine/store_impl.hpp"
 #include "core/catalog/catalog.hpp"
 #include "core/guide/outside.hpp"
 #include "core/guide/names.hpp"
@@ -19,7 +18,7 @@
 #include "core/util/redact.hpp"
 #include "core/util/strings.hpp"
 
-namespace marigold::app {
+namespace marigold::engine {
 namespace {
 
 constexpr size_t kMaxProgramHits = 60;
@@ -298,11 +297,11 @@ void Store::markMySportsPrompted() {
   setMySports(p);
 }
 
-}  // namespace marigold::app
+}  // namespace marigold::engine
 
 // ------------------------------------------------------------ channel report
 
-namespace marigold::app {
+namespace marigold::engine {
 
 void Store::buildChannelReport(std::function<void(std::shared_ptr<std::string>)> done) {
   const Impl& m = *impl_;
@@ -374,14 +373,14 @@ void Store::buildChannelReport(std::function<void(std::shared_ptr<std::string>)>
   }
   job->stations = guide::groupByNetwork(*m.stations);
   for (const GuideChannel& g : channels_->all) {
-    std::string status = g.logoUrl.empty() ? "no logo" : app_.logos().status(g.logoUrl);
+    std::string status = g.logoUrl.empty() ? "no logo" : (host_.logoStatus ? host_.logoStatus(g.logoUrl) : std::string());
     job->logos[g.id] = {g.logoSources.empty() ? "none" : g.logoSources, status};
   }
   job->now = now;
   job->windowStart = windowStart();
-  job->zone = app_.zone();
+  job->zone = host_.zone();
   auto out = std::make_shared<std::string>();
-  app_.pool().post(
+  host_.pool.post(
       [job, out] {
         report::ChannelReportInput in;
         in.channels = job->channels.get();
@@ -409,4 +408,4 @@ void Store::buildChannelReport(std::function<void(std::shared_ptr<std::string>)>
       [out, done] { done(out->empty() ? nullptr : out); }, http::Priority::Normal);
 }
 
-}  // namespace marigold::app
+}  // namespace marigold::engine

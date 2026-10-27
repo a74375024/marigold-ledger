@@ -21,50 +21,12 @@
 #include <thread>
 #include <vector>
 
+#include "core/net/http.hpp"
+
 struct RedeGrupo;
 struct RedeJob;
 
 namespace marigold::http {
-
-// `Long` is for jobs that hold a thread for minutes (guide builds, big
-// downloads): they run one at a time on a thread of their own, so they can
-// never take every worker away from what is on screen.
-enum class Priority { Background = 0, Normal = 1, Visible = 2, Long = 3 };
-
-struct Response;
-// Worker thread, after the transfer and before the UI callback: the place to
-// parse or decode a body without blocking the UI.
-using WorkerStep = std::function<void(Response&)>;
-
-struct Request {
-  std::string method;  // empty = GET
-  std::string url;
-  std::vector<std::string> headers;  // "Name: value"
-  std::string body;
-  unsigned timeoutMs = 15000;
-  size_t maxBytes = 0;   // 0 = the safe default (8 MB buffered, 1 GB streamed)
-  bool follow = true;
-  bool personalServer = false;  // Emby on a LAN: self-signed certificates allowed
-  bool gunzip = false;          // inflate a gzip body (sniffed; plain passes)
-  Priority priority = Priority::Normal;
-  std::string tag;  // for the log, e.g. "xtream.live"
-  WorkerStep afterTransfer;
-
-  // Worker thread. Return false to stop the transfer.
-  std::function<bool(std::string_view)> onChunk;
-};
-
-struct Response {
-  int status = 0;           // 0 = no HTTP response
-  bool ok = false;          // transport fine and 2xx (or 304)
-  bool cancelled = false;
-  std::string error;        // short code for the log, never a URL
-  std::string body;         // empty when streamed
-  std::string mime, etag, lastModified;
-  int retryAfterS = 0;
-  unsigned ms = 0;
-  uint64_t bytes = 0;       // body bytes after decoding
-};
 
 // A handle to cancel a pending or running request.
 class Ticket {
@@ -81,12 +43,10 @@ class Ticket {
   std::shared_ptr<Job> job_;
 };
 
-class Client {
+class Client final : public Pool {
  public:
-  using Done = std::function<void(Response&&)>;
-
   Client() = default;
-  ~Client();
+  ~Client() override;
   Client(const Client&) = delete;
   Client& operator=(const Client&) = delete;
 
@@ -95,18 +55,12 @@ class Client {
   void start(int threads, std::function<void()> wake);
   void stop();
 
-  Ticket submit(Request req, Done done);
-  // Runs `work` on a pool thread (file reads, parsing, cache writes), then
-  // `done` on the UI thread from pump().
-  Ticket post(std::function<void()> work, std::function<void()> done,
-              Priority priority = Priority::Normal);
-  // Runs a request on the calling thread and returns its response. For
-  // background jobs already on a pool thread (guide builds); never call it
-  // on the UI thread. cancelAll() stops it too.
-  Response fetchNow(Request req);
-  // Drops every queued and running request (account switch, exit). Their
-  // callbacks never run.
-  void cancelAll();
+  // Pool. Callbacks run on the UI thread from pump().
+  void submit(Request req, Done done) override;
+  void post(std::function<void()> work, std::function<void()> done,
+            Priority priority = Priority::Normal) override;
+  Response fetchNow(Request req) override;
+  void cancelAll() override;
   // UI thread: runs finished callbacks. Returns how many ran.
   int pump();
 

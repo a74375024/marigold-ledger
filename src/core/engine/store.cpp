@@ -2,8 +2,8 @@
 // needs, on the TV's worker pool. Everything here runs on the UI thread
 // except the lambdas handed to pool().post() / afterTransfer / onChunk,
 // which only touch what they captured (by value or shared_ptr).
-#include "app/store/store.hpp"
-#include "app/store/store_impl.hpp"
+#include "core/engine/store.hpp"
+#include "core/engine/store_impl.hpp"
 
 #include <sys/stat.h>
 #include <unistd.h>
@@ -18,8 +18,6 @@
 #include <set>
 #include <unordered_set>
 
-#include "app/app.hpp"
-#include "app/playback.hpp"
 #include "core/catalog/admission.hpp"
 #include "core/catalog/cache.hpp"
 #include "core/catalog/catalog.hpp"
@@ -44,9 +42,8 @@
 #include "core/util/memory.hpp"
 #include "core/util/redact.hpp"
 #include "core/util/strings.hpp"
-#include "platform/logo_cache.hpp"
 
-namespace marigold::app {
+namespace marigold::engine {
 namespace {
 
 using catalog::CatalogResult;
@@ -101,7 +98,7 @@ std::string randomId() {
 }
 
 // One Wikipedia page's wikitext, on a pool thread (station directory, markets).
-std::optional<std::string> wikitext(http::Client& pool, const std::string& title,
+std::optional<std::string> wikitext(http::Pool& pool, const std::string& title,
                                     http::Priority priority = http::Priority::Visible);
 
 // Waits while full screen video plays (big downloads).
@@ -244,8 +241,8 @@ json::Value stringArray(const std::vector<std::string>& v) {
 
 }  // namespace
 
-Store::Store(App& app) : app_(app), impl_(std::make_unique<Impl>()) {
-  platform::Storage& st = app_.storage();
+Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()) {
+  Files& st = host_.files;
   Impl& m = *impl_;
 
   if (auto main = st.read(kAccountsFile)) {
@@ -312,8 +309,8 @@ Store::~Store() { *impl_->stopJobs = true; }
 
 void Store::saveAccounts() {
   sources::EncodedAccounts enc = sources::encodeAccounts(impl_->accounts);
-  app_.storage().write(kAccountsFile, enc.main);
-  app_.storage().write(kSecretsFile, enc.secrets, true);
+  host_.files.write(kAccountsFile, enc.main);
+  host_.files.write(kSecretsFile, enc.secrets, true);
 }
 
 void Store::saveLists() {
@@ -333,7 +330,7 @@ void Store::saveLists() {
     rel.set(k, pair);
   }
   v.set("reliability", rel);
-  app_.storage().write(kListsFile, json::write(v));
+  host_.files.write(kListsFile, json::write(v));
 }
 
 void Store::saveM3uStreams() {
@@ -347,8 +344,8 @@ void Store::saveM3uStreams() {
     v.set(id, x);
   }
   std::string text = json::write(v);
-  std::string path = app_.storage().path(kM3uStreamsFile);
-  app_.pool().post([path, text] { writeFileAtomic(path, text, true); }, nullptr, http::Priority::Background);
+  std::string path = host_.files.path(kM3uStreamsFile);
+  host_.pool.post([path, text] { writeFileAtomic(path, text, true); }, nullptr, http::Priority::Background);
 }
 
 void Store::setSettings(const Settings& s) {
@@ -369,7 +366,7 @@ void Store::setSettings(const Settings& s) {
   if (!s.guideShards.empty())
     v.set("guideShards", stringArray(std::vector<std::string>(s.guideShards.begin(), s.guideShards.end())));
   impl_->ev.boardDirty = true;
-  app_.storage().write(kSettingsFile, json::write(v, true));
+  host_.files.write(kSettingsFile, json::write(v, true));
   if (tsChanged) {
     for (sources::Account& a : impl_->accounts) a.preferTS = s.preferTS;
   }
@@ -386,7 +383,7 @@ void Store::setSettings(const Settings& s) {
 void Store::setPrefs(const catalog::LineupPrefs& p) {
   bool countriesChanged = p.countries != impl_->prefs.countries;
   impl_->prefs = p;
-  app_.storage().write(kLineupFile, catalog::toJson(p));
+  host_.files.write(kLineupFile, catalog::toJson(p));
   if (countriesChanged && impl_->admissionCut) {
     // Which groups are kept depends on the countries: read the channel
     // lists again, and sort them even if they haven't changed.
@@ -423,7 +420,7 @@ void Store::addAccount(const AccountForm& form, std::function<void(std::string)>
   a.displayName = std::string(str::trim(form.name));
   if (a.displayName.empty()) a.displayName = hostOf(server).empty() ? "My provider" : hostOf(server);
   a.preferTS = settings_.preferTS;
-  App& app = app_;
+  http::Pool& pool = host_.pool;
   uint64_t gen = impl_->generation;
   auto finish = [this, gen, done](sources::Account account, std::string problem) {
     if (!problem.empty()) {
@@ -450,7 +447,7 @@ void Store::addAccount(const AccountForm& form, std::function<void(std::string)>
         return;
       }
       auto shared = std::make_shared<sources::xtream::Client>(client.take());
-      app.pool().submit(toHttp(shared->accountInfoRequest(), "xtream.signin", http::Priority::Visible),
+      pool.submit(toHttp(shared->accountInfoRequest(), "xtream.signin", http::Priority::Visible),
                         [shared, a, finish](http::Response&& r) mutable {
         if (!r.status) {
           finish(a, "Couldn't reach the server (" + r.error + ")");
@@ -471,7 +468,7 @@ void Store::addAccount(const AccountForm& form, std::function<void(std::string)>
       a.serverUrl = sources::stripServerSecrets(server);
       a.userName = std::string(str::trim(form.user));
       sources::Request req = sources::emby::authenticateRequest(a.serverUrl, a.userName, form.password, a.allowInsecureTLS);
-      app.pool().submit(toHttp(req, "emby.signin", http::Priority::Visible), [a, finish](http::Response&& r) mutable {
+      pool.submit(toHttp(req, "emby.signin", http::Priority::Visible), [a, finish](http::Response&& r) mutable {
         if (!r.status) {
           finish(a, "Couldn't reach the server (" + r.error + ")");
           return;
@@ -504,7 +501,7 @@ void Store::addAccount(const AccountForm& form, std::function<void(std::string)>
         *bytes += c.size();
         return parser->feed(c) && *bytes < (256u << 10);
       };
-      app.pool().submit(std::move(q), [a, parser, finish](http::Response&& r) mutable {
+      pool.submit(std::move(q), [a, parser, finish](http::Response&& r) mutable {
         if (!r.status) {
           finish(a, "Couldn't download the playlist (" + r.error + ")");
           return;
@@ -555,8 +552,8 @@ std::string Store::currentSignature() const {
 void Store::refreshAll() {
   Impl& m = *impl_;
   ++m.generation;
-  app_.pool().cancelAll();
-  app_.logos().abandonLoads();
+  host_.pool.cancelAll();
+  if (host_.requestsCancelled) host_.requestsCancelled();
   m.loading = false;
   m.activeGuideFetches = 0;
   m.providerRunning = m.outsideRunning = false;
@@ -609,11 +606,11 @@ void Store::load(bool force) {
   uint64_t gen = m.generation;
   if (m.channels->empty() && !force) {
     // 1. The list saved on this TV: on screen right away.
-    std::string path = app_.storage().path(catalog::cache::fileName(signature, catalog::cache::Part::first));
-    std::string fullPath = app_.storage().path(catalog::cache::fileName(signature, catalog::cache::Part::full));
+    std::string path = host_.files.path(catalog::cache::fileName(signature, catalog::cache::Part::first));
+    std::string fullPath = host_.files.path(catalog::cache::fileName(signature, catalog::cache::Part::full));
     auto saved = std::make_shared<std::optional<catalog::cache::Saved>>();
     auto foreground = m.foregroundJobs;
-    app_.pool().post(
+    host_.pool.post(
         [path, saved, signature, foreground] {
           Foreground busy(foreground);
           std::ifstream in(path, std::ios::binary);
@@ -626,7 +623,7 @@ void Store::load(bool force) {
             installSaved(std::move(**saved), true);
             // Then the full saved list.
             auto full = std::make_shared<std::optional<catalog::cache::Saved>>();
-            app_.pool().post(
+            host_.pool.post(
                 [fullPath, full, signature, foreground = impl_->foregroundJobs] {
                   Foreground busy(foreground);
                   std::ifstream in(fullPath, std::ios::binary);
@@ -685,12 +682,12 @@ void Store::downloadChannels(uint64_t gen) {
         auto c = std::make_shared<sources::xtream::Client>(client.take());
         // Account info (formats, expiry) alongside the list.
         auto infoBox = std::make_shared<std::optional<sources::xtream::AccountInfo>>();
-        app_.pool().submit(toHttp(c->accountInfoRequest(), "xtream.info"), [c, infoBox, slot, this, gen](http::Response&& r) {
+        host_.pool.submit(toHttp(c->accountInfoRequest(), "xtream.info"), [c, infoBox, slot, this, gen](http::Response&& r) {
           if (gen != impl_->generation) return;
           auto info = c->parseAccountInfo(r.status, r.body);
           if (info) slot->formats = info.value().formats;
         });
-        app_.pool().submit(toHttp(c->categoriesRequest(), "xtream.categories"),
+        host_.pool.submit(toHttp(c->categoriesRequest(), "xtream.categories"),
                            [this, gen, c, slot, name, finished, i](http::Response&& r) {
           if (gen != impl_->generation) return;
           auto categories = sources::xtream::parseCategories(r.status, r.body);
@@ -710,7 +707,7 @@ void Store::downloadChannels(uint64_t gen) {
             }
             if (auto err = reader->finish()) slot->problem = name + ": " + err->message;
           };
-          app_.pool().submit(std::move(q), [finished, i](http::Response&&) { finished(i); });
+          host_.pool.submit(std::move(q), [finished, i](http::Response&&) { finished(i); });
         });
         break;
       }
@@ -737,7 +734,7 @@ void Store::downloadChannels(uint64_t gen) {
           }
           if (auto err = reader->finish()) slot->problem = name + ": " + err->message;
         };
-        app_.pool().submit(std::move(q), [finished, i](http::Response&&) { finished(i); });
+        host_.pool.submit(std::move(q), [finished, i](http::Response&&) { finished(i); });
         break;
       }
       case sources::AccountKind::M3U: {
@@ -762,7 +759,7 @@ void Store::downloadChannels(uint64_t gen) {
           if (auto err = parser->finish()) slot->problem = name + ": " + err->message;
           slot->guideUrl = parser->header().guideUrl;
         };
-        app_.pool().submit(std::move(q), [finished, i](http::Response&&) { finished(i); });
+        host_.pool.submit(std::move(q), [finished, i](http::Response&&) { finished(i); });
         break;
       }
     }
@@ -841,7 +838,7 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
   uint64_t lastPrint = showing && !m.admissionChanged ? m.listFingerprint : 0;
   auto print = std::make_shared<uint64_t>(0);
   auto unchanged = std::make_shared<bool>(false);
-  app_.pool().post(
+  host_.pool.post(
       [merged, old, oldCatalog, result, renamedCount, now, stations, wanted, cut, lastPrint, print, unchanged,
        foreground = m.foregroundJobs] {
         Foreground busy(foreground);
@@ -920,7 +917,7 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
 
 void Store::readStations() {
   // Small (a few thousand stations): read before the first catalog build.
-  platform::Storage& st = app_.storage();
+  Files& st = host_.files;
   std::string path = st.path(kStationsFile);
   struct stat sb;
   if (stat(path.c_str(), &sb) != 0) return;
@@ -940,10 +937,10 @@ void Store::fetchStations() {
   m.stationsFetching = true;
   m.stationsTriedAt = now;
   auto out = std::make_shared<std::vector<guide::Station>>();
-  http::Client& pool = app_.pool();
-  std::string path = app_.storage().path(kStationsFile);
+  http::Pool& pool = host_.pool;
+  std::string path = host_.files.path(kStationsFile);
   auto stop = m.stopJobs;
-  app_.pool().post(
+  host_.pool.post(
       [out, &pool, path, stop] {
         std::vector<std::pair<std::string, std::string>> texts;
         bool first = true;
@@ -982,9 +979,9 @@ void Store::fetchStations() {
 // ------------------------------------------------------------ fallback logos
 
 void Store::readLogoIndex() {
-  std::string path = app_.storage().path(kLogoIndexFile);
+  std::string path = host_.files.path(kLogoIndexFile);
   auto box = std::make_shared<std::optional<logos::IptvOrgIndex::Saved>>();
-  app_.pool().post(
+  host_.pool.post(
       [path, box] {
         std::string text;
         if (readFile(path, text)) *box = logos::IptvOrgIndex::fromJson(text);
@@ -1005,10 +1002,10 @@ void Store::fetchLogoIndex() {
   m.iptvOrgFetching = true;
   m.iptvOrgTriedAt = now;
   auto out = std::make_shared<std::optional<logos::IptvOrgIndex::Saved>>();
-  http::Client& pool = app_.pool();
-  std::string path = app_.storage().path(kLogoIndexFile);
+  http::Pool& pool = host_.pool;
+  std::string path = host_.files.path(kLogoIndexFile);
   GuideReadStateLite st{m.playingFull, m.stopJobs};
-  app_.pool().post(
+  host_.pool.post(
       [out, &pool, path, st] {
         auto get = [&pool, st](const char* file) -> std::optional<std::string> {
           for (int i = 0; i < 600 && st.playing->load() && !st.stop->load(); ++i) usleep(500000);
@@ -1053,7 +1050,7 @@ void Store::rebuildCatalog() {
   auto result = std::make_shared<std::shared_ptr<CatalogResult>>();
   uint64_t gen = m.generation;
   time::Seconds now = time::now();
-  app_.pool().post([list, stations, result, now] { *result = std::make_shared<CatalogResult>(catalog::build(*list, now, *stations)); },
+  host_.pool.post([list, stations, result, now] { *result = std::make_shared<CatalogResult>(catalog::build(*list, now, *stations)); },
                    [this, gen, list, result] {
                      if (gen != impl_->generation || list != impl_->channels || impl_->loading) return;
                      installCatalog(list, *result, false);
@@ -1106,9 +1103,9 @@ void Store::saveCatalog() {
   for (const std::string& r : m.recents) first.insert(r);
   std::set<std::string> families;
   for (const auto& f : m.catalog->families) families.insert(f.id);
-  std::string firstPath = app_.storage().path(catalog::cache::fileName(m.signature, catalog::cache::Part::first));
-  std::string fullPath = app_.storage().path(catalog::cache::fileName(m.signature, catalog::cache::Part::full));
-  app_.pool().post(
+  std::string firstPath = host_.files.path(catalog::cache::fileName(m.signature, catalog::cache::Part::first));
+  std::string fullPath = host_.files.path(catalog::cache::fileName(m.signature, catalog::cache::Part::full));
+  host_.pool.post(
       [job, first, families, firstPath, fullPath] {
         job->ref.channels = job->channels.get();
         job->ref.catalog = job->catalog.get();
@@ -1165,7 +1162,7 @@ void Store::rebuildEntries() {
   }
   auto out = std::make_shared<catalog::LineupOutput>();
   uint64_t gen = m.generation;
-  app_.pool().post([input, out] { *out = catalog::lineup(*input); },
+  host_.pool.post([input, out] { *out = catalog::lineup(*input); },
                    [this, gen, generation, out] {
                      if (gen != impl_->generation || generation != impl_->rebuildGeneration) return;
                      impl_->lineup = std::move(*out);
@@ -1188,7 +1185,7 @@ namespace {
 // clients whose User-Agent has no contact address (a URL or an email), and
 // to bursts: the agent names the project's page, and a 429 waits as long as
 // the server asks (or 3, 8, then 15 s) before trying again.
-std::optional<std::string> wikitext(http::Client& pool, const std::string& title, http::Priority priority) {
+std::optional<std::string> wikitext(http::Pool& pool, const std::string& title, http::Priority priority) {
   http::Request q;
   q.url = guide::stations::wikiRequestUrl(title);
   q.headers.push_back("User-Agent: " + std::string(guide::stations::kUserAgent));
@@ -1227,7 +1224,7 @@ std::optional<std::string> wikitext(http::Client& pool, const std::string& title
 
 void Store::loadMarkets(std::function<void(TvMarkets)> done) {
   Impl& m = *impl_;
-  std::string path = app_.storage().path("markets-v2.json");  // v2: US markets only
+  std::string path = host_.files.path("markets-v2.json");  // v2: US markets only
   // Names the market suggestion reads: local-looking channels first (tvOS).
   auto names = std::make_shared<std::vector<std::string>>();
   for (const Channel& c : *m.channels) {
@@ -1240,8 +1237,8 @@ void Store::loadMarkets(std::function<void(TvMarkets)> done) {
   if (names->size() > 6000) names->resize(6000);
   auto result = std::make_shared<TvMarkets>();
   auto list = std::make_shared<std::vector<catalog::markets::Market>>();
-  http::Client& pool = app_.pool();
-  app_.pool().post(
+  http::Pool& pool = host_.pool;
+  host_.pool.post(
       [path, names, result, list, &pool, stations = m.stations] {
         struct stat st;
         std::string text;
@@ -1292,8 +1289,8 @@ void Store::resolveMarkets(const std::vector<std::string>& names, const catalog:
     todo.push_back(mk != impl_->tvMarkets.end() ? *mk : catalog::markets::Market{name, std::nullopt});
   }
   auto fetched = std::make_shared<std::map<std::string, catalog::MarketChoice>>();
-  http::Client& pool = app_.pool();
-  app_.pool().post(
+  http::Pool& pool = host_.pool;
+  host_.pool.post(
       [todo, fetched, &pool, stations = impl_->stations] {
         bool first = true;
         for (const auto& mk : todo) {
@@ -1437,7 +1434,7 @@ void Store::toggleFavorite(const std::string& entryId) {
     for (const sources::Account& a : m.accounts) {
       if (a.sourceId() != c.serverId) continue;
       if (auto client = sources::emby::Client::make(a)) {
-        app_.pool().submit(toHttp(client.value().setFavoriteRequest(fav, c.itemId), "emby.favorite"), nullptr);
+        host_.pool.submit(toHttp(client.value().setFavoriteRequest(fav, c.itemId), "emby.favorite"), nullptr);
       }
     }
   }
@@ -1454,7 +1451,7 @@ void Store::noteWatched(const std::string& entryId) {
 
 // ------------------------------------------------------------ guide
 
-time::Seconds Store::windowStart() const { return catalog::windowStart(time::now(), app_.zone()); }
+time::Seconds Store::windowStart() const { return catalog::windowStart(time::now(), host_.zone()); }
 
 bool Store::entryHasGuide(const std::string& id) const {
   const Impl& m = *impl_;
@@ -1504,7 +1501,7 @@ void Store::wantListings(const std::vector<std::string>& ids) {
   if (m.recentlyRequested.size() > kRecentlyRequestedMax)
     m.recentlyRequested.erase(m.recentlyRequested.begin(),
                               m.recentlyRequested.begin() + static_cast<long>(m.recentlyRequested.size() - kRecentlyRequestedMax));
-  if (added && !m.guideFlushAt) m.guideFlushAt = app_.ms() + kGuideFlushMs;
+  if (added && !m.guideFlushAt) m.guideFlushAt = host_.ms() + kGuideFlushMs;
 }
 
 void Store::startGuideFetches() {
@@ -1627,7 +1624,7 @@ void Store::fetchXtreamGuide(const std::vector<std::string>& allIDs, const sourc
         r.body.clear();
       };
       std::shared_ptr<std::function<void()>> strong = weakPump.lock();
-      app_.pool().submit(std::move(q), [this, gen, b, list, channelId, strong](http::Response&&) {
+      host_.pool.submit(std::move(q), [this, gen, b, list, channelId, strong](http::Response&&) {
         if (gen != impl_->generation) return;
         b->results[channelId] = std::move(*list);
         --b->running;
@@ -1670,7 +1667,7 @@ void Store::fetchEmbyGuide(const std::vector<std::string>& ids, const sources::A
     r.body.clear();
   };
   uint64_t gen = m.generation;
-  app_.pool().submit(std::move(q), [this, gen, ids, list, start](http::Response&&) {
+  host_.pool.submit(std::move(q), [this, gen, ids, list, start](http::Response&&) {
     if (gen != impl_->generation) return;
     --impl_->activeGuideFetches;
     if (!*list) {
@@ -1786,7 +1783,7 @@ void Store::rebuildOutsidePrograms() {
   m.touchedListings.clear();
   auto merged = std::make_shared<catalog::ProgramLists>();
   uint64_t gen = m.generation;
-  app_.pool().post(
+  host_.pool.post(
       [server, provider, outside, ids, window, merged] {
         *merged = catalog::mergedListings(ids, *server, *provider, *outside, window);
       },
@@ -1841,11 +1838,11 @@ void Store::readSavedListings() {
   for (const sources::Account& a : m.accounts) {
     if (!hasGuideFile(a)) continue;
     std::string key = guide::provider::cacheKey("default", a.sourceId());
-    keys.push_back({key, app_.storage().path(guide::provider::savedFileName(key))});
+    keys.push_back({key, host_.files.path(guide::provider::savedFileName(key))});
   }
-  std::string outsidePath = app_.storage().path(guide::savedFileName(m.signature));
+  std::string outsidePath = host_.files.path(guide::savedFileName(m.signature));
   uint64_t gen = m.generation;
-  app_.pool().post(
+  host_.pool.post(
       [box, keys, outsidePath, foreground = m.foregroundJobs] {
         Foreground busy(foreground);
         // Read a piece at a time: the files run to several MB.
@@ -1901,18 +1898,18 @@ void Store::installProviderSaved() {
 void Store::scheduleProvider(bool force) {
   Impl& m = *impl_;
   m.providerForce = m.providerForce || force;
-  if (!m.providerAt) m.providerAt = app_.ms() + (force ? 0 : kProviderDelayMs);
+  if (!m.providerAt) m.providerAt = host_.ms() + (force ? 0 : kProviderDelayMs);
 }
 
 void Store::scheduleOutside(bool force) {
   Impl& m = *impl_;
   m.outsideForce = m.outsideForce || force;
-  if (!m.outsideAt) m.outsideAt = app_.ms() + (force ? 0 : kOutsideDelayMs);
+  if (!m.outsideAt) m.outsideAt = host_.ms() + (force ? 0 : kOutsideDelayMs);
 }
 
 void Store::scheduleLineupRefresh() {
   if (!impl_->prefs.configured) return;
-  impl_->lineupRefreshAt = app_.ms() + kLineupRefreshMs;
+  impl_->lineupRefreshAt = host_.ms() + kLineupRefreshMs;
 }
 
 namespace {
@@ -1978,11 +1975,11 @@ void Store::runProviderGuide() {
   auto results = std::make_shared<std::vector<std::pair<std::string, guide::provider::Outcome>>>();
   auto shared = std::make_shared<std::vector<Job>>(std::move(jobs));
   GuideReadState st{m.playingFull, m.stopJobs, m.foregroundJobs};
-  http::Client& pool = app_.pool();
-  std::string dir = app_.storage().dir();
-  platform::Storage* storage = &app_.storage();
+  http::Pool& pool = host_.pool;
+  std::string dir = host_.files.dir();
+  Files* storage = &host_.files;
   uint64_t gen = m.generation;
-  app_.pool().post(
+  host_.pool.post(
       [shared, results, st, &pool, storage] {
         for (Job& j : *shared) {
           if (st.stop->load()) return;
@@ -2085,14 +2082,14 @@ void Store::runOutsideGuide() {
   m.outsideRunning = true;
   auto previous = std::make_shared<std::optional<guide::Saved>>(m.outsideSaved);
   auto built = std::make_shared<guide::BuildResult>();
-  std::string guideDir = app_.storage().path("guides");
+  std::string guideDir = host_.files.path("guides");
   mkdir(guideDir.c_str(), 0700);
-  std::string savedPath = app_.storage().path(guide::savedFileName(m.signature));
+  std::string savedPath = host_.files.path(guide::savedFileName(m.signature));
   GuideReadState st{m.playingFull, m.stopJobs, m.foregroundJobs};
-  http::Client& pool = app_.pool();
+  http::Pool& pool = host_.pool;
   uint64_t gen = m.generation;
   auto newSaved = std::make_shared<std::optional<guide::Saved>>();
-  app_.pool().post(
+  host_.pool.post(
       [snapshot, shards, previous, built, guideDir, savedPath, st, &pool, newSaved, stations = m.stations] {
         waitForPlayback(st);
         guide::BuildIO io;
@@ -2222,7 +2219,7 @@ void Store::runOutsideGuide() {
 
 void Store::afterBigJob(const char* what) {
   memory::release();
-  app_.playback().logMemory(what);
+  if (host_.memoryNote) host_.memoryNote(what);
 }
 
 // ------------------------------------------------------------ playback
@@ -2359,7 +2356,7 @@ void Store::open(const Feed& feed, std::function<void(std::optional<Feed>)> done
   };
   Feed base = feed;
   closeStream();
-  app_.pool().submit(std::move(q), [this, cl, stream, base, done](http::Response&&) {
+  host_.pool.submit(std::move(q), [this, cl, stream, base, done](http::Response&&) {
     if (!*stream) {
       done(std::nullopt);
       return;
@@ -2368,7 +2365,7 @@ void Store::open(const Feed& feed, std::function<void(std::optional<Feed>)> done
     f.url = (*stream)->url;
     f.needsOpen = false;
     openStream_ = std::make_shared<OpenStream>(OpenStream{cl, **stream});
-    app_.pool().submit(toHttp(cl->reportPlayingRequest(**stream), "emby.playing"), nullptr);
+    host_.pool.submit(toHttp(cl->reportPlayingRequest(**stream), "emby.playing"), nullptr);
     done(f);
   });
 }
@@ -2379,7 +2376,7 @@ void Store::closeStream() {
   auto os = openStream_;
   openStream_.reset();
   std::vector<sources::Request> steps = os->client->closeStreamRequests(os->stream);
-  http::Client& pool = app_.pool();
+  http::Pool& pool = host_.pool;
   pool.post(
       [steps, &pool] {
         for (const sources::Request& r : steps) pool.fetchNow(toHttp(r, "emby.close", http::Priority::Background));
@@ -2446,7 +2443,7 @@ void Store::publishChannels() {
         g.name, ei ? ei->core : std::nullopt, g.west, ei && cat == catalog::LineupCategory::local && ei->callsign,
         ei ? ei->callsign : std::nullopt, ei ? ei->virtualNumber : std::nullopt, e.imageUrl,
         member ? member->epgId : std::nullopt, cat, m.iptvOrg.get());
-    g.logoUrl = logos::LogoCache::chain(spec.urls);
+    g.logoUrl = logos::chain(spec.urls);
     g.logoSources = str::join(spec.sources, ", ");
     g.subtitle = spec.subtitle.value_or(catalog::genreTitle(cat));
     switch (spec.style) {
@@ -2535,7 +2532,7 @@ bool Store::tick(uint32_t ms) {
   Impl& m = *impl_;
   uint64_t eventsVersion = events_->version;
   eventsTick(ms);
-  *m.playingFull = app_.playback().active() && app_.playback().full();
+  *m.playingFull = host_.playingFull();
   if (m.guideFlushAt && ms >= m.guideFlushAt) {
     m.guideFlushAt = 0;
     startGuideFetches();
@@ -2589,4 +2586,4 @@ bool Store::tick(uint32_t ms) {
   return changed;
 }
 
-}  // namespace marigold::app
+}  // namespace marigold::engine

@@ -12,7 +12,7 @@
 
 #include "core/util/time.hpp"
 
-namespace marigold::app {
+namespace marigold::engine {
 
 struct EventSide {
   std::string abbr;      // badge text ("KC"); empty with a country chip
@@ -114,4 +114,4 @@ struct WhereToWatch {
   std::string note;   // "4 more stations are showing it"
 };
 
-}  // namespace marigold::app
+}  // namespace marigold::engine

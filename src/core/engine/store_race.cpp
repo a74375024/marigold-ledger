@@ -7,16 +7,15 @@
 #include <algorithm>
 #include <set>
 
-#include "app/app.hpp"
-#include "app/store/store.hpp"
-#include "app/store/store_impl.hpp"
+#include "core/engine/store.hpp"
+#include "core/engine/store_impl.hpp"
 #include "core/sports/cameras.hpp"
 #include "core/sports/player_photos.hpp"
 #include "core/sports/race_data.hpp"
 #include "core/sports/special_feeds.hpp"
 #include "core/util/log.hpp"
 
-namespace marigold::app {
+namespace marigold::engine {
 namespace {
 
 namespace rd = sports::race_data;
@@ -45,7 +44,7 @@ http::Request toHttp(const sources::Request& r, std::string tag) {
 
 void Store::loadRace() {
   EventsState& e = impl_->ev;
-  platform::Storage& st = app_.storage();
+  Files& st = host_.files;
   rd::Saved saved;
   rd::NascarSaved nascar;
   if (auto text = st.read(kRaceFile))
@@ -60,7 +59,7 @@ void Store::loadRace() {
 
 void Store::savePhotos() {
   EventsState& e = impl_->ev;
-  if (auto s = e.photos.persist(time::now())) app_.storage().write(kPhotosFile, pp::toJson(*s));
+  if (auto s = e.photos.persist(time::now())) host_.files.write(kPhotosFile, pp::toJson(*s));
 }
 
 // One race-data request at a time while a pass runs; the pass ends (and is
@@ -69,13 +68,13 @@ void Store::pumpRace(uint32_t ms) {
   EventsState& e = impl_->ev;
   if (e.raceWasRunning && !e.race.running() && !e.raceBusy) {
     e.raceWasRunning = false;
-    app_.storage().write(kRaceFile, rd::toJson(e.race.saved()));
+    host_.files.write(kRaceFile, rd::toJson(e.race.saved()));
     if (e.race.revision() != e.raceSeen) e.boardDirty = true;
   }
   if (!e.race.running() || e.raceBusy || ms < e.raceAt) return;
   e.raceWasRunning = true;
   if (!e.racePending) {
-    auto req = e.race.nextRequest(time::now(), app_.zone());
+    auto req = e.race.nextRequest(time::now(), host_.zone());
     if (!req) return;  // over (saved next tick) or an answer is awaited
     e.racePending = std::move(*req);
     if (e.racePending->waitMs > 0) {
@@ -89,7 +88,7 @@ void Store::pumpRace(uint32_t ms) {
   auto body = std::make_shared<std::string>();
   http::Request q = toHttp(send.request, "events.race");
   q.afterTransfer = [body](http::Response& r) { body->swap(r.body); };
-  app_.pool().submit(std::move(q), [this, body](http::Response&& r) {
+  host_.pool.submit(std::move(q), [this, body](http::Response&& r) {
     EventsState& ev = impl_->ev;
     ev.raceBusy = false;
     ev.race.onResponse(r.status, *body, time::now());
@@ -100,7 +99,7 @@ void Store::pumpPhotos(uint32_t ms) {
   EventsState& e = impl_->ev;
   if (!e.photos.draining() || e.photosBusy || ms < e.photosAt) return;
   if (!e.photoPending) {
-    auto req = e.photos.nextRequest(time::now(), app_.zone());
+    auto req = e.photos.nextRequest(time::now(), host_.zone());
     if (!req) {
       savePhotos();
       return;
@@ -117,7 +116,7 @@ void Store::pumpPhotos(uint32_t ms) {
   auto body = std::make_shared<std::string>();
   http::Request q = toHttp(send.request, "events.photo");
   q.afterTransfer = [body](http::Response& r) { body->swap(r.body); };
-  app_.pool().submit(std::move(q), [this, body](http::Response&& r) {
+  host_.pool.submit(std::move(q), [this, body](http::Response&& r) {
     EventsState& ev = impl_->ev;
     ev.photosBusy = false;
     ev.photos.onResponse(r.status, *body, time::now());
@@ -169,11 +168,11 @@ sports::cameras::CameraPanel Store::cameraPanel(const std::string& eventId, cons
         auto body = std::make_shared<std::string>();
         http::Request q = toHttp(*req, "events.nascar");
         q.afterTransfer = [body](http::Response& r) { body->swap(r.body); };
-        app_.pool().submit(std::move(q), [this, body](http::Response&& r) {
+        host_.pool.submit(std::move(q), [this, body](http::Response&& r) {
           EventsState& es = impl_->ev;
           es.nascarBusy = false;
           es.race.onNascarResponse(r.status, *body, time::now());
-          if (r.ok) app_.storage().write(kNascarFile, rd::toJson(es.race.nascarSaved()));
+          if (r.ok) host_.files.write(kNascarFile, rd::toJson(es.race.nascarSaved()));
         });
       }
     }
@@ -191,7 +190,7 @@ bool Store::toggleFollowDriver(const std::string& name) {
   EventsState& e = impl_->ev;
   bool on = e.followed.toggle(name);
   ++e.followRevision;
-  app_.storage().write(kFollowedFile, e.followed.toJson());
+  host_.files.write(kFollowedFile, e.followed.toJson());
   return on;
 }
 
@@ -215,4 +214,4 @@ std::optional<std::vector<Feed>> Store::cameraFeeds(const std::string& channelId
   return out;
 }
 
-}  // namespace marigold::app
+}  // namespace marigold::engine

@@ -2,7 +2,7 @@
 // status pills and the hero backdrop (LiveEventTile, TeamBadge in tvOS).
 #pragma once
 
-#include "app/store/events_model.hpp"
+#include "app/store/store.hpp"
 #include "app/ui/ui.hpp"
 
 namespace marigold::app::events_ui {

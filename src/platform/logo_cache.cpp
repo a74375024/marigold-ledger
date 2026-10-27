@@ -13,6 +13,7 @@
 #include <sstream>
 #include <vector>
 
+#include "core/logos/logos.hpp"
 #include "core/util/log.hpp"
 #include "core/util/strings.hpp"
 #include "core/util/time.hpp"
@@ -71,15 +72,7 @@ std::string LogoCache::fileFor(const std::string& url) const {
   return dir_ + "/" + str::hex64(str::fnv1a64(url));
 }
 
-std::string LogoCache::chain(const std::vector<std::string>& urls) {
-  std::string out;
-  for (const std::string& u : urls) {
-    if (u.empty() || u.find('\n') != std::string::npos) continue;
-    if (!out.empty()) out += '\n';
-    out += u;
-  }
-  return out;
-}
+std::string LogoCache::chain(const std::vector<std::string>& urls) { return logos::chain(urls); }
 
 Texture LogoCache::get(const std::string& url) {
   if (url.empty()) return {};

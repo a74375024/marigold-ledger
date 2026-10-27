@@ -34,7 +34,18 @@ App::App(platform::Window& window, platform::Storage& storage, gfx::Renderer& g,
   std::string logoDir = storage_.dir().empty() ? std::string("/tmp/marigold-logos")
                                                : storage_.path("logos");
   logos_ = std::make_unique<logos::LogoCache>(pool_, logoDir);
-  store_ = std::make_unique<Store>(*this);
+  // What the shared engine needs from this app (see core/engine/host.hpp).
+  engine::Host host{pool_, storage_};
+  host.ms = [this] { return ms_; };
+  host.zone = [this]() -> const time::Zone& { return zone_; };
+  host.playingFull = [this] { return playback_ && playback_->active() && playback_->full(); };
+  host.memoryNote = [this](const char* what) {
+    if (playback_) playback_->logMemory(what);
+  };
+  host.logoStatus = [this](const std::string& url) { return logos_->status(url); };
+  host.requestsCancelled = [this] { logos_->abandonLoads(); };
+  host.build = build_.build;
+  store_ = std::make_unique<Store>(std::move(host));
   playback_ = std::make_unique<Playback>(*this);
 }
 
