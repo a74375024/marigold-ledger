@@ -1,3 +1,4 @@
+#include "core/sports/profiles.hpp"
 #include "core/sports/schedule.hpp"
 
 #include <algorithm>
@@ -171,7 +172,7 @@ std::optional<SportsGame> parseGame(const json::Value& event, const League& leag
   game.id = league.shortName + "|" + *id;
   game.league = league.group;
   game.leagueShort = league.shortName;
-  game.isSoccer = league.soccer;
+  game.homeFirst = profile(league.group).homeFirst;
   if (showsWeek && week) game.weekLabel = "Week " + std::to_string(*week);
   game.home = std::move(*home);
   game.away = std::move(*away);
@@ -325,7 +326,7 @@ std::optional<FightCards> parseFightCards(std::string_view body, const League& l
       game.id = league.shortName + "|" + *id + "|" + key;
       game.league = league.group;
       game.leagueShort = league.shortName;
-      game.isSoccer = true;
+      game.homeFirst = profile(league.group).homeFirst;
       game.home = sides.first;
       game.away = sides.second;
       game.start = *start;
@@ -430,7 +431,7 @@ std::optional<std::vector<SportsGame>> parseRaceWeekends(std::string_view body, 
       game.id = league.shortName + "|" + *id + "|" + *sessionID;
       game.league = league.group;
       game.leagueShort = league.shortName;
-      game.isSoccer = false;
+      game.homeFirst = profile(league.group).homeFirst;
       game.home = side;
       game.away = side;
       game.start = *start;
@@ -623,7 +624,7 @@ std::optional<std::vector<SportsGame>> parseTennisMatches(std::string_view body,
       game.id = league.shortName + "|" + *eventID + "|" + *matchID;
       game.league = league.group;
       game.leagueShort = league.shortName;
-      game.isSoccer = false;
+      game.homeFirst = profile(league.group).homeFirst;
       // No networks: a match is found through feeds and listings naming its
       // players, not every channel of its network.
       game.home = *home;

@@ -46,7 +46,9 @@ struct SportsGame {
   std::string id;           // "NFL|401..." , "UFC|600...|main", "F1|<event>|<session>"
   std::string league;       // row group: "NFL", "College Football", "Soccer"
   std::string leagueShort;  // chip text: "NFL", "EPL", "UCL"
-  bool isSoccer = false;
+  // "Home vs Away" with the home side first (soccer, fight cards); saved
+  // as "isSoccer".
+  bool homeFirst = false;
   std::optional<std::string> weekLabel;  // "Week 8"
   SportsTeam home;
   SportsTeam away;

@@ -121,7 +121,7 @@ TEST_CASE("dates: minutes without seconds, or full ISO 8601") {
   REQUIRE(doc);
   REQUIRE(doc->games.size() == 1);
   CHECK(doc->games[0].start == utc(2026, 10, 24, 13, 0));
-  CHECK(doc->games[0].isSoccer);
+  CHECK(doc->games[0].homeFirst);
   CHECK(doc->games[0].title() == "Harbor City FC vs Team A");
 }
 
@@ -185,7 +185,7 @@ TEST_CASE("fight cards: one game per part, by segment or by time") {
   CHECK(early.customTitle == "UFC 333 Early Prelims");
   CHECK(early.cardKey == "ufc|333|early");
   CHECK(early.completed);
-  CHECK(early.isSoccer);
+  CHECK(early.homeFirst);
   const SportsGame& main = cards->games[2];
   CHECK(main.id == "UFC|600001|main");
   CHECK(main.customTitle == "UFC 333: Stone vs. River");

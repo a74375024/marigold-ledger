@@ -1,3 +1,4 @@
+#include "core/sports/profiles.hpp"
 #include "core/sports/board.hpp"
 
 #include <algorithm>
@@ -498,9 +499,9 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
     place.subtitle = event.game->venue;
   } else if (event.game) {
     const SportsGame& game = *event.game;
-    place.top = game.isSoccer ? game.home : game.away;
-    place.bottom = game.isSoccer ? game.away : game.home;
-    if (!game.cardKey && !game.isTennis()) place.homeIsTop = game.isSoccer;
+    place.top = game.homeFirst ? game.home : game.away;
+    place.bottom = game.homeFirst ? game.away : game.home;
+    if (!game.cardKey && !game.isTennis()) place.homeIsTop = game.homeFirst;
     std::string full = game.customTitle.value_or(event.title);
     place.title = std::string(str::trimUnicode(text::components(full, ":").front()));
   } else if (event.teams && event.teams->size() == 2) {
@@ -603,7 +604,8 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
     }
     place.top.reset();
     place.bottom.reset();
-    if (showsScores && parts->front().game->leagueShort == "F1" && in.podium) {
+    const SportsGame& first = *parts->front().game;
+    if (showsScores && profile(first.league, first.leagueShort).podium && in.podium) {
       for (auto it = parts->rbegin(); it != parts->rend(); ++it) {
         if (!it->start || *it->start >= now || !it->game || !it->game->cardKey) continue;
         std::string kind = cardKind(*it);
@@ -625,7 +627,7 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
     if (!s.detail.empty()) place.clock = s.detail;
     if (s.phase == LivePhase::pre && event.start && now > *event.start) place.notStarted = true;
     if (s.phase == LivePhase::final) place.endedAt = endedAt;
-    if (isLivePhase(s.phase)) place.liveProgress = clockProgress(s, game.league, game.isSoccer);
+    if (isLivePhase(s.phase)) place.liveProgress = clockProgress(s, game.league);
     if (showsScores && s.phase == LivePhase::live && s.redZone) {
       place.tag = std::string("RED ZONE");
       place.tagAlert = true;
@@ -637,7 +639,7 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
         place.bottomSets = s.homeSets.value_or(std::vector<std::string>{});
       }
     } else if (showsScores && s.phase != LivePhase::pre) {
-      bool topIsHome = game.isSoccer;
+      bool topIsHome = game.homeFirst;
       place.topScore = topIsHome ? s.homeScore : s.awayScore;
       place.bottomScore = topIsHome ? s.awayScore : s.homeScore;
       if (s.possession) {
@@ -712,7 +714,7 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
     place.footer = "Not in your channels";
   }
   // Tennis: the court where the match is, and photos.
-  if (event.game && event.game->isTennis()) {
+  if (event.game && profile(event.game->league).tile == Profile::Tile::Players) {
     if (event.game->venue) place.footer = *event.game->venue;
     place.photos = true;
   }
@@ -876,7 +878,7 @@ Tile makeTile(const SportsEvent& event, const Place& place, const std::string& r
   tile.title = place.title;
   tile.subtitle = place.subtitle;
   tile.icon = symbol(event.league);
-  bool soccer = event.game ? event.game->isSoccer : true;
+  bool soccer = event.game ? event.game->homeFirst : true;
   if (!place.parts.empty()) {
     tile.layout = Tile::Layout::card;
     for (PartLine part : place.parts) {
@@ -960,26 +962,11 @@ std::string shortName(const SportsTeam& team, bool soccer) {
 std::string title(const SportsGame& game) {
   // A fight card part: "UFC 333 Prelims".
   if (game.customTitle) return *game.customTitle;
-  std::string away = shortName(game.away, game.isSoccer), home = shortName(game.home, game.isSoccer);
-  return game.isSoccer ? home + " vs " + away : away + " at " + home;
+  std::string away = shortName(game.away, game.homeFirst), home = shortName(game.home, game.homeFirst);
+  return game.homeFirst ? home + " vs " + away : away + " at " + home;
 }
 
-std::string symbol(std::string_view league) {
-  if (league == "NFL" || league == "College Football") return "football.fill";
-  if (league == "NBA" || league == "WNBA" || league == "College Basketball") return "basketball.fill";
-  if (league == "MLB") return "baseball.fill";
-  if (league == "NHL" || league == "Hockey") return "hockey.puck.fill";
-  if (league == "Field Hockey") return "figure.field.hockey";
-  if (league == "Volleyball") return "volleyball.fill";
-  if (league == "Baseball" || league == "Softball" || league == "MiLB") return "baseball.fill";
-  if (league == "Lacrosse") return "figure.lacrosse";
-  if (league == "Soccer" || league == "MLS") return "soccerball";
-  if (league == "Fighting") return "figure.boxing";
-  if (league == "Motorsport") return "flag.checkered";
-  if (league == "Golf") return "figure.golf";
-  if (league == "Tennis") return "tennisball.fill";
-  return "sportscourt.fill";
-}
+std::string symbol(std::string_view league) { return profile(league).symbol; }
 
 bool isLight(const std::optional<std::string>& hex) {
   if (!hex || hex->size() != 6) return false;
@@ -1052,7 +1039,8 @@ std::string untilText(Seconds start, Seconds now) {
   return "in " + std::to_string((minutes + 30) / 60) + " h";
 }
 
-std::optional<double> clockProgress(const LiveStatus& status, std::string_view league, bool isSoccer) {
+std::optional<double> clockProgress(const LiveStatus& status, std::string_view league) {
+  const Profile& p = profile(league);
   const std::string& detail = status.detail;
   if (detail == "Halftime") return 0.5;
   std::vector<std::string> pieces = text::words(detail);
@@ -1063,12 +1051,12 @@ std::optional<double> clockProgress(const LiveStatus& status, std::string_view l
     if (c >= '0' && c <= '9') digitText += c;
   }
   std::optional<int> digits = text::toInt(digitText);
-  if (isSoccer) {
+  if (p.clock == Profile::Clock::Minutes) {
     // "67'", "90'+3'".
     if (!digits) return std::nullopt;
     return std::min(1.0, *digits / 95.0);
   }
-  if (league == "MLB" || league == "Baseball") {
+  if (p.clock == Profile::Clock::Innings) {
     // "Top 6th", "Mid 5th", "Bot 8th", "End 5th".
     if (pieces.size() < 2) return std::nullopt;
     std::string inningText;
@@ -1089,19 +1077,10 @@ std::optional<double> clockProgress(const LiveStatus& status, std::string_view l
   auto seconds = text::toInt(clockParts[1]);
   if (!minutes || !seconds) return std::nullopt;
   double remaining = *minutes * 60.0 + *seconds;
-  double count = 3, length = 1200;
+  double count = p.periods, length = p.periodSeconds;
   if (str::startsWith(head, "Q")) {
     count = 4;
-    if (league == "NFL" || league == "College Football" || league == "Football") {
-      length = 900;
-    } else if (league == "NBA") {
-      length = 720;
-    } else {
-      length = 600;
-    }
-  } else if (league == "College Basketball") {
-    count = 2;
-    length = 1200;
+    length = p.quarterSeconds;
   }
   int period = std::min(std::max(1, digits.value_or(1)), static_cast<int>(count));
   return std::min(1.0, std::max(0.0, (period - 1 + 1 - std::min(1.0, remaining / length)) / count));
@@ -1423,14 +1402,14 @@ Board build(const Input& in) {
     h.leagueLine = str::join(leagueParts, kWideDot);
     if (hero->game) {
       const SportsGame& g = *hero->game;
-      h.badges.push_back(sideLine(g.isSoccer ? g.home : g.away, g.isSoccer, false, std::nullopt, std::nullopt, false, {}, false));
-      h.badges.push_back(sideLine(g.isSoccer ? g.away : g.home, g.isSoccer, false, std::nullopt, std::nullopt, false, {}, false));
+      h.badges.push_back(sideLine(g.homeFirst ? g.home : g.away, g.homeFirst, false, std::nullopt, std::nullopt, false, {}, false));
+      h.badges.push_back(sideLine(g.homeFirst ? g.away : g.home, g.homeFirst, false, std::nullopt, std::nullopt, false, {}, false));
     } else if (hero->teams && hero->teams->size() == 2) {
       for (const SportsTeam& t : *hero->teams) h.badges.push_back(sideLine(t, true, false, std::nullopt, std::nullopt, false, {}, false));
     }
     // "Indiana 24  –  17 Michigan" with scores; the game's title without.
     if (place.topScore && place.bottomScore && place.top && place.bottom && place.parts.empty()) {
-      bool soccer = hero->game ? hero->game->isSoccer : true;
+      bool soccer = hero->game ? hero->game->homeFirst : true;
       h.title = shortName(*place.top, soccer) + " " + *place.topScore + "  \xE2\x80\x93  " + *place.bottomScore + " " +
                 shortName(*place.bottom, soccer);
     } else {
@@ -1789,8 +1768,8 @@ DetailCard detailCard(const SportsEvent& event, Seconds now, const time::Zone& z
   card.leagueLine = leagueLine(event);
   if (event.game) {
     const SportsGame& g = *event.game;
-    card.badges.push_back(sideLine(g.isSoccer ? g.home : g.away, g.isSoccer, false, std::nullopt, std::nullopt, false, {}, false));
-    card.badges.push_back(sideLine(g.isSoccer ? g.away : g.home, g.isSoccer, false, std::nullopt, std::nullopt, false, {}, false));
+    card.badges.push_back(sideLine(g.homeFirst ? g.home : g.away, g.homeFirst, false, std::nullopt, std::nullopt, false, {}, false));
+    card.badges.push_back(sideLine(g.homeFirst ? g.away : g.home, g.homeFirst, false, std::nullopt, std::nullopt, false, {}, false));
   }
   card.title = event.game ? title(*event.game) : event.title;
   std::vector<std::string> parts;

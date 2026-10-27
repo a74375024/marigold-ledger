@@ -124,9 +124,6 @@ struct LiveEvent {
   // (today). Matching against the schedule decides the real day.
   std::optional<bool> startGuessed;
 
-  // Rough length by sport, for "live now" (seconds).
-  time::Seconds expectedLength() const;
-  bool isLive(time::Seconds now) const;
   bool operator==(const LiveEvent& o) const { return id == o.id; }
 };
 

@@ -1,3 +1,4 @@
+#include "core/sports/profiles.hpp"
 #include "core/sports/matcher.hpp"
 
 #include <algorithm>
@@ -218,7 +219,12 @@ bool isGenericSportsTitle(std::string_view title) {
 }
 
 const std::set<std::string>& completeLeagues() {
-  static const std::set<std::string> kLeagues = {"NFL", "NBA", "WNBA", "NHL", "MLB"};
+  static const std::set<std::string> kLeagues = [] {
+    std::set<std::string> out;
+    for (const Profile& p : profiles())
+      if (p.completeSchedule && p.leagueShort.empty()) out.insert(p.league);
+    return out;
+  }();
   return kLeagues;
 }
 
@@ -504,7 +510,8 @@ std::optional<BuildResult> build(const BuildInput& in) {
         if (!best || gap < best->second) best = std::make_pair(g, gap);
       }
       // Tennis: a later match on a court can start hours after its listed time.
-      if (best && best->second <= (games[static_cast<size_t>(best->first)].isTennis() ? 8 : 3) * 3600) {
+      const SportsGame* bestGame = best ? &games[static_cast<size_t>(best->first)] : nullptr;
+      if (best && best->second <= profile(bestGame->league, bestGame->leagueShort).matchWindow) {
         chosen = best->first;
       }
     } else {
@@ -1143,16 +1150,9 @@ std::optional<std::string> pairKey(std::string_view title) {
 }
 
 std::string shortLeague(std::string_view league) {
-  if (league == "College Football") return "NCAAF";
-  if (league == "College Basketball") return "NCAAB";
-  if (league == "Motorsport") return "MOTOR";
-  if (league == "Fighting") return "FIGHT";
-  if (league == "Field Hockey") return "FIELD H.";
-  if (league == "Volleyball") return "VOLLEY";
-  if (league == "Lacrosse") return "LAX";
-  if (league == "Wrestling") return "WREST.";
   if (league.empty()) return "EVENT";
-  return str::upper(league);
+  const Profile& p = profile(league);
+  return p.chip.empty() ? str::upper(league) : p.chip;
 }
 
 // MARK: TeamIndex

@@ -185,22 +185,3 @@ TEST_CASE("leagueFor: a sport named first, then words, fights before soccer") {
   CHECK(leagueFor("x", "", "Something Else") == "Other");
 }
 
-TEST_CASE("LiveEvent length and live window") {
-  LiveEvent e;
-  e.league = "NFL";
-  e.start = utc(2026, 10, 21, 20, 0);
-  CHECK(e.expectedLength() == 3 * 3600 + 45 * 60);
-  CHECK(e.isLive(utc(2026, 10, 21, 23, 0)));
-  CHECK_FALSE(e.isLive(utc(2026, 10, 21, 23, 45)));
-  CHECK_FALSE(e.isLive(utc(2026, 10, 21, 19, 59)));
-  e.league = "Fighting";
-  CHECK(e.expectedLength() == 5 * 3600);
-  e.league = "Golf";
-  CHECK(e.expectedLength() == 4 * 3600);
-  e.league = "MLB";
-  CHECK(e.expectedLength() == 3 * 3600 + 15 * 60);
-  e.league = "Curling";
-  CHECK(e.expectedLength() == 2 * 3600 + 30 * 60);
-  e.start.reset();
-  CHECK_FALSE(e.isLive(utc(2026, 10, 21, 20, 0)));
-}

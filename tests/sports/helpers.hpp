@@ -43,7 +43,7 @@ inline SportsGame game(const std::string& league, const std::string& group, cons
   g.id = league + "|" + id;
   g.league = group;
   g.leagueShort = league;
-  g.isSoccer = soccer;
+  g.homeFirst = soccer;
   g.home = std::move(home);
   g.away = std::move(away);
   g.start = start;

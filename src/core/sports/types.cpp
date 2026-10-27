@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "core/sports/profiles.hpp"
 #include "core/sports/text.hpp"
 
 namespace marigold::sports {
@@ -32,11 +33,11 @@ bool SportsTeam::operator==(const SportsTeam& o) const {
 
 std::string SportsGame::title() const {
   if (customTitle) return *customTitle;
-  return isSoccer ? home.name + " vs " + away.name : away.name + " at " + home.name;
+  return homeFirst ? home.name + " vs " + away.name : away.name + " at " + home.name;
 }
 
 bool SportsGame::operator==(const SportsGame& o) const {
-  return id == o.id && league == o.league && leagueShort == o.leagueShort && isSoccer == o.isSoccer &&
+  return id == o.id && league == o.league && leagueShort == o.leagueShort && homeFirst == o.homeFirst &&
          weekLabel == o.weekLabel && home == o.home && away == o.away && start == o.start &&
          networks == o.networks && venue == o.venue && postponed == o.postponed &&
          completed == o.completed && customTitle == o.customTitle && cardKey == o.cardKey &&
@@ -129,36 +130,7 @@ bool SportsEvent::hasFeeds() const {
                      [](const EventSource& s) { return s.kind == EventSource::Kind::provider; });
 }
 
-Seconds SportsEvent::expectedLength() const {
-  const std::string& l = league;
-  if (l == "NFL" || l == "College Football" || l == "Football") return 12'960;  // 3.6 h
-  if (l == "MLB" || l == "Baseball") return 11'160;                              // 3.1 h
-  if (l == "NBA" || l == "WNBA" || l == "NHL" || l == "College Basketball" || l == "Basketball" ||
-      l == "Hockey") {
-    return 9'360;  // 2.6 h
-  }
-  if (l == "Soccer" || l == "MLS") return 7'560;  // 2.1 h
-  if (l == "Fighting") {
-    // A card's prelims run about 2 h, its main card about 3.
-    if (game && game->cardKey) {
-      const std::string& card = *game->cardKey;
-      if (str::endsWith(card, "|early") || str::endsWith(card, "|prelims")) return 9'000;
-      if (str::endsWith(card, "|main")) return 4 * 3600;
-    }
-    return 5 * 3600;
-  }
-  if (l == "Motorsport") {
-    // A NASCAR Cup race runs 3-4 hours; a race weekend session its own length.
-    if (game && game->leagueShort == "NASCAR") return 13'500;  // 3.75 h
-    if (game && game->isRacing() && game->cardKey) {
-      size_t cut = game->cardKey->rfind('|');
-      if (cut != std::string::npos) return race_session::length(game->cardKey->substr(cut + 1));
-    }
-    return 4 * 3600;
-  }
-  if (l == "Golf") return 4 * 3600;
-  return 9'000;  // 2.5 h
-}
+Seconds SportsEvent::expectedLength() const { return lengthOf(league, game ? &*game : nullptr); }
 
 SportsEvent::State SportsEvent::state(Seconds now) const {
   if (game && game->postponed) return State::postponed;
@@ -184,10 +156,11 @@ SportsEvent::State SportsEvent::state(Seconds now) const {
   if (now < *start) return State::upcoming;
   if (game && game->completed) return State::finished;
   if (feedsEndedAt && now >= *feedsEndedAt) return State::finished;
+  const Profile& p = profile(league, game ? std::string_view(game->leagueShort) : std::string_view());
   Seconds end = *start + expectedLength();
-  if (listingEnd && *listingEnd > end && *listingEnd < *start + 8 * 3600) end = *listingEnd;
+  if (listingEnd && *listingEnd > end && *listingEnd < *start + p.listingCap) end = *listingEnd;
   if (now < end) return State::live;
-  if (now < end + 30 * 60) return State::mayHaveEnded;
+  if (now < end + p.overrun) return State::mayHaveEnded;
   return State::finished;
 }
 
@@ -354,7 +327,7 @@ json::Value toJson(const SportsGame& g) {
   v.set("id", g.id);
   v.set("league", g.league);
   v.set("leagueShort", g.leagueShort);
-  v.set("isSoccer", g.isSoccer);
+  v.set("isSoccer", g.homeFirst);
   setOpt(v, "weekLabel", g.weekLabel);
   v.set("home", toJson(g.home));
   v.set("away", toJson(g.away));
@@ -382,7 +355,7 @@ std::optional<SportsGame> gameFromJson(const json::Value& v) {
   g.id = v["id"].asString();
   g.league = v["league"].asString();
   g.leagueShort = v["leagueShort"].asString();
-  g.isSoccer = v["isSoccer"].asBool();
+  g.homeFirst = v["isSoccer"].asBool();
   g.weekLabel = optString(v["weekLabel"]);
   g.home = std::move(*home);
   g.away = std::move(*away);

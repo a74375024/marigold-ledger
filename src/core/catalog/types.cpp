@@ -216,22 +216,4 @@ std::optional<ChannelKind> kindFromRaw(std::string_view raw) {
   return std::nullopt;
 }
 
-time::Seconds LiveEvent::expectedLength() const {
-  const std::string& l = league;
-  if (l == "NFL" || l == "College Football") return 3 * 3600 + 45 * 60;
-  if (l == "MLB" || l == "MiLB") return 3 * 3600 + 15 * 60;
-  if (l == "Soccer" || l == "NBA" || l == "WNBA" || l == "NHL" || l == "College Basketball" ||
-      l == "MLS") {
-    return 2 * 3600 + 30 * 60;
-  }
-  if (l == "Fighting") return 5 * 3600;
-  if (l == "Motorsport" || l == "Golf") return 4 * 3600;
-  return 2 * 3600 + 30 * 60;
-}
-
-bool LiveEvent::isLive(time::Seconds now) const {
-  if (!start) return false;
-  return *start <= now && now < *start + expectedLength();
-}
-
 }  // namespace marigold::catalog

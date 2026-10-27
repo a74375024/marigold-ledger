@@ -1,0 +1,79 @@
+// One profile per sport: how long it runs and how it may run over, how
+// feeds are matched to it, how its games are named, how its clock reads,
+// and how its tile looks. Every sports rule that differs by sport reads it
+// here instead of keeping its own "if NFL..." branch; fixing or adding a
+// sport is one entry in profiles.cpp.
+//
+// Profiles are looked up by the row group / event league ("NFL", "Soccer",
+// "Motorsport"), with per-league entries where one league of a group differs
+// (NASCAR and F1 within Motorsport). Unknown leagues get the default
+// profile ("Other").
+#pragma once
+
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "core/util/time.hpp"
+
+namespace marigold::sports {
+
+struct SportsGame;
+
+struct Profile {
+  // How the live clock text turns into progress along the tile.
+  enum class Clock : uint8_t {
+    Periods,  // "Q2 3:12", "2nd 14:05": count down through periods
+    Innings,  // "Top 6th", "Bot 8th"
+    Minutes,  // "67'", "90'+3'" out of 95
+  };
+  // How the event's tile is laid out.
+  enum class Tile : uint8_t {
+    Teams,        // two teams: badge or logo, score
+    Players,      // two players: photo (initials until it loads), sets
+    Card,         // a fight card: Prelims / Main timeline
+    RaceWeekend,  // a race weekend: sessions, the last one's top three
+    Title,        // a title and the sport's icon
+  };
+  // Parts of an event with lengths of their own.
+  enum class Parts : uint8_t { None, FightCard, RaceSessions };
+
+  std::string league;       // row group / event league this entry is for
+  std::string leagueShort;  // one league within the group ("NASCAR"); empty = the whole group
+
+  time::Seconds length = 9'000;          // a typical event, start to finish
+  time::Seconds overrun = 30 * 60;       // past that: "may have ended" this long
+  time::Seconds listingCap = 8 * 3600;   // a guide listing may stretch it to this
+  time::Seconds matchWindow = 3 * 3600;  // a feed's time this close to the game's
+  Parts parts = Parts::None;
+
+  // Two teams with no game on the schedule means the feed is a replay.
+  bool completeSchedule = false;
+  // "Home vs Away", the home side on top (soccer, fights); otherwise
+  // "Away at Home".
+  bool homeFirst = false;
+
+  Clock clock = Clock::Periods;
+  // Periods: length of a quarter ("Q" clocks), and the count and length of
+  // other periods (hockey periods, college basketball halves).
+  int quarterSeconds = 600;
+  int periods = 3;
+  int periodSeconds = 1200;
+
+  Tile tile = Tile::Teams;
+  bool podium = false;  // a finished session's top three on the tile (F1)
+  std::string symbol = "sportscourt.fill";  // icon on title-only tiles
+  std::string chip;  // short league chip ("NCAAF"); empty = the league upper-cased
+};
+
+// Every profile, group entries and per-league ones.
+const std::vector<Profile>& profiles();
+
+// The profile for an event's league, or one league within it.
+const Profile& profile(std::string_view league, std::string_view leagueShort = {});
+
+// A typical length for this event: the profile's, or its part's (a fight
+// card's prelims or main card, a race weekend's session).
+time::Seconds lengthOf(std::string_view league, const SportsGame* game);
+
+}  // namespace marigold::sports

@@ -728,13 +728,13 @@ TEST_CASE("formatting helpers") {
   CHECK(untilText(kNow + 90 * 60, kNow) == "in 2 h");
   CHECK(untilText(kNow + 6 * 3600, kNow).empty());
   CHECK(untilText(kNow - 60, kNow).empty());
-  CHECK(*clockProgress(status(LivePhase::live, "67'"), "Soccer", true) == doctest::Approx(67.0 / 95));
-  CHECK(*clockProgress(status(LivePhase::live, "Bot 8th"), "MLB", false) == doctest::Approx((7 + 0.5 + 0.25) / 9));
-  CHECK(*clockProgress(status(LivePhase::live, "Halftime"), "NFL", false) == 0.5);
-  CHECK(*clockProgress(status(LivePhase::live, "OT 2:00"), "NHL", false) == 1);
-  CHECK(*clockProgress(status(LivePhase::live, "2nd 10:00"), "College Basketball", false) ==
+  CHECK(*clockProgress(status(LivePhase::live, "67'"), "Soccer") == doctest::Approx(67.0 / 95));
+  CHECK(*clockProgress(status(LivePhase::live, "Bot 8th"), "MLB") == doctest::Approx((7 + 0.5 + 0.25) / 9));
+  CHECK(*clockProgress(status(LivePhase::live, "Halftime"), "NFL") == 0.5);
+  CHECK(*clockProgress(status(LivePhase::live, "OT 2:00"), "NHL") == 1);
+  CHECK(*clockProgress(status(LivePhase::live, "2nd 10:00"), "College Basketball") ==
         doctest::Approx((1 + 1 - 600.0 / 1200) / 2));
-  CHECK_FALSE(clockProgress(status(LivePhase::live, "Live"), "NFL", false));
+  CHECK_FALSE(clockProgress(status(LivePhase::live, "Live"), "NFL"));
   CHECK(shortName(team("1", "Harbor City Red Sox"), false) == "Red Sox");
   CHECK(shortName(team("1", "Harbor United"), true) == "Harbor United");
   CHECK(shortName(team("1", "One / Two"), false) == "One / Two");
