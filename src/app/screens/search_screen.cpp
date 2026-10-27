@@ -5,11 +5,11 @@
 // most 80 results.
 #include <algorithm>
 
-#include "core/engine/views.hpp"
 #include "app/app.hpp"
 #include "app/playback.hpp"
 #include "app/screens/screens.hpp"
 #include "app/store/store.hpp"
+#include "core/engine/views.hpp"
 #include "core/util/strings.hpp"
 
 namespace marigold::app {

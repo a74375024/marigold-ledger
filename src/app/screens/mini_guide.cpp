@@ -4,11 +4,11 @@
 // playing, OK switches, Left opens the neighborhoods, Back steps out.
 #include <algorithm>
 
-#include "core/engine/views.hpp"
 #include "app/app.hpp"
 #include "app/playback.hpp"
 #include "app/screens/screens.hpp"
 #include "app/store/store.hpp"
+#include "core/engine/views.hpp"
 
 namespace marigold::app {
 namespace {

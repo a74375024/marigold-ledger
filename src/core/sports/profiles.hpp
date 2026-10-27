@@ -54,6 +54,9 @@ struct Profile {
   // tennis, cricket, golf): the game stays live with a SUSPENDED pill.
   // Elsewhere a suspended game counts as postponed.
   bool suspendResumes = false;
+  // Two games between the same teams on one day (baseball): a feed with no
+  // time goes to the one on now.
+  bool doubleheaders = false;
   time::Seconds listingCap = 8 * 3600;   // a guide listing may stretch it to this
   time::Seconds matchWindow = 3 * 3600;  // a feed's time this close to the game's
   Parts parts = Parts::None;

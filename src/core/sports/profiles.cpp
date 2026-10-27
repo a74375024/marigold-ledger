@@ -35,6 +35,7 @@ Profile baseball(const char* league, time::Seconds length = 11'160) {  // 3.1 h
   Profile p = base(league, length, "baseball.fill", Tile::Teams);
   p.clock = Clock::Innings;
   p.suspendResumes = true;
+  p.doubleheaders = true;
   return p;
 }
 
@@ -86,6 +87,7 @@ const std::vector<Profile>& table() {
     v.push_back(milb);
     Profile softball = base("Softball", 9'000, "baseball.fill");
     softball.suspendResumes = true;
+    softball.doubleheaders = true;
     v.push_back(softball);
 
     Profile nhl = base("NHL", 9'360, "hockey.puck.fill", Tile::Teams);

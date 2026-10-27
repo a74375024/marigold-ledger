@@ -1,4 +1,3 @@
-#include "core/sports/profiles.hpp"
 #include "core/sports/board.hpp"
 
 #include <algorithm>
@@ -8,6 +7,7 @@
 #include "core/guide/names.hpp"
 #include "core/sports/matcher.hpp"
 #include "core/sports/player_photos.hpp"
+#include "core/sports/profiles.hpp"
 #include "core/sports/text.hpp"
 
 namespace marigold::sports::board {

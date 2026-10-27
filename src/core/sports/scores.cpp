@@ -1,4 +1,3 @@
-#include "core/sports/profiles.hpp"
 #include "core/sports/scores.hpp"
 
 #include <algorithm>
@@ -6,6 +5,7 @@
 #include <unordered_set>
 
 #include "core/sports/parse.hpp"
+#include "core/sports/profiles.hpp"
 #include "core/sports/schedule.hpp"
 #include "core/sports/text.hpp"
 

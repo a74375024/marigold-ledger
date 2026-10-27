@@ -1,4 +1,3 @@
-#include "core/sports/profiles.hpp"
 #include "core/sports/schedule.hpp"
 
 #include <algorithm>
@@ -6,6 +5,7 @@
 
 #include "core/sports/matcher.hpp"
 #include "core/sports/parse.hpp"
+#include "core/sports/profiles.hpp"
 #include "core/sports/text.hpp"
 #include "core/util/json.hpp"
 #include "core/util/json_stream.hpp"

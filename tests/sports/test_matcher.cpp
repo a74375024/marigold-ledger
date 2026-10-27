@@ -455,3 +455,43 @@ TEST_CASE("racing feeds go to the session they name, cameras to no tile") {
   CHECK(ids(tile->sources) == std::vector<std::string>{"f|2", "f|1"});
   CHECK(find(out->events, "r3"));  // a camera stays out of the race tile
 }
+
+TEST_CASE("doubleheaders: a feed with no time goes to the game on now, or the one it names") {
+  Seconds first = utc(2026, 7, 4, 17, 5);    // 1:05 PM Eastern
+  Seconds second = utc(2026, 7, 4, 21, 10);  // 5:10 PM
+  SportsTeam home = team("10", "Harbor City Gulls", std::string("HCG"));
+  SportsTeam away = team("11", "Team Alpha", std::string("TMA"));
+  BuildInput in;
+  in.games = {game("MLB", "MLB", "g1", home, away, first, {}), game("MLB", "MLB", "g2", home, away, second, {})};
+  in.zone = time::Zone::usEastern();
+  auto feedFor = [&](const std::string& title) {
+    return std::vector<ProviderEvent>{provider("p1", title, "MLB", std::nullopt, {"xt|7"}, "slots", false, true)};
+  };
+  auto gameOf = [&](Seconds now, const std::string& title) -> std::string {
+    in.now = now;
+    in.events = feedFor(title);
+    auto out = build(in);
+    REQUIRE(out);
+    for (const SportsEvent& e : out->events)
+      if (e.game && !e.sources.empty()) return e.game->id;
+    return "";
+  };
+  // Morning: game 1. During game 1: game 1. Once game 2 has started: game 2,
+  // even before game 1 is marked over.
+  CHECK(gameOf(utc(2026, 7, 4, 14, 0), "Team Alpha @ Harbor City Gulls") == "MLB|g1");
+  CHECK(gameOf(utc(2026, 7, 4, 18, 0), "Team Alpha @ Harbor City Gulls") == "MLB|g1");
+  CHECK(gameOf(utc(2026, 7, 4, 21, 30), "Team Alpha @ Harbor City Gulls") == "MLB|g2");
+  // A title naming the game.
+  CHECK(gameOf(utc(2026, 7, 4, 14, 0), "Team Alpha @ Harbor City Gulls (Game 2)") == "MLB|g2");
+  CHECK(gameOf(utc(2026, 7, 4, 21, 30), "Team Alpha @ Harbor City Gulls Gm 1") == "MLB|g1");
+
+  // Not a doubleheader sport: the matchup's next game, as before.
+  in.games = {game("NBA", "NBA", "n1", home, away, first, {}), game("NBA", "NBA", "n2", home, away, second, {})};
+  in.now = utc(2026, 7, 4, 21, 30);
+  in.events = {provider("p2", "Team Alpha @ Harbor City Gulls", "NBA", std::nullopt, {"xt|8"}, "slots", false, true)};
+  auto out = build(in);
+  REQUIRE(out);
+  const SportsEvent* n1 = findGame(out->events, "NBA|n1");
+  REQUIRE(n1);
+  CHECK(ids(n1->sources) == std::vector<std::string>{"xt|8"});
+}

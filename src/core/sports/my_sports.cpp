@@ -1,9 +1,9 @@
-#include "core/catalog/text.hpp"
 #include "core/sports/my_sports.hpp"
 
 #include <algorithm>
 #include <set>
 
+#include "core/catalog/text.hpp"
 #include "core/sports/leagues.hpp"
 #include "core/sports/matcher.hpp"
 #include "core/util/json.hpp"

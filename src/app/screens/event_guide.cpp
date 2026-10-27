@@ -5,12 +5,12 @@
 // rows: no requests of its own, but scores keep refreshing while it's open.
 #include <algorithm>
 
-#include "core/engine/views.hpp"
 #include "app/app.hpp"
 #include "app/playback.hpp"
 #include "app/screens/events_ui.hpp"
 #include "app/screens/screens.hpp"
 #include "app/store/store.hpp"
+#include "core/engine/views.hpp"
 
 namespace marigold::app {
 namespace {

@@ -1,4 +1,3 @@
-#include "core/sports/profiles.hpp"
 #include "core/sports/matcher.hpp"
 
 #include <algorithm>
@@ -10,6 +9,7 @@
 #include "core/catalog/catalog.hpp"
 #include "core/guide/names.hpp"
 #include "core/sports/network_map.hpp"
+#include "core/sports/profiles.hpp"
 #include "core/sports/text.hpp"
 
 namespace marigold::sports::matcher {
@@ -523,17 +523,34 @@ std::optional<BuildResult> build(const BuildInput& in) {
       std::stable_sort(open.begin(), open.end(), [&](int a, int b) {
         return games[static_cast<size_t>(a)].start < games[static_cast<size_t>(b)].start;
       });
+      // The matchup's next game; on a doubleheader day, the one the title
+      // names ("Game 2"), else the one on now (the latest that started).
+      auto next = [&]() -> std::optional<int> {
+        if (open.empty()) return std::nullopt;
+        const SportsGame& first = games[static_cast<size_t>(open.front())];
+        if (!profile(first.league, first.leagueShort).doubleheaders) return open.front();
+        std::vector<int> day;
+        for (int g : open)
+          if (games[static_cast<size_t>(g)].start - first.start < 12 * 3600) day.push_back(g);
+        if (day.size() < 2) return open.front();
+        if (rx::test("\\b(game|gm)\\s*2\\b", event.title, true)) return day[1];
+        if (rx::test("\\b(game|gm)\\s*1\\b", event.title, true)) return day[0];
+        int on = day.front();
+        for (int g : day)
+          if (games[static_cast<size_t>(g)].start <= now) on = g;
+        return on;
+      };
       if (event.start) {
         auto at = std::find_if(open.begin(), open.end(), [&](int g) {
           return clockGap(games[static_cast<size_t>(g)].start, *event.start) <= 75 * 60;
         });
         if (at != open.end()) {
           chosen = *at;
-        } else if (!open.empty()) {
-          chosen = open.front();
+        } else {
+          chosen = next();
         }
-      } else if (!open.empty()) {
-        chosen = open.front();
+      } else {
+        chosen = next();
       }
       // Counted per group and sport, for day-less titles only: fresh when it
       // names a game still to come, stale when the game it names was before
