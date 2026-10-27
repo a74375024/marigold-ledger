@@ -107,6 +107,8 @@ float GuideScreen::xAt(time::Seconds t) const {
 
 void GuideScreen::shown() {
   refresh(true);
+  // Back after a while (hours of a channel): the window starts now again.
+  if (windowStart_ < nowWindow()) returnToNow();
   // Back from the player: the picture shrinks into the corner again.
   Playback& p = app_.playback();
   if (p.active() && p.full()) {
@@ -847,8 +849,10 @@ bool GuideScreen::tick(uint32_t ms) {
     app_.invalidate();
   }
   if (!digits_.empty()) animating = true;
-  // Two idle minutes in a later window: back to now.
+  // Two idle minutes in a later window: back to now. A window left behind
+  // as time passed (it never starts before now) moves on with it.
   if (later() && ms - lastKeyMs_ > kIdleBackToNowMs) returnToNow();
+  else if (windowStart_ < nowWindow()) returnToNow();
 
   // Preview: after focus rests on a channel, only while the grid has focus
   // and nothing else is open.
