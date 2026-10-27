@@ -154,6 +154,13 @@ ParsedEvent parseEventDetailed(std::string_view input, Seconds now,
   title = rx::replace(title, "^\\s*[A-Za-z+]{2,10}\\s*\\|\\s*\\d{1,3}\\s*-?\\s*", "");
   title = rx::replace(title, "\\s:\\s?[A-Za-z][\\w+ ]{0,24}?\\s+\\d{1,3}\\s*$", "");
 
+  // "Home vs Away // UK Tue 27 Oct 7:45pm // ET Tue 27 Oct 3:45pm": both
+  // times, UK first; the Eastern one is the one to read.
+  if (auto both = rx::first("^(.*?)\\s*//\\s*UK\\b[^/]*//\\s*ET\\b\\s*(.*)$", title, true)) {
+    std::string etPart = rx::replace(both->group(2), "^(mon|tue|wed|thu|fri|sat|sun)[a-z]*\\.?\\s+", "", true);
+    title = std::string(both->group(1)) + " " + etPart + " ET";
+  }
+
   // Fri 23 Oct 18:00 EDT (US) / Fri 23 Oct 02:05 CEST (SE) / ... 19:40 +03 (SA)
   if (auto f =
           groups("(?:[A-Za-z]{3}\\s+)?(\\d{1,2})\\s+([A-Za-z]{3})\\s+(\\d{1,2}):(\\d{2})\\s+(?!"
@@ -310,11 +317,12 @@ ParsedEvent parseEventDetailed(std::string_view input, Seconds now,
   // "12PM" / "730PM" / "7:30 PM ET" / "8.30 PM ET" -> that day when the title
   // names one ("02:00PM UFC 333 ... (OCT 24)"), else today (Eastern).
   if (!start) {
-    if (auto f = groups("\\b(\\d{1,2})(?:[:.]?(\\d{2}))?\\s*(AM|PM)(?:\\s*ET)?\\b", title)) {
+    if (auto f = groups("\\b(\\d{1,2})(?:[:.]?(\\d{2}))?\\s*(AM|PM)(?:\\s*(ET|UK))?\\b", title)) {
       removeRange(title, *f);
       if (auto h = num(f->p[0])) {
         int mi = num(f->p[1]).value_or(0);
-        const Zone& zone = amPmZone;
+        // "8:00 pm uk": UK time.
+        const Zone& zone = str::lower(f->p[3]) == "uk" ? london : amPmZone;
         bool done = false;
         static const char* const kMonth =
             "(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t|tember)?|"

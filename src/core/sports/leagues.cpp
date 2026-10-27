@@ -73,15 +73,18 @@ const std::vector<League>& leagues() {
     v.push_back(keywords(standard(make("soccer/esp.1", "Soccer", "LIGA", "La Liga", "Soccer", true)),
                          {"laliga", "la liga"}));
     v.push_back(keywords(make("soccer/mex.1", "Soccer", "LMX", "Liga MX", "Soccer", true), {"liga mx"}));
-    v.push_back(keywords(make("soccer/ita.1", "Soccer", "SA", "Serie A", "Soccer", true), {"serie a"}));
-    v.push_back(
-        keywords(make("soccer/ger.1", "Soccer", "BUN", "Bundesliga", "Soccer", true), {"bundesliga"}));
-    v.push_back(keywords(make("soccer/fra.1", "Soccer", "L1", "Ligue 1", "Soccer", true),
+    // The other big leagues and the European club competitions are looked
+    // up with every sport too: providers carry them all, and a title from
+    // last week's matchday is only told apart with its schedule.
+    v.push_back(keywords(standard(make("soccer/ita.1", "Soccer", "SA", "Serie A", "Soccer", true)), {"serie a"}));
+    v.push_back(keywords(standard(make("soccer/ger.1", "Soccer", "BUN", "Bundesliga", "Soccer", true)),
+                         {"bundesliga"}));
+    v.push_back(keywords(standard(make("soccer/fra.1", "Soccer", "L1", "Ligue 1", "Soccer", true)),
                          {"ligue 1", "ligue1"}));
-    v.push_back(keywords(make("soccer/uefa.europa", "Soccer", "UEL", "Europa League", "Soccer", true),
+    v.push_back(keywords(standard(make("soccer/uefa.europa", "Soccer", "UEL", "Europa League", "Soccer", true)),
                          {"europa league"}));
     v.push_back(keywords(
-        make("soccer/uefa.europa.conf", "Soccer", "UECL", "Conference League", "Soccer", true),
+        standard(make("soccer/uefa.europa.conf", "Soccer", "UECL", "Conference League", "Soccer", true)),
         {"conference league"}));
     v.push_back(keywords(make("soccer/eng.2", "Soccer", "EFL", "Championship", "Soccer", true),
                          {"championship", "efl"}));
@@ -298,8 +301,13 @@ std::vector<League> activeLeagues(const MySportsPrefs& prefs, const SportFeedsSe
     return out;
   }
   std::set<std::string> picked(prefs.leagues.begin(), prefs.leagues.end());
+  // Any soccer picked: the European club competitions too (their clubs are
+  // the picked leagues'; unpicked, their games fold into More events).
+  bool soccer = std::any_of(leagues().begin(), leagues().end(),
+                            [&](const League& l) { return l.soccer && picked.count(l.shortName); });
   for (const League& l : leagues()) {
-    if (picked.count(l.shortName)) out.push_back(l);
+    bool european = l.shortName == "UCL" || l.shortName == "UEL" || l.shortName == "UECL";
+    if (picked.count(l.shortName) || (soccer && european)) out.push_back(l);
   }
   if (picked.count("S:Fighting")) out.insert(out.end(), fightLeagues().begin(), fightLeagues().end());
   for (const League& l : racingLeagues()) {

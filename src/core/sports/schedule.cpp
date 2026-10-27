@@ -55,7 +55,7 @@ std::vector<std::string> queriesFor(const League& league, Seconds now, const tim
     case League::Mode::month: {
       // Date ranges stopped working (HTTP 400); a whole month, a week number
       // or a single day still do.
-      std::string first = text::yearMonth(text::addDays(now, -2, zone), zone);
+      std::string first = text::yearMonth(text::addDays(now, -7, zone), zone);
       std::string last = text::yearMonth(text::addDays(now, 8, zone), zone);
       queries.push_back("dates=" + first);
       if (last != first) queries.push_back("dates=" + last);
@@ -998,7 +998,7 @@ Published Schedule::publish(const Context& ctx) const {
   if (!ctx.enabled) return out;
   std::vector<League> active = activeLeagues(ctx.prefs, ctx.seen, ctx.now);
   std::set<std::string> shorts = shortsOf(active);
-  for (SportsGame& g : keeping(saved_.games, ctx.now - kFinishedShown)) {
+  for (SportsGame& g : keeping(saved_.games, ctx.now - kSavedFor)) {
     if (shorts.count(g.leagueShort)) out.games.push_back(std::move(g));
   }
   std::stable_sort(out.games.begin(), out.games.end(),
@@ -1037,7 +1037,10 @@ bool Schedule::start(const Context& ctx, bool force, std::optional<std::set<std:
   f.only = std::move(only);
   f.now = ctx.now;
   f.zone = ctx.zone;
-  f.from = text::addDays(ctx.now, -2, ctx.zone);
+  // A week back: last week's matchday is what tells a leftover slot title
+  // ("Juventus vs Rennes 17:45") from tonight's game. The board shows only
+  // recent finals.
+  f.from = text::addDays(ctx.now, -7, ctx.zone);
   f.to = text::addDays(ctx.now, 8, ctx.zone);
   std::vector<League> active = activeLeagues(ctx.prefs, ctx.seen, ctx.now);
   // A given list may include leagues Setup is showing but hasn't saved.

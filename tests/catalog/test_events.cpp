@@ -130,6 +130,13 @@ TEST_CASE("a clock time with the day before the month, and a month next to the h
   auto t = parse("AFC Totton vs Torquay United // UK Tue 21 Oct // ET Tue 21 Oct 3:45pm");
   CHECK_FALSE(t.guessed);
   CHECK(t.start == utc(2026, 10, 21, 19, 45));
+  // Both times, UK first: the Eastern one.
+  auto both = parse("AFC Totton vs Torquay United // UK Tue 21 Oct 7:45pm // ET Tue 21 Oct 3:45pm");
+  CHECK(both.title == "AFC Totton vs Torquay United");
+  CHECK(both.start == utc(2026, 10, 21, 19, 45));
+  CHECK_FALSE(both.guessed);
+  // "8:00 pm uk": UK time (BST until the 25th, so 19:00 UTC on the 21st).
+  CHECK(parse("Dundee United v Rangers 8:00 pm uk").start == utc(2026, 10, 21, 19, 0));
   // "Oct 3:45pm" is not the 3rd of October.
   auto u = parse("Team A vs Team B Oct 3:45pm");
   CHECK(u.guessed);

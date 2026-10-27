@@ -43,7 +43,9 @@ constexpr Seconds kFreshFor = 20 * 3600;
 // one matches it and is hidden instead of looking like today's game.
 constexpr Seconds kFinishedShown = 36 * 3600;
 // Saved games older than this are dropped.
-constexpr Seconds kSavedFor = 2 * 86'400;
+// A week: last week's matchday tells a leftover slot title from tonight's
+// game (the board itself shows only recent finals).
+constexpr Seconds kSavedFor = 7 * 86'400;
 // School logos (college events in any sport) are fetched once a month.
 constexpr Seconds kSchoolsMaxAge = 30 * 86'400;
 // Before My Sports is set up, a league none of your channels showed in a

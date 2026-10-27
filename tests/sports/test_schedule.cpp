@@ -587,20 +587,22 @@ TEST_CASE("before setup, a league none of your channels showed is asked weekly")
   CHECK_FALSE(schedule.takeDirty());
 }
 
-TEST_CASE("published games: active leagues, finished ones for a day and a half, by start") {
+TEST_CASE("published games: active leagues, finished ones for a week, by start") {
   Seconds now = utc(2026, 10, 26, 16, 0);
   Saved saved;
   auto g = [&](const std::string& league, const std::string& id, Seconds start) {
     return sportsdata::game(league, league, id, sportsdata::team("1", "A"), sportsdata::team("2", "B"), start);
   };
-  saved.games = {g("NFL", "2", now + 7200), g("NFL", "1", now - 3600), g("NFL", "old", now - 40 * 3600),
-                 g("NHL", "3", now + 3600)};
+  saved.games = {g("NFL", "2", now + 7200), g("NFL", "1", now - 3600), g("NFL", "week", now - 5 * 86'400),
+                 g("NFL", "old", now - 8 * 86'400), g("NHL", "3", now + 3600)};
   saved.fetchedAt = now - 600;
   Schedule schedule(saved);
   Published p = schedule.publish(nflOnly(now));
-  REQUIRE(p.games.size() == 2);
-  CHECK(p.games[0].id == "NFL|1");
-  CHECK(p.games[1].id == "NFL|2");
+  // Last week's game stays: a leftover slot naming it is told apart.
+  REQUIRE(p.games.size() == 3);
+  CHECK(p.games[0].id == "NFL|week");
+  CHECK(p.games[1].id == "NFL|1");
+  CHECK(p.games[2].id == "NFL|2");
   CHECK(p.updatedAt == now - 600);
   Context off = nflOnly(now);
   off.enabled = false;
