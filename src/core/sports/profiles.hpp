@@ -50,6 +50,10 @@ struct Profile {
   time::Seconds knockoutOverrun = 0;
   bool cup = false;
   time::Seconds longLength = 0;          // TennisMatches: a best-of-five match
+  // "Suspended" means play stops and resumes later (rain in baseball,
+  // tennis, cricket, golf): the game stays live with a SUSPENDED pill.
+  // Elsewhere a suspended game counts as postponed.
+  bool suspendResumes = false;
   time::Seconds listingCap = 8 * 3600;   // a guide listing may stretch it to this
   time::Seconds matchWindow = 3 * 3600;  // a feed's time this close to the game's
   Parts parts = Parts::None;

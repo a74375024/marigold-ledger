@@ -813,7 +813,7 @@ Tile makeTile(const SportsEvent& event, const Place& place, const std::string& r
         tile.pillText = "ON NOW";
       } else if (event.live == LivePhase::delayed) {
         tile.pill = Pill::delayed;
-        tile.pillText = "DELAYED";
+        tile.pillText = event.suspended ? "SUSPENDED" : "DELAYED";
       } else {
         tile.pill = tile.watchable ? Pill::live : Pill::liveOutlined;
         tile.pillText = "LIVE";
@@ -1103,7 +1103,10 @@ Board build(const Input& in) {
     // Where each game stands, from the live scoreboard.
     if (e.game) {
       auto status = in.statuses.find(e.game->id);
-      if (status != in.statuses.end()) copy.live = status->second.phase;
+      if (status != in.statuses.end()) {
+        copy.live = status->second.phase;
+        copy.suspended = status->second.suspended;
+      }
     }
     withLive.push_back(std::move(copy));
   }
@@ -1420,7 +1423,7 @@ Board build(const Input& in) {
     switch (state) {
       case State::live:
         h.chip = hero->live == LivePhase::delayed ? HeroChip::delayed : HeroChip::live;
-        h.chipText = hero->live == LivePhase::delayed ? "DELAYED" : "LIVE";
+        h.chipText = hero->live != LivePhase::delayed ? "LIVE" : hero->suspended ? "SUSPENDED" : "DELAYED";
         break;
       case State::upcoming:
         h.chip = HeroChip::later;
@@ -1625,7 +1628,7 @@ EventGuide eventGuide(const Board& board, const std::optional<std::string>& rowI
         switch (state) {
           case State::live:
             game.pill = e.live == LivePhase::delayed ? Pill::delayed : Pill::live;
-            game.pillText = e.live == LivePhase::delayed ? "DELAYED" : "LIVE";
+            game.pillText = e.live != LivePhase::delayed ? "LIVE" : e.suspended ? "SUSPENDED" : "DELAYED";
             game.statusText = tile.partLabel ? *tile.partLabel : tile.clock.value_or("");
             break;
           case State::mayHaveEnded: game.statusText = "Likely over"; break;

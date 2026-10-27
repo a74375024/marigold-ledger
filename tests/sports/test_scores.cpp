@@ -325,3 +325,30 @@ TEST_CASE("merging statuses: when a game was seen final") {
   CHECK(scores.revision() == revision);  // nothing changed
   CHECK(scores.finalSeen().at("NFL|1") == now);
 }
+
+TEST_CASE("suspended: resumes later in baseball and tennis, postponed elsewhere") {
+  bool suspended = false;
+  CHECK(livePhase(L("MLB"), std::string("in"), "STATUS_SUSPENDED", &suspended) == LivePhase::delayed);
+  CHECK(suspended);
+  CHECK(livePhase(L("ATP"), std::string("in"), "STATUS_SUSPENDED", &suspended) == LivePhase::delayed);
+  CHECK(suspended);
+  CHECK(livePhase(L("NFL"), std::string("in"), "STATUS_SUSPENDED", &suspended) == LivePhase::postponed);
+  CHECK_FALSE(suspended);
+  CHECK(livePhase(L("EPL"), std::string("in"), "STATUS_SUSPENDED", &suspended) == LivePhase::postponed);
+  CHECK(livePhase(L("MLB"), std::string("post"), "STATUS_POSTPONED", &suspended) == LivePhase::postponed);
+  CHECK_FALSE(suspended);
+  CHECK(livePhase(L("MLB"), std::string("in"), "STATUS_RAIN_DELAY", &suspended) == LivePhase::delayed);
+  CHECK_FALSE(suspended);  // a delay, not a suspension
+
+  std::string body = R"({"events":[{"id":"8","competitions":[{
+      "status":{"period":6,"type":{"name":"STATUS_SUSPENDED","state":"in","shortDetail":"Suspended - Rain"}},
+      "competitors":[{"homeAway":"home","score":"4"},{"homeAway":"away","score":"3"}]}]}]})";
+  LiveStatus s = statuses(body, L("MLB")).at("MLB|8");
+  CHECK(s.phase == LivePhase::delayed);
+  CHECK(s.suspended);
+  CHECK(s.detail == "Suspended - Rain");
+  // The same game in football: postponed, as before.
+  LiveStatus f = statuses(body, L("NFL")).at("NFL|8");
+  CHECK(f.phase == LivePhase::postponed);
+  CHECK_FALSE(f.suspended);
+}

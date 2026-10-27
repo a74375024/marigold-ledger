@@ -34,6 +34,7 @@ Profile basketball(const char* league) { return base(league, 9'360, "basketball.
 Profile baseball(const char* league, time::Seconds length = 11'160) {  // 3.1 h
   Profile p = base(league, length, "baseball.fill", Tile::Teams);
   p.clock = Clock::Innings;
+  p.suspendResumes = true;
   return p;
 }
 
@@ -83,7 +84,9 @@ const std::vector<Profile>& table() {
     Profile milb = baseball("MiLB");
     milb.tile = Tile::Title;
     v.push_back(milb);
-    v.push_back(base("Softball", 9'000, "baseball.fill"));
+    Profile softball = base("Softball", 9'000, "baseball.fill");
+    softball.suspendResumes = true;
+    v.push_back(softball);
 
     Profile nhl = base("NHL", 9'360, "hockey.puck.fill", Tile::Teams);
     nhl.completeSchedule = true;
@@ -138,13 +141,16 @@ const std::vector<Profile>& table() {
     tennis.overrun = 60 * 60;
     tennis.parts = Parts::TennisMatches;
     tennis.longLength = 4 * 3600;
+    tennis.suspendResumes = true;
     v.push_back(tennis);
     // All-day coverage: live for as long as the guide listing says.
     Profile golf = base("Golf", 4 * 3600, "figure.golf");
     golf.listingCap = 12 * 3600;
+    golf.suspendResumes = true;
     v.push_back(golf);
     Profile cricket = base("Cricket", 12'600, "figure.cricket");  // 3.5 h, a T20
     cricket.listingCap = 12 * 3600;
+    cricket.suspendResumes = true;
     v.push_back(cricket);
 
     Profile volleyball = base("Volleyball", 9'000, "volleyball.fill");

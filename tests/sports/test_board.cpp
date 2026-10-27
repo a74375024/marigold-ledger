@@ -296,6 +296,15 @@ TEST_CASE("status texts: ends ~, started, an upcoming time and how soon, due, wa
   Input delayed = baseInput({eventOf(nflAt("10", kNow - 600), {lineup("e|1")})});
   delayed.statuses["NFL|10"] = status(LivePhase::delayed, "Rain Delay");
   CHECK(tile(build(delayed), "sev|NFL|10").pillText == "DELAYED");
+  // Suspended, to resume later (the scores say so for sports that resume).
+  LiveStatus halted = status(LivePhase::delayed, "Suspended - Rain");
+  halted.suspended = true;
+  delayed.statuses["NFL|10"] = halted;
+  Board halt = build(delayed);
+  const Tile& suspended = tile(halt, "sev|NFL|10");
+  CHECK(suspended.pill == Pill::delayed);
+  CHECK(suspended.pillText == "SUSPENDED");
+  CHECK(suspended.state == State::live);
 }
 
 TEST_CASE("times in the viewer's zone: an Eastern evening game seen from London") {

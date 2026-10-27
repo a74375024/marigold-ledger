@@ -34,6 +34,11 @@ namespace marigold::sports::scores {
 
 // "pre" / "in" / "post" and the status name -> the phase.
 LivePhase livePhase(const std::optional<std::string>& state, std::string_view name);
+// The same, for a game of `league`: a suspended one in a sport that resumes
+// play (rain in baseball or tennis) is delayed, not postponed; `suspended`
+// says so.
+LivePhase livePhase(const League& league, const std::optional<std::string>& state, std::string_view name,
+                    bool* suspended);
 // The tile's clock: "Q3 4:12", "2nd 11:02", "67'", "Bot 8th", "Halftime".
 std::string liveDetail(const League& league, LivePhase phase, std::string_view name, int period,
                        std::string_view clock, const std::optional<std::string>& shortDetail);

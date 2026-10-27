@@ -1,3 +1,4 @@
+#include "core/sports/profiles.hpp"
 #include "core/sports/scores.hpp"
 
 #include <algorithm>
@@ -22,6 +23,18 @@ LivePhase livePhase(const std::optional<std::string>& state, std::string_view na
   if (s == "in") return has("DELAY") ? LivePhase::delayed : LivePhase::live;
   if (s == "post") return LivePhase::final;
   return LivePhase::pre;
+}
+
+LivePhase livePhase(const League& league, const std::optional<std::string>& state, std::string_view name,
+                    bool* suspended) {
+  LivePhase phase = livePhase(state, name);
+  std::string upper = str::upper(name);
+  bool halted = upper.find("SUSPENDED") != std::string::npos;
+  bool off = upper.find("POSTPONED") != std::string::npos || upper.find("CANCELED") != std::string::npos ||
+             upper.find("CANCELLED") != std::string::npos || upper.find("FORFEIT") != std::string::npos;
+  bool resumes = phase == LivePhase::postponed && halted && !off && profile(league.group).suspendResumes;
+  if (suspended) *suspended = resumes;
+  return resumes ? LivePhase::delayed : phase;
 }
 
 std::string liveDetail(const League& league, LivePhase phase, std::string_view name, int period,
@@ -90,12 +103,14 @@ Statuses gameStatuses(std::string_view body, const League& league) {
     const json::Value& status = competition["status"].isObject() ? competition["status"] : event["status"];
     const json::Value& type = status["type"];
     std::string name = text::text(type["name"]).value_or("");
-    LivePhase phase = livePhase(text::text(type["state"]), name);
+    bool suspended = false;
+    LivePhase phase = livePhase(league, text::text(type["state"]), name, &suspended);
     if (phase == LivePhase::pre && text::flag(type["completed"])) phase = LivePhase::final;
     int period = intOf(status["period"]).value_or(0);
     std::string clock = text::text(status["displayClock"]).value_or("");
     LiveStatus live;
     live.phase = phase;
+    live.suspended = suspended;
     live.detail = liveDetail(league, phase, name, period, clock, text::text(type["shortDetail"]));
     for (const json::Value& competitor : competition["competitors"].items()) {
       if (!competitor.isObject()) continue;
@@ -255,11 +270,13 @@ Statuses tennisStatuses(std::string_view body, const League& league) {
       if (!matchID) continue;
       const json::Value& statusObject = competition["status"];
       const json::Value& type = statusObject["type"];
-      LivePhase phase = livePhase(text::text(type["state"]), text::text(type["name"]).value_or(""));
+      bool suspended = false;
+      LivePhase phase = livePhase(league, text::text(type["state"]), text::text(type["name"]).value_or(""), &suspended);
       if (phase == LivePhase::pre && text::flag(type["completed"])) phase = LivePhase::final;
       int period = intOf(statusObject["period"]).value_or(0);
       LiveStatus status;
       status.phase = phase;
+      status.suspended = suspended;
       if (phase == LivePhase::final) {
         status.detail = "Final";
       } else if (phase == LivePhase::live || phase == LivePhase::delayed) {

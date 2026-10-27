@@ -122,7 +122,8 @@ float pill(ui::Ctx& c, const EventTile& t, float x, float y, bool focused) {
       return smallPill(c, "LIVE", x, y, theme::hex(theme::kWatching, 0.8f),
                        focused ? theme::hex(theme::kWatching) : theme::hex(0xF4B4AE), true);
     case EventTile::Pill::OnNow: return smallPill(c, "ON NOW", x, y, outline, ink, true);
-    case EventTile::Pill::Delayed: return smallPill(c, "DELAYED", x, y, theme::hex(kDelayed), theme::black(), false);
+    case EventTile::Pill::Delayed:
+      return smallPill(c, t.pillText.empty() ? "DELAYED" : t.pillText, x, y, theme::hex(kDelayed), theme::black(), false);
     case EventTile::Pill::LikelyOver: return smallPill(c, "Likely over", x, y, outline, ink, true);
     case EventTile::Pill::Postponed: return smallPill(c, "POSTPONED", x, y, theme::hex(kPostponed), theme::black(), false);
     case EventTile::Pill::Final:

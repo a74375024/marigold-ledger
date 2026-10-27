@@ -87,6 +87,8 @@ std::optional<LivePhase> livePhaseFromRaw(std::string_view raw);
 
 struct LiveStatus {
   LivePhase phase = LivePhase::pre;
+  // Delayed because play was suspended (rain): it resumes later.
+  bool suspended = false;
   // "Q3 4:12", "Halftime", "Bot 8th", "67'", "2nd 11:02", "Final/OT".
   std::string detail;
   std::optional<std::string> homeScore;
@@ -161,6 +163,7 @@ struct SportsEvent {
   // Where the game stands from the live scoreboard (set on board copies).
   // Overrides the guesswork in state().
   std::optional<LivePhase> live;
+  bool suspended = false;  // with live delayed: play suspended, to resume
 
   enum class State : uint8_t { upcoming, live, mayHaveEnded, finished, postponed, unknownTime };
 
