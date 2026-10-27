@@ -581,3 +581,93 @@ TEST_CASE("feeds that aren't events: shows and replays of team sports, fight car
   CHECK(out->stats.shows == 7);
   CHECK(out->stats.pastCards == 1);
 }
+
+TEST_CASE("titles with no day: leftovers of a feed dated before today, and the rest of their group") {
+  Fixture f;
+  BuildInput in = f.input();
+  Seconds tonight = utc(2026, 10, 25, 22, 0);
+  // Last Thursday's dated feed, which the channel list no longer shows.
+  in.pastEvents = {provider("past|1", "Matchroom Boxing: Stone vs River", "", utc(2026, 10, 22, 18, 0), {"p|1"}),
+                   provider("past|2", "Old Card: Ash vs Elm", "", utc(2026, 10, 21, 18, 0), {"p|2"})};
+  in.events = {
+      // The same fight, day-less ("UK 5:00pm"): a leftover; and the other
+      // slot of that group, which the provider stopped updating too.
+      provider("b1", "STONE vs RIVER UK", "Fighting", tonight, {"b|1"}, "boxing #", false, true),
+      provider("b2", "BOLT vs CRANE", "Fighting", tonight, {"b|2"}, "boxing #", false, true),
+      // A group with a day-less title that is dated today elsewhere: current,
+      // so its other day-less titles stay, but not one that is a leftover.
+      provider("c1", "Wolf vs Bear", "Fighting", tonight, {"c|1"}, "ppv #", false, true),
+      provider("c2", "Wolf vs Bear", "Fighting", tonight + 60, {"c|2"}, "ppv dated #"),
+      provider("c3", "ASH vs ELM", "Fighting", tonight, {"c|3"}, "ppv #", false, true),
+      provider("c4", "Lark vs Finch", "Fighting", tonight, {"c|4"}, "ppv #", false, true),
+      // Another group, nothing known about it: stays.
+      provider("d1", "Pine vs Cedar", "Fighting", tonight, {"d|1"}, "other #", false, true),
+  };
+  auto out = build(in);
+  REQUIRE(out);
+  for (const char* id : {"b1", "b2", "c3"}) {
+    INFO(std::string(id));
+    CHECK_FALSE(find(out->events, id));
+  }
+  for (const char* id : {"c4", "d1"}) {
+    INFO(std::string(id));
+    CHECK(find(out->events, id));
+  }
+  CHECK(std::none_of(out->events.begin(), out->events.end(),
+                     [](const SportsEvent& e) { return e.id.rfind("past|", 0) == 0; }));
+}
+
+TEST_CASE("college football: a day-less title pairing a school with one it doesn't play this week is a leftover") {
+  Fixture f;
+  BuildInput in = f.input();
+  Seconds saturday = utc(2026, 10, 31, 16, 0), tonight = utc(2026, 10, 25, 22, 0);
+  in.games.push_back(game("NCAAF", "College Football", "c1", team("L", "Lakeside Lakers", std::string("LKS"), std::string("Lakeside")),
+                          team("H", "Harbor State Herons", std::string("HBS"), std::string("Harbor State")), saturday));
+  in.games.push_back(game("NCAAF", "College Football", "c2", team("M", "Mesa Miners", std::string("MESA"), std::string("Mesa")),
+                          team("P", "Plains Pumas", std::string("PLNS"), std::string("Plains")), saturday));
+  in.events = {
+      // Last week's slots: two schools of this week's schedule, or one named
+      // by its abbreviation.
+      provider("l1", "Lakeside @ Mesa", "College Football", tonight, {"n|1"}, "ncaaf #", false, true),
+      provider("l2", "LKS at Coastal", "College Football", tonight, {"n|2"}, "ncaaf #", false, true),
+      provider("l3", "Plains @ Harbor State", "College Football", tonight, {"n|3"}, "ncaaf #", false, true),
+      // A misspelt school in that same group of leftovers.
+      provider("l4", "Coastal at Lakesyde", "College Football", tonight, {"n|4"}, "ncaaf #", false, true),
+      // Schools the schedule doesn't cover, in another group: stays.
+      provider("k1", "Coastal @ Riverside", "College Football", tonight, {"d|1"}, "d3 #", false, true),
+      // The game itself, dated.
+      provider("g1", "Lakeside vs Harbor State", "College Football", saturday, {"n|5"}, "ncaaf dated #"),
+  };
+  auto out = build(in);
+  REQUIRE(out);
+  for (const char* id : {"l1", "l2", "l3", "l4"}) {
+    INFO(std::string(id));
+    CHECK_FALSE(find(out->events, id));
+  }
+  CHECK(find(out->events, "k1"));
+  const SportsEvent* g = findGame(out->events, "NCAAF|c1");
+  REQUIRE(g);
+  CHECK(ids(g->sources) == std::vector<std::string>{"n|5"});
+}
+
+TEST_CASE("a feed under the wrong sport's name goes to the game at its time; an unknown sport's isn't a replay") {
+  Fixture f;
+  BuildInput in = f.input();
+  Seconds at = utc(2026, 10, 26, 0, 0);
+  in.games.push_back(game("NHL", "NHL", "h1", team("C", "Carolina Storm", std::string("CAR")),
+                          team("B", "Boston Bruisers", std::string("BOS")), at));
+  in.events = {
+      // "NCAA Football: BOS vs. CAR • WWE NXT (BOS vs. CAR)" from a channel
+      // listing several events: hockey, at the game's time.
+      provider("x1", "BOS vs. CAR", "College Football", at + 20 * 60, {"e|1"}, "espn+ #"),
+      // The same two teams' other sport, days before the game: its own tile.
+      provider("x2", "Boston Bruisers vs Carolina Storm", "", at - 3 * 86'400, {"e|2"}, "espn+ #"),
+  };
+  auto out = build(in);
+  REQUIRE(out);
+  const SportsEvent* g = findGame(out->events, "NHL|h1");
+  REQUIRE(g);
+  std::vector<std::string> feeds = ids(g->sources);
+  CHECK(std::find(feeds.begin(), feeds.end(), "e|1") != feeds.end());
+  CHECK(find(out->events, "x2"));
+}

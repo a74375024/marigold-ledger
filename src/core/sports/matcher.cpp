@@ -465,6 +465,14 @@ std::optional<BuildResult> build(const BuildInput& in) {
     std::vector<int> candidates = index.matches(
         event.title, [&](int g) { return compatible(event.league, games[static_cast<size_t>(g)]); },
         [&](int g) { return sameLeague(event.league, games[static_cast<size_t>(g)]); });
+    if (candidates.empty() && event.start && !event.guessed) {
+      // One game of any league at that time with both teams named, even by
+      // its own abbreviations ("NJ vs. DAL" from a channel listing several
+      // events under one sport's name): the time settles it.
+      auto atTime = [&](int g) { return std::llabs(games[static_cast<size_t>(g)].start - *event.start) <= 45 * 60; };
+      std::vector<int> timed = index.matches(event.title, atTime, atTime);
+      if (timed.size() == 1) candidates = timed;
+    }
     // An event of unknown league matching games of more than one league
     // (Panthers, Rangers, Kings...) is too ambiguous.
     bool ambiguous = false;
@@ -543,6 +551,112 @@ std::optional<BuildResult> build(const BuildInput& in) {
   // (yesterday's slate still in its slots) vs. a game still to come.
   std::map<std::string, int> staleByFamily, freshByFamily;
   const Seconds startOfToday = text::startOfDay(now, in.zone);
+
+  // 0. Titles with no day that another feed dates: "SMITH vs PUELLO 5:00pm"
+  // in one group, "Matchroom Boxing: Smith vs Puello (10.24 2:00PM ET)" in
+  // another. When every dated copy aired before today, the day-less one is a
+  // slot left over from it (so are its group's other day-less titles, unless
+  // one of them is dated today or later too).
+  std::set<std::string> leftovers;
+  std::map<std::string, int> leftoverByFamily, currentByFamily;
+  {
+    struct Dated {
+      std::set<std::string> words;
+      Seconds start;
+    };
+    std::vector<Dated> dated;
+    std::unordered_map<std::string, std::vector<size_t>> byWord;
+    std::vector<const ProviderEvent*> datedEvents;
+    for (const ProviderEvent& event : in.events) datedEvents.push_back(&event);
+    for (const ProviderEvent& event : in.pastEvents) datedEvents.push_back(&event);
+    for (const ProviderEvent* e : datedEvents) {
+      const ProviderEvent& event = *e;
+      if (event.guessed || !event.start) continue;
+      std::set<std::string> words = titleWords(event.title);
+      if (words.size() < 2) continue;
+      for (const std::string& w : words) byWord[w].push_back(dated.size());
+      dated.push_back({std::move(words), *event.start});
+    }
+    for (const ProviderEvent& event : in.events) {
+      if (!event.guessed) continue;
+      std::set<std::string> words = titleWords(event.title);
+      if (words.size() < 2) continue;
+      // Candidates through the rarest word; a copy has every word.
+      const std::vector<size_t>* fewest = nullptr;
+      for (const std::string& w : words) {
+        auto it = byWord.find(w);
+        if (it == byWord.end()) {
+          fewest = nullptr;
+          break;
+        }
+        if (!fewest || it->second.size() < fewest->size()) fewest = &it->second;
+      }
+      if (!fewest) continue;
+      bool before = false, current = false;
+      for (size_t i : *fewest) {
+        const Dated& d = dated[i];
+        if (!std::includes(d.words.begin(), d.words.end(), words.begin(), words.end())) continue;
+        (d.start < startOfToday ? before : current) = true;
+      }
+      std::string familyKey = event.family + "|" + event.league;
+      if (current) {
+        currentByFamily[familyKey] += 1;
+      } else if (before) {
+        leftovers.insert(event.id);
+        leftoverByFamily[familyKey] += 1;
+      }
+    }
+  }
+  // A day-less title that is a leftover: dated before today elsewhere, or in
+  // a group whose day-less titles are (one at least, none current: a group
+  // of slots the provider stopped updating).
+  auto leftover = [&](const ProviderEvent& event) {
+    if (!event.guessed) return false;
+    if (leftovers.count(event.id)) return true;
+    std::string familyKey = event.family + "|" + event.league;
+    auto old = leftoverByFamily.find(familyKey);
+    return !event.family.empty() && old != leftoverByFamily.end() && !currentByFamily.count(familyKey);
+  };
+
+  // College football: the week's schedule has every game the schools in it
+  // play, so a day-less title pairing one of them with a school it doesn't
+  // play this week is a slot from an earlier week ("Boise State @
+  // Washington State 6PM").
+  std::vector<SportsTeam> fbs;
+  std::set<std::string> fbsIDs;
+  for (const SportsGame& game : games) {
+    if (game.league != "College Football") continue;
+    for (const SportsTeam* team : {&game.home, &game.away}) {
+      if (fbsIDs.insert(team->id).second) fbs.push_back(*team);
+    }
+  }
+  std::optional<TeamIndex> fbsIndex, schoolsIndex;
+  if (!fbs.empty()) {
+    fbsIndex = TeamIndex::fromTeams(fbs, true);
+    if (!in.schools.empty()) schoolsIndex = TeamIndex::fromTeams(in.schools);
+  }
+  // One side named as the schedule names the school ("BYU", "UCF", "USC",
+  // "Wisconsin"), so short names count too.
+  std::set<std::string> fbsNames;
+  for (const SportsTeam& team : fbs) {
+    for (const std::optional<std::string>& name : {std::optional<std::string>(team.name), team.shortName, team.location}) {
+      if (name) fbsNames.insert(trimmed(normalized(*name)));
+    }
+    for (const std::string& name : team.alternates) fbsNames.insert(trimmed(normalized(name)));
+  }
+  auto collegeLeftover = [&](const ProviderEvent& event) {
+    if (!event.guessed || event.league != "College Football" || !fbsIndex) return false;
+    if (fbsIndex->pair(event.title)) return true;
+    if (schoolsIndex) {
+      auto pair = schoolsIndex->pair(event.title);
+      if (pair && (fbsIDs.count(pair->first.id) || fbsIDs.count(pair->second.id))) return true;
+    }
+    auto sep = rx::first("\\s+(?:@|at|vs\\.?|v)\\s+", event.title, true);
+    if (!sep) return false;
+    std::vector<std::string> sides = {event.title.substr(0, sep->begin), event.title.substr(sep->end)};
+    return std::any_of(sides.begin(), sides.end(),
+                       [&](const std::string& side) { return fbsNames.count(trimmed(normalized(side))) > 0; });
+  };
   for (const auto& item : pending) {
     ProviderEvent event = corrected(item.first);
     std::optional<int> chosen;
@@ -623,6 +737,13 @@ std::optional<BuildResult> build(const BuildInput& in) {
       }
     }
     if (!chosen) {
+      // A dated feed of no known sport days away from the game its schools
+      // play is another sport's event between them (Thursday's volleyball,
+      // Saturday's football), not a replay.
+      if (event.start && !event.guessed && (event.league.empty() || event.league == "Other")) {
+        unmatched.push_back(item.first);
+        continue;
+      }
       stats.replays += 1;
       continue;
     }
@@ -779,6 +900,12 @@ std::optional<BuildResult> build(const BuildInput& in) {
   // team order, start within 90 minutes) through a key lookup.
   std::vector<SportsEvent> loose;
   std::map<std::string, std::vector<size_t>> byPair;
+  // A group whose day-less college football titles are mostly leftovers:
+  // its others are too (a misspelt school: "UAlbany at lowa").
+  std::map<std::string, int> collegeLeftovers;
+  for (const ProviderEvent& event : unmatched) {
+    if (collegeLeftover(event)) collegeLeftovers[event.family + "|" + event.league] += 1;
+  }
   for (const ProviderEvent& original : unmatched) {
     if (notAnEvent(original)) continue;
     ProviderEvent event = corrected(original);
@@ -787,7 +914,11 @@ std::optional<BuildResult> build(const BuildInput& in) {
     std::string familyKey = event.family + "|" + event.league;
     int staleCount = staleByFamily.count(familyKey) ? staleByFamily[familyKey] : 0;
     int freshCount = freshByFamily.count(familyKey) ? freshByFamily[familyKey] : 0;
-    if (event.guessed && !event.family.empty() && staleCount >= 3 && staleCount > 3 * freshCount) {
+    int collegeCount = collegeLeftovers.count(familyKey) ? collegeLeftovers[familyKey] : 0;
+    bool collegeGroup = event.guessed && event.league == "College Football" && !event.family.empty() &&
+                        collegeCount >= 3 && collegeCount > 3 * freshCount;
+    if ((event.guessed && !event.family.empty() && staleCount >= 3 && staleCount > 3 * freshCount) ||
+        leftover(event) || collegeLeftover(event) || collegeGroup) {
       stats.stale += 1;
       continue;
     }
@@ -817,6 +948,10 @@ std::optional<BuildResult> build(const BuildInput& in) {
   };
   for (const ProviderEvent& original : plain) {
     if (notAnEvent(original)) continue;
+    if (leftover(original)) {
+      stats.stale += 1;
+      continue;
+    }
     ProviderEvent event = corrected(original);
     std::optional<FightKey> key;
     if (event.league == "Fighting") key = fightKey(event.title);
@@ -1235,6 +1370,19 @@ bool excluded(std::string_view t) {
     if (has(t, w)) return true;
   }
   return false;
+}
+
+std::set<std::string> titleWords(std::string_view title) {
+  static const std::set<std::string> kNoise = {"vs",   "the",  "and",  "live", "feed", "event", "events",
+                                               "hd",   "fhd",  "uhd",  "4k",   "ppv",  "tv",    "channel",
+                                               "main", "card", "full", "replay"};
+  std::set<std::string> out;
+  for (const std::string& w : splitWords(normalized(title))) {
+    bool digits = std::all_of(w.begin(), w.end(), [](char c) { return c >= '0' && c <= '9'; });
+    if (digits ? w.size() < 2 : w.size() < 3) continue;
+    if (!kNoise.count(w)) out.insert(w);
+  }
+  return out;
 }
 
 std::optional<std::string> pairKey(std::string_view title) {

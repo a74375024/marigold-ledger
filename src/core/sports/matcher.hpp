@@ -122,6 +122,9 @@ struct BuildInput {
   // Game id -> channels airing its network (network_map::networkSources).
   std::map<std::string, std::vector<EventSource>> channelSources;
   std::vector<ProviderEvent> events;
+  // Dated feeds that are over (the channel list drops them): evidence that
+  // a day-less copy of one is a leftover, never shown themselves.
+  std::vector<ProviderEvent> pastEvents;
   std::vector<GuideListing> listings;
   bool preferSpanish = false;
   Seconds now = 0;
@@ -202,6 +205,10 @@ bool isStudioShow(std::string_view title);
 bool excluded(std::string_view text);
 // "rams|seahawks" for "Rams vs Seahawks" or "Seahawks @ Rams".
 std::optional<std::string> pairKey(std::string_view title);
+// The words that tell copies of a title apart from other titles: 3+
+// letters or 2+ digits, without "vs", "live", "feed" and the like
+// ("SMITH vs PUELLO UK" -> puello, smith).
+std::set<std::string> titleWords(std::string_view title);
 // Chip text for a row group with no schedule ("NCAAF", "FIGHT", "EVENT").
 std::string shortLeague(std::string_view league);
 

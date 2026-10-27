@@ -316,27 +316,80 @@ ParsedEvent parseEventDetailed(std::string_view input, Seconds now,
         int mi = num(f->p[1]).value_or(0);
         const Zone& zone = amPmZone;
         bool done = false;
-        if (auto dp =
-                groups("\\(?\\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|"
-                       "aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
-                       "\\.?\\s+(\\d{1,2})\\b\\)?",
-                       title)) {
-          int mo = monthOf(dp->p[0].substr(0, 3));
-          auto d = num(dp->p[1]);
-          if (mo && d && *d >= 1 && *d <= 31) {
-            Seconds named = nearestYear(mo, *d, hour24(*h, f->p[2]), mi, zone);
-            // Only a day near today ("MAR 28" may be Spanish for Tuesday the 28th).
-            if (named > now - 3 * 86400 && named < now + 7 * 86400) {
-              start = named;
-              removeRange(title, *dp);
-              done = true;
-            }
+        static const char* const kMonth =
+            "(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t|tember)?|"
+            "oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
+        // "(OCT 24)" or "Tue 27 Oct": the month's name and the day, either
+        // way round (not "Oct 3:45pm", whose 3 is the hour).
+        auto tryDay = [&](const std::string& monthText, std::optional<int> d, const Found& found) {
+          int mo = monthOf(str::lower(monthText).substr(0, 3));
+          if (!mo || !d || *d < 1 || *d > 31) return;
+          Seconds named = nearestYear(mo, *d, hour24(*h, f->p[2]), mi, zone);
+          // Only a day near today: a past one ("(OCT 24)" on the 27th) is a
+          // card that's over; "MAR 28" may be Spanish for Tuesday the 28th,
+          // so March only within three days.
+          bool march = str::lower(monthText).rfind("mar", 0) == 0;
+          Seconds back = (march ? 3 : 30) * 86400;
+          if (named > now - back && named < now + 7 * 86400) {
+            start = named;
+            removeRange(title, found);
+            done = true;
+          }
+        };
+        if (auto dp = groups(std::string("\\(?\\b") + kMonth + "\\.?\\s+(\\d{1,2})\\b(?![:.]\\d)\\)?", title)) {
+          tryDay(dp->p[0], num(dp->p[1]), *dp);
+        }
+        if (!done) {
+          if (auto dp = groups(std::string("\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+") + kMonth + "\\b", title)) {
+            tryDay(dp->p[1], num(dp->p[0]), *dp);
           }
         }
         if (!done) {
           time::Civil today = zone.toLocal(now);
           start = date(today.year, today.month, today.day, hour24(*h, f->p[2]), mi, zone);
           guessed = true;
+        }
+      }
+    }
+  }
+
+  // A channel running several events in a row lists them with "•" and names
+  // the one on now in parentheses ("NCAA Football: BOS vs. CAR • WWE NXT •
+  // SHSU vs. MOST (BOS vs. CAR)"): that one is the event. The sport in front
+  // belongs to one of the others, so it goes.
+  static const std::string kBullet = "\xE2\x80\xA2";
+  if (title.find(kBullet) != std::string::npos) {
+    std::string body(str::trimUnicode(title));
+    std::string named;
+    if (!body.empty() && body.back() == ')') {
+      int depth = 0;
+      for (size_t i = body.size(); i-- > 0;) {
+        if (body[i] == ')') {
+          ++depth;
+        } else if (body[i] == '(' && --depth == 0) {
+          named = str::lower(std::string(str::trimUnicode(body.substr(i + 1, body.size() - i - 2))));
+          body = body.substr(0, i);
+          break;
+        }
+      }
+    }
+    size_t bullet = body.find(kBullet);
+    size_t colon = body.find(": ");
+    if (colon != std::string::npos && colon < bullet) body = body.substr(colon + 2);
+    std::vector<std::string> parts;
+    for (size_t from = 0;;) {
+      size_t at = body.find(kBullet, from);
+      std::string part(str::trimUnicode(body.substr(from, at == std::string::npos ? std::string::npos : at - from)));
+      if (!part.empty()) parts.push_back(part);
+      if (at == std::string::npos) break;
+      from = at + kBullet.size();
+    }
+    if (!parts.empty()) {
+      title = parts.front();
+      for (const std::string& part : parts) {
+        if (!named.empty() && str::lower(part).rfind(named, 0) == 0) {
+          title = part;
+          break;
         }
       }
     }

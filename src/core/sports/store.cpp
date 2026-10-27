@@ -168,6 +168,31 @@ std::vector<matcher::ProviderEvent> providerEvents(
   return out;
 }
 
+// Feeds dated in the last two weeks that are over, which the channel list
+// leaves out of its events: only the slots no event uses are read again.
+std::vector<matcher::ProviderEvent> pastEvents(
+    const std::vector<catalog::LiveEvent>& events,
+    const std::unordered_map<std::string, catalog::ChannelTraits>& traits, Seconds now) {
+  std::unordered_set<std::string> used;
+  for (const catalog::LiveEvent& event : events)
+    for (const std::string& feed : event.feeds) used.insert(feed);
+  std::vector<matcher::ProviderEvent> out;
+  for (const auto& [id, t] : traits) {
+    if (!t.familyKey || !t.eventText || used.count(id)) continue;
+    const std::string& text = *t.eventText;
+    if (std::none_of(text.begin(), text.end(), [](char c) { return c >= '0' && c <= '9'; })) continue;
+    catalog::ParsedEvent parsed = catalog::parseEventDetailed(text, now, t.market);
+    if (!parsed.start || parsed.guessed || parsed.title.empty()) continue;
+    if (*parsed.start > now - 8 * 3600 || *parsed.start < now - 14 * 86400) continue;
+    matcher::ProviderEvent p;
+    p.id = "past|" + id;
+    p.title = parsed.title;
+    p.start = parsed.start;
+    out.push_back(std::move(p));
+  }
+  return out;
+}
+
 std::vector<matcher::RosterLeague> rosterLeagues(const std::vector<League>& active,
                                                  const std::map<std::string, std::vector<SportsTeam>>& rosters) {
   std::vector<matcher::RosterLeague> out;
@@ -204,6 +229,7 @@ std::string fingerprint(const Fingerprint& f, Seconds now) {
 std::optional<RebuildResult> rebuild(const RebuildInput& in) {
   matcher::BuildInput b;
   b.events = providerEvents(in.events, in.traits, in.now);
+  b.pastEvents = pastEvents(in.events, in.traits, in.now);
   network_map::NetworkSources network = network_map::networkSources(in.games, in.channelIndex);
   b.channelSources = network.sources;
   if (!in.f1Sources.empty()) {

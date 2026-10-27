@@ -96,6 +96,11 @@ std::optional<std::string> listingsDue(Seconds changedAt, Seconds pendingSince,
 std::vector<matcher::ProviderEvent> providerEvents(
     const std::vector<catalog::LiveEvent>& events,
     const std::unordered_map<std::string, catalog::ChannelTraits>& traits, Seconds now);
+// Feeds dated in the last two weeks that are over (the channel list drops
+// them), so the matcher can tell a day-less copy of one is a leftover.
+std::vector<matcher::ProviderEvent> pastEvents(
+    const std::vector<catalog::LiveEvent>& events,
+    const std::unordered_map<std::string, catalog::ChannelTraits>& traits, Seconds now);
 
 // Teams of the leagues being looked up (logos by name, team channels).
 std::vector<matcher::RosterLeague> rosterLeagues(const std::vector<League>& active,

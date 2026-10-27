@@ -58,7 +58,7 @@ constexpr bool kEnabledByDefault = true;
 constexpr bool kShowsUnwatchableByDefault = true;
 
 // A league's scoreboard: `query` ("dates=202610", "week=9&seasontype=2" or
-// "") plus the league's extra; "&limit=1000" unless the plain form is the
+// "") plus the league's extra; "&limit=500" unless the plain form is the
 // one that works for it.
 sources::Request scoreboardRequest(const League& league, std::string_view query, bool plainForm);
 // Division I schools (about 360) with their logos.

@@ -290,6 +290,8 @@ std::vector<League> activeLeagues(const MySportsPrefs& prefs, const SportFeedsSe
       if (l.standard) out.push_back(l);
     }
     out.insert(out.end(), racingLeagues().begin(), racingLeagues().end());
+    // Fight cards too: the next ones show, and an old card is told apart.
+    out.insert(out.end(), fightLeagues().begin(), fightLeagues().end());
     if (tennisSeen) out.insert(out.end(), tennisLeagues().begin(), tennisLeagues().end());
     if (seen.golfSeen(now)) out.insert(out.end(), golfLeagues().begin(), golfLeagues().end());
     if (seen.cricketSeen(now)) out.push_back(cricketLeague());

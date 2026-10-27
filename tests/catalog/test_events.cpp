@@ -117,6 +117,35 @@ TEST_CASE("a clock time with a named day near today") {
   CHECK(far.title.find("MAR 28") != std::string::npos);
 }
 
+TEST_CASE("a clock time with a day that's past: a card that's over, not today's") {
+  // Now is the 21st; the card was on the 14th.
+  auto past = parse("02:00PM UFC 332 VOLKANOVKSI V EVLOEV (OCT 14)");
+  CHECK_FALSE(past.guessed);
+  CHECK(past.start == utc(2026, 10, 14, 18, 0));
+  // March only within three days ("MAR" may be Spanish for Tuesday).
+  CHECK(parse("Team A vs Team B 7PM MAR 28").guessed);
+}
+
+TEST_CASE("a clock time with the day before the month, and a month next to the hour") {
+  auto t = parse("AFC Totton vs Torquay United // UK Tue 21 Oct // ET Tue 21 Oct 3:45pm");
+  CHECK_FALSE(t.guessed);
+  CHECK(t.start == utc(2026, 10, 21, 19, 45));
+  // "Oct 3:45pm" is not the 3rd of October.
+  auto u = parse("Team A vs Team B Oct 3:45pm");
+  CHECK(u.guessed);
+  CHECK(u.start == utc(2026, 10, 21, 19, 45));
+}
+
+TEST_CASE("a channel listing several events in a row: the one named on now") {
+  auto now = parse("NCAA Football: BOS vs. CAR \xE2\x80\xA2 WWE NXT \xE2\x80\xA2 SHSU vs. MOST (BOS vs. CAR ) (2026 10 21 20:00:25)");
+  CHECK(now.title == "BOS vs. CAR");
+  CHECK(now.start == utc(2026, 10, 22, 0, 0));
+  CHECK(parse("NCAA Football: WWE NXT \xE2\x80\xA2 SHSU vs. MOST (WWE NXT )").title == "WWE NXT");
+  // No name in parentheses: the first.
+  CHECK(parse("Basketball: Stetson vs. Florida (EXH) \xE2\x80\xA2 Charlotte vs. North Carolina").title ==
+        "Stetson vs. Florida (EXH)");
+}
+
 TEST_CASE("title decorations and tidying") {
   CHECK(parse("LIVE | Team A vs Team B").title == "Team A vs Team B");
   CHECK(parse("NEXT | Team A vs Team B").title == "Team A vs Team B");

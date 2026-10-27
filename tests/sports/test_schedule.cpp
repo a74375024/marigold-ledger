@@ -299,7 +299,7 @@ TEST_CASE("keeping: games after the cutoff, race weekends together") {
 
 TEST_CASE("requests: the public scoreboard, the limit form and the extra query") {
   sources::Request r = scoreboardRequest(nfl(), "dates=202610", false);
-  CHECK(r.url == "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=202610&limit=1000");
+  CHECK(r.url == "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=202610&limit=500");
   CHECK(r.timeoutSeconds == 20);
   CHECK(r.method == "GET");
   CHECK(r.headers.empty());
@@ -443,7 +443,7 @@ TEST_CASE("a fetch asks only picked leagues, learns the request form, and saves"
   REQUIRE(first);
   CHECK(first->league.shortName == "NFL");
   CHECK(first->waitMs == 0);
-  CHECK(first->request.url.find("dates=202610&limit=1000") != std::string::npos);
+  CHECK(first->request.url.find("dates=202610&limit=500") != std::string::npos);
   // One at a time: nothing more until the answer.
   CHECK_FALSE(schedule.nextRequest());
   schedule.onResponse(200, oneGame("1", "2026-10-27T00:15Z"));
@@ -516,7 +516,7 @@ TEST_CASE("college football: this week, then next week from the answer") {
   REQUIRE(schedule.refreshIfNeeded(ctx));
   auto week = schedule.nextRequest();
   REQUIRE(week);
-  CHECK(week->request.url.find("scoreboard?groups=80&limit=1000") != std::string::npos);
+  CHECK(week->request.url.find("scoreboard?groups=80&limit=500") != std::string::npos);
   schedule.onResponse(200, oneGame("5", "2026-10-31T16:00Z"));
   auto next = schedule.nextRequest();
   REQUIRE(next);

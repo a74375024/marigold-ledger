@@ -28,7 +28,9 @@ sources::Request scoreboardRequest(const League& league, std::string_view query,
   if (!extra.empty()) parts.push_back(extra);
   std::string base = std::string(kApiBase) + league.path + "/scoreboard?" + str::join(parts, "&");
   sources::Request request;
-  request.url = plainForm ? base : base + "&limit=1000";
+  // Not more than 500: asked for 1000, the college football scoreboard
+  // falls back to its default 25 games (a week has 50-60).
+  request.url = plainForm ? base : base + "&limit=500";
   request.timeoutSeconds = kTimeoutSeconds;
   return request;
 }
