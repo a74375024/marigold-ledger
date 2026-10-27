@@ -92,3 +92,21 @@ TEST_CASE("a remote's keys: what the hints may offer, learned as they are presse
   CHECK(stick.channel);
   CHECK(stick == RemoteKeys::lg());
 }
+
+TEST_CASE("keys: Apple TV press types") {
+  using marigold::keyFromTvos;
+  CHECK(keyFromTvos(0) == Key::Up);
+  CHECK(keyFromTvos(1) == Key::Down);
+  CHECK(keyFromTvos(2) == Key::Left);
+  CHECK(keyFromTvos(3) == Key::Right);
+  CHECK(keyFromTvos(4) == Key::Ok);
+  CHECK(keyFromTvos(5) == Key::Back);
+  CHECK(keyFromTvos(6) == Key::PlayPause);
+  CHECK(keyFromTvos(30) == Key::ChannelUp);
+  CHECK(keyFromTvos(31) == Key::ChannelDown);
+  CHECK(keyFromTvos(32) == Key::Unknown);  // the 123 overlay button: the system's
+  marigold::RemoteKeys k = marigold::RemoteKeys::appleTv();
+  CHECK(k.playPause);
+  CHECK_FALSE(k.menu);
+  CHECK_FALSE(k.colour);
+}

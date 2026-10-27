@@ -580,13 +580,7 @@ bool GuideScreen::key(const KeyEvent& e) {
     if (k == Key::Ok && st.phase == StoreStatus::Phase::NoAccounts) app_.nav().push(makeAccounts(app_, false));
     else if (k == Key::Ok && st.phase != StoreStatus::Phase::Loading) app_.store().refreshAll();
     else if (k == Key::Blue) openOptions();
-    else if (k == Key::Back) {
-      if (backAt_ && app_.ms() - backAt_ < kBackExitMs) app_.quit();
-      else {
-        backAt_ = app_.ms();
-        app_.toast("Press Back again to exit");
-      }
-    }
+    else if (k == Key::Back) backOut();
     return true;
   }
   int d = digitOf(k);
@@ -768,16 +762,25 @@ bool GuideScreen::key(const KeyEvent& e) {
         returnToNow();
         return true;
       }
-      // Back twice leaves the app.
-      if (backAt_ && app_.ms() - backAt_ < kBackExitMs) {
-        app_.quit();
-      } else {
-        backAt_ = app_.ms();
-        app_.toast("Press Back again to exit");
-      }
+      backOut();
       return true;
     default:
       return false;
+  }
+}
+
+// Back with nothing left to undo: Back twice leaves the app, or once where
+// the platform's rule is that Back on the top screen goes home (tvOS).
+void GuideScreen::backOut() {
+  if (app_.window().leaveOnFirstBack()) {
+    app_.window().leave();
+    return;
+  }
+  if (backAt_ && app_.ms() - backAt_ < kBackExitMs) {
+    app_.quit();
+  } else {
+    backAt_ = app_.ms();
+    app_.toast("Press Back again to exit");
   }
 }
 

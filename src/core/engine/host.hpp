@@ -27,6 +27,15 @@ class Files {
   virtual bool write(const std::string& name, const std::string& content, bool secret = false) = 0;
 };
 
+// How each file is kept where lasting storage is small (an Apple TV keeps
+// about 500 KB for good; anything else may be deleted when space runs low).
+// Keep: what the user made (accounts, settings, lineup, favourites,
+// reminders, My Sports). Secret: passwords and tokens. Cache: everything
+// rebuilt from the sources (channels, guides, logos, scores, logs).
+// webOS and Android keep every file and don't ask.
+enum class FileKind { Cache, Keep, Secret };
+FileKind fileKind(const std::string& name);
+
 struct Host {
   Host(http::Pool& requests, Files& folder) : pool(requests), files(folder) {}
 

@@ -258,6 +258,8 @@ bool Window::leave() {
   return true;
 }
 
+bool Window::leaveOnFirstBack() const { return false; }
+
 // Other Android TV remotes differ (a Chromecast remote has no menu or media
 // keys); their keys are learned as they are pressed.
 RemoteKeys Window::remoteKeys() const { return impl_->amazon ? RemoteKeys::fireTv() : RemoteKeys{}; }

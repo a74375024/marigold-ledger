@@ -122,6 +122,21 @@ Key keyFromAndroid(int keycode) {
   return Key::Unknown;
 }
 
+Key keyFromTvos(int pressType) {
+  switch (pressType) {
+    case 0: return Key::Up;           // UIPressTypeUpArrow
+    case 1: return Key::Down;
+    case 2: return Key::Left;
+    case 3: return Key::Right;
+    case 4: return Key::Ok;           // select: a click
+    case 5: return Key::Back;         // menu: the Back button
+    case 6: return Key::PlayPause;
+    case 30: return Key::ChannelUp;   // pageUp (a TV remote's CH +)
+    case 31: return Key::ChannelDown;
+    default: return Key::Unknown;
+  }
+}
+
 bool RemoteKeys::saw(Key key) {
   bool* has = nullptr;
   switch (key) {
@@ -155,6 +170,13 @@ RemoteKeys RemoteKeys::lg() {
 RemoteKeys RemoteKeys::fireTv() {
   RemoteKeys k;
   k.menu = k.playPause = k.seek = true;
+  return k;
+}
+
+// Its Menu button is Back; it has no media keys but play/pause.
+RemoteKeys RemoteKeys::appleTv() {
+  RemoteKeys k;
+  k.playPause = true;
   return k;
 }
 

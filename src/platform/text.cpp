@@ -1,7 +1,5 @@
 #include "platform/text.hpp"
 
-#include <GLES2/gl2.h>
-
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -36,7 +34,7 @@ bool TextRenderer::init(const std::string& fontDir) {
 
 void TextRenderer::shutdown() {
   for (auto& [key, l] : lines_) {
-    if (l.texture) glDeleteTextures(1, &l.texture);
+    gfx::releaseTexture(l.texture);
   }
   lines_.clear();
   widths_.clear();
@@ -61,13 +59,7 @@ const TextRenderer::Line* TextRenderer::line(const std::string& s, Weight w, int
   l.w = im.w;
   l.h = im.h;
   l.bytes = static_cast<size_t>(l.w) * static_cast<size_t>(l.h) * 4u;
-  glGenTextures(1, &l.texture);
-  glBindTexture(GL_TEXTURE_2D, l.texture);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, l.w, l.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, im.rgba.data());
+  l.texture = gfx::uploadTexture(im);
 
   evictTo(budget_ > l.bytes ? budget_ - l.bytes : 0);
   lru_.push_front(key);
@@ -82,7 +74,7 @@ void TextRenderer::evictTo(size_t limit) {
   while (bytes_ > limit && !lru_.empty()) {
     auto it = lines_.find(lru_.back());
     if (it != lines_.end()) {
-      if (it->second.texture) glDeleteTextures(1, &it->second.texture);
+      gfx::releaseTexture(it->second.texture);
       bytes_ -= it->second.bytes;
       lines_.erase(it);
     }

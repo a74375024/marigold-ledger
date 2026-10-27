@@ -1,4 +1,5 @@
-// GLES2 renderer for the UI, in 1920x1080 layout units.
+// The UI renderer, in 1920x1080 layout units: GLES2 on webOS and Android
+// (gfx.cpp), Metal on tvOS (tvos/gfx_metal.mm), the same drawing on each.
 //
 // One quad, one program: filled rounded rectangles (signed distance with a
 // one-pixel edge), alpha-tinted textures for text and icons, scissor clips and
@@ -9,6 +10,8 @@
 
 #include <cstdint>
 #include <vector>
+
+#include "core/util/pixels.hpp"
 
 namespace marigold::gfx {
 
@@ -59,15 +62,20 @@ class Renderer {
   void draw(Rect r, Color c, float radius, float thickness, int mode, unsigned texture);
   void applyClip();
 
-  unsigned program_ = 0;
-  unsigned vbo_ = 0;
-  int uRect_ = -1, uLayout_ = -1, uColor_ = -1, uRadius_ = -1, uThickness_ = -1, uMode_ = -1,
-      uTexture_ = -1, uPixel_ = -1;
+  struct Backend;  // the GPU side (GL program and buffer, or Metal state)
+  Backend* gpu_ = nullptr;
   int drawableW_ = 1920, drawableH_ = 1080;
   std::vector<Rect> clips_;
 };
 
 // The renderer the vendored C code draws through (see gfx_c.cpp).
 Renderer& renderer();
+
+// Textures for text, icons and logos, by id (0: none): RGBA with straight
+// alpha, linear filtering, clamped edges. Passing an existing id replaces
+// its pixels. On the thread that draws.
+unsigned uploadTexture(const px::Image& im, unsigned replace = 0);
+// Frees the texture and sets `id` to 0.
+void releaseTexture(unsigned& id);
 
 }  // namespace marigold::gfx

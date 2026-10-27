@@ -1,7 +1,7 @@
 // The app window: its GLES2 context, its events and the system keyboard.
 // Each platform supplies one behind this header (webOS: window.cpp over the
 // TV's SDL, set up the way Legacy's main.c does; Android: android/window.cpp
-// over EGL and the activity). The app sees only platform::Event.
+// over EGL and the activity; tvOS: tvos/window.mm over UIKit and Metal). The app sees only platform::Event.
 #pragma once
 
 #include <cstdint>
@@ -75,9 +75,13 @@ class Window {
   void closeKeyboard();
   bool keyboardOpen() const;
 
-  // Back with nothing left to close: Android goes to the home screen (the
-  // app keeps running, as TV apps do) and returns true; webOS does nothing.
+  // Back with nothing left to close: Android and tvOS go to the home screen
+  // (the app keeps running, as TV apps do) and return true; webOS does
+  // nothing.
   bool leave();
+  // Whether Back on the guide leaves at once (tvOS: Apple's rule for the
+  // top screen) instead of after "Press Back again to exit".
+  bool leaveOnFirstBack() const;
 
   // The keys this platform's remote is known to have (webOS: the LG
   // remote's; Android: a Fire TV remote's on Amazon devices, else none

@@ -77,3 +77,17 @@ TEST_CASE("hints: any other remote is shown only what every remote has") {
   CHECK(guide(k, false).keys[0].icons == std::vector<std::string>{"key-menu"});
   CHECK(eventsBoard(k).keys[0].label == "Where to Watch");
 }
+
+TEST_CASE("hints: the Siri Remote gets hold OK and play/pause") {
+  RemoteKeys k = RemoteKeys::appleTv();
+  Bar g = guide(k, false);
+  CHECK(labels(g) == "Channel options | Live Events");
+  CHECK(g.keys[0].cap == "Hold OK");
+  CHECK(g.keys[1].icons == std::vector<std::string>{"key-playpause"});
+  CHECK(g.right == "\xe2\x96\xb2 Search & Options");
+  Bar e = eventsBoard(k);
+  CHECK(labels(e) == "Guide");
+  CHECK(e.keys[0].icons == std::vector<std::string>{"key-playpause"});
+  CHECK(playerSources(k).cap == "\xe2\x96\xbc");
+  CHECK_FALSE(pickAnotherSource(k));
+}

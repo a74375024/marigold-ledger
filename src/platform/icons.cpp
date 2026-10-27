@@ -1,19 +1,16 @@
 #include "platform/icons.hpp"
 
-#include <GLES2/gl2.h>
-
 #include <fstream>
 #include <sstream>
 
 #include "core/util/log.hpp"
+#include "platform/gfx.hpp"
 #include "platform/image.hpp"
 
 namespace marigold::icons {
 
 IconSet::~IconSet() {
-  for (auto& [name, id] : textures_) {
-    if (id) glDeleteTextures(1, &id);
-  }
+  for (auto& [name, id] : textures_) gfx::releaseTexture(id);
 }
 
 unsigned IconSet::get(const std::string& name) {
@@ -30,13 +27,7 @@ unsigned IconSet::get(const std::string& name) {
     MLOG_W("icons", "no icon %s", name.c_str());
     return 0;
   }
-  glGenTextures(1, &id);
-  glBindTexture(GL_TEXTURE_2D, id);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, im->w, im->h, 0, GL_RGBA, GL_UNSIGNED_BYTE, im->rgba.data());
+  id = gfx::uploadTexture(*im);
   return id;
 }
 

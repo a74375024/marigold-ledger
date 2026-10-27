@@ -3,8 +3,9 @@
 // The LG remote sends standard SDL scancodes for arrows, OK, digits and media
 // keys, and webOS-only scancodes (SDL_webOS.h) for Back, CH+/CH-, the colour
 // keys and the Magic Remote cursor. A Fire TV or Android TV remote sends
-// Android key codes (KeyEvent.KEYCODE_*). Platform code passes the raw
-// numbers here so the mapping can be unit tested on the host.
+// Android key codes (KeyEvent.KEYCODE_*); an Apple TV, UIKit press types.
+// Platform code passes the raw numbers here so the mapping can be unit
+// tested on the host.
 #pragma once
 
 #include <cstdint>
@@ -41,6 +42,9 @@ constexpr int kExit = 505;
 Key keyFromSdl(int scancode, int32_t keycode);
 // `keycode` is android.view.KeyEvent's KEYCODE_* value.
 Key keyFromAndroid(int keycode);
+// `pressType` is UIPressType's raw value (the Siri Remote's clickpad
+// directions and click, Back, play/pause; a TV remote's page keys over HDMI).
+Key keyFromTvos(int pressType);
 
 // The keys a remote has beyond the D-pad, OK and Back, which every remote
 // has. Screens offer only these in their key hints, so a Fire TV remote
@@ -57,6 +61,7 @@ struct RemoteKeys {
   bool saw(Key key);
   static RemoteKeys lg();      // the LG remote: all of them
   static RemoteKeys fireTv();  // menu, play/pause, rewind and fast forward
+  static RemoteKeys appleTv();  // the Siri Remote: play/pause
   bool operator==(const RemoteKeys& o) const {
     return colour == o.colour && menu == o.menu && playPause == o.playPause && seek == o.seek && digits == o.digits &&
            channel == o.channel;

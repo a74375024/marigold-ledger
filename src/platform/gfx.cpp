@@ -87,6 +87,13 @@ Renderer gRenderer;
 
 }  // namespace
 
+struct Renderer::Backend {
+  GLuint program = 0;
+  GLuint vbo = 0;
+  GLint uRect = -1, uLayout = -1, uColor = -1, uRadius = -1, uThickness = -1, uMode = -1, uTexture = -1,
+        uPixel = -1;
+};
+
 Renderer& renderer() { return gRenderer; }
 
 bool Renderer::init(int drawableWidth, int drawableHeight) {
@@ -95,6 +102,9 @@ bool Renderer::init(int drawableWidth, int drawableHeight) {
   GLuint vs = compile(GL_VERTEX_SHADER, kVertexShader);
   GLuint fs = compile(GL_FRAGMENT_SHADER, kFragmentShader);
   if (!vs || !fs) return false;
+  if (!gpu_) gpu_ = new Backend;
+  Backend& b = *gpu_;
+  GLuint& program_ = b.program;
   program_ = glCreateProgram();
   glAttachShader(program_, vs);
   glAttachShader(program_, fs);
@@ -111,24 +121,24 @@ bool Renderer::init(int drawableWidth, int drawableHeight) {
     return false;
   }
   glUseProgram(program_);
-  uRect_ = glGetUniformLocation(program_, "uRect");
-  uLayout_ = glGetUniformLocation(program_, "uLayout");
-  uColor_ = glGetUniformLocation(program_, "uColor");
-  uRadius_ = glGetUniformLocation(program_, "uRadius");
-  uThickness_ = glGetUniformLocation(program_, "uThickness");
-  uMode_ = glGetUniformLocation(program_, "uMode");
-  uTexture_ = glGetUniformLocation(program_, "uTexture");
-  uPixel_ = glGetUniformLocation(program_, "uPixel");
-  glUniform2f(uLayout_, kLayoutWidth, kLayoutHeight);
-  glUniform1i(uTexture_, 0);
-  glUniform1f(uPixel_, kLayoutWidth / static_cast<float>(drawableW_));
+  b.uRect = glGetUniformLocation(program_, "uRect");
+  b.uLayout = glGetUniformLocation(program_, "uLayout");
+  b.uColor = glGetUniformLocation(program_, "uColor");
+  b.uRadius = glGetUniformLocation(program_, "uRadius");
+  b.uThickness = glGetUniformLocation(program_, "uThickness");
+  b.uMode = glGetUniformLocation(program_, "uMode");
+  b.uTexture = glGetUniformLocation(program_, "uTexture");
+  b.uPixel = glGetUniformLocation(program_, "uPixel");
+  glUniform2f(b.uLayout, kLayoutWidth, kLayoutHeight);
+  glUniform1i(b.uTexture, 0);
+  glUniform1f(b.uPixel, kLayoutWidth / static_cast<float>(drawableW_));
 
   // Every draw is this one quad, deformed by uRect in the vertex shader. It
   // lives in a buffer, not client memory (Legacy found WebGL rejects the
   // latter; GLES2 accepts both, the buffer is the portable choice).
   static const GLfloat quad[] = {0, 0, 1, 0, 0, 1, 1, 1};
-  glGenBuffers(1, &vbo_);
-  glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+  glGenBuffers(1, &b.vbo);
+  glBindBuffer(GL_ARRAY_BUFFER, b.vbo);
   glBufferData(GL_ARRAY_BUFFER, sizeof quad, quad, GL_STATIC_DRAW);
   glEnableVertexAttribArray(0);
   glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
@@ -144,10 +154,11 @@ bool Renderer::init(int drawableWidth, int drawableHeight) {
 }
 
 void Renderer::shutdown() {
-  if (vbo_) glDeleteBuffers(1, &vbo_);
-  if (program_) glDeleteProgram(program_);
-  vbo_ = 0;
-  program_ = 0;
+  if (!gpu_) return;
+  if (gpu_->vbo) glDeleteBuffers(1, &gpu_->vbo);
+  if (gpu_->program) glDeleteProgram(gpu_->program);
+  delete gpu_;
+  gpu_ = nullptr;
 }
 
 void Renderer::beginFrame(Color clear) {
@@ -159,12 +170,13 @@ void Renderer::beginFrame(Color clear) {
 }
 
 void Renderer::draw(Rect r, Color c, float radius, float thickness, int mode, unsigned texture) {
-  if (r.w <= 0 || r.h <= 0 || c.a <= 0) return;
-  glUniform4f(uRect_, r.x, r.y, r.w, r.h);
-  glUniform4f(uColor_, c.r, c.g, c.b, c.a);
-  glUniform1f(uRadius_, radius);
-  glUniform1f(uThickness_, thickness);
-  glUniform1i(uMode_, mode);
+  if (r.w <= 0 || r.h <= 0 || c.a <= 0 || !gpu_) return;
+  const Backend& b = *gpu_;
+  glUniform4f(b.uRect, r.x, r.y, r.w, r.h);
+  glUniform4f(b.uColor, c.r, c.g, c.b, c.a);
+  glUniform1f(b.uRadius, radius);
+  glUniform1f(b.uThickness, thickness);
+  glUniform1i(b.uMode, mode);
   if (mode != 0) glBindTexture(GL_TEXTURE_2D, texture);
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
@@ -230,6 +242,23 @@ void Renderer::applyClip() {
   glEnable(GL_SCISSOR_TEST);
   glScissor(static_cast<int>(r.x * sx), static_cast<int>((kLayoutHeight - r.y - r.h) * sy),
             static_cast<int>(std::ceil(r.w * sx)), static_cast<int>(std::ceil(r.h * sy)));
+}
+
+unsigned uploadTexture(const px::Image& im, unsigned replace) {
+  GLuint id = replace;
+  if (!id) glGenTextures(1, &id);
+  glBindTexture(GL_TEXTURE_2D, id);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, im.w, im.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, im.rgba.data());
+  return id;
+}
+
+void releaseTexture(unsigned& id) {
+  if (id) glDeleteTextures(1, &id);
+  id = 0;
 }
 
 }  // namespace marigold::gfx

@@ -27,6 +27,7 @@ class GuideScreen : public Screen {
   // Window presets from the time menu.
   void setWindow(time::Seconds start);
   void returnToNow();
+  void backOut();
   // Focus a channel row (search, number keys, back from the player).
   bool focusChannel(const std::string& entryId);
 

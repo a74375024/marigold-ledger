@@ -1,6 +1,5 @@
 #include "platform/logo_cache.hpp"
 
-#include <GLES2/gl2.h>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -17,6 +16,7 @@
 #include "core/util/log.hpp"
 #include "core/util/strings.hpp"
 #include "core/util/time.hpp"
+#include "platform/gfx.hpp"
 #include "platform/http.hpp"
 #include "platform/image.hpp"
 
@@ -63,9 +63,7 @@ LogoCache::LogoCache(http::Client& pool, std::string dir, size_t textureBudget, 
 }
 
 LogoCache::~LogoCache() {
-  for (auto& [url, e] : entries_) {
-    if (e.tex.id) glDeleteTextures(1, &e.tex.id);
-  }
+  for (auto& [url, e] : entries_) gfx::releaseTexture(e.tex.id);
 }
 
 std::string LogoCache::fileFor(const std::string& url) const {
@@ -207,13 +205,7 @@ void LogoCache::finish(const std::string& url, const std::shared_ptr<Result>& r)
 }
 
 void LogoCache::upload(Entry& e, const px::Image& im, px::Tone tone) {
-  if (!e.tex.id) glGenTextures(1, &e.tex.id);
-  glBindTexture(GL_TEXTURE_2D, e.tex.id);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, im.w, im.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, im.rgba.data());
+  e.tex.id = gfx::uploadTexture(im, e.tex.id);
   e.tex.w = im.w;
   e.tex.h = im.h;
   e.tex.tone = tone;
@@ -227,7 +219,7 @@ void LogoCache::evict() {
   for (auto it = lru_.rbegin(); it != lru_.rend() && bytes_ > budget_; ++it) {
     Entry& e = entries_[*it];
     if (e.state != State::Ready || e.wantedFrame + kWantedFrames >= frame_) continue;
-    glDeleteTextures(1, &e.tex.id);
+    gfx::releaseTexture(e.tex.id);
     e.tex = {};
     bytes_ -= e.bytes;
     e.bytes = 0;
