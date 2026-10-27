@@ -16,13 +16,16 @@ add_executable(marigold
   ${MARIGOLD_APP_SOURCES}
   platform/gfx.cpp
   platform/http.cpp
+  platform/http_rede.cpp
   platform/icons.cpp
   platform/image.cpp
+  platform/image_sdl.cpp
   platform/lan_share.cpp
   platform/logo_cache.cpp
   platform/stdout_capture.cpp
   platform/storage.cpp
   platform/text.cpp
+  platform/text_sdl.cpp
   platform/ts_proxy.cpp
   platform/video.cpp
   platform/window.cpp

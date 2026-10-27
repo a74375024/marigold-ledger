@@ -1,5 +1,7 @@
-// HTTP and background work on a small worker pool. HTTP goes through the
-// vendored Legacy rede_pedir (verified TLS, redirect rules, body caps).
+// HTTP and background work on a small worker pool. The pool is the same on
+// every platform; one transfer goes through the platform's network stack
+// (http_transport.hpp: the vendored Legacy rede on webOS, verified TLS,
+// redirect rules, body caps; HttpURLConnection on Android).
 // Requests block on a worker, never on the UI thread. Completion callbacks run on the UI thread, from pump().
 //
 // Streaming: with `onChunk` set, the body is handed over in pieces on the
@@ -23,10 +25,11 @@
 
 #include "core/net/http.hpp"
 
-struct RedeGrupo;
-struct RedeJob;
-
 namespace marigold::http {
+
+namespace transport {
+struct Group;
+}
 
 // A handle to cancel a pending or running request.
 class Ticket {
@@ -50,7 +53,7 @@ class Client final : public Pool {
   Client(const Client&) = delete;
   Client& operator=(const Client&) = delete;
 
-  // Call once on the main thread (libcurl's global init is not thread safe).
+  // Call once on the main thread (webOS: libcurl's global init is not thread safe).
   // `wake` is called from a worker when a result is ready for pump().
   void start(int threads, std::function<void()> wake);
   void stop();
@@ -78,7 +81,7 @@ class Client final : public Pool {
   std::deque<std::shared_ptr<Ticket::Job>> longQueue_;  // Priority::Long, one at a time
   std::vector<std::thread> threads_;
   bool stopping_ = false;
-  RedeGrupo* group_ = nullptr;
+  transport::Group* group_ = nullptr;
 
   std::mutex doneMu_;
   std::vector<std::shared_ptr<Ticket::Job>> done_;

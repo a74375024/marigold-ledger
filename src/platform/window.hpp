@@ -1,46 +1,96 @@
-// The app window and its GLES2 context, set up the way Legacy's main.c does
-// on webOS (see the comments in window.cpp for why each step is there).
+// The app window: its GLES2 context, its events and the system keyboard.
+// Each platform supplies one behind this header (webOS: window.cpp over the
+// TV's SDL, set up the way Legacy's main.c does; Android: android/window.cpp
+// over EGL and the activity). The app sees only platform::Event.
 #pragma once
 
+#include <cstdint>
+#include <memory>
 #include <string>
 
-struct SDL_Window;
+#include "core/input/keys.hpp"
 
 namespace marigold::platform {
 
+struct Event {
+  enum class Type : uint8_t {
+    None,         // nothing the app acts on
+    Wake,         // wake() from a worker
+    Quit,
+    Hidden,       // the window lost focus or was hidden
+    Shown,        // shown, exposed or focused again: redraw
+    Background,   // the app is going to the background
+    KeyDown,
+    KeyUp,
+    PointerMove,  // x, y
+    PointerDown,  // the pointer's button (OK)
+    PointerUp,
+    Wheel,        // wheel: +1 up, -1 down
+    Text,         // the system keyboard's field value
+    Swallowed,    // a key the open system keyboard uses
+  };
+  Type type = Type::None;
+  Key key = Key::Unknown;
+  bool repeat = false;  // a held key repeating
+  float x = 0, y = 0;   // pointer, in drawable pixels
+  int wheel = 0;
+  // Text: the whole field value; `done` when the keyboard closed, with
+  // `confirmed` when it closed on OK.
+  std::string text;
+  bool done = false, confirmed = false;
+  // The platform's own event (webOS: the SDL_Event), valid until the next
+  // nextEvent(). For the webOS key test screen only.
+  const void* native = nullptr;
+
+  bool lifecycle() const {
+    return type == Type::Quit || type == Type::Hidden || type == Type::Shown || type == Type::Background;
+  }
+};
+
 class Window {
  public:
-  Window() = default;
+  Window();
   ~Window();
   Window(const Window&) = delete;
   Window& operator=(const Window&) = delete;
 
-  // Creates the 1920x1080 fullscreen window, makes the surface non-opaque so
-  // the video plane shows through, and creates the GL context.
+  // Creates the fullscreen 1920x1080 surface with an alpha channel (the video
+  // shows through where the UI clears it) and makes its GL context current.
   bool open(const char* title);
   void swap();
 
-  SDL_Window* sdl() const { return window_; }
-  int drawableWidth() const { return drawableW_; }
-  int drawableHeight() const { return drawableH_; }
-  // "2.0.5", the SDL that is actually loaded (the TV's, not the SDK's).
-  const std::string& sdlRuntime() const { return sdlRuntime_; }
-  const std::string& glRenderer() const { return glRenderer_; }
-  bool transparentSurface() const { return transparent_; }
+  // The next event, waiting up to `timeoutMs` (0: don't wait). False when
+  // none came.
+  bool nextEvent(Event& e, int timeoutMs);
+  // Any thread: makes a waiting nextEvent() return (a Wake event).
+  void wake();
+  // Monotonic milliseconds.
+  uint32_t ticks() const;
+  // Once per loop, on the UI thread (the system keyboard's own timing).
+  void frame();
+
+  // The system keyboard. It sends Text events with the whole field value.
+  bool keyboardAvailable() const;
+  void openKeyboard(const std::string& value);
+  void closeKeyboard();
+  bool keyboardOpen() const;
+
+  int drawableWidth() const;
+  int drawableHeight() const;
+  // What runs underneath, for Help and the logs: the TV's SDL version on
+  // webOS ("2.0.5"), "Android 9 (API 28)" on Android.
+  const std::string& runtime() const;
+  const std::string& glRenderer() const;
+  bool transparentSurface() const;
+
+  struct Impl;
 
  private:
-  void makeSurfaceTransparent();
-
-  SDL_Window* window_ = nullptr;
-  void* context_ = nullptr;
-  int drawableW_ = 1920;
-  int drawableH_ = 1080;
-  std::string sdlRuntime_;
-  std::string glRenderer_;
-  bool transparent_ = false;
+  std::unique_ptr<Impl> impl_;
 };
 
-// Process environment the webOS SDL and LS2 need before SDL_Init. Call first.
+// webOS: the process environment the TV's SDL and LS2 need before SDL_Init.
+// Call first. Nothing to do elsewhere.
 void prepareEnvironment(const char* appId);
 
 }  // namespace marigold::platform

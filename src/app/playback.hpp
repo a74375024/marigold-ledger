@@ -1,8 +1,8 @@
-// The webOS face of the engine's playback session (core/engine/session):
-// the TV's video player and the local TS proxy behind engine::Player, and
-// where the picture sits (full screen or the guide corner). Everything the
-// session decides (feeds, backups, watched, previous, the log) is the
-// engine's.
+// The app's face of the engine's playback session (core/engine/session):
+// the platform's video player (with the local TS proxy on webOS) behind
+// engine::Player, and where the picture sits (full screen or the guide
+// corner). Everything the session decides (feeds, backups, watched,
+// previous, the log) is the engine's.
 #pragma once
 
 #include <cstdint>

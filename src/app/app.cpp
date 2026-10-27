@@ -1,20 +1,18 @@
 #include "app/app.hpp"
 
-#include <SDL2/SDL.h>
-
 #include <algorithm>
 
 #include "app/playback.hpp"
 #include "app/screens/screens.hpp"
 #include "app/store/store.hpp"
 #include "core/util/log.hpp"
-#include "entrada_texto.h"
-#include "layout.h"  // NV_HOLD_MS
 
 namespace marigold::app {
 namespace {
 
 constexpr uint32_t kToastMs = 3500;
+// OK held this long counts as a long press (Legacy's NV_HOLD_MS, as Android TV).
+constexpr uint32_t kHoldMs = 700;
 constexpr int kPoolThreads = 4;
 
 }  // namespace
@@ -22,15 +20,8 @@ constexpr int kPoolThreads = 4;
 App::App(platform::Window& window, platform::Storage& storage, gfx::Renderer& g,
          text::TextRenderer& t, icons::IconSet& icons, platform::Video& video, Build build)
     : window_(window), storage_(storage), g_(g), t_(t), icons_(icons), video_(video), build_(std::move(build)) {
-  wakeEvent_ = SDL_RegisterEvents(1);
-  uint32_t wake = wakeEvent_;
-  pool_.start(kPoolThreads, [wake] {
-    // Thread safe: wakes SDL_WaitEventTimeout so pump() runs promptly.
-    SDL_Event e;
-    SDL_zero(e);
-    e.type = wake;
-    SDL_PushEvent(&e);
-  });
+  // Wakes the loop when a worker has a result, so pump() runs promptly.
+  pool_.start(kPoolThreads, [&window] { window.wake(); });
   std::string logoDir = storage_.dir().empty() ? std::string("/tmp/marigold-logos")
                                                : storage_.path("logos");
   logos_ = std::make_unique<logos::LogoCache>(pool_, logoDir);
@@ -60,18 +51,18 @@ App::~App() {
 void App::toast(const std::string& message, bool top) {
   toast_ = message;
   toastTop_ = top;
-  toastUntil_ = SDL_GetTicks() + kToastMs;
+  toastUntil_ = window_.ticks() + kToastMs;
   dirty_ = true;
 }
 
 bool App::openKeyboard(const std::string& current) {
-  if (!(texto_sistema_disponivel() & TS_TECLADO)) return false;
-  texto_sistema_abrir(current.c_str(), 0);
+  if (!window_.keyboardAvailable()) return false;
+  window_.openKeyboard(current);
   return true;
 }
 
-void App::closeKeyboard() { texto_sistema_fechar(); }
-bool App::keyboardOpen() const { return texto_sistema_aberto() != 0; }
+void App::closeKeyboard() { window_.closeKeyboard(); }
+bool App::keyboardOpen() const { return window_.keyboardOpen(); }
 
 void App::suspend() {
   // Leaving the app: the decoder goes back to the TV.
@@ -106,45 +97,37 @@ void App::dispatch(const KeyEvent& k) {
   if (k.key == Key::Exit) quit_ = true;
 }
 
-void App::handle(const SDL_Event& e) {
-  // The system keyboard sees text before any screen (Legacy main.c).
-  texto_sistema_observar(&e);
-  if (e.type == wakeEvent_) return;
-  bool lifecycle = e.type == SDL_QUIT || e.type == SDL_WINDOWEVENT || e.type == SDL_APP_WILLENTERBACKGROUND;
-  if (!lifecycle) {
+void App::handle(const platform::Event& e) {
+  using Type = platform::Event::Type;
+  if (e.type == Type::Wake) return;
+  if (!e.lifecycle()) {
     if (Screen* top = nav_.top(); top && top->rawEvent(e)) {
       dirty_ = true;
       return;
     }
   }
-  if (e.type == texto_sistema_evento()) {
-    if (Screen* top = nav_.top()) {
-      bool closed = e.user.code == TS_EV_FIM;
-      top->text(texto_sistema_valor(), closed, closed && e.user.data1 != nullptr);
-    }
+  if (e.type == Type::Text) {
+    if (Screen* top = nav_.top()) top->text(e.text, e.done, e.confirmed);
     dirty_ = true;
     return;
   }
-  if (keyboardOpen() && texto_sistema_engole(&e)) return;
+  if (e.type == Type::Swallowed) return;
 
   switch (e.type) {
-    case SDL_QUIT:
+    case Type::Quit:
       quit_ = true;
       break;
-    case SDL_WINDOWEVENT:
-      if ((e.window.event == SDL_WINDOWEVENT_HIDDEN ||
-           e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) &&
-          !keyboardOpen())
-        suspend();
-      if (e.window.event == SDL_WINDOWEVENT_SHOWN || e.window.event == SDL_WINDOWEVENT_EXPOSED ||
-          e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED)
-        dirty_ = true;
+    case Type::Hidden:
+      if (!keyboardOpen()) suspend();
       break;
-    case SDL_APP_WILLENTERBACKGROUND:
+    case Type::Shown:
+      dirty_ = true;
+      break;
+    case Type::Background:
       suspend();
       break;
-    case SDL_KEYDOWN: {
-      Key key = keyFromSdl(static_cast<int>(e.key.keysym.scancode), e.key.keysym.sym);
+    case Type::KeyDown: {
+      Key key = e.key;
       if (key == Key::CursorShown || key == Key::CursorHidden) {
         pointerShown_ = key == Key::CursorShown;
         dirty_ = true;
@@ -153,28 +136,27 @@ void App::handle(const SDL_Event& e) {
       if (key == Key::Unknown) break;
       if (pointerShown_ && key != Key::Ok) pointerShown_ = false;  // arrows take over
       if (key == Key::Ok) {
-        if (!e.key.repeat) {
+        if (!e.repeat) {
           okDown_ = true;
           okLongSent_ = false;
-          okDownAt_ = SDL_GetTicks();
+          okDownAt_ = window_.ticks();
         }
         break;  // reported on release or after the hold time (frame())
       }
-      dispatch({key, e.key.repeat != 0, false});
+      dispatch({key, e.repeat, false});
       break;
     }
-    case SDL_KEYUP: {
-      Key key = keyFromSdl(static_cast<int>(e.key.keysym.scancode), e.key.keysym.sym);
-      if (key == Key::Ok && okDown_) {
+    case Type::KeyUp: {
+      if (e.key == Key::Ok && okDown_) {
         okDown_ = false;
         if (!okLongSent_) dispatch({Key::Ok, false, false});
       }
       break;
     }
-    case SDL_MOUSEMOTION: {
+    case Type::PointerMove: {
       pointerShown_ = true;
-      pointerX_ = static_cast<float>(e.motion.x) * gfx::kLayoutWidth / static_cast<float>(std::max(1, g_.drawableWidth()));
-      pointerY_ = static_cast<float>(e.motion.y) * gfx::kLayoutHeight / static_cast<float>(std::max(1, g_.drawableHeight()));
+      pointerX_ = e.x * gfx::kLayoutWidth / static_cast<float>(std::max(1, g_.drawableWidth()));
+      pointerY_ = e.y * gfx::kLayoutHeight / static_cast<float>(std::max(1, g_.drawableHeight()));
       // Last registered region wins: panels are drawn over the grid.
       for (auto it = hits_.rbegin(); it != hits_.rend(); ++it) {
         const ui::Rect& r = it->rect;
@@ -186,21 +168,19 @@ void App::handle(const SDL_Event& e) {
       }
       break;
     }
-    case SDL_MOUSEBUTTONDOWN:
-      if (e.button.button == SDL_BUTTON_LEFT) {
-        okDown_ = true;
-        okLongSent_ = false;
-        okDownAt_ = SDL_GetTicks();
-      }
+    case Type::PointerDown:
+      okDown_ = true;
+      okLongSent_ = false;
+      okDownAt_ = window_.ticks();
       break;
-    case SDL_MOUSEBUTTONUP:
-      if (e.button.button == SDL_BUTTON_LEFT && okDown_) {
+    case Type::PointerUp:
+      if (okDown_) {
         okDown_ = false;
         if (!okLongSent_) dispatch({Key::Ok, false, false});
       }
       break;
-    case SDL_MOUSEWHEEL:
-      if (e.wheel.y != 0) dispatch({e.wheel.y > 0 ? Key::Up : Key::Down, false, false});
+    case Type::Wheel:
+      if (e.wheel != 0) dispatch({e.wheel > 0 ? Key::Up : Key::Down, false, false});
       break;
     default:
       break;
@@ -257,7 +237,7 @@ void App::frame() {
 
 void App::run() {
   while (!quit_ && !nav_.empty()) {
-    ms_ = SDL_GetTicks();
+    ms_ = window_.ticks();
     Screen* top = nav_.top();
     bool animating = top && top->tick(ms_);
     // Failover runs whatever is on top (a panel over the player too).
@@ -267,17 +247,17 @@ void App::run() {
     bool okHeld = okDown_ && !okLongSent_;
     // Idle: sleep until an event, a worker result or the next clock minute.
     int timeout = animating ? 0 : okHeld ? 50 : dirty_ ? 0 : 500;
-    SDL_Event e;
-    if (timeout == 0 ? SDL_PollEvent(&e) : SDL_WaitEventTimeout(&e, timeout)) {
+    platform::Event e;
+    if (window_.nextEvent(e, timeout)) {
       handle(e);
-      while (SDL_PollEvent(&e)) handle(e);
+      while (window_.nextEvent(e, 0)) handle(e);
     }
-    ms_ = SDL_GetTicks();
-    if (okDown_ && !okLongSent_ && ms_ - okDownAt_ >= NV_HOLD_MS) {
+    ms_ = window_.ticks();
+    if (okDown_ && !okLongSent_ && ms_ - okDownAt_ >= kHoldMs) {
       okLongSent_ = true;
       dispatch({Key::Ok, false, true});
     }
-    texto_sistema_quadro();
+    window_.frame();
     if (pool_.pump() > 0) dirty_ = true;
     if (store_->tick(ms_)) dirty_ = true;
     video_.pump();

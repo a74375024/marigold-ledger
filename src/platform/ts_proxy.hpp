@@ -27,6 +27,9 @@ namespace marigold::platform {
 
 class TsProxy {
  public:
+  // Whether this platform's player needs it: webOS yes; Android no (its
+  // player follows HLS itself), where the rest is a no-op.
+  static bool wanted();
   // Starts the local server (a free port on 127.0.0.1). False when it can't
   // listen; localUrl() then returns "" and feeds play directly.
   bool start();

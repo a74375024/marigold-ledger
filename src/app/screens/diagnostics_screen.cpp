@@ -17,8 +17,8 @@ class DiagnosticsScreen : public Screen {
     app.playback().stop();
   }
 
-  bool rawEvent(const SDL_Event& e) override {
-    test_.handle(e, SDL_GetTicks());
+  bool rawEvent(const platform::Event& e) override {
+    if (e.native) test_.handle(*static_cast<const SDL_Event*>(e.native), SDL_GetTicks());
     return true;
   }
   bool key(const KeyEvent&) override { return true; }
@@ -37,7 +37,7 @@ class DiagnosticsScreen : public Screen {
     i.version = app.build().version;
     i.build = app.build().build;
     i.webosMajor = nv_webos_major();
-    i.sdlRuntime = app.window().sdlRuntime();
+    i.sdlRuntime = app.window().runtime();
     i.glRenderer = app.window().glRenderer();
     i.drawableW = app.window().drawableWidth();
     i.drawableH = app.window().drawableHeight();

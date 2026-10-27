@@ -19,8 +19,6 @@
 #include "platform/video.hpp"
 #include "platform/window.hpp"
 
-union SDL_Event;
-
 namespace marigold::engine {
 class Store;
 }  // namespace marigold::engine
@@ -32,7 +30,7 @@ class Playback;
 
 struct Build {
   std::string version, build;
-  int webosMajor = 0;
+  std::string system;  // "webOS 6", "Android 9 (API 28)"
 };
 
 class App {
@@ -72,7 +70,7 @@ class App {
   uint32_t ms() const { return ms_; }
 
  private:
-  void handle(const SDL_Event& e);
+  void handle(const platform::Event& e);
   void dispatch(const KeyEvent& k);
   void frame();
   void suspend();
@@ -98,9 +96,8 @@ class App {
   bool dirty_ = true;
   uint32_t ms_ = 0;
   time::Seconds lastMinute_ = 0;
-  uint32_t wakeEvent_ = 0;
 
-  // OK is reported on release, or as a long press after NV_HOLD_MS.
+  // OK is reported on release, or as a long press after kHoldMs (700 ms).
   bool okDown_ = false;
   bool okLongSent_ = false;
   uint32_t okDownAt_ = 0;

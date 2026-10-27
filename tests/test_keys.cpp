@@ -35,3 +35,28 @@ TEST_CASE("unknown keys stay unknown") {
   CHECK(keyFromSdl(9999, 0) == Key::Unknown);
   CHECK(std::string(marigold::keyName(Key::Unknown)) == "Unknown");
 }
+
+TEST_CASE("Fire TV and Android TV remotes") {
+  using marigold::keyFromAndroid;
+  CHECK(keyFromAndroid(19) == Key::Up);
+  CHECK(keyFromAndroid(20) == Key::Down);
+  CHECK(keyFromAndroid(21) == Key::Left);
+  CHECK(keyFromAndroid(22) == Key::Right);
+  CHECK(keyFromAndroid(23) == Key::Ok);  // the D-pad's centre
+  CHECK(keyFromAndroid(66) == Key::Ok);
+  CHECK(keyFromAndroid(4) == Key::Back);
+  CHECK(keyFromAndroid(82) == Key::Menu);
+  CHECK(keyFromAndroid(85) == Key::PlayPause);
+  CHECK(keyFromAndroid(89) == Key::Rewind);
+  CHECK(keyFromAndroid(90) == Key::FastForward);
+  CHECK(keyFromAndroid(166) == Key::ChannelUp);
+  CHECK(keyFromAndroid(167) == Key::ChannelDown);
+  CHECK(keyFromAndroid(183) == Key::Red);
+  CHECK(keyFromAndroid(186) == Key::Blue);
+  CHECK(keyFromAndroid(7) == Key::Digit0);
+  CHECK(keyFromAndroid(16) == Key::Digit9);
+  CHECK(keyFromAndroid(145) == Key::Digit1);
+  CHECK(keyFromAndroid(96) == Key::Ok);    // a game controller's A
+  CHECK(keyFromAndroid(97) == Key::Back);  // and B
+  CHECK(keyFromAndroid(3) == Key::Unknown);  // Home stays the system's
+}

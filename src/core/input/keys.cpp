@@ -17,6 +17,16 @@ constexpr int kAudioRewind = 285, kAudioFastForward = 286;  // SDL 2.0.6+, harml
 constexpr int kF1 = 58;
 }  // namespace sdl
 
+// android.view.KeyEvent key codes (stable since API 1-21).
+namespace android {
+constexpr int kBack = 4, k0 = 7, k9 = 16, kUp = 19, kDown = 20, kLeft = 21, kRight = 22, kCenter = 23;
+constexpr int kSpace = 62, kEnter = 66, kDel = 67, kMenu = 82, kPlayPause = 85, kStop = 86, kNext = 87;
+constexpr int kPrevious = 88, kRewind = 89, kFastForward = 90, kPageUp = 92, kPageDown = 93;
+constexpr int kButtonA = 96, kButtonB = 97, kEscape = 111, kPlay = 126, kPause = 127;
+constexpr int kNumpad0 = 144, kNumpad9 = 153, kNumpadEnter = 160, kInfo = 165, kChannelUp = 166;
+constexpr int kChannelDown = 167, kGuide = 172, kRed = 183, kGreen = 184, kYellow = 185, kBlue = 186;
+}  // namespace android
+
 // SDL_Keycode values that only desktop keyboards send.
 constexpr int32_t kKeycodeEscape = 27, kKeycodeBackspace = 8;
 
@@ -66,6 +76,49 @@ Key keyFromSdl(int scancode, int32_t keycode) {
     return static_cast<Key>(static_cast<int>(Key::Digit0) + d);
   }
   if (keycode == kKeycodeEscape || keycode == kKeycodeBackspace) return Key::Back;
+  return Key::Unknown;
+}
+
+Key keyFromAndroid(int keycode) {
+  using namespace android;
+  switch (keycode) {
+    case kUp: return Key::Up;
+    case kDown: return Key::Down;
+    case kLeft: return Key::Left;
+    case kRight: return Key::Right;
+    case kCenter:
+    case kEnter:
+    case kNumpadEnter:
+    case kButtonA: return Key::Ok;
+    case kBack:
+    case kEscape:
+    case kDel:
+    case kButtonB: return Key::Back;
+    case kChannelUp:
+    case kPageUp: return Key::ChannelUp;
+    case kChannelDown:
+    case kPageDown: return Key::ChannelDown;
+    case kPlayPause:
+    case kSpace: return Key::PlayPause;
+    case kPlay: return Key::Play;
+    case kPause: return Key::Pause;
+    case kStop: return Key::Stop;
+    case kRewind:
+    case kPrevious: return Key::Rewind;
+    case kFastForward:
+    case kNext: return Key::FastForward;
+    case kMenu: return Key::Menu;
+    case kInfo:
+    case kGuide: return Key::Info;
+    case kRed: return Key::Red;
+    case kGreen: return Key::Green;
+    case kYellow: return Key::Yellow;
+    case kBlue: return Key::Blue;
+    default: break;
+  }
+  if (keycode >= k0 && keycode <= k9) return static_cast<Key>(static_cast<int>(Key::Digit0) + keycode - k0);
+  if (keycode >= kNumpad0 && keycode <= kNumpad9)
+    return static_cast<Key>(static_cast<int>(Key::Digit0) + keycode - kNumpad0);
   return Key::Unknown;
 }
 

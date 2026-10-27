@@ -6,7 +6,7 @@
 #include "core/util/gunzip.hpp"
 #include "core/util/log.hpp"
 #include "core/util/strings.hpp"
-#include "rede.h"
+#include "platform/http_transport.hpp"
 
 namespace marigold::http {
 
@@ -15,38 +15,21 @@ struct Ticket::Job {
   Client::Done done;
   std::function<void()> work, workDone;  // post() jobs instead of HTTP
   Response resp;
-  RedeJob* rede = nullptr;
+  transport::Handle* handle = nullptr;
   std::atomic<bool> cancelled{false};
   ~Job() {
-    if (rede) rede_job_soltar(rede);
+    if (handle) transport::releaseHandle(handle);
   }
-  bool stopped() const { return cancelled.load() || rede_job_estado(rede) != REDE_OK; }
+  bool stopped() const { return cancelled.load() || !transport::live(handle); }
 };
 
 void Ticket::cancel() {
   if (!job_) return;
   job_->cancelled = true;
-  if (job_->rede) rede_job_cancelar(job_->rede);
+  if (job_->handle) transport::cancelHandle(job_->handle);
 }
 
 namespace {
-
-const char* errorName(RedeErro e) {
-  switch (e) {
-    case REDE_OK: return "";
-    case REDE_ENTRADA: return "bad-request";
-    case REDE_INDISPONIVEL: return "unavailable";
-    case REDE_MEMORIA: return "memory";
-    case REDE_TRANSPORTE: return "transport";
-    case REDE_PRAZO: return "timeout";
-    case REDE_CANCELADO: return "cancelled";
-    case REDE_GERACAO: return "stale";
-    case REDE_LIMITE_CORPO: return "body-cap";
-    case REDE_LIMITE_CABECALHOS: return "header-cap";
-    case REDE_REDIRECT: return "redirect";
-  }
-  return "unknown";
-}
 
 // Body sink shared by the streamed and the gunzip-buffered paths.
 struct Sink {
@@ -68,16 +51,6 @@ struct Sink {
     return true;
   }
 };
-
-int receive(const void* data, size_t n, void* user) {
-  Sink* s = static_cast<Sink*>(user);
-  if (s->job->stopped()) return 0;
-  std::string_view chunk(static_cast<const char*>(data), n);
-  if (s->gunzip) return s->gunzip->feed(chunk) ? 1 : 0;
-  return s->deliver(chunk) ? 1 : 0;
-}
-
-int shouldStop(void* user) { return static_cast<Ticket::Job*>(user)->stopped() ? 1 : 0; }
 
 }  // namespace
 
@@ -105,8 +78,8 @@ Client::~Client() { stop(); }
 
 void Client::start(int threads, std::function<void()> wake) {
   if (!threads_.empty()) return;
-  rede_preparar();  // dlopen + curl_global_init here, on the main thread
-  group_ = rede_grupo_criar();
+  transport::prepare();  // webOS: dlopen + curl_global_init here, on the main thread
+  group_ = transport::createGroup();
   wake_ = std::move(wake);
   stopping_ = false;
   for (int i = 0; i < std::max(1, threads); ++i) threads_.emplace_back([this] { worker(false); });
@@ -121,7 +94,7 @@ void Client::stop() {
     queue_.clear();
     longQueue_.clear();
   }
-  if (group_) rede_grupo_cancelar(group_);
+  if (group_) transport::cancelGroup(group_);
   cv_.notify_all();
   for (std::thread& t : threads_) t.join();
   threads_.clear();
@@ -130,7 +103,7 @@ void Client::stop() {
     done_.clear();
   }
   if (group_) {
-    rede_grupo_soltar(group_);
+    transport::releaseGroup(group_);
     group_ = nullptr;
   }
 }
@@ -152,7 +125,7 @@ void Client::post(std::function<void()> work, std::function<void()> done, Priori
 
 Ticket Client::enqueue(std::shared_ptr<Ticket::Job> job) {
   std::lock_guard<std::mutex> lock(mu_);
-  job->rede = rede_job_criar(group_);
+  job->handle = transport::createHandle(group_);
   if (stopping_ || threads_.empty()) {
     job->cancelled = true;
     return Ticket(job);
@@ -176,7 +149,7 @@ Response Client::fetchNow(Request req) {
   job.req = std::move(req);
   {
     std::lock_guard<std::mutex> lock(mu_);
-    job.rede = rede_job_criar(group_);
+    job.handle = transport::createHandle(group_);
   }
   execute(job);
   return std::move(job.resp);
@@ -190,7 +163,7 @@ void Client::cancelAll() {
   }
   // Running requests see the new generation and stop at the next chunk;
   // any result they still post is dropped by pump().
-  if (group_) rede_grupo_avancar(group_);
+  if (group_) transport::advanceGroup(group_);
   std::lock_guard<std::mutex> lock(doneMu_);
   done_.clear();
 }
@@ -250,73 +223,52 @@ void Client::execute(Ticket::Job& job) {
   const Request& q = job.req;
   Response& out = job.resp;
 
-  std::vector<const char*> headers;
-  headers.reserve(q.headers.size() + 1);
-  for (const std::string& h : q.headers) headers.push_back(h.c_str());
-  headers.push_back(nullptr);
-
   bool streamed = static_cast<bool>(q.onChunk) || q.gunzip;
   Sink sink;
   sink.job = &job;
   sink.buffer = &out.body;
-  sink.bufferCap = q.maxBytes ? q.maxBytes : REDE_CORPO_PADRAO;
+  sink.bufferCap = q.maxBytes ? q.maxBytes : transport::kBufferedDefault;
   if (q.gunzip) {
     Sink* s = &sink;
     sink.gunzip = std::make_unique<gz::Gunzip>([s](std::string_view c) { return s->deliver(c); },
-                                               q.onChunk ? REDE_FLUXO_MAXIMO : sink.bufferCap + 1);
+                                               q.onChunk ? transport::kStreamedMax : sink.bufferCap + 1);
   }
-
-  RedePedido p;
-  std::memset(&p, 0, sizeof p);
-  p.metodo = q.method.empty() ? nullptr : q.method.c_str();
-  p.url = q.url.c_str();
-  p.cabecalhos = headers.data();
-  p.corpo = q.body.empty() ? nullptr : q.body.data();
-  p.n_corpo = q.body.size();
-  p.prazo_ms = std::min(q.timeoutMs, 300000u);
   // A gzip body is capped on the wire here and inflated size in the Sink.
-  p.max_bytes = q.maxBytes ? q.maxBytes : streamed && q.onChunk ? REDE_FLUXO_MAXIMO : 0;
-  if (!q.onChunk && q.gunzip && !q.maxBytes) p.max_bytes = REDE_CORPO_MAXIMO;
-  p.seguir = q.follow ? 1 : 0;
-  p.tls_pessoal = q.personalServer ? 1 : 0;
-  p.job = job.rede;
-  p.parar = shouldStop;
-  p.parar_usuario = &job;
+  size_t wireCap = q.maxBytes ? q.maxBytes : streamed && q.onChunk ? transport::kStreamedMax : 0;
+  if (!q.onChunk && q.gunzip && !q.maxBytes) wireCap = transport::kBufferedMax;
+  std::function<bool(std::string_view)> receive;
   if (streamed) {
-    p.receber_corpo = receive;
-    p.corpo_usuario = &sink;
+    receive = [&sink](std::string_view chunk) {
+      if (sink.job->stopped()) return false;
+      if (sink.gunzip) return sink.gunzip->feed(chunk);
+      return sink.deliver(chunk);
+    };
   }
 
-  RedeResposta r;
-  std::memset(&r, 0, sizeof r);
-  rede_pedir(&p, &r);
+  transport::Result r = transport::fetch(q, job.handle, wireCap, receive, [&job] { return job.stopped(); });
 
   out.status = r.status;
   out.ms = r.ms;
-  out.retryAfterS = r.retry_after_s;
+  out.retryAfterS = r.retryAfterS;
   out.mime = r.mime;
-  if (r.cabecalhos && r.n_cabecalhos) {
-    std::string_view block(r.cabecalhos, r.n_cabecalhos);
-    out.etag = headerValue(block, "ETag");
-    out.lastModified = headerValue(block, "Last-Modified");
+  if (!r.headers.empty()) {
+    out.etag = headerValue(r.headers, "ETag");
+    out.lastModified = headerValue(r.headers, "Last-Modified");
   }
-  if (!streamed && r.corpo) out.body.assign(r.corpo, r.n_corpo);
-  out.bytes = streamed ? sink.bytes : r.n_corpo;
+  if (!streamed) out.body = std::move(r.body);
+  out.bytes = streamed ? sink.bytes : out.body.size();
   bool success = r.status >= 200 && r.status < 300;
   bool streamOk = true;
   if (streamed && success && sink.gunzip) streamOk = sink.gunzip->finish();
 
   out.cancelled = job.stopped();
   if (out.cancelled) out.error = "cancelled";
-  else if (r.erro != REDE_OK) out.error = errorName(r.erro);
+  else if (!r.error.empty()) out.error = r.error;
   else if (sink.overflow) out.error = "body-cap";
   else if (!streamOk) out.error = "gzip";
   else if (!success && r.status != 304) out.error = "http " + std::to_string(r.status);
   out.ok = out.error.empty();
-  if (!out.ok && r.erro == REDE_TRANSPORTE && r.curl_erro)
-    out.error += " (curl " + std::to_string(r.curl_erro) + ")";
   if (!streamed && !success) out.body.clear();
-  rede_resposta_limpar(&r);
 
   const char* tag = q.tag.empty() ? "request" : q.tag.c_str();
   if (out.ok)

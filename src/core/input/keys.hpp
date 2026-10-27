@@ -1,9 +1,10 @@
-// Remote-control keys, independent of SDL.
+// Remote-control keys, independent of the platform.
 //
 // The LG remote sends standard SDL scancodes for arrows, OK, digits and media
 // keys, and webOS-only scancodes (SDL_webOS.h) for Back, CH+/CH-, the colour
-// keys and the Magic Remote cursor. Platform code passes the raw numbers here
-// so the mapping can be unit tested on the host.
+// keys and the Magic Remote cursor. A Fire TV or Android TV remote sends
+// Android key codes (KeyEvent.KEYCODE_*). Platform code passes the raw
+// numbers here so the mapping can be unit tested on the host.
 #pragma once
 
 #include <cstdint>
@@ -38,6 +39,8 @@ constexpr int kExit = 505;
 // `scancode` is SDL_Scancode as an int; `keycode` is SDL_Keycode (used for
 // desktop keyboards, where Escape and Backspace stand in for Back).
 Key keyFromSdl(int scancode, int32_t keycode);
+// `keycode` is android.view.KeyEvent's KEYCODE_* value.
+Key keyFromAndroid(int keycode);
 
 int digitOf(Key key);  // 0-9, or -1
 const char* keyName(Key key);

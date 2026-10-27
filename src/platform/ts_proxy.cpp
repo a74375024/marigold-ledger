@@ -5,6 +5,9 @@
 #include "proxyts.h"
 
 namespace marigold::platform {
+
+bool TsProxy::wanted() { return true; }
+
 namespace {
 
 // proxyts.c copies the headers into 512-byte buffers and sends at most 7

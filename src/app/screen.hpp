@@ -8,8 +8,7 @@
 
 #include "app/ui/ui.hpp"
 #include "core/input/keys.hpp"
-
-union SDL_Event;
+#include "platform/window.hpp"
 
 namespace marigold::app {
 
@@ -18,7 +17,7 @@ class App;
 struct KeyEvent {
   Key key = Key::Unknown;
   bool repeat = false;     // held down (arrows auto-repeat)
-  bool longPress = false;  // OK held for NV_HOLD_MS
+  bool longPress = false;  // OK held for 700 ms
 };
 
 class Screen {
@@ -44,9 +43,9 @@ class Screen {
   virtual bool keepsPreview() const { return false; }
   // Pushed or uncovered again.
   virtual void shown() {}
-  // Raw SDL events before the app's own handling (the diagnostics screen).
-  // True when used.
-  virtual bool rawEvent(const SDL_Event& /*e*/) { return false; }
+  // Every event before the app's own handling (the webOS key test screen
+  // reads its native SDL event). True when used.
+  virtual bool rawEvent(const platform::Event& /*e*/) { return false; }
 
  protected:
   App& app_;

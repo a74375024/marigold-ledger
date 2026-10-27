@@ -1,23 +1,14 @@
-// Marigold entry point: platform setup, then the main loop.
+// The webOS entry point: the TV-specific set-up around app::run (launch.hpp).
 #include <SDL2/SDL.h>
-#include <sys/stat.h>
 
-#include <clocale>
 #include <cstdio>
 #include <string>
 
-#include "app/app.hpp"
-#include "app/screens/guide_screen.hpp"
-#include "app/screens/screens.hpp"
-#include "app/store/store.hpp"
+#include "app/launch.hpp"
 #include "app_id.h"
 #include "core/util/log.hpp"
-#include "core/util/memory.hpp"
-#include "platform/gfx.hpp"
-#include "platform/icons.hpp"
 #include "platform/stdout_capture.hpp"
 #include "platform/storage.hpp"
-#include "platform/text.hpp"
 #include "platform/video.hpp"
 #include "platform/window.hpp"
 #include "video.h"
@@ -46,22 +37,12 @@ int main(int argc, char** argv) {
   (void)argc;
   (void)argv;
   using namespace marigold;
-  memory::configure();  // before any thread starts
-  // Data files (accounts, caches, logs) are the app's only.
-  umask(077);
-  // Numbers with a dot, always: JSON payloads are built with printf.
-  std::setlocale(LC_NUMERIC, "C");
+  app::prepareProcess();
   platform::prepareEnvironment(NV_APP_ID);
 
   const std::string appDir = installDir();
   platform::Storage storage;
-  storage.init(appDir);
-  if (!storage.dir().empty()) {
-    // The previous session's log survives one launch, for crashes.
-    std::string logPath = storage.path("marigold.log");
-    std::rename(logPath.c_str(), storage.path("marigold-previous.log").c_str());
-    log::open(logPath);
-  }
+  app::openStorage(storage, appDir);
   platform::captureStdout();
   MLOG_I("app", "Marigold %s build %s, data in %s", MARIGOLD_VERSION, MARIGOLD_BUILD,
          storage.dir().empty() ? "(nowhere writable)" : storage.dir().c_str());
@@ -73,38 +54,15 @@ int main(int argc, char** argv) {
   }
   video_escala_definir(window.drawableWidth(), window.drawableHeight());
 
-  gfx::Renderer& g = gfx::renderer();
-  if (!g.init(window.drawableWidth(), window.drawableHeight())) {
-    MLOG_E("app", "renderer init failed");
-    platform::releaseStdout();
-    return 1;
-  }
-  text::TextRenderer text;
-  text.init(appDir + "/fonts");
-
-  platform::Video video;
-  video.start();
-
   app::Build build;
   build.version = MARIGOLD_VERSION;
   build.build = MARIGOLD_BUILD;
-  build.webosMajor = nv_webos_major();
-  {
-    icons::IconSet icons;  // GL textures: gone before the renderer shuts down
-    icons.init(appDir + "/icons");
-    app::App app(window, storage, g, text, icons, video, build);
-    if (app.store().accounts().empty()) app.nav().push(app::makeAccounts(app, true));
-    else app.nav().push(std::make_unique<app::GuideScreen>(app));
-    app.nav().settle();
-    app.run();
-  }
+  build.system = "webOS " + std::to_string(nv_webos_major());
+  platform::Video video;
+  int code = app::run(window, storage, video, appDir, std::move(build));
 
-  MLOG_I("app", "exiting");
-  video.shutdown();
-  text.shutdown();
-  g.shutdown();
   SDL_Quit();
   platform::releaseStdout();
   log::close();
-  return 0;
+  return code;
 }

@@ -23,11 +23,13 @@ bool looksHls(const std::string& url) {
   return str::endsWith(path, ".m3u8") || str::endsWith(path, ".m3u");
 }
 
-// The TV's media pipeline, with the TS proxy in front of HLS feeds.
+// The platform's video player, with the TS proxy in front of HLS feeds where
+// the platform wants it (webOS).
 class TvPlayer final : public engine::Player {
  public:
   TvPlayer(App& app, std::function<gfx::Rect()> window) : app_(app), window_(std::move(window)) {
-    if (!proxy_.start()) MLOG_W("play", "TS proxy unavailable; HLS feeds play directly");
+    if (platform::TsProxy::wanted() && !proxy_.start())
+      MLOG_W("play", "TS proxy unavailable; HLS feeds play directly");
   }
 
   void beginTune() override { proxyFailed_.clear(); }
