@@ -12,6 +12,18 @@
 using namespace marigold;
 using namespace marigold::catalog;
 
+// GCC says it is sanitizing with __SANITIZE_*__, clang with __has_feature.
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#define MARIGOLD_SANITIZED 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#define MARIGOLD_SANITIZED 1
+#endif
+#endif
+#ifndef MARIGOLD_SANITIZED
+#define MARIGOLD_SANITIZED 0
+#endif
+
 namespace {
 
 struct Rng {
@@ -134,7 +146,7 @@ TEST_CASE("catalog for 60,000 synthetic channels") {
   size_t cnn = 0;
   for (const EntryInfo& e : r.entries) cnn += e.id == "e|core:CNN" ? 1 : 0;
   CHECK(cnn == 1);
-#if !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__)
+#if !MARIGOLD_SANITIZED
   // About 2 s in an optimized desktop build; sanitizers make it 15-40x slower.
   CHECK(seconds < 30);
 #endif
