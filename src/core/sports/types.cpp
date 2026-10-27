@@ -41,6 +41,7 @@ bool SportsGame::operator==(const SportsGame& o) const {
          weekLabel == o.weekLabel && home == o.home && away == o.away && start == o.start &&
          networks == o.networks && venue == o.venue && postponed == o.postponed &&
          completed == o.completed && customTitle == o.customTitle && cardKey == o.cardKey &&
+         tournament == o.tournament &&
          note == o.note && racing == o.racing && tennis == o.tennis;
 }
 
@@ -160,7 +161,7 @@ SportsEvent::State SportsEvent::state(Seconds now) const {
   Seconds end = *start + expectedLength();
   if (listingEnd && *listingEnd > end && *listingEnd < *start + p.listingCap) end = *listingEnd;
   if (now < end) return State::live;
-  if (now < end + p.overrun) return State::mayHaveEnded;
+  if (now < end + overrunOf(league, game ? &*game : nullptr)) return State::mayHaveEnded;
   return State::finished;
 }
 
@@ -338,6 +339,7 @@ json::Value toJson(const SportsGame& g) {
   v.set("completed", g.completed);
   setOpt(v, "customTitle", g.customTitle);
   setOpt(v, "cardKey", g.cardKey);
+  setOpt(v, "tournament", g.tournament);
   setOpt(v, "note", g.note);
   setOpt(v, "racing", g.racing);
   setOpt(v, "tennis", g.tennis);
@@ -366,6 +368,7 @@ std::optional<SportsGame> gameFromJson(const json::Value& v) {
   g.completed = v["completed"].asBool();
   g.customTitle = optString(v["customTitle"]);
   g.cardKey = optString(v["cardKey"]);
+  g.tournament = optString(v["tournament"]);
   g.note = optString(v["note"]);
   g.racing = optBool(v["racing"]);
   g.tennis = optBool(v["tennis"]);

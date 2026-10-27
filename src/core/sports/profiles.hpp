@@ -26,6 +26,7 @@ struct Profile {
     Periods,  // "Q2 3:12", "2nd 14:05": count down through periods
     Innings,  // "Top 6th", "Bot 8th"
     Minutes,  // "67'", "90'+3'" out of 95
+    None,     // no running clock (fight cards): progress goes by the time
   };
   // How the event's tile is laid out.
   enum class Tile : uint8_t {
@@ -36,13 +37,19 @@ struct Profile {
     Title,        // a title and the sport's icon
   };
   // Parts of an event with lengths of their own.
-  enum class Parts : uint8_t { None, FightCard, RaceSessions };
+  // Tennis matches: best of five sets (men's Grand Slam singles) run longer.
+  enum class Parts : uint8_t { None, FightCard, RaceSessions, TennisMatches };
 
   std::string league;       // row group / event league this entry is for
   std::string leagueShort;  // one league within the group ("NASCAR"); empty = the whole group
 
   time::Seconds length = 9'000;          // a typical event, start to finish
   time::Seconds overrun = 30 * 60;       // past that: "may have ended" this long
+  // A knockout match (extra time, penalties) may run over this long;
+  // 0 = the usual overrun. `cup`: every match is treated as one.
+  time::Seconds knockoutOverrun = 0;
+  bool cup = false;
+  time::Seconds longLength = 0;          // TennisMatches: a best-of-five match
   time::Seconds listingCap = 8 * 3600;   // a guide listing may stretch it to this
   time::Seconds matchWindow = 3 * 3600;  // a feed's time this close to the game's
   Parts parts = Parts::None;
@@ -73,7 +80,15 @@ const std::vector<Profile>& profiles();
 const Profile& profile(std::string_view league, std::string_view leagueShort = {});
 
 // A typical length for this event: the profile's, or its part's (a fight
-// card's prelims or main card, a race weekend's session).
+// card's prelims or main card, a race weekend's session, a best-of-five
+// tennis match).
 time::Seconds lengthOf(std::string_view league, const SportsGame* game);
+// How long past that it "may have ended": longer for a knockout match.
+time::Seconds overrunOf(std::string_view league, const SportsGame* game);
+// A knockout match: a cup competition's, or a round the schedule names
+// ("Round of 16 · 2nd Leg", "Quarterfinal", "Playoffs").
+bool isKnockout(const Profile& p, const SportsGame& game);
+// A Grand Slam tournament ("Wimbledon", "US Open"...).
+bool isGrandSlam(std::string_view tournament);
 
 }  // namespace marigold::sports

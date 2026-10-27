@@ -2,6 +2,8 @@
 
 #include <vector>
 
+#include "core/util/rx.hpp"
+
 #include "core/sports/types.hpp"
 #include "core/util/strings.hpp"
 
@@ -39,6 +41,7 @@ Profile soccer(const char* league) {
   Profile p = base(league, 7'560, "soccerball", Tile::Teams);  // 2.1 h
   p.homeFirst = true;
   p.clock = Clock::Minutes;
+  p.knockoutOverrun = 60 * 60;  // extra time and penalties
   return p;
 }
 
@@ -53,7 +56,6 @@ const std::vector<Profile>& table() {
     cfb.chip = "NCAAF";
     v.push_back(cfb);
     Profile plainFootball = football("Football");  // the level isn't known
-    plainFootball.symbol = "sportscourt.fill";
     plainFootball.tile = Tile::Title;
     v.push_back(plainFootball);
 
@@ -69,7 +71,6 @@ const std::vector<Profile>& table() {
     cbb.periods = 2;  // halves
     v.push_back(cbb);
     Profile plainBasketball = basketball("Basketball");
-    plainBasketball.symbol = "sportscourt.fill";
     plainBasketball.tile = Tile::Title;
     v.push_back(plainBasketball);
 
@@ -79,7 +80,9 @@ const std::vector<Profile>& table() {
     Profile plainBaseball = baseball("Baseball");
     plainBaseball.tile = Tile::Title;
     v.push_back(plainBaseball);
-    v.push_back(base("MiLB", 9'000, "baseball.fill"));
+    Profile milb = baseball("MiLB");
+    milb.tile = Tile::Title;
+    v.push_back(milb);
     v.push_back(base("Softball", 9'000, "baseball.fill"));
 
     Profile nhl = base("NHL", 9'360, "hockey.puck.fill", Tile::Teams);
@@ -92,6 +95,13 @@ const std::vector<Profile>& table() {
 
     v.push_back(soccer("Soccer"));
     v.push_back(soccer("MLS"));
+    // European cups: knockout ties (and their legs) run into extra time.
+    for (const char* cup : {"UCL", "UEL", "UECL"}) {
+      Profile p = soccer("Soccer");
+      p.leagueShort = cup;
+      p.cup = true;
+      v.push_back(p);
+    }
 
     // A card's prelims run about 2.5 h, its main card about 4; a whole
     // card 5. Fighters are named "A vs B".
@@ -99,7 +109,7 @@ const std::vector<Profile>& table() {
     fighting.chip = "FIGHT";
     fighting.parts = Parts::FightCard;
     fighting.homeFirst = true;
-    fighting.clock = Clock::Minutes;  // as before; fight statuses carry no running clock
+    fighting.clock = Clock::None;  // fight statuses carry no running clock
     v.push_back(fighting);
     Profile wrestling = base("Wrestling", 9'000, "sportscourt.fill");
     wrestling.chip = "WREST.";
@@ -121,11 +131,21 @@ const std::vector<Profile>& table() {
     nascar.parts = Parts::None;
     v.push_back(nascar);
 
-    // A later match on a court can start hours after its listed time.
+    // A later match on a court can start hours after its listed time; a
+    // long match runs well past its usual length.
     Profile tennis = base("Tennis", 9'000, "tennisball.fill", Tile::Players);
     tennis.matchWindow = 8 * 3600;
+    tennis.overrun = 60 * 60;
+    tennis.parts = Parts::TennisMatches;
+    tennis.longLength = 4 * 3600;
     v.push_back(tennis);
-    v.push_back(base("Golf", 4 * 3600, "figure.golf"));
+    // All-day coverage: live for as long as the guide listing says.
+    Profile golf = base("Golf", 4 * 3600, "figure.golf");
+    golf.listingCap = 12 * 3600;
+    v.push_back(golf);
+    Profile cricket = base("Cricket", 12'600, "figure.cricket");  // 3.5 h, a T20
+    cricket.listingCap = 12 * 3600;
+    v.push_back(cricket);
 
     Profile volleyball = base("Volleyball", 9'000, "volleyball.fill");
     volleyball.chip = "VOLLEY";
@@ -157,8 +177,30 @@ const Profile& profile(std::string_view league, std::string_view leagueShort) {
   return group ? *group : fallback();
 }
 
+bool isGrandSlam(std::string_view tournament) {
+  return rx::test("\\b(australian open|roland garros|french open|wimbledon|us open)\\b", tournament, true);
+}
+
+bool isKnockout(const Profile& p, const SportsGame& game) {
+  if (p.cup) return true;
+  return game.note &&
+         rx::test("\\b(leg|final|semifinals?|quarterfinals?|round of \\d+|playoffs?|knockout|cup)\\b", *game.note, true);
+}
+
+time::Seconds overrunOf(std::string_view league, const SportsGame* game) {
+  const Profile& p = profile(league, game ? std::string_view(game->leagueShort) : std::string_view());
+  if (p.knockoutOverrun && game && isKnockout(p, *game)) return p.knockoutOverrun;
+  return p.overrun;
+}
+
 time::Seconds lengthOf(std::string_view league, const SportsGame* game) {
   const Profile& p = profile(league, game ? std::string_view(game->leagueShort) : std::string_view());
+  // Men's singles at a Grand Slam: best of five sets.
+  if (p.parts == Parts::TennisMatches && game && game->leagueShort == "ATP" && game->tournament &&
+      isGrandSlam(*game->tournament) && game->home.name.find(" / ") == std::string::npos &&
+      game->away.name.find(" / ") == std::string::npos) {
+    return p.longLength;
+  }
   if (game && game->cardKey) {
     const std::string& card = *game->cardKey;
     if (p.parts == Parts::FightCard) {

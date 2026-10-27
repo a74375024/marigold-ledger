@@ -1041,6 +1041,7 @@ std::string untilText(Seconds start, Seconds now) {
 
 std::optional<double> clockProgress(const LiveStatus& status, std::string_view league) {
   const Profile& p = profile(league);
+  if (p.clock == Profile::Clock::None) return std::nullopt;
   const std::string& detail = status.detail;
   if (detail == "Halftime") return 0.5;
   std::vector<std::string> pieces = text::words(detail);

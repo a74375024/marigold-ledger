@@ -63,6 +63,8 @@ struct SportsGame {
   std::optional<std::string> customTitle;
   // Fight cards "ufc|333|main"; race weekends "f1|<event>|<session kind>".
   std::optional<std::string> cardKey;
+  // A tennis match's tournament ("Wimbledon").
+  std::optional<std::string> tournament;
   // A short tag for the tile ("World Series · Game 1", "Sunday Night").
   // Never a score or a result.
   std::optional<std::string> note;

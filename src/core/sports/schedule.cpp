@@ -633,6 +633,7 @@ std::optional<std::vector<SportsGame>> parseTennisMatches(std::string_view body,
       game.venue = court;
       game.completed = text::flag(status["completed"]) || (state && str::lower(*state) == "post");
       game.customTitle = tennisShort(*away) + " vs " + tennisShort(*home);
+      game.tournament = tournament;
       if (!tag.empty()) game.note = str::join(tag, " \xC2\xB7 ");
       game.tennis = true;
       games.push_back(std::move(game));
