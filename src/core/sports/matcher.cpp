@@ -8,6 +8,7 @@
 
 #include "core/catalog/catalog.hpp"
 #include "core/guide/names.hpp"
+#include "core/sports/board.hpp"
 #include "core/sports/network_map.hpp"
 #include "core/sports/profiles.hpp"
 #include "core/sports/text.hpp"
@@ -279,7 +280,8 @@ std::string Stats::summary() const {
                     n(matchedListings) + " matched (" + n(venueListings) + " by venue, " +
                     n(describedListings) + " by description), " + n(trimmedStations) +
                     " extra stations folded, school pairs " + n(schoolPairs) + ", name pairs " +
-                    n(namePairs) + ", fight feeds " + n(fightFeeds);
+                    n(namePairs) + ", fight feeds " + n(fightFeeds) + ", shows " + n(shows) +
+                    " and past cards " + n(pastCards) + " hidden";
   if (!offsets.empty()) out += ", offsets " + str::join(offsets, "; ");
   out += "; ms: " + str::join(steps, ", ");
   if (aborted) out += "; ABORTED: " + *aborted;
@@ -741,11 +743,44 @@ std::optional<BuildResult> build(const BuildInput& in) {
   lap("2 listings");
   if (stop()) return std::nullopt;
 
+  // Feeds no game matched that aren't events at all, set aside before
+  // they're grouped:
+  // - in a team sport (gamesOnly), a title with no two sides is a show about
+  //   the sport, and a matchup marked as a replay, classic or highlights is
+  //   an old game (a whip-around's channel stays: it shows live games);
+  // - a fight feed marked the same way is an old card, and one for a card
+  //   its promotion's schedule doesn't have is a card that's over (last
+  //   week's "UFC 333 Prelims").
+  std::set<std::string> scheduledOrgs;
+  for (const auto& [card, indices] : cards) scheduledOrgs.insert(text::components(card, "|").front());
+  auto notAnEvent = [&](const ProviderEvent& event) {
+    bool old = excluded(normalized(event.title));
+    if (profile(event.league).gamesOnly && !board::whipNamed(event.title)) {
+      if (old || !looksLikeGame(event.title)) {
+        stats.shows += 1;
+        return true;
+      }
+    }
+    if (event.league == "Fighting") {
+      if (old) {
+        stats.shows += 1;
+        return true;
+      }
+      auto key = fightKey(event.title);
+      if (key && scheduledOrgs.count(key->org)) {
+        stats.pastCards += 1;
+        return true;
+      }
+    }
+    return false;
+  };
+
   // 3. Provider events that matched no game: grouped by matchup (either
   // team order, start within 90 minutes) through a key lookup.
   std::vector<SportsEvent> loose;
   std::map<std::string, std::vector<size_t>> byPair;
   for (const ProviderEvent& original : unmatched) {
+    if (notAnEvent(original)) continue;
     ProviderEvent event = corrected(original);
     // A group whose day-less titles are mostly yesterday's games: its other
     // day-less titles are too.
@@ -781,6 +816,7 @@ std::optional<BuildResult> build(const BuildInput& in) {
     return std::llabs(*a - *b) <= 10 * 60;
   };
   for (const ProviderEvent& original : plain) {
+    if (notAnEvent(original)) continue;
     ProviderEvent event = corrected(original);
     std::optional<FightKey> key;
     if (event.league == "Fighting") key = fightKey(event.title);
@@ -828,6 +864,7 @@ std::optional<BuildResult> build(const BuildInput& in) {
   }
   std::vector<SportsEvent> others = loose;
   others.insert(others.end(), plainTiles.begin(), plainTiles.end());
+
 
   // Teams named in titles no game matched: two teams of a complete league
   // with no game between them is a replay or an old slot name (hidden);

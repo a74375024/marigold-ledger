@@ -538,3 +538,46 @@ TEST_CASE("a match over several days takes feeds on any of its days") {
   REQUIRE(e);
   CHECK(ids(e->sources) == std::vector<std::string>{"xt|c"});
 }
+
+TEST_CASE("feeds that aren't events: shows and replays of team sports, fight cards that are over") {
+  Fixture f;
+  BuildInput in = f.input();
+  // Next Saturday's card is on the schedule; last Saturday's isn't any more.
+  SportsGame card = game("UFC", "Fighting", "600|main", team("f1", "Max Stone"), team("f2", "Lee River"),
+                         f.now + 6 * 86'400);
+  card.cardKey = "ufc|334|main";
+  in.games.push_back(card);
+  Seconds at = f.now + 1800;
+  in.events = {
+      // Shows about a team sport: no two sides, no game.
+      provider("s1", "NBA Today", "NBA", at, {"x|1"}),
+      provider("s2", "NFL Insiders", "NFL", at, {"x|2"}),
+      provider("s3", "College Football Live", "College Football", at, {"x|3"}),
+      provider("s4", "Premier League Tonight", "Soccer", at, {"x|4"}),
+      // An old game: a matchup marked as a classic or replay.
+      provider("r1", "Desert Foxes vs Mountain Goats (Classic)", "NFL", at, {"x|5"}),
+      provider("r2", "Replay: Lakeside vs Harbor State", "College Football", at, {"x|6"}),
+      // A game the schedule doesn't have (a smaller conference): kept.
+      provider("g1", "Lakeside vs Harbor State", "College Football", at, {"x|7"}),
+      // A whip-around's feed shows live games: kept.
+      provider("w1", "NFL RedZone", "NFL", at, {"x|8"}),
+      // Sports without two sides keep their titles.
+      provider("t1", "PGA Tour Live", "Golf", at, {"x|9"}),
+      // Last week's card, and a promotion with no schedule (kept).
+      provider("c1", "UFC 333 Prelims", "Fighting", at, {"x|10"}),
+      provider("c2", "UFC 333: Main Card (Replay)", "Fighting", std::nullopt, {"x|11"}),
+      provider("c3", "PFL 9 Prelims", "Fighting", at, {"x|12"}),
+  };
+  auto out = build(in);
+  REQUIRE(out);
+  for (const char* id : {"s1", "s2", "s3", "s4", "r1", "r2", "c1", "c2"}) {
+    INFO(std::string(id));
+    CHECK_FALSE(find(out->events, id));
+  }
+  for (const char* id : {"g1", "w1", "t1", "c3"}) {
+    INFO(std::string(id));
+    CHECK(find(out->events, id));
+  }
+  CHECK(out->stats.shows == 7);
+  CHECK(out->stats.pastCards == 1);
+}

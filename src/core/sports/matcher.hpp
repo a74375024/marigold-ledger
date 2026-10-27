@@ -104,6 +104,11 @@ struct Stats {
   int trimmedStations = 0;
   // Fight feeds joined to a card part (from the schedule or each other).
   int fightFeeds = 0;
+  // Feeds of a team sport that aren't a game: shows and replays (hidden).
+  int shows = 0;
+  // Fight feeds for a card the promotion's schedule doesn't have: a card
+  // that's over, or a replay of one (hidden).
+  int pastCards = 0;
   std::vector<std::string> offsets;
   std::map<std::string, int> milliseconds;
   std::optional<std::string> aborted;

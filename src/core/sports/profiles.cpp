@@ -23,25 +23,34 @@ Profile base(const char* league, time::Seconds length, const char* symbol, Tile 
   return p;
 }
 
+// Team sports whose level is known: every event is a game (gamesOnly). The
+// plain-level entries ("Football", "Basketball") set it back off.
 Profile football(const char* league) {
   Profile p = base(league, 12'960, "football", Tile::Teams);  // 3.6 h
   p.quarterSeconds = 900;
+  p.gamesOnly = true;
   return p;
 }
 
-Profile basketball(const char* league) { return base(league, 9'360, "basketball", Tile::Teams); }  // 2.6 h
+Profile basketball(const char* league) {  // 2.6 h
+  Profile p = base(league, 9'360, "basketball", Tile::Teams);
+  p.gamesOnly = true;
+  return p;
+}
 
 Profile baseball(const char* league, time::Seconds length = 11'160) {  // 3.1 h
   Profile p = base(league, length, "baseball", Tile::Teams);
   p.clock = Clock::Innings;
   p.suspendResumes = true;
   p.doubleheaders = true;
+  p.gamesOnly = true;
   return p;
 }
 
 Profile soccer(const char* league) {
   Profile p = base(league, 7'560, "soccer", Tile::Teams);  // 2.1 h
   p.homeFirst = true;
+  p.gamesOnly = true;
   p.clock = Clock::Minutes;
   p.knockoutOverrun = 60 * 60;  // extra time and penalties
   return p;
@@ -59,6 +68,7 @@ const std::vector<Profile>& table() {
     v.push_back(cfb);
     Profile plainFootball = football("Football");  // the level isn't known
     plainFootball.tile = Tile::Title;
+    plainFootball.gamesOnly = false;
     v.push_back(plainFootball);
 
     Profile nba = basketball("NBA");
@@ -74,6 +84,7 @@ const std::vector<Profile>& table() {
     v.push_back(cbb);
     Profile plainBasketball = basketball("Basketball");
     plainBasketball.tile = Tile::Title;
+    plainBasketball.gamesOnly = false;
     v.push_back(plainBasketball);
 
     Profile mlb = baseball("MLB");
@@ -81,9 +92,11 @@ const std::vector<Profile>& table() {
     v.push_back(mlb);
     Profile plainBaseball = baseball("Baseball");
     plainBaseball.tile = Tile::Title;
+    plainBaseball.gamesOnly = false;
     v.push_back(plainBaseball);
     Profile milb = baseball("MiLB");
     milb.tile = Tile::Title;
+    milb.gamesOnly = false;
     v.push_back(milb);
     Profile softball = baseball("Softball", 7'200);  // 2 h, 7 innings
     softball.innings = 7;
@@ -92,6 +105,7 @@ const std::vector<Profile>& table() {
 
     Profile nhl = base("NHL", 9'360, "hockey", Tile::Teams);
     nhl.completeSchedule = true;
+    nhl.gamesOnly = true;
     v.push_back(nhl);
     v.push_back(base("Hockey", 9'360, "hockey"));
     Profile fieldHockey = base("Field Hockey", 6'300, "fieldHockey", Tile::Teams);  // 1.75 h

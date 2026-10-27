@@ -66,6 +66,11 @@ struct Profile {
 
   // Two teams with no game on the schedule means the feed is a replay.
   bool completeSchedule = false;
+  // Every event is a game between two sides: a feed that names no two sides
+  // and matches no scheduled game ("NBA Today", "NFL Insiders", "College
+  // Football Live") is a show about the sport, and one marked as a replay,
+  // classic or highlights is an old game. Neither is an event.
+  bool gamesOnly = false;
   // "Home vs Away", the home side on top (soccer, fights); otherwise
   // "Away at Home".
   bool homeFirst = false;

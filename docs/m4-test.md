@@ -159,3 +159,11 @@ Events from provider feeds that no schedule game matched.
 | Icons | Look across sports: football to cycling | Each sport has its own line icon, white on the tile and black when focused |
 | Chips | A mixed row (search results, Live now) with boxing, Olympics or other events | BOXING, OLYMPICS, MOTOGP, or EVENT for anything else |
 | Long names | A studio show ("The ... Show: Preview") | The show's name as the title, the rest under it |
+
+## Live Events: only events
+
+| Area | How to check | Pass |
+|---|---|---|
+| Shows stay out | Live Events on a weekday, in NFL, NBA and College Football | No tiles for shows about the sport ("NBA Today", "NFL Insiders", "College Football Live") or replays and classics of old games; only the day's real games |
+| Fight cards | Live Events the week after a UFC card | No tiles for last week's card ("UFC 333 Prelims"); next card under its day |
+| Kept | The same rows | Whip-arounds (RedZone) on Sundays; games the schedule doesn't list (smaller conferences) still shown |
