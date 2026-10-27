@@ -840,3 +840,29 @@ TEST_CASE("golf on the board: the leaderboard with scores on, the name without")
   CHECK(q.title == "Harbor Championship");
   CHECK_FALSE(q.tag);  // the name is the title, not also the tag
 }
+
+TEST_CASE("cricket on the board: only matches you can watch, the batting side marked") {
+  SportsGame odi = game("CRIC", "Cricket", "77", team("1", "Harbor", std::string("HAR")), team("2", "India", std::string("IND")),
+                        kNow - 3 * 3600, {}, std::nullopt, true);
+  odi.matchFormat = std::string("ODI");
+  odi.note = std::string("3rd ODI");
+  SportsGame other = odi;
+  other.id = "CRIC|78";
+  Input in = baseInput({eventOf(odi, {lineup("e|1")}), eventOf(other)});
+  LiveStatus s = status(LivePhase::live, "2nd innings");
+  s.homeScore = "278/8";
+  s.awayScore = "166/4";
+  s.possession = std::string("2");
+  s.situation = std::string("Need 113 from 65 balls");
+  in.statuses["CRIC|77"] = s;
+  in.settings.showsUnwatchable = true;  // even then: cricket lists every domestic match
+  Board b = build(in);
+  CHECK_FALSE(b.tiles.count("sev|CRIC|78"));
+  const Tile& t = tile(b, "sev|CRIC|77");
+  REQUIRE(t.sides.size() == 2);
+  CHECK(t.sides[0].name == "Harbor");  // home first
+  CHECK(t.sides[1].possession);        // India batting
+  CHECK(t.situation == std::string("Need 113 from 65 balls"));
+  CHECK(t.tag == std::string("3rd ODI"));
+  CHECK(t.state == State::live);  // an ODI runs most of the day
+}

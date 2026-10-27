@@ -166,9 +166,12 @@ const std::vector<Profile>& table() {
     golf.longLength = 11 * 3600;  // a scheduled round: 07:00 to 18:00 US Eastern
     golf.suspendResumes = true;
     v.push_back(golf);
-    Profile cricket = base("Cricket", 12'600, "figure.cricket");  // 3.5 h, a T20
+    Profile cricket = base("Cricket", 12'600, "figure.cricket", Tile::Teams);  // 3.5 h, a T20
     cricket.listingCap = 12 * 3600;
     cricket.suspendResumes = true;
+    cricket.homeFirst = true;
+    cricket.clock = Clock::None;
+    cricket.parts = Parts::CricketMatch;
     v.push_back(cricket);
 
     // Best of five sets; no running clock (progress goes by the time).
@@ -228,6 +231,10 @@ time::Seconds overrunOf(std::string_view league, const SportsGame* game) {
 time::Seconds lengthOf(std::string_view league, const SportsGame* game) {
   const Profile& p = profile(league, game ? std::string_view(game->leagueShort) : std::string_view());
   if (p.parts == Parts::GolfRound && game && game->isGolf()) return p.longLength;
+  if (p.parts == Parts::CricketMatch && game) {
+    if (game->end && *game->end - game->start >= 86'400) return *game->end - game->start + 8 * 3600;  // a day's play past the last day's start
+    if (game->matchFormat == std::optional<std::string>("ODI")) return 8 * 3600;
+  }
   // Men's singles at a Grand Slam: best of five sets.
   if (p.parts == Parts::TennisMatches && game && game->leagueShort == "ATP" && game->tournament &&
       isGrandSlam(*game->tournament) && game->home.name.find(" / ") == std::string::npos &&

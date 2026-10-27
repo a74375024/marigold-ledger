@@ -557,7 +557,10 @@ std::optional<BuildResult> build(const BuildInput& in) {
     if (event.start && !event.guessed) {
       std::optional<std::pair<int, Seconds>> best;
       for (int g : candidates) {
-        Seconds gap = std::llabs(*event.start - games[static_cast<size_t>(g)].start);
+        const SportsGame& game = games[static_cast<size_t>(g)];
+        Seconds gap = std::llabs(*event.start - game.start);
+        // A match over several days (a Test): any of its days.
+        if (game.end && *event.start >= game.start - 3 * 3600 && *event.start <= *game.end + 10 * 3600) gap = 0;
         if (!best || gap < best->second) best = std::make_pair(g, gap);
       }
       // Tennis: a later match on a court can start hours after its listed time.

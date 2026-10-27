@@ -39,6 +39,7 @@ struct League {
   bool racing = false;     // each event is a race weekend of sessions
   bool tennis = false;     // each event is a tournament of matches
   bool golf = false;       // each event is a tournament, its competitors a leaderboard
+  bool cricket = false;    // every series' matches, from one live listing
 
   bool college() const { return group.rfind("College", 0) == 0; }
 };
@@ -59,6 +60,8 @@ const std::vector<League>& sportLeagues(std::string_view sportID);
 const std::vector<League>& teamSportLeagues();
 // Golf: this week's tournament on each tour (PGA Tour, LPGA, LIV, DP World).
 const std::vector<League>& golfLeagues();
+// Cricket: one listing of every series under way (cricket.hpp).
+const League& cricketLeague();
 // leagues + fights + racing + tennis + golf + teamSportLeagues.
 const std::vector<League>& allLeagues();
 const League* leagueByShort(std::string_view shortName);
@@ -71,15 +74,17 @@ struct SportFeedsSeen {
   std::optional<time::Seconds> tennis;
   std::optional<time::Seconds> nascar;
   std::optional<time::Seconds> golf;
+  std::optional<time::Seconds> cricket;
 
   static constexpr time::Seconds kWindow = 14 * 86'400;
   bool racingSeen(time::Seconds now) const { return racing && now - *racing < kWindow; }
   bool tennisSeen(time::Seconds now) const { return tennis && now - *tennis < kWindow; }
   bool nascarSeen(time::Seconds now) const { return nascar && now - *nascar < kWindow; }
   bool golfSeen(time::Seconds now) const { return golf && now - *golf < kWindow; }
+  bool cricketSeen(time::Seconds now) const { return cricket && now - *cricket < kWindow; }
 
   bool operator==(const SportFeedsSeen& o) const {
-    return racing == o.racing && tennis == o.tennis && nascar == o.nascar && golf == o.golf;
+    return racing == o.racing && tennis == o.tennis && nascar == o.nascar && golf == o.golf && cricket == o.cricket;
   }
 };
 json::Value toJson(const SportFeedsSeen& seen);

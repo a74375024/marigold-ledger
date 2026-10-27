@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <unordered_set>
 
+#include "core/sports/cricket.hpp"
 #include "core/sports/matcher.hpp"
 #include "core/sports/parse.hpp"
 #include "core/sports/profiles.hpp"
@@ -15,6 +16,12 @@ namespace marigold::sports::schedule {
 // MARK: Requests
 
 sources::Request scoreboardRequest(const League& league, std::string_view query, bool plainForm) {
+  if (league.cricket) {
+    sources::Request listing;
+    listing.url = cricket::listingUrl();
+    listing.timeoutSeconds = kTimeoutSeconds;
+    return listing;
+  }
   std::vector<std::string> parts;
   if (!query.empty()) parts.emplace_back(query);
   std::string extra = league.extra.empty() ? "" : league.extra.substr(1);
@@ -721,6 +728,15 @@ std::optional<std::vector<SportsGame>> parseGolfTournaments(std::string_view bod
 std::optional<LeagueResult> parseLeague(std::string_view body, const League& league, Seconds from, Seconds to) {
   LeagueResult result;
   auto inWindow = [&](const SportsGame& g) { return g.start >= from && g.start <= to; };
+  if (league.cricket) {
+    auto matches = cricket::parseMatches(body, league);
+    if (!matches) return std::nullopt;
+    result.total = matches->size();
+    for (SportsGame& g : *matches) {
+      if (inWindow(g) || (g.end && *g.end >= from && g.start <= to)) result.games.push_back(std::move(g));
+    }
+    return result;
+  }
   if (league.golf) {
     auto tournaments = parseGolfTournaments(body, league);
     if (!tournaments) return std::nullopt;

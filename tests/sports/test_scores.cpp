@@ -4,6 +4,8 @@
 // merging statuses (when a game was seen final).
 #include <set>
 
+#include "core/sports/cricket.hpp"
+#include "core/sports/profiles.hpp"
 #include "core/sports/scores.hpp"
 #include "doctest.h"
 #include "sports/helpers.hpp"
@@ -465,4 +467,62 @@ TEST_CASE("golf: the round, the top two with ties, flags and holes played") {
   CHECK(between.phase == LivePhase::pre);
   CHECK(between.detail == "Round 3 done");
   CHECK(between.leaders.size() == 2);
+}
+
+TEST_CASE("cricket: scores as the tile shows them, the batting side, the chase") {
+  using namespace marigold::sports::cricket;
+  CHECK(shown("317 & 168/8 (51.3 ov, target 313)") == "317 & 168/8");
+  CHECK(shown("162 & 215/5 (59.1 ov) (f/o)") == "162 & 215/5");
+  CHECK(shown("465/7d") == "465/7d");
+  CHECK(shown("") == "");
+  CHECK(batting("168/8 (51.3 ov, target 313)"));
+  CHECK(batting("111/5 (18.4/20 ov, target 108)"));
+  CHECK_FALSE(batting("278/8"));
+  CHECK(situation("95/3 (14.2/20 ov, target 148)") == "Need 53 from 34 balls");
+  CHECK(situation("147/9 (19.5/20 ov, target 148)") == "Need 1 from 1 ball");
+  CHECK(situation("317 & 168/8 (51.3 ov, target 313)") == "Need 145 to win");
+  CHECK(situation("259/6 (86 ov)") == "86 ov");
+  CHECK(situation("120/2 (16.2/50 ov)") == "16.2/50 ov");
+  CHECK(situation("162 & 215/5 (59.1 ov) (f/o)") == "59.1 ov \xC2\xB7 follow-on");
+  CHECK_FALSE(situation("278/8"));
+
+  // The listing, shaped like the real one: series, then matches.
+  std::string body = R"JSON({"sports":[{"leagues":[{"name":"India tour of Harbor","events":[
+    {"id":"77","date":"2026-10-27T08:00Z","endDate":"2026-10-27T16:00Z","status":"in","period":2,"summary":"Live",
+     "description":"3rd ODI, India tour of Harbor at Harbor City","class":{"eventType":"ODI"},
+     "fullStatus":{"type":{"name":"STATUS_IN_PROGRESS","state":"in"}},
+     "competitors":[{"id":"1","displayName":"Harbor","abbreviation":"HAR","homeAway":"home","score":"278/8"},
+                    {"id":"2","displayName":"India","abbreviation":"IND","homeAway":"away","score":"166/4 (39.1/50 ov, target 279)"}]},
+    {"id":"78","date":"2026-10-24T04:00Z","endDate":"2026-10-28T04:00Z","status":"in","period":3,"summary":"Match delayed - Rain",
+     "description":"1st Test, India tour of Harbor at Valley","class":{"eventType":"Test"},
+     "fullStatus":{"type":{"name":"STATUS_IN_PROGRESS","state":"in"}},
+     "competitors":[{"id":"1","displayName":"Harbor","homeAway":"home","score":"402 & 5/0 (2.3 ov)"},
+                    {"id":"2","displayName":"India","homeAway":"away","score":"443/9d"}]}]}]}]})JSON";
+  const League& league = cricketLeague();
+  auto games = parseMatches(body, league);
+  REQUIRE(games);
+  REQUIRE(games->size() == 2);
+  const SportsGame& odi = (*games)[0];
+  CHECK(odi.id == "CRIC|77");
+  CHECK(odi.isCricket());
+  CHECK(odi.matchFormat == "ODI");
+  CHECK(odi.note == "3rd ODI");
+  CHECK(odi.venue == "India tour of Harbor");
+  CHECK(odi.home.name == "Harbor");
+  CHECK(lengthOf("Cricket", &odi) == 8 * 3600);
+  const SportsGame& test = (*games)[1];
+  REQUIRE(test.end);
+  CHECK(lengthOf("Cricket", &test) == 4 * 86'400 + 8 * 3600);
+  auto st = cricket::statuses(body, league);
+  const LiveStatus& o = st.at("CRIC|77");
+  CHECK(o.phase == LivePhase::live);
+  CHECK(o.detail == "2nd innings");
+  CHECK(o.homeScore == "278/8");
+  CHECK(o.awayScore == "166/4");
+  CHECK(o.possession == "2");
+  CHECK(o.situation == "Need 113 from 65 balls");
+  const LiveStatus& t = st.at("CRIC|78");
+  CHECK(t.phase == LivePhase::delayed);  // rain
+  CHECK(t.detail == "Match delayed - Rain");
+  CHECK(t.homeScore == "402 & 5/0");
 }

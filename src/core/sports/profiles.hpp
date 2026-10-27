@@ -40,7 +40,8 @@ struct Profile {
   // Parts of an event with lengths of their own.
   // Tennis matches: best of five sets (men's Grand Slam singles) run longer.
   // A golf tournament's round runs the day (longLength).
-  enum class Parts : uint8_t { None, FightCard, RaceSessions, TennisMatches, GolfRound };
+  // Cricket: by format (an ODI's day; a match over several days to its last).
+  enum class Parts : uint8_t { None, FightCard, RaceSessions, TennisMatches, GolfRound, CricketMatch };
 
   std::string league;       // row group / event league this entry is for
   std::string leagueShort;  // one league within the group ("NASCAR"); empty = the whole group

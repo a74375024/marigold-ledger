@@ -143,3 +143,6 @@ Pick each in Options › My Sports (More sports).
 | IndyCar, NASCAR | Pick Racing; after a race, scores on | The race tile shows the top three ("1 BEL 2 GIB 3 RED") |
 | Golf | Pick Golf (or have golf feeds); a PGA Tour, LPGA, LIV or DP World round | The top two: position (T2 for ties), flag, name, holes played, score to par; the tournament in the tag; "Round 3" while it's on, "Round 3 done" between rounds |
 | Golf feeds | A provider golf channel naming the tournament or the tour | Its feeds are on that tournament's tile |
+| Cricket | Pick Cricket (or have cricket feeds); a match on one of your channels | Home first; scores "278/8" and "166/4" with the batting side marked; footer "Need 113 from 65 balls" in a chase, else the overs; "3rd ODI" in the tag; Stumps, rain delays and innings in the status |
+| Cricket, not watchable | Many matches under way (domestic cricket) | Only matches you can watch get tiles |
+| Tests | A Test match on day 3 | Still live, and day-3 feeds are on its tile |

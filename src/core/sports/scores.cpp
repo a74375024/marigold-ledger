@@ -5,6 +5,7 @@
 #include <iterator>
 #include <unordered_set>
 
+#include "core/sports/cricket.hpp"
 #include "core/sports/parse.hpp"
 #include "core/sports/profiles.hpp"
 #include "core/sports/schedule.hpp"
@@ -427,6 +428,7 @@ Statuses golfStatuses(std::string_view body, const League& league) {
 }
 
 Statuses statuses(std::string_view body, const League& league) {
+  if (league.cricket) return cricket::statuses(body, league);
   if (league.golf) return golfStatuses(body, league);
   if (league.racing) return raceStatuses(body, league);
   if (league.tennis) return tennisStatuses(body, league);
@@ -437,6 +439,11 @@ Statuses statuses(std::string_view body, const League& league) {
 
 sources::Request scoreboardRequest(const League& league, std::string_view day) {
   sources::Request request;
+  if (league.cricket) {
+    request.url = cricket::listingUrl();
+    request.timeoutSeconds = kTimeoutSeconds;
+    return request;
+  }
   std::string base = std::string(schedule::kApiBase) + league.path + "/scoreboard";
   request.url = day.empty() ? base : base + "?dates=" + std::string(day) + league.extra;
   request.timeoutSeconds = kTimeoutSeconds;
@@ -627,6 +634,8 @@ void LiveScores::endLeague(Seconds now) {
     if (r.bytes > kLargeScoreboardBytes) interval = std::max(interval, static_cast<double>(kQuietInterval));
     // Racing only needs the session's status.
     if (r.league.racing) interval = std::max(interval, static_cast<double>(kQuietInterval));
+    // Cricket's listing covers every series (and moves slowly): every two minutes at most.
+    if (r.league.cricket) interval = std::max(interval, static_cast<double>(kQuietInterval));
     interval *= r.spread;
     if (recent_.size() >= static_cast<size_t>(kHourlyPace)) interval = std::max(interval, static_cast<double>(kPacedInterval));
     Seconds wait = static_cast<Seconds>(interval);

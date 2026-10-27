@@ -42,7 +42,8 @@ bool SportsGame::operator==(const SportsGame& o) const {
          networks == o.networks && venue == o.venue && postponed == o.postponed &&
          completed == o.completed && customTitle == o.customTitle && cardKey == o.cardKey &&
          tournament == o.tournament &&
-         note == o.note && racing == o.racing && tennis == o.tennis && golf == o.golf;
+         note == o.note && racing == o.racing && tennis == o.tennis && golf == o.golf &&
+         matchFormat == o.matchFormat && end == o.end;
 }
 
 // MARK: LivePhase / LiveStatus
@@ -348,6 +349,8 @@ json::Value toJson(const SportsGame& g) {
   setOpt(v, "racing", g.racing);
   setOpt(v, "tennis", g.tennis);
   setOpt(v, "golf", g.golf);
+  setOpt(v, "format", g.matchFormat);
+  if (g.end) v.set("end", static_cast<int64_t>(*g.end));
   return v;
 }
 
@@ -378,6 +381,8 @@ std::optional<SportsGame> gameFromJson(const json::Value& v) {
   g.racing = optBool(v["racing"]);
   g.tennis = optBool(v["tennis"]);
   g.golf = optBool(v["golf"]);
+  g.matchFormat = optString(v["format"]);
+  if (v["end"].isNumber()) g.end = v["end"].asInt();
   return g;
 }
 

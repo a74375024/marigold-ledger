@@ -77,10 +77,15 @@ struct SportsGame {
   std::optional<bool> tennis;
   // A golf tournament's round: both sides are the tournament.
   std::optional<bool> golf;
+  // Cricket: the format ("Test", "ODI", "T20") and, for a match over
+  // several days, its last day.
+  std::optional<std::string> matchFormat;
+  std::optional<Seconds> end;
 
   bool isRacing() const { return racing.value_or(false); }
   bool isTennis() const { return tennis.value_or(false); }
   bool isGolf() const { return golf.value_or(false); }
+  bool isCricket() const { return league == "Cricket"; }
   std::string title() const;
   bool operator==(const SportsGame& o) const;
   bool operator!=(const SportsGame& o) const { return !(*this == o); }

@@ -523,3 +523,18 @@ TEST_CASE("golf feeds go to the tournament they name, on its tour and day") {
   CHECK(target("Golf: Harbor Championship", round + 3 * 86'400).empty());  // another day
   CHECK(target("Golf: Some Other Open").empty());
 }
+
+TEST_CASE("a match over several days takes feeds on any of its days") {
+  SportsGame test = game("CRIC", "Cricket", "78", team("1", "Harbor"), team("2", "India"), utc(2026, 10, 24, 4, 0), {});
+  test.end = utc(2026, 10, 28, 4, 0);
+  BuildInput in;
+  in.games = {test};
+  in.now = utc(2026, 10, 26, 6, 0);
+  in.zone = time::Zone::usEastern();
+  in.events = {provider("p", "Cricket: Harbor vs India - 1st Test, Day 3", "Cricket", utc(2026, 10, 26, 4, 30), {"xt|c"})};
+  auto out = build(in);
+  REQUIRE(out);
+  const SportsEvent* e = findGame(out->events, "CRIC|78");
+  REQUIRE(e);
+  CHECK(ids(e->sources) == std::vector<std::string>{"xt|c"});
+}

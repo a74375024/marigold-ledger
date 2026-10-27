@@ -1148,6 +1148,8 @@ Board build(const Input& in) {
     if (!timely || !e.start || *e.start >= horizon) return false;
     // Tennis lists every match on every court: only the ones you can watch.
     if (e.game && e.game->isTennis()) return !e.sources.empty();
+    // Cricket too: the listing has every domestic match as well.
+    if (e.game && e.game->isCricket()) return !e.sources.empty();
     return !e.sources.empty() || in.settings.showsUnwatchable;
   };
 
