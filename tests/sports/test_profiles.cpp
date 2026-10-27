@@ -45,7 +45,10 @@ TEST_CASE("profiles: typical lengths by sport") {
   CHECK(lengthOf("Golf", nullptr) == 4 * 3600);
   CHECK(lengthOf("Fighting", nullptr) == 5 * 3600);
   CHECK(lengthOf("Motorsport", nullptr) == 4 * 3600);
-  for (const char* l : {"Tennis", "Rugby", "Curling", "Other", ""}) CHECK(lengthOf(l, nullptr) == 9'000);
+  CHECK(lengthOf("Rugby", nullptr) == 7'200);
+  CHECK(lengthOf("Softball", nullptr) == 7'200);
+  CHECK(lengthOf("Lacrosse", nullptr) == 8'100);
+  for (const char* l : {"Tennis", "Curling", "Other", ""}) CHECK(lengthOf(l, nullptr) == 9'000);
 }
 
 TEST_CASE("profiles: parts with lengths of their own") {
@@ -233,4 +236,23 @@ TEST_CASE("profiles: fight cards' progress goes by the time, not a soccer clock"
   s.phase = LivePhase::live;
   s.detail = "R2 3:12";
   CHECK_FALSE(board::clockProgress(s, "Fighting"));
+}
+
+TEST_CASE("profiles: new sports' clocks and naming") {
+  LiveStatus s;
+  s.phase = LivePhase::live;
+  s.detail = "64'";
+  CHECK(*board::clockProgress(s, "Rugby") == doctest::Approx(64.0 / 85));
+  s.detail = "Bot 5th";
+  CHECK(*board::clockProgress(s, "Softball") == doctest::Approx((4 + 0.5 + 0.25) / 7));
+  s.detail = "Q3 6:00";
+  CHECK(*board::clockProgress(s, "Lacrosse") == doctest::Approx((2 + 1 - 360.0 / 900) / 4));
+  CHECK(*board::clockProgress(s, "Lacrosse", "PLL") == doctest::Approx((2 + 1 - 360.0 / 720) / 4));
+  CHECK_FALSE(board::clockProgress(s, "Volleyball"));
+  CHECK(profile("Rugby").homeFirst);
+  CHECK_FALSE(profile("Lacrosse").homeFirst);
+  CHECK(profile("Motorsport", "NASCAR").podiumFromScores);
+  CHECK(profile("Motorsport", "IRL").podiumFromScores);
+  CHECK_FALSE(profile("Motorsport", "F1").podiumFromScores);
+  CHECK(profile("Softball").doubleheaders);
 }

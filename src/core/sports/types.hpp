@@ -116,6 +116,9 @@ struct LiveStatus {
   std::optional<std::string> boutB;
   std::optional<std::string> boutACountry;
   std::optional<std::string> boutBCountry;
+  // A finished race's top three, as three-letter codes ("BEL"), from the
+  // scoreboard's finishing order (NASCAR, IndyCar).
+  std::vector<std::string> top3;
   // Tennis: games won in each set so far, per side.
   std::optional<std::vector<std::string>> homeSets;
   std::optional<std::vector<std::string>> awaySets;

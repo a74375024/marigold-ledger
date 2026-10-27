@@ -73,7 +73,8 @@ bool LiveStatus::operator==(const LiveStatus& o) const {
          bases == o.bases && lastPlay == o.lastPlay && boutsDone == o.boutsDone &&
          boutsTotal == o.boutsTotal && boutA == o.boutA && boutB == o.boutB &&
          boutACountry == o.boutACountry && boutBCountry == o.boutBCountry && homeSets == o.homeSets &&
-         awaySets == o.awaySets;
+         awaySets == o.awaySets && suspended == o.suspended && homePens == o.homePens && awayPens == o.awayPens &&
+         homeAggregate == o.homeAggregate && awayAggregate == o.awayAggregate && top3 == o.top3;
 }
 
 // MARK: SportsEvent

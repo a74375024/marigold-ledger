@@ -780,3 +780,38 @@ TEST_CASE("soccer knockouts on the tile: penalties beside the score, the winner 
   CHECK_FALSE(q.sides[0].pens);
   CHECK_FALSE(q.situation);
 }
+
+TEST_CASE("new sports on the board: rugby home first, a race's top three") {
+  SportsGame rugby = game("6N", "Rugby", "1", team("h1", "Ireland", std::string("IRE")), team("a1", "France", std::string("FRA")),
+                          kNow - 3600, {}, std::nullopt, true);
+  Input in = baseInput({eventOf(rugby, {lineup("e|1")})});
+  LiveStatus s = status(LivePhase::live, "64'");
+  s.homeScore = "24";
+  s.awayScore = "17";
+  in.statuses["6N|1"] = s;
+  Board b = build(in);
+  const Tile& t = tile(b, "sev|6N|1");
+  REQUIRE(t.sides.size() == 2);
+  CHECK(t.sides[0].name == "Ireland");  // home first
+  CHECK(t.sides[0].score == "24");
+  REQUIRE(t.progress);
+  CHECK(*t.progress == doctest::Approx(64.0 / 85));
+
+  SportsGame race = game("NASCAR", "Motorsport", "9|1", team("gp", "Harbor 500"), team("gp", "Harbor 500"), kNow - 4 * 3600);
+  race.racing = true;
+  race.cardKey = "nascar|9|race";
+  Input r = baseInput({eventOf(race, {lineup("e|2")})});
+  LiveStatus done = status(LivePhase::final, "Final");
+  done.top3 = {"BEL", "GIB", "RED"};
+  r.statuses["NASCAR|9|1"] = done;
+  r.finalSeen["NASCAR|9|1"] = kNow - 600;
+  Board rb = build(r);
+  const Tile& rt = tile(rb, "sev|NASCAR|9|1");
+  REQUIRE(rt.podium.size() == 3);
+  CHECK(rt.podium[0].code == "BEL");
+  CHECK(rt.podiumLabel == std::string("Race"));
+  // Scores off: no result.
+  r.settings.showsScores = false;
+  Board quiet = build(r);
+  CHECK(tile(quiet, "sev|NASCAR|9|1").podium.empty());
+}

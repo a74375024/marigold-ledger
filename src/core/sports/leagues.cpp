@@ -99,7 +99,10 @@ const std::vector<League>& fightLeagues() {
   static const std::vector<League> kFights = [] {
     League ufc = make("mma/ufc", "Fighting", "UFC", "UFC", "Fighting", false);
     ufc.fights = true;
-    return std::vector<League>{ufc};
+    League pfl = make("mma/pfl", "Fighting", "PFL", "PFL", "Fighting", false);
+    pfl.fights = true;
+    pfl.keywords = {"pfl"};
+    return std::vector<League>{ufc, pfl};
   }();
   return kFights;
 }
@@ -117,7 +120,11 @@ const std::vector<League>& racingLeagues() {
     nascar.mode = League::Mode::current;
     nascar.keywords = {"nascar"};
     nascar.racing = true;
-    return std::vector<League>{f1, nascar};
+    League indycar = make("racing/irl", "Motorsport", "IRL", "IndyCar Series", "Motorsport", false);
+    indycar.mode = League::Mode::current;
+    indycar.keywords = {"indycar", "indy 500", "indianapolis 500"};
+    indycar.racing = true;
+    return std::vector<League>{f1, nascar, indycar};
   }();
   return kRacing;
 }
@@ -137,10 +144,81 @@ const std::vector<League>& tennisLeagues() {
   return kTennis;
 }
 
+namespace {
+
+// College sports: too many games for a month at once, so a few days at a time.
+League college(const char* path, const char* group, const char* shortName, const char* name) {
+  League l = make(path, group, shortName, name, group, false);
+  l.mode = League::Mode::days;
+  l.days = 3;
+  return l;
+}
+
+struct SportList {
+  const char* id;
+  std::vector<League> leagues;
+};
+
+const std::vector<SportList>& sportLists() {
+  static const std::vector<SportList> kLists = [] {
+    std::vector<SportList> v;
+    auto rugby = [](const char* id, const char* shortName, const char* name, std::vector<std::string> words) {
+      return keywords(make(std::string("rugby/") + id, "Rugby", shortName, name, "Rugby", false), std::move(words));
+    };
+    v.push_back({"S:Rugby",
+                 {rugby("180659", "6N", "Six Nations", {"six nations", "6 nations"}),
+                  rugby("17567", "RNC", "Nations Championship", {"nations championship"}),
+                  rugby("244293", "TRC", "The Rugby Championship", {"rugby championship"}),
+                  rugby("164205", "RWC", "Rugby World Cup", {"rugby world cup"}),
+                  rugby("289237", "WRWC", "Women's Rugby World Cup", {"women's rugby world cup"}),
+                  rugby("289234", "TEST", "Test Matches", {"test match", "autumn nations"}),
+                  rugby("268565", "LIONS", "Lions Tour", {"lions tour", "british and irish lions"}),
+                  rugby("267979", "PREM", "Premiership", {"premiership rugby", "gallagher prem"}),
+                  rugby("270557", "URC", "United Rugby Championship", {"urc", "united rugby championship"}),
+                  rugby("270559", "T14", "Top 14", {"top 14"}),
+                  rugby("271937", "ECC", "Champions Cup", {"champions cup"}),
+                  rugby("272073", "ECH", "Challenge Cup", {"challenge cup"}),
+                  rugby("242041", "SRP", "Super Rugby Pacific", {"super rugby"}),
+                  rugby("289262", "MLR", "Major League Rugby", {"major league rugby", "mlr"})}});
+    v.push_back({"S:Volleyball",
+                 {college("volleyball/womens-college-volleyball", "Volleyball", "NCAAWV", "Women's College"),
+                  college("volleyball/mens-college-volleyball", "Volleyball", "NCAAMV", "Men's College")}});
+    League pll = make("lacrosse/pll", "Lacrosse", "PLL", "Premier Lacrosse League", "Lacrosse", false);
+    pll.keywords = {"pll", "premier lacrosse"};
+    v.push_back({"S:Lacrosse",
+                 {college("lacrosse/mens-college-lacrosse", "Lacrosse", "NCAAML", "Men's College"),
+                  college("lacrosse/womens-college-lacrosse", "Lacrosse", "NCAAWL", "Women's College"), pll}});
+    v.push_back({"S:FieldHockey",
+                 {college("field-hockey/womens-college-field-hockey", "Field Hockey", "NCAAFH", "College")}});
+    v.push_back({"S:Softball", {college("baseball/college-softball", "Softball", "NCAASB", "College")}});
+    return v;
+  }();
+  return kLists;
+}
+
+}  // namespace
+
+const std::vector<League>& sportLeagues(std::string_view sportID) {
+  static const std::vector<League> kNone;
+  for (const SportList& list : sportLists()) {
+    if (list.id == sportID) return list.leagues;
+  }
+  return kNone;
+}
+
+const std::vector<League>& teamSportLeagues() {
+  static const std::vector<League> kAll = [] {
+    std::vector<League> v;
+    for (const SportList& list : sportLists()) v.insert(v.end(), list.leagues.begin(), list.leagues.end());
+    return v;
+  }();
+  return kAll;
+}
+
 const std::vector<League>& allLeagues() {
   static const std::vector<League> kAll = [] {
     std::vector<League> v = leagues();
-    for (const auto* list : {&fightLeagues(), &racingLeagues(), &tennisLeagues()}) {
+    for (const auto* list : {&fightLeagues(), &racingLeagues(), &tennisLeagues(), &teamSportLeagues()}) {
       v.insert(v.end(), list->begin(), list->end());
     }
     return v;
@@ -189,11 +267,15 @@ std::vector<League> activeLeagues(const MySportsPrefs& prefs, const SportFeedsSe
   }
   if (picked.count("S:Fighting")) out.insert(out.end(), fightLeagues().begin(), fightLeagues().end());
   for (const League& l : racingLeagues()) {
-    bool seenIt = l.shortName == "F1" ? seen.racingSeen(now) : seen.nascarSeen(now);
+    // F1 and NASCAR also when their feeds were seen lately; IndyCar when picked.
+    bool seenIt = l.shortName == "F1" ? seen.racingSeen(now) : l.shortName == "NASCAR" && seen.nascarSeen(now);
     if (picked.count("S:Motorsport") || seenIt) out.push_back(l);
   }
   if (picked.count("S:Tennis") || tennisSeen) {
     out.insert(out.end(), tennisLeagues().begin(), tennisLeagues().end());
+  }
+  for (const SportList& list : sportLists()) {
+    if (picked.count(list.id)) out.insert(out.end(), list.leagues.begin(), list.leagues.end());
   }
   return out;
 }

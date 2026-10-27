@@ -67,7 +67,8 @@ std::string liveDetail(const League& league, LivePhase phase, std::string_view n
   };
   std::string c(clock);
   if (str::startsWith(path, "football/") || str::endsWith(path, "/nba") || str::endsWith(path, "/wnba") ||
-      str::endsWith(path, "/womens-college-basketball")) {
+      str::endsWith(path, "/womens-college-basketball") || str::startsWith(path, "lacrosse/") ||
+      str::startsWith(path, "field-hockey/")) {
     if (period > 4) return (period - 4 > 1 ? std::to_string(period - 4) + "OT" : std::string("OT")) + " " + c;
     return "Q" + std::to_string(std::max(1, period)) + " " + c;
   }
@@ -80,7 +81,7 @@ std::string liveDetail(const League& league, LivePhase phase, std::string_view n
     if (period > 4) return "SO";
     return ordinal(std::max(1, period)) + " " + c;
   }
-  if (str::startsWith(path, "soccer/")) return c.empty() ? shortDetail.value_or("") : c;
+  if (str::startsWith(path, "soccer/") || str::startsWith(path, "rugby/")) return c.empty() ? shortDetail.value_or("") : c;
   return shortDetail.value_or(c);
 }
 
@@ -139,6 +140,25 @@ Statuses gameStatuses(std::string_view body, const League& league) {
     } else if (live.homeAggregate) {
       live.situation = "Aggregate " + std::to_string(*live.homeAggregate) + "\xE2\x80\x93" +
                        std::to_string(*live.awayAggregate);
+    }
+    // Volleyball: the score is sets won; the set on now and its points, in
+    // the tile's order ("Set 4 · 14–11").
+    if (on && str::startsWith(league.path, "volleyball/")) {
+      std::optional<int> homePoints, awayPoints;
+      size_t sets = 0;
+      for (const json::Value& competitor : competition["competitors"].items()) {
+        const json::Value::Array& lines = competitor["linescores"].items();
+        if (lines.empty()) continue;
+        sets = std::max(sets, lines.size());
+        bool home = text::text(competitor["homeAway"]) == std::optional<std::string>("home");
+        (home ? homePoints : awayPoints) = intOf(lines.back()["value"]);
+      }
+      if (sets && homePoints && awayPoints) {
+        bool homeFirst = profile(league.group).homeFirst;
+        int first = homeFirst ? *homePoints : *awayPoints, second = homeFirst ? *awayPoints : *homePoints;
+        live.situation = "Set " + std::to_string(sets) + " \xC2\xB7 " + std::to_string(first) + "\xE2\x80\x93" +
+                         std::to_string(second);
+      }
     }
     const json::Value& situation = competition["situation"];
     if ((phase == LivePhase::live || phase == LivePhase::delayed) && situation.isObject()) {
@@ -258,6 +278,21 @@ Statuses raceStatuses(std::string_view body, const League& league) {
       status.phase = phase;
       if (phase == LivePhase::final) {
         status.detail = "Final";
+        // The finishing order: "C. Bell" -> "BEL".
+        std::vector<std::pair<int, std::string>> order;
+        for (const json::Value& c : competition["competitors"].items()) {
+          auto place = intOf(c["order"]);
+          auto driver = text::text(c["athlete"]["shortName"]);
+          if (!driver) driver = text::text(c["athlete"]["displayName"]);
+          if (!place || *place < 1 || *place > 3 || !driver) continue;
+          std::vector<std::string> words = text::words(*driver);
+          if (words.empty()) continue;
+          order.push_back({*place, str::upper(text::prefix(words.back(), 3))});
+        }
+        std::sort(order.begin(), order.end());
+        if (order.size() == 3) {
+          for (auto& [place, code] : order) status.top3.push_back(code);
+        }
       } else if (phase == LivePhase::live || phase == LivePhase::delayed) {
         auto shortText = text::text(type["shortDetail"]);
         if (!shortText) shortText = text::text(type["detail"]);

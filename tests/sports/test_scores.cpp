@@ -397,3 +397,43 @@ TEST_CASE("soccer knockouts: penalties and the aggregate over two legs") {
   CHECK_FALSE(leg1.homeAggregate);
   CHECK_FALSE(leg1.situation);
 }
+
+TEST_CASE("new sports: rugby minutes, lacrosse quarters, volleyball sets, race top three") {
+  // Rugby: the running minute.
+  std::string rugby = R"({"events":[{"id":"1","competitions":[{
+      "status":{"displayClock":"64'","period":2,"type":{"name":"STATUS_SECOND_HALF","state":"in","shortDetail":"2nd Half"}},
+      "competitors":[{"homeAway":"home","score":"24"},{"homeAway":"away","score":"17"}]}]}]})";
+  LiveStatus r = statuses(rugby, L("6N")).at("6N|1");
+  CHECK(r.detail == "64'");
+  CHECK(r.homeScore == "24");
+
+  // Lacrosse: quarters as football reads them.
+  std::string lax = R"({"events":[{"id":"2","competitions":[{
+      "status":{"displayClock":"8:12","period":3,"type":{"name":"STATUS_IN_PROGRESS","state":"in","shortDetail":"8:12 - 3rd"}},
+      "competitors":[{"homeAway":"home","score":"11"},{"homeAway":"away","score":"9"}]}]}]})";
+  CHECK(statuses(lax, L("NCAAML")).at("NCAAML|2").detail == "Q3 8:12");
+  CHECK(statuses(lax, L("PLL")).at("PLL|2").detail == "Q3 8:12");
+
+  // Volleyball: sets won as the score, the set on now in the tile's order
+  // (away first, as US college tiles are).
+  std::string vb = R"({"events":[{"id":"3","competitions":[{
+      "status":{"period":4,"type":{"name":"STATUS_IN_PROGRESS","state":"in","shortDetail":"4th Set"}},
+      "competitors":[{"homeAway":"home","score":"2","linescores":[{"value":25.0},{"value":22.0},{"value":25.0},{"value":11.0}]},
+                     {"homeAway":"away","score":"1","linescores":[{"value":20.0},{"value":25.0},{"value":19.0},{"value":14.0}]}]}]}]})";
+  LiveStatus v = statuses(vb, L("NCAAWV")).at("NCAAWV|3");
+  CHECK(v.homeScore == "2");
+  CHECK(v.situation == "Set 4 \xC2\xB7 14\xE2\x80\x93" "11");
+  // Over: no set line.
+  std::string vbDone = R"({"events":[{"id":"4","competitions":[{
+      "status":{"period":3,"type":{"name":"STATUS_FINAL","state":"post","shortDetail":"Final"}},
+      "competitors":[{"homeAway":"home","score":"3","linescores":[{"value":25.0}]},{"homeAway":"away","score":"0","linescores":[{"value":12.0}]}]}]}]})";
+  CHECK_FALSE(statuses(vbDone, L("NCAAWV")).at("NCAAWV|4").situation);
+
+  // A finished race: the top three by finishing order.
+  std::string race = R"({"events":[{"id":"5","competitions":[{"id":"9",
+      "status":{"type":{"name":"STATUS_FINAL","state":"post","completed":true}},
+      "competitors":[{"order":2,"athlete":{"shortName":"T. Gibbs"}},{"order":1,"athlete":{"shortName":"C. Bell"}},
+                     {"order":3,"athlete":{"shortName":"T. Reddick"}},{"order":4,"athlete":{"shortName":"D. Hamlin"}}]}]}]})";
+  CHECK(statuses(race, L("NASCAR")).at("NASCAR|5|9").top3 == std::vector<std::string>{"BEL", "GIB", "RED"});
+  CHECK(statuses(race, L("IRL")).at("IRL|5|9").top3.size() == 3);
+}

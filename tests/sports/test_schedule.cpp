@@ -348,14 +348,32 @@ TEST_CASE("active leagues: the standard set until My Sports is set up, then pick
   prefs.leagues = {"NBA", "S:Fighting"};
   shorts.clear();
   for (const League& l : activeLeagues(prefs, seen, now)) shorts.insert(l.shortName);
-  CHECK(shorts == std::set<std::string>{"NBA", "UFC"});
+  CHECK(shorts == std::set<std::string>{"NBA", "UFC", "PFL"});
   // NASCAR feeds seen in the last two weeks: its schedule too.
   seen.nascar = now - 86'400;
   shorts.clear();
   for (const League& l : activeLeagues(prefs, seen, now)) shorts.insert(l.shortName);
-  CHECK(shorts == std::set<std::string>{"NBA", "UFC", "NASCAR"});
+  CHECK(shorts == std::set<std::string>{"NBA", "UFC", "PFL", "NASCAR"});
   seen.nascar = now - 15 * 86'400;
-  CHECK(activeLeagues(prefs, seen, now).size() == 2);
+  CHECK(activeLeagues(prefs, seen, now).size() == 3);
+  // A sport picked as a whole: its leagues. IndyCar only with Motorsport.
+  prefs.leagues = {"S:Rugby", "S:Volleyball", "S:Motorsport"};
+  shorts.clear();
+  for (const League& l : activeLeagues(prefs, seen, now)) shorts.insert(l.shortName);
+  CHECK(shorts.count("6N"));
+  CHECK(shorts.count("URC"));
+  CHECK(shorts.count("NCAAWV"));
+  CHECK(shorts.count("NCAAMV"));
+  CHECK(shorts.count("IRL"));
+  CHECK_FALSE(shorts.count("PLL"));
+  prefs.leagues = {"NBA"};
+  shorts.clear();
+  for (const League& l : activeLeagues(prefs, seen, now)) shorts.insert(l.shortName);
+  CHECK_FALSE(shorts.count("IRL"));
+  CHECK(leagueByShort("NCAASB"));
+  CHECK(leagueByShort("NCAASB")->path == "baseball/college-softball");
+  CHECK(sportLeagues("S:Lacrosse").size() == 3);
+  CHECK(sportLeagues("S:Nothing").empty());
 }
 
 TEST_CASE("sport feeds seen: F1, NASCAR and tennis, at most every 6 hours") {

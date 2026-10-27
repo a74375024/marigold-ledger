@@ -25,7 +25,7 @@ struct Profile {
   enum class Clock : uint8_t {
     Periods,  // "Q2 3:12", "2nd 14:05": count down through periods
     Innings,  // "Top 6th", "Bot 8th"
-    Minutes,  // "67'", "90'+3'" out of 95
+    Minutes,  // "67'", "90'+3'" out of clockMinutes
     None,     // no running clock (fight cards): progress goes by the time
   };
   // How the event's tile is laid out.
@@ -73,9 +73,12 @@ struct Profile {
   int quarterSeconds = 600;
   int periods = 3;
   int periodSeconds = 1200;
+  int clockMinutes = 95;  // Minutes: a whole game with stoppage time
+  int innings = 9;        // Innings: a regulation game
 
   Tile tile = Tile::Teams;
-  bool podium = false;  // a finished session's top three on the tile (F1)
+  bool podium = false;  // a finished session's top three on the tile (F1, from its race data)
+  bool podiumFromScores = false;  // the same from the scoreboard's finishing order (NASCAR, IndyCar)
   std::string symbol = "sportscourt.fill";  // icon on title-only tiles
   std::string chip;  // short league chip ("NCAAF"); empty = the league upper-cased
 };

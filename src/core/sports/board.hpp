@@ -415,6 +415,6 @@ std::string clockText(Seconds t, const time::Zone& zone, bool twelveHour);      
 std::string shortClockText(Seconds t, const time::Zone& zone, bool twelveHour);  // "8:00" / "20:00"
 std::string untilText(Seconds start, Seconds now);                               // "in 25 m", "in 2 h", ""
 // How far into the game the clock says it is (0..1), or nullopt.
-std::optional<double> clockProgress(const LiveStatus& status, std::string_view league);
+std::optional<double> clockProgress(const LiveStatus& status, std::string_view league, std::string_view leagueShort = {});
 
 }  // namespace marigold::sports::board

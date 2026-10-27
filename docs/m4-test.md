@@ -128,3 +128,16 @@ The guide's lists and the playback session now come from the shared engine. Each
 | Singles | Live Events with tennis on | Each player's country flag before the name; the three-letter code until it loads; no photo |
 | Doubles | A doubles match | Two small flags per pair (blank boxes until they load) |
 | Focused | Focus a tennis tile | Flags still clear on the white tile |
+
+## More sports with schedules and scores
+
+Pick each in Options › My Sports (More sports).
+
+| Area | How to check | Pass |
+|---|---|---|
+| Rugby | Pick Rugby; a Six Nations, Premiership, URC, Top 14 or Champions Cup match | Its own Rugby row; home first ("Ireland vs France"); the minute ("64'") and the score |
+| Volleyball | Pick Volleyball; a college match | Sets won as the score; footer "Set 4 · 14–11" while it's on |
+| Lacrosse, field hockey | Pick them; a college or PLL game | Score and "Q3 8:12" |
+| Softball | Pick Softball; a college game | Innings ("Bot 5th"), outs and count, runners on base |
+| PFL | Pick UFC, PFL, boxing & wrestling | PFL cards with Prelims and Main Card, like UFC |
+| IndyCar, NASCAR | Pick Racing; after a race, scores on | The race tile shows the top three ("1 BEL 2 GIB 3 RED") |

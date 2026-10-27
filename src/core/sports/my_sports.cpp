@@ -75,12 +75,16 @@ bool isFavorite(const MySportsPrefs& prefs, const SportsGame& game) {
 
 const std::vector<OtherSport>& otherSports() {
   static const std::vector<OtherSport> kSports = {
-      {"S:Fighting", "Fighting", "UFC, boxing & wrestling"},
+      {"S:Fighting", "Fighting", "UFC, PFL, boxing & wrestling"},
       {"S:Motorsport", "Motorsport", "Racing"},
       {"S:Tennis", "Tennis", "Tennis"},
       {"S:Golf", "Golf", "Golf"},
       {"S:Rugby", "Rugby", "Rugby"},
       {"S:Cricket", "Cricket", "Cricket"},
+      {"S:Volleyball", "Volleyball", "Volleyball"},
+      {"S:Lacrosse", "Lacrosse", "Lacrosse"},
+      {"S:FieldHockey", "Field Hockey", "Field hockey"},
+      {"S:Softball", "Softball", "Softball"},
       {"S:Darts", "Darts", "Darts"},
   };
   return kSports;

@@ -49,7 +49,14 @@ const std::vector<League>& fightLeagues();
 const std::vector<League>& racingLeagues();
 // Tennis: this week's tournaments (one request per tour lists every match).
 const std::vector<League>& tennisLeagues();
-// leagues + fights + racing + tennis.
+// Sports picked as a whole in My Sports, each with its own leagues (picked
+// with "S:Rugby", "S:Volleyball"...): rugby's competitions, college
+// volleyball, lacrosse (college and PLL), field hockey and softball. Team
+// games, read like the leagues above.
+const std::vector<League>& sportLeagues(std::string_view sportID);
+// Every league of those sports.
+const std::vector<League>& teamSportLeagues();
+// leagues + fights + racing + tennis + teamSportLeagues.
 const std::vector<League>& allLeagues();
 const League* leagueByShort(std::string_view shortName);
 

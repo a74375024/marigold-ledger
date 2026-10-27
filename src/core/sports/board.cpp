@@ -628,7 +628,11 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
     if (!s.detail.empty()) place.clock = s.detail;
     if (s.phase == LivePhase::pre && event.start && now > *event.start) place.notStarted = true;
     if (s.phase == LivePhase::final) place.endedAt = endedAt;
-    if (isLivePhase(s.phase)) place.liveProgress = clockProgress(s, game.league);
+    if (isLivePhase(s.phase)) place.liveProgress = clockProgress(s, game.league, game.leagueShort);
+    if (showsScores && game.isRacing() && s.top3.size() == 3 && profile(game.league, game.leagueShort).podiumFromScores) {
+      for (const std::string& code : s.top3) place.podium.push_back({code, std::nullopt});
+      place.podiumLabel = race_session::name("race");
+    }
     if (showsScores && s.phase == LivePhase::live && s.redZone) {
       place.tag = std::string("RED ZONE");
       place.tagAlert = true;
@@ -903,6 +907,8 @@ Tile makeTile(const SportsEvent& event, const Place& place, const std::string& r
     tile.sides.back().pens = place.bottomPens;
   } else {
     tile.layout = Tile::Layout::plain;
+    tile.podium = place.podium;
+    tile.podiumLabel = place.podiumLabel;
   }
 
   // Footer.
@@ -1031,8 +1037,8 @@ std::string untilText(Seconds start, Seconds now) {
   return "in " + std::to_string((minutes + 30) / 60) + " h";
 }
 
-std::optional<double> clockProgress(const LiveStatus& status, std::string_view league) {
-  const Profile& p = profile(league);
+std::optional<double> clockProgress(const LiveStatus& status, std::string_view league, std::string_view leagueShort) {
+  const Profile& p = profile(league, leagueShort);
   if (p.clock == Profile::Clock::None) return std::nullopt;
   const std::string& detail = status.detail;
   if (detail == "Halftime") return 0.5;
@@ -1047,7 +1053,7 @@ std::optional<double> clockProgress(const LiveStatus& status, std::string_view l
   if (p.clock == Profile::Clock::Minutes) {
     // "67'", "90'+3'".
     if (!digits) return std::nullopt;
-    return std::min(1.0, *digits / 95.0);
+    return std::min(1.0, *digits / static_cast<double>(p.clockMinutes));
   }
   if (p.clock == Profile::Clock::Innings) {
     // "Top 6th", "Mid 5th", "Bot 8th", "End 5th".
@@ -1060,7 +1066,7 @@ std::optional<double> clockProgress(const LiveStatus& status, std::string_view l
     if (!inning) return std::nullopt;
     std::string h = str::lower(head);
     double half = h == "top" ? 0 : (h == "mid" || h == "bot") ? 0.5 : 1;
-    return std::min(1.0, std::max(0.0, (*inning - 1 + half + 0.25) / 9));
+    return std::min(1.0, std::max(0.0, (*inning - 1 + half + 0.25) / p.innings));
   }
   if (str::endsWith(head, "OT") || head == "SO") return 1.0;
   if (pieces.size() < 2) return std::nullopt;

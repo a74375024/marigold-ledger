@@ -85,18 +85,25 @@ const std::vector<Profile>& table() {
     Profile milb = baseball("MiLB");
     milb.tile = Tile::Title;
     v.push_back(milb);
-    Profile softball = base("Softball", 9'000, "baseball.fill");
-    softball.suspendResumes = true;
-    softball.doubleheaders = true;
+    Profile softball = baseball("Softball", 7'200);  // 2 h, 7 innings
+    softball.innings = 7;
     v.push_back(softball);
 
     Profile nhl = base("NHL", 9'360, "hockey.puck.fill", Tile::Teams);
     nhl.completeSchedule = true;
     v.push_back(nhl);
     v.push_back(base("Hockey", 9'360, "hockey.puck.fill"));
-    Profile fieldHockey = base("Field Hockey", 9'000, "figure.field.hockey");
+    Profile fieldHockey = base("Field Hockey", 6'300, "figure.field.hockey", Tile::Teams);  // 1.75 h
     fieldHockey.chip = "FIELD H.";
+    fieldHockey.quarterSeconds = 900;
     v.push_back(fieldHockey);
+
+    // 80 minutes and halftime; the clock runs on past 80 until the ball is dead.
+    Profile rugby = base("Rugby", 7'200, "figure.rugby", Tile::Teams);
+    rugby.homeFirst = true;
+    rugby.clock = Clock::Minutes;
+    rugby.clockMinutes = 85;
+    v.push_back(rugby);
 
     v.push_back(soccer("Soccer"));
     v.push_back(soccer("MLS"));
@@ -134,7 +141,14 @@ const std::vector<Profile>& table() {
     nascar.leagueShort = "NASCAR";
     nascar.length = 13'500;  // 3.75 h
     nascar.parts = Parts::None;
+    nascar.podiumFromScores = true;
     v.push_back(nascar);
+    Profile indycar = motorsport;
+    indycar.leagueShort = "IRL";
+    indycar.length = 10'800;  // 3 h
+    indycar.parts = Parts::None;
+    indycar.podiumFromScores = true;
+    v.push_back(indycar);
 
     // A later match on a court can start hours after its listed time; a
     // long match runs well past its usual length.
@@ -155,12 +169,20 @@ const std::vector<Profile>& table() {
     cricket.suspendResumes = true;
     v.push_back(cricket);
 
-    Profile volleyball = base("Volleyball", 9'000, "volleyball.fill");
+    // Best of five sets; no running clock (progress goes by the time).
+    Profile volleyball = base("Volleyball", 7'200, "volleyball.fill", Tile::Teams);
     volleyball.chip = "VOLLEY";
+    volleyball.clock = Clock::None;
     v.push_back(volleyball);
-    Profile lacrosse = base("Lacrosse", 9'000, "figure.lacrosse");
+    Profile lacrosse = base("Lacrosse", 8'100, "figure.lacrosse", Tile::Teams);  // 2.25 h, four 15-minute quarters
     lacrosse.chip = "LAX";
+    lacrosse.quarterSeconds = 900;
     v.push_back(lacrosse);
+    Profile pll = lacrosse;  // four 12-minute quarters
+    pll.leagueShort = "PLL";
+    pll.length = 7'200;
+    pll.quarterSeconds = 720;
+    v.push_back(pll);
     return v;
   }();
   return kTable;
