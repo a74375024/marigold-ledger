@@ -47,14 +47,13 @@
 			</array>
 		</dict>
 	</dict>
-	<!-- Live TV links are plain http as often as not, on any host. -->
+	<!-- Live TV links are plain http as often as not, on any host. Only
+	     NSAllowsArbitraryLoads: with NSAllowsArbitraryLoadsForMedia or
+	     NSAllowsLocalNetworking beside it, tvOS 10 and later ignore it and
+	     block plain http to the internet (sign-in fails with -1022). -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-		<key>NSAllowsArbitraryLoadsForMedia</key>
-		<true/>
-		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>

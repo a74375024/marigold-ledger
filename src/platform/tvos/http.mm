@@ -62,6 +62,9 @@ std::string errorCode(NSError* e) {
     case NSURLErrorServerCertificateNotYetValid:
     case NSURLErrorClientCertificateRejected:
     case NSURLErrorClientCertificateRequired: return "transport (tls)";
+    case NSURLErrorAppTransportSecurityRequiresSecureConnection: return "transport (ats)";  // Info.plist
+    case NSURLErrorBadURL:
+    case NSURLErrorUnsupportedURL: return "transport (url)";
     case NSURLErrorHTTPTooManyRedirects: return "redirect";
     default: return "transport";
   }
