@@ -107,3 +107,14 @@ The guide's lists and the playback session now come from the shared engine. Each
 |---|---|---|
 | Nothing else moved | Browse Live Events with games of several sports on | Same tiles, times, "may have ended", icons and chips as before |
 | Whole-word sports | Live Events after the first launch (the channel list is sorted again once) | No shows filed under a sport because a word hid inside another ("conflict", "multiple", "obligation"); "… FC" games found in Soccer |
+
+## Sport profiles (steps 3–5) and runners on base
+
+| Area | How to check | Pass |
+|---|---|---|
+| Golf, cricket | A golf or cricket broadcast with a long guide listing | Stays LIVE until the listing ends (up to 12 h), then "Likely over" |
+| Long tennis | A men's Grand Slam singles match | LIVE for about 4 h before "Likely over" |
+| Soccer knockouts | A cup or playoff match without live scores | "Likely over" lasts about an hour (extra time, penalties) before it ends |
+| Suspended | A baseball or tennis game suspended by rain (scores on) | Yellow SUSPENDED pill, still in Live now; football or soccer "suspended" still reads POSTPONED |
+| Doubleheader | An MLB doubleheader with provider feeds that give no time | Game 1's tile has them until game 2 starts, then game 2's; a "Game 2" feed goes to game 2 |
+| Runners on base | A live baseball game, scores on | A small diamond before "2 outs · 1-2"; filled bases match the runners |
