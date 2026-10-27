@@ -26,7 +26,8 @@ namespace marigold::catalog::cache {
 // 2: three-letter Xtream group codes read as countries ("USA|" is US).
 // 3: a too-small numbered family no longer leaves its channels as events.
 // 7: free streaming decided by all of a channel's copies.
-constexpr int kVersion = 7;
+// 8: sport words in event titles count only as whole words.
+constexpr int kVersion = 8;
 
 enum class Part { first, full };
 

@@ -377,7 +377,7 @@ std::string leagueFor(std::string_view family, std::string_view group, std::stri
   std::string titleText = str::lower(title);
   std::string all =
       str::lower(std::string(family) + " " + std::string(group) + " " + std::string(title));
-  auto has = [&](std::string_view w) { return text::contains(all, w); };
+  auto has = [&](std::string_view w) { return text::hasWord(all, w); };
   // 1. A sport named at the start of the title ("Football: ...",
   // "volleyball:  ...") says more than the channel's group.
   if (auto m = text::firstMatch("^\\s*[a-z][a-z ]{1,20}(?=:)", titleText)) {

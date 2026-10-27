@@ -2,6 +2,7 @@
 // deduplication keys and league detection.
 #include "catalog/helpers.hpp"
 #include "core/catalog/catalog.hpp"
+#include "core/catalog/text.hpp"
 #include "doctest.h"
 
 using namespace marigold;
@@ -185,3 +186,39 @@ TEST_CASE("leagueFor: a sport named first, then words, fights before soccer") {
   CHECK(leagueFor("x", "", "Something Else") == "Other");
 }
 
+
+TEST_CASE("sport words count only as whole words") {
+  // Words that used to hide inside others.
+  CHECK(leagueFor("x", "", "Conflict Zone: The Documentary") == "Other");      // nfl
+  CHECK(leagueFor("x", "", "The Influencers Live") == "Other");                // nfl
+  CHECK(leagueFor("x", "", "Multiple Choice Quiz Night") == "Other");          // ipl
+  CHECK(leagueFor("x", "", "A Moral Obligation") == "Other");                  // liga
+  CHECK(leagueFor("x", "", "Reunited: Family Special") == "Other");            // united
+  // Still found.
+  CHECK(leagueFor("x", "", "NFL: Team A at Team B") == "NFL");
+  CHECK(leagueFor("x", "", "Team A vs Team B (NBA)") == "NBA");
+  CHECK(leagueFor("x", "", "Team A vs Harbor FC") == "Soccer");                 // "fc" at the end
+  CHECK(leagueFor("x", "", "Harbor United vs Team B") == "Soccer");
+  CHECK(leagueFor("x", "", "Liga MX: Team A vs Team B") == "Soccer");
+  CHECK(leagueFor("x", "", "UFC 300: Main Card") == "Fighting");                // not soccer's "fc"
+  CHECK(leagueFor("x", "", "Formula1 Grand Prix") == "Motorsport");             // digits don't join words
+  CHECK(leagueFor("x", "", "F1: Practice 1") == "Motorsport");
+  CHECK(leagueFor("x", "", "LIV Golf: Round 2") == "Golf");
+  CHECK(leagueFor("x", "", "IPL: Team A vs Team B") == "Cricket");
+  CHECK(leagueFor("x", "", "Men's Basketball: Team A vs Team B") == "College Basketball");
+}
+
+TEST_CASE("whole words") {
+  CHECK(text::hasWord("nfl sunday", "nfl"));
+  CHECK(text::hasWord("sunday nfl", "nfl"));
+  CHECK(text::hasWord("(nfl)", "nfl"));
+  CHECK_FALSE(text::hasWord("conflict", "nfl"));
+  CHECK_FALSE(text::hasWord("nfls", "nfl"));
+  CHECK(text::hasWord("nfl2024", "nfl"));
+  CHECK(text::hasWord("women's", "women"));
+  CHECK_FALSE(text::hasWord("womens", "women"));
+  CHECK(text::hasWord("harbor fc", "fc "));     // spaces around a word are ignored
+  CHECK_FALSE(text::hasWord("ufc 300", "fc "));
+  CHECK_FALSE(text::hasWord("f\xc3\xbatbol", "tbol"));  // accented letters join words
+  CHECK_FALSE(text::hasWord("anything", " "));
+}

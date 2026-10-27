@@ -1,3 +1,4 @@
+#include "core/catalog/text.hpp"
 #include "core/sports/my_sports.hpp"
 
 #include <algorithm>
@@ -133,7 +134,7 @@ std::map<std::string, int> suggestionCounts(const std::vector<catalog::LiveEvent
       }
       if (!league.keywords.empty()) {
         bool named = std::any_of(league.keywords.begin(), league.keywords.end(),
-                                 [&](const std::string& k) { return text.find(k) != std::string::npos; });
+                                 [&](const std::string& k) { return catalog::text::hasWord(text, k); });
         if (!named) continue;
       } else if (league.shortName == "NCAAM" && text.find("women") != std::string::npos) {
         continue;

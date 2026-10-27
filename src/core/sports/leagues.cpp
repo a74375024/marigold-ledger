@@ -58,7 +58,7 @@ const std::vector<League>& leagues() {
     wcb.extra = "&groups=50";
     wcb.mode = League::Mode::days;
     wcb.days = 3;
-    wcb.keywords = {"women"};
+    wcb.keywords = {"women", "womens"};
     v.push_back(wcb);
     v.push_back(standard(make("baseball/mlb", "MLB", "MLB", "MLB", "Baseball", false)));
     v.push_back(standard(make("hockey/nhl", "NHL", "NHL", "NHL", "Hockey", false)));

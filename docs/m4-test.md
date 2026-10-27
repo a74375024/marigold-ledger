@@ -100,3 +100,10 @@ The guide's lists and the playback session now come from the shared engine. Each
 | Backup takes over | A channel whose first feed fails | Same retries, then the next feed; the corner card says which feed took over |
 | HLS and Emby | A channel with an HLS feed, and an Emby channel | Both start as before (HLS through the local relay, Emby opened on the server) |
 | Playback log | Export Playback Log after the above | Tunes, retries and memory lines as before; no links |
+
+## Sport profiles (steps 1–2)
+
+| Area | How to check | Pass |
+|---|---|---|
+| Nothing else moved | Browse Live Events with games of several sports on | Same tiles, times, "may have ended", icons and chips as before |
+| Whole-word sports | Live Events after the first launch (the channel list is sorted again once) | No shows filed under a sport because a word hid inside another ("conflict", "multiple", "obligation"); "… FC" games found in Soccer |
