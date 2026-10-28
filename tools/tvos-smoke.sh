@@ -24,13 +24,16 @@ xcrun simctl install "$udid" "$app"
 xcrun simctl launch "$udid" org.marigold.app -MarigoldKeyboardSelfTest YES
 sleep 30
 log="$(xcrun simctl spawn "$udid" log show --style compact --last 5m --predicate 'subsystem == "org.marigold.app"' || true)"
-echo "$log" | tail -n 40
+tail -n 40 <<<"$log"
 fail=0
-xcrun simctl spawn "$udid" launchctl list | grep -q "org.marigold.app" || { echo "smoke: the app is not running"; fail=1; }
+# Whole outputs first, then grep them: `grep -q` leaves a pipe early, and
+# with pipefail the writer's broken pipe would read as a failed check.
+running="$(xcrun simctl spawn "$udid" launchctl list || true)"
+grep -q "org.marigold.app" <<<"$running" || { echo "smoke: the app is not running"; fail=1; }
 for want in "window\] tvOS" "GPU " "first frame shown" "keyboard\] self-test: ok"; do
-  echo "$log" | grep -q "$want" || { echo "smoke: no \"$want\" in the log"; fail=1; }
+  grep -q "$want" <<<"$log" || { echo "smoke: no \"$want\" in the log"; fail=1; }
 done
-if echo "$log" | grep -qE "renderer init failed|shader compile failed|pipeline failed|no Metal layer"; then
+if grep -qE "renderer init failed|shader compile failed|pipeline failed|no Metal layer" <<<"$log"; then
   echo "smoke: drawing failed"; fail=1
 fi
 [ "$fail" = 0 ] && echo "smoke: ok"
