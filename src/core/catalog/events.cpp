@@ -506,7 +506,9 @@ std::string leagueFor(std::string_view family, std::string_view group, std::stri
       {"Soccer",
        {"uefa", "premier league", "champions league", "la liga", "laliga", "serie a", "bundesliga",
         "ligue1", "ligue 1", "football event", "soccer", "fc ", " united", "liga", "eredivisie",
-        "a-league", "concacaf", "nwsl"}},
+        "a-league", "concacaf", "nwsl",
+        // Club initials of the Balkans and the north ("KF Vllaznia", "Vora FK", "NK Osijek").
+        "kf", "ks", "fk", "nk", "afc"}},
       {"Motorsport",
        {"f1", "formula", "nascar", "indycar", "motogp", "rally", "wrc", "supercross", "motocross"}},
       {"Tennis", {"wta", "atp", "tennis"}},

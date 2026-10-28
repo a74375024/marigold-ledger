@@ -1,6 +1,8 @@
 #include "core/sports/types.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <set>
 
 #include "core/sports/profiles.hpp"
 #include "core/sports/text.hpp"
@@ -11,16 +13,37 @@ namespace marigold::sports {
 
 std::string SportsTeam::abbreviation() const {
   if (shortName && !shortName->empty() && text::count(*shortName) <= 4) return str::upper(*shortName);
+  // Letters only ("D'Youville" is one word), split at spaces and hyphens
+  // ("Colby-Sawyer" is two).
+  std::string letters = str::replaceAll(str::replaceAll(name, "'", ""), "\xE2\x80\x99", "");
   std::vector<std::string> words;
-  for (const std::string& w : text::words(name)) {
+  for (const std::string& w : text::words(str::replaceAll(letters, "-", " "))) {
     if (text::startsWithLetter(w)) words.push_back(w);
   }
+  // A run of capitals at a word's start stays whole: "UMass" -> UM, "UConn" -> UC.
+  auto lead = [](const std::string& w) {
+    size_t n = 0;
+    while (n < w.size() && n < 3 && std::isupper(static_cast<unsigned char>(w[n]))) ++n;
+    bool run = n >= 2 && n < w.size() && std::islower(static_cast<unsigned char>(w[n]));
+    return run ? w.substr(0, n) : text::firstCharacter(w);
+  };
+  std::string out;
   if (words.size() >= 2) {
-    std::string out;
-    for (size_t i = 0; i < words.size() && i < 3; ++i) out += text::firstCharacter(words[i]);
-    return str::upper(out);
+    for (size_t i = 0; i < words.size() && text::count(out) < 3; ++i) out += lead(words[i]);
+    out = text::prefix(out, 3);
+  } else {
+    out = text::prefix(words.empty() ? name : words.front(), 3);
   }
-  return str::upper(text::prefix(name, 3));
+  out = str::upper(out);
+  // Three letters that spell something they shouldn't: the first two and the last.
+  static const std::set<std::string> kAvoid = {"ASS", "FUK", "FUC", "FAG", "SEX", "CUM", "DIK", "DIC", "NIG",
+                                               "TIT", "POO", "PEE", "GAY", "KKK", "WTF", "XXX", "HOE", "SUK",
+                                               "COK", "COC", "JIZ", "PUS", "PIS", "SHT", "VAG", "NAZ"};
+  if (kAvoid.count(out) && words.size() == 1 && text::count(words.front()) > 3) {
+    std::string w = str::upper(words.front());
+    out = text::prefix(w, 2) + w.substr(w.size() - 1);
+  }
+  return out;
 }
 
 bool SportsTeam::operator==(const SportsTeam& o) const {

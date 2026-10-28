@@ -200,9 +200,11 @@ TEST_CASE("groups inside a row and which games a row shows") {
   Board b = build(in);
   const Row& r = row(b, "sport|NFL");
   CHECK(r.grouped);
-  CHECK(groupLabels(r) == std::vector<std::string>{"Live", "Final", "Earlier", "Starting Soon", "Later Today",
+  // What's on, what's still to come today, today's results, then the days ahead.
+  CHECK(groupLabels(r) == std::vector<std::string>{"Live", "Earlier", "Starting Soon", "Later Today", "Final",
                                                    "Tomorrow", "Monday", "Shows", "Postponed",
                                                    "Not in your channels"});
+  CHECK(tile(b, "sev|NFL|final").statusText.rfind("ended ", 0) == 0);
   CHECK(std::count(r.eventIDs.begin(), r.eventIDs.end(), ended) == 0);
   CHECK(std::count(r.eventIDs.begin(), r.eventIDs.end(), far) == 0);
   CHECK(r.groups[0].tiles[0].id == live);
@@ -212,8 +214,11 @@ TEST_CASE("groups inside a row and which games a row shows") {
   CHECK(tile(b, "show").tag == "STUDIO");
   CHECK(tile(b, "show").pill == Pill::onNow);
   CHECK(tile(b, "show").pillText == "ON NOW");
-  // Finished over 30 minutes ago: off the board.
-  in.finalSeen["NFL|final"] = kNow - 40 * 60;
+  // Over when first looked at: its end worked out from its start ("~").
+  in.finalSeen["NFL|final"] = 0;
+  CHECK(tile(build(in), "sev|NFL|final").statusText.rfind("ended ~", 0) == 0);
+  // Finished over 12 hours ago: off the board.
+  in.finalSeen["NFL|final"] = kNow - 13 * 3600;
   Board later = build(in);
   const Row& laterRow = row(later, "sport|NFL");
   CHECK(std::count(laterRow.eventIDs.begin(), laterRow.eventIDs.end(), "sev|NFL|final") == 0);
@@ -430,7 +435,8 @@ TEST_CASE("sides: short names, abbreviations, colors, scores, possession, ranks;
   CHECK(tile(plain, "p2").title == "Harbor Grand Prix");
   CHECK(tile(plain, "p2").subtitle == "F1");
   CHECK(tile(plain, "p2").icon == "motorsport");
-  CHECK(tile(plain, "p3").subtitle == "Golf");
+  // The sport isn't repeated under the title: the tile already says it.
+  CHECK_FALSE(tile(plain, "p3").subtitle);
 }
 
 TEST_CASE("title tiles: stages as tags, team colours, people, icons") {

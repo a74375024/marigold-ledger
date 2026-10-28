@@ -53,6 +53,8 @@ section.row h2 small{color:var(--sub);font-weight:500;font-size:13px}
 .ttl{font-size:17px;font-weight:700;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .subt{font-size:13px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sym{font-size:22px;margin-right:6px}
+.ico{display:inline-block;width:22px;height:22px;margin-right:8px;vertical-align:-4px}
+.ico svg{width:22px;height:22px}
 .lead{display:flex;gap:8px;font-size:14px}
 .lead b{width:26px;color:var(--sub)}
 .lead span:last-child{margin-left:auto}
@@ -105,6 +107,7 @@ aside code{font-size:12px;color:var(--sub);word-break:break-all}
 <aside id="card"><button class="chip close" onclick="closeCard()">Close</button><div id="cardBody"></div></aside>
 <script>
 const DATA = __DATA__;
+const ICONS = __ICONS__;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const PILL = {live:'LIVE', liveOutline:'LIVE', onNow:'ON NOW', delayed:'DELAYED', likelyOver:'LIKELY OVER',
@@ -128,7 +131,8 @@ function tileHtml(t, row) {
   if (t.sides.length === 2) {
     body = sideLine(t.sides[0]) + sideLine(t.sides[1]);
   } else {
-    body = `<div class="ttl">${t.symbol ? `<span class="sym">${esc(t.symbol)}</span>` : ''}${esc(t.title)}</div>`;
+    const icon = ICONS[t.icon] ? `<span class="ico">${ICONS[t.icon]}</span>` : (t.symbol ? `<span class="sym">${esc(t.symbol)}</span>` : '');
+    body = `<div class="ttl">${icon}${esc(t.title)}</div>`;
     if (t.subtitle) body += `<div class="subt">${esc(t.subtitle)}</div>`;
     if (t.leaders.length) body += t.leaders.slice(0, 2).map(l => `<div class="lead"><b>${esc(l.pos)}</b><span>${esc(l.name)}</span><span>${esc(l.score)}${l.thru ? ` · ${esc(l.thru)}` : ''}</span></div>`).join('');
     if (t.parts.length) body += `<div class="parts">${t.parts.map(p => `<div class="${p.current ? 'cur' : ''}" title="${esc(p.label)}"><i style="width:${Math.round(p.fill * 100)}%"></i></div>`).join('')}</div>`;

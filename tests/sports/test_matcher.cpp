@@ -704,3 +704,24 @@ TEST_CASE("tennis: a tournament's feed is each of that day's matches") {
   CHECK(tennisTargets("WTA Tennis", "", std::nullopt, noon, all, games).empty());
   CHECK(tennisTargets("Player vs Racket", "", std::nullopt, noon, all, games).empty());
 }
+
+TEST_CASE("shows: titles that name no teams, a network and a sport, old years") {
+  CHECK(isTeamSportShow("The Harbor Collective", "Basketball"));
+  CHECK(isTeamSportShow("Hawk Talk with Coach Harbor", "Football"));
+  CHECK_FALSE(isTeamSportShow("Harbor Hawks vs Valley Bears", "Football"));
+  CHECK_FALSE(isTeamSportShow("Harbor Bowl", "College Football"));
+  CHECK_FALSE(isTeamSportShow("Harbor Series Game 4", "MLB"));
+  CHECK_FALSE(isTeamSportShow("Harbor Open", "Golf"));  // not a team sport
+  CHECK(isStudioShow("Baseball Tonight"));
+  CHECK(isStudioShow("HarborWrestling Radio Live"));
+  CHECK(isStudioShow("Race Day Live"));
+  CHECK_FALSE(isStudioShow("Tonight: Harbor vs Valley"));
+  CHECK(isNetworkAndSport("ESPN B\xC3\xA9isbol"));
+  CHECK(isNetworkAndSport("Fox Soccer"));
+  CHECK_FALSE(isNetworkAndSport("Harbor Soccer"));
+  Seconds now = utc(2026, 10, 28, 12, 0);
+  CHECK(namesPastYear("2024 Round 5: Harbor City", now));
+  CHECK_FALSE(namesPastYear("Harbor v Valley PREM Rugby Round 5 2026/27", now));
+  CHECK_FALSE(namesPastYear("2025-26 Harbor Cup", now));
+  CHECK_FALSE(namesPastYear("Harbor City GP 2026", now));
+}

@@ -667,7 +667,8 @@ void LiveScores::apply(const Statuses& fresh, Seconds now, const std::vector<Spo
       // Seen ending now, or already over when first looked at.
       bool wasLive = old != statuses_.end() &&
                      (old->second.phase == LivePhase::live || old->second.phase == LivePhase::delayed);
-      finalSeen_[id] = wasLive ? now : now - 20 * 60;
+      // 0: already over when first looked at (when it ended isn't known).
+      finalSeen_[id] = wasLive ? now : 0;
     }
     statuses_[id] = status;
     changed = true;

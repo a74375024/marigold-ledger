@@ -107,7 +107,7 @@ struct Input {
   std::vector<catalog::EventFamily> families;
   MySportsPrefs prefs;
   scores::Statuses statuses;
-  std::map<std::string, Seconds> finalSeen;
+  std::map<std::string, Seconds> finalSeen;  // LiveScores::finalSeen (0: when unknown)
   std::vector<WhipChannel> whips;
   Seconds now = 0;
   time::Zone zone = time::Zone::device();

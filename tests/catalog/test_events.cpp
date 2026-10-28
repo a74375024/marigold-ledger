@@ -249,6 +249,8 @@ TEST_CASE("sport words count only as whole words") {
   CHECK(leagueFor("x", "PPV", "Ring of Honor Wrestling") == "Pro Wrestling");
   CHECK(leagueFor("x", "", "Wrestling: Team A at Team B") == "Wrestling");
   CHECK(leagueFor("x", "", "UFC Fight Night") == "Fighting");
+  CHECK(leagueFor("x", "", "KS Harbor vs. KF Valley") == "Soccer");
+  CHECK(leagueFor("x", "", "Harbor FK vs. Valley") == "Soccer");
 }
 
 TEST_CASE("whole words") {

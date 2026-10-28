@@ -211,6 +211,16 @@ const std::map<std::string, std::set<std::string>>& sportFamilies();
 // A studio show (pregame, countdown, kickoff show, weigh-ins...) rather
 // than a game: kept out of Live now, at the end of its sport's row.
 bool isStudioShow(std::string_view title);
+// A title in a sport played by two teams that names neither ("The Hoop
+// Collective", "Hawk Talk"): a show, unless it's named after an event
+// ("Rose Bowl", "Game 4", "Regional Final").
+bool isTeamSportShow(std::string_view title, std::string_view league);
+// A year before this one in the title ("2024 Round 5"; a "2025/26" season
+// still counts): an old event shown again.
+bool namesPastYear(std::string_view title, Seconds now);
+// Only a network and a sport ("ESPN Beisbol", "Fox Soccer"): a channel's
+// name, not an event.
+bool isNetworkAndSport(std::string_view title);
 // Studio and highlight shows around a game, not the game itself (`text`
 // is normalized).
 bool excluded(std::string_view text);

@@ -153,6 +153,18 @@ TEST_CASE("abbreviations: the schedule's, else initials") {
   CHECK(t.abbreviation() == "TEA");
   t.name = "Team A 2";
   CHECK(t.abbreviation() == "TA");
+  // Hyphens split words, apostrophes don't; a run of capitals stays whole.
+  t.name = "Harbor-Valley";
+  CHECK(t.abbreviation() == "HV");
+  t.name = "D'Harbor";
+  CHECK(t.abbreviation() == "DHA");
+  t.name = "UHarbor Valley";
+  CHECK(t.abbreviation() == "UHV");
+  t.name = "UHarbor Coast";
+  CHECK(t.abbreviation() == "UHC");
+  // Never three letters that spell a rude word.
+  t.name = "Assumption";
+  CHECK(t.abbreviation() == "ASN");
 }
 
 TEST_CASE("fight cards: one game per part, by segment or by time") {
@@ -674,4 +686,15 @@ TEST_CASE("golf: a tournament as its round on now") {
   auto back = gameFromJson(toJson(g));
   REQUIRE(back);
   CHECK(back->isGolf());
+}
+
+TEST_CASE("schedule: racing also asks for the coming Sunday (the next race weekend)") {
+  League f1;
+  f1.mode = League::Mode::current;
+  f1.racing = true;
+  // Wednesday 28 October 2026: also Sunday 1 November.
+  auto q = queriesFor(f1, utc(2026, 10, 28, 15, 0), time::Zone::utc());
+  CHECK(q == std::vector<std::string>{"", "dates=20261101"});
+  f1.racing = false;
+  CHECK(queriesFor(f1, utc(2026, 10, 28, 15, 0), time::Zone::utc()) == std::vector<std::string>{""});
 }

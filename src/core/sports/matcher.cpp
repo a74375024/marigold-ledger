@@ -894,6 +894,11 @@ std::optional<BuildResult> build(const BuildInput& in) {
   std::set<std::string> scheduledOrgs;
   for (const auto& [card, indices] : cards) scheduledOrgs.insert(text::components(card, "|").front());
   auto notAnEvent = [&](const ProviderEvent& event) {
+    // "2024 Round 5: Detroit": an old race or game shown again.
+    if (namesPastYear(event.title, now)) {
+      stats.replays += 1;
+      return true;
+    }
     bool old = excluded(normalized(event.title));
     if (profile(event.league).gamesOnly && !board::whipNamed(event.title)) {
       if (old || !looksLikeGame(event.title)) {
@@ -1475,10 +1480,66 @@ bool isStudioShow(std::string_view title) {
       " studio ",     " fantasy ",    " the herd ",   " pti ",        " pre race ",   " post race ",
       " build up ",   " buildup ",    " notebook ",   " paddock ",    " race show ",  " pre show ",
       " post show ",  " prerace ",    " postrace ",   " post fight ", " pre fight ",  " fight conference ",
-      " qualifying replay "};
+      " qualifying replay ", " radio ",    " podcast ",    " tonight ",    " talk ",      " hour ",
+      " insider ",    " insiders ",   " report ",     " daily ",      " roundtable ", " magazine ",
+      " weekly ",     " race day live ", " center ",  " show "};
   std::string t = normalized(title);
   for (const char* w : kStudio) {
     if (has(t, w)) return true;
+  }
+  return false;
+}
+
+bool isTeamSportShow(std::string_view title, std::string_view league) {
+  // Sports played by two teams: an event in them names both.
+  static const std::set<std::string> kTeamSports = {
+      "NFL",    "College Football", "Football", "NBA",     "WNBA",     "College Basketball", "Basketball",
+      "MLB",    "MiLB",             "Baseball", "NHL",     "Hockey",   "MLS",                "Soccer",
+      "Volleyball", "Field Hockey", "Softball", "Lacrosse"};
+  if (!kTeamSports.count(std::string(league)) || looksLikeGame(title)) return false;
+  std::string t = normalized(title);
+  // Named after a real event, not a team: still an event.
+  static const char* const kEvent[] = {
+      " bowl ",       " final ",      " finals ",     " championship ", " championships ", " cup ",
+      " tournament ", " classic ",    " series ",     " playoff ",    " playoffs ",   " all star ",
+      " draft ",      " open ",       " invitational ", " showcase ", " derby ",      " regional ",
+      " regionals ",  " jamboree ",   " scrimmage ",  " semifinal ",  " semifinals ", " quarterfinal ",
+      " combine ",    " world ",      " olympic ",    " olympics ",   " qualifier ",  " super "};
+  for (const char* w : kEvent) {
+    if (has(t, w)) return false;
+  }
+  if (rx::test("\\b(?:game|round|week|matchday|leg|match|event|day)\\s+\\d+\\b", t)) return false;
+  return true;
+}
+
+bool isNetworkAndSport(std::string_view title) {
+  static const std::set<std::string> kNetworks = {
+      "espn", "espn2", "espnu", "espnews", "espn+", "fox", "fs1", "fs2", "tnt", "tbs", "cbs", "nbc", "abc",
+      "bein", "tudn", "univision", "unimas", "telemundo", "universo", "deportes", "sports", "sport", "tv",
+      "network", "channel", "en", "espanol", "plus", "sky", "dazn", "tsn", "sportsnet", "bally", "msg", "nesn",
+      "yes", "peacock", "paramount", "prime", "video", "the", "hd"};
+  static const std::set<std::string> kSports = {
+      "baseball", "beisbol", "basketball", "baloncesto", "basquetbol", "football", "futbol", "soccer", "hockey",
+      "tennis", "tenis", "golf", "boxing", "boxeo", "mma", "racing", "nfl", "nba", "mlb", "nhl", "mls",
+      "college", "ncaa", "volleyball", "voleibol", "rugby", "cricket", "wrestling", "lucha"};
+  std::vector<std::string> words = splitWords(normalized(title));
+  if (words.size() < 2 || words.size() > 4) return false;
+  bool network = false, sport = false;
+  for (const std::string& w : words) {
+    if (kSports.count(w)) sport = true;
+    else if (kNetworks.count(w)) network = true;
+    else return false;
+  }
+  return network && sport;
+}
+
+bool namesPastYear(std::string_view title, Seconds now) {
+  int year = time::civilFromSeconds(now).year;
+  for (const rx::Match& m : rx::all("\\b((?:19|20)\\d{2})\\b(\\s*[/-]\\s*(?:\\d{2}|\\d{4})\\b)?", title)) {
+    int y = std::atoi(std::string(m.group(1)).c_str());
+    // "2025/26", "2025-26": a season reaching this year is current.
+    bool season = !std::string(m.group(2)).empty();
+    if (y < year - (season ? 1 : 0)) return true;
   }
   return false;
 }

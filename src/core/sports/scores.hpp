@@ -158,6 +158,8 @@ class LiveScores {
   Seconds waitSeconds() const;
 
   const Statuses& statuses() const { return statuses_; }
+  // When each game was seen ending; 0 for one already over when first
+  // looked at.
   const std::map<std::string, Seconds>& finalSeen() const { return finalSeen_; }
   std::optional<LiveStatus> status(const std::string& gameID) const;
   // Bumped when statuses change.

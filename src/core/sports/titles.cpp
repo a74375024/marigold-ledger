@@ -1,5 +1,8 @@
 #include "core/sports/titles.hpp"
 
+#include <cctype>
+#include <cstdlib>
+#include <set>
 #include <vector>
 
 #include "core/catalog/text.hpp"
@@ -103,6 +106,87 @@ std::string trimmed(std::string_view s) {
   return std::string(str::trimUnicode(out));
 }
 
+// The provider's stand-ins: "`" for an apostrophe, "_" for a hyphen
+// ("UMass_Boston", "Tip_Off") or a comma before a state ("Western Colo._
+// CO"); feed details in brackets ("[Main Broadcast]", "(UHD)") and a
+// leading serial number ("2618 Mexico City GP F1") aren't the event's.
+std::string cleanTitle(std::string s) {
+  s = str::replaceAll(s, "`", "'");
+  s = rx::replace(s, "_\\s+(?=[A-Z]{2}\\b)", ", ");
+  s = rx::replace(s, "(?<=[\\p{L}\\p{N}.])_(?=[\\p{L}\\p{N}])", "-");
+  s = rx::replace(s,
+                  "\\s*[\\(\\[]\\s*(?:main broadcast|uhd|fhd|hd|sd|4k|1080p|720p|english|eng|spanish|esp|"
+                  "espa\xc3\xb1ol|en espa\xc3\xb1ol|multi ?cam|alt(?:ernate)? feed|backup)\\s*[\\)\\]]",
+                  "", true);
+  if (auto m = rx::first("^(\\d{4,})\\s+(?=\\p{L})", s)) {
+    int n = std::atoi(std::string(m->group(1)).c_str());
+    if (n < 1900 || n > 2100) s = s.substr(m->end);
+  }
+  return std::string(str::trimUnicode(s));
+}
+
+// Words kept in capitals when a shouted (or all lower case) title is given
+// ordinary capitals.
+bool keepsCapitals(const std::string& upperWord) {
+  static const std::set<std::string> kKeep = {
+      "FC", "AFC", "SC", "CF", "CD", "AC", "KF", "KS", "FK", "SK", "NK", "BK", "IF", "IK", "SV", "VFB", "VFL", "TSG",
+      "PSV", "AZ", "MMA", "UFC", "PFL", "BKFC", "WWE", "AEW", "NBA", "NFL", "NHL", "MLB", "MLS", "WNBA", "NCAA",
+      "NCAAF", "NCAAB", "F1", "GP", "USA", "US", "UK", "USSR", "II", "III", "IV", "VI", "VII", "VIII", "IX", "XI",
+      "TV", "ESPN", "CBS", "NBC", "ABC", "FOX", "BYU", "UCF", "USC", "UCLA", "LSU", "TCU", "SMU", "UNLV", "UTEP",
+      "MIT", "WPI", "CWRU", "RIT", "UAB", "UNC", "NC", "DC", "OT", "PPV", "WTA", "ATP", "ITF", "LPGA", "PGA", "LIV",
+      "PSG", "CA", "CO", "NY", "TX", "FL", "OH", "PA", "MA", "VA", "MI", "MN", "WI", "IL", "IN", "GA", "SC", "AL"};
+  if (kKeep.count(upperWord)) return true;
+  // "U21", "67'S", "3RD": numbers aside.
+  if (rx::test("\\d", upperWord)) return rx::test("^[A-Z]+\\d+$", upperWord);
+  // No vowels: an abbreviation ("KSV", "BSC").
+  return upperWord.size() >= 2 && upperWord.size() <= 4 && !rx::test("[AEIOUY]", upperWord);
+}
+
+// "FENCIBLES UNITED VS. EASTERN SUBURBS" -> "Fencibles United vs. Eastern
+// Suburbs", "detroit, mi" -> "Detroit, MI". Titles with both cases are left
+// as they are.
+std::string readable(const std::string& s) {
+  bool upper = rx::test("\\p{Lu}", s), lower = rx::test("\\p{Ll}", s);
+  if (upper && lower) return s;
+  if (!upper && !lower) return s;
+  static const std::set<std::string> kSmall = {"vs", "vs.", "v", "v.", "at", "of", "the", "and", "de", "la", "del",
+                                               "y", "e", "di", "da", "on", "in", "for", "a", "an", "to"};
+  std::string out;
+  bool first = true;
+  for (const rx::Match& m : rx::all("[^\\s]+|\\s+", s)) {
+    std::string w(m.group(0));
+    if (std::isspace(static_cast<unsigned char>(w[0]))) {
+      out += w;
+      continue;
+    }
+    std::string up = str::upper(w), low = str::lower(w);
+    std::string core = rx::replace(up, "^[^\\p{L}\\p{N}]+|[^\\p{L}\\p{N}']+$", "");
+    if (!first && kSmall.count(low)) {
+      out += low;
+    } else if (keepsCapitals(core)) {
+      out += up;
+    } else {
+      // Each part of "district-17" or "o'neil" capitalised.
+      std::string word;
+      bool start = true;
+      for (size_t i = 0; i < low.size();) {
+        size_t n = 1;
+        unsigned char c = static_cast<unsigned char>(low[i]);
+        if (c >= 0xF0) n = 4;
+        else if (c >= 0xE0) n = 3;
+        else if (c >= 0xC0) n = 2;
+        std::string ch = low.substr(i, n);
+        word += start ? str::upper(ch) : ch;
+        start = ch == "-" || ch == "/" || ch == "(" || ch == "." ;
+        i += n;
+      }
+      out += word;
+    }
+    first = false;
+  }
+  return out;
+}
+
 // "Saddleback College vs Orange Coast College _ Women`s (Saddleback vs
 // Orange Coast)": the piece without its asides (brackets, closed or cut
 // off, and what follows " _ ").
@@ -114,18 +198,23 @@ std::string withoutAsides(const std::string& piece) {
 }
 
 // "A vs B" in one piece of a title.
-std::optional<std::tuple<std::string, std::string, bool>> matchup(const std::string& whole) {
+std::optional<std::tuple<std::string, std::string, bool>> matchup(const std::string& whole, bool places) {
   const std::pair<const char*, bool> separators[] = {
-      {" vs. ", false}, {" vs ", false}, {" VS ", false}, {" v. ", false}, {" v ", false}, {" at ", true}, {" @ ", true}};
+      {" vs. ", false}, {" vs ", false}, {" v. ", false}, {" v ", false}, {" at ", true}, {" @ ", true}};
   // As named, else without its asides (which often repeat the matchup).
   std::string bare = withoutAsides(whole);
   for (int pass = 0; pass < 2; ++pass) {
     const std::string& piece = pass == 0 ? whole : bare;
     if (pass == 1 && bare == whole) break;
+    std::string lowerPiece = str::lower(piece);
     for (const auto& [separator, homeSecond] : separators) {
-      std::vector<std::string> parts = text::components(piece, separator);
-      if (parts.size() != 2) continue;
-      std::string a = trimmed(parts[0]), b = trimmed(parts[1]);
+      // Any case ("VS.", "Vs", "AT"), once.
+      std::string sep = str::lower(separator);
+      // A race or a round "at" a track or course: a place, not a side.
+      if (places && (sep == " at " || sep == " @ ")) continue;
+      size_t at = lowerPiece.find(sep);
+      if (at == std::string::npos || lowerPiece.find(sep, at + 1) != std::string::npos) continue;
+      std::string a = trimmed(piece.substr(0, at)), b = trimmed(piece.substr(at + sep.size()));
       size_t na = text::count(a), nb = text::count(b);
       if (na < 2 || nb < 2 || na > 40 || nb > 40) continue;
       // "Round 2 at Augusta" is a place, not a side.
@@ -149,7 +238,7 @@ std::optional<std::string> stageIn(std::string_view s) {
 
 Title read(std::string_view title, std::string_view league) {
   Title out;
-  std::string full(str::trimUnicode(title));
+  std::string full = cleanTitle(std::string(str::trimUnicode(title)));
   std::string lowerTitle = str::lower(full);
 
   // "Rugby: ..." / "MotoGP: ..." / "Pro Bull Riding: ...": a sport or a series first.
@@ -174,27 +263,70 @@ Title read(std::string_view title, std::string_view league) {
     for (const std::string& a : text::components(chunk, " - ")) {
       for (const std::string& b : text::components(a, " \xE2\x80\x93 ")) {  // en dash
         for (const std::string& c : text::components(b, " | ")) {
-          if (std::string s = trimmed(c); !s.empty()) segments.push_back(s);
+          // " _ ": the provider's separator ("... _ Women's", "... _ Oct 29th").
+          for (const std::string& d : text::components(c, " _ ")) {
+            if (std::string s = trimmed(d); !s.empty()) segments.push_back(s);
+          }
         }
       }
     }
   }
   if (segments.empty()) segments.push_back(body);
 
+  std::string lowerLeagueRow = str::lower(league);
+  bool placesAt = lowerLeagueRow == "motorsport" || lowerLeagueRow == "golf" || lowerLeagueRow == "racing";
   // A matchup in any piece; the first piece's stage only at its end, so a
   // "Race of Champions" keeps its name.
   size_t sideAt = segments.size();
   for (size_t i = 0; i < segments.size() && sideAt == segments.size(); ++i) {
-    if (auto m = matchup(segments[i])) {
+    if (auto m = matchup(segments[i], placesAt)) {
       out.sides = std::make_pair(std::get<0>(*m), std::get<1>(*m));
       out.homeSecond = std::get<2>(*m);
       sideAt = i;
     }
   }
+  if (out.sides) {
+    // "(Home)" says which side is at home; "(Mat 1)" is where (a tag). Other
+    // brackets on a side go.
+    auto side = [&](std::string& name, bool second) {
+      for (int guard = 0; guard < 4; ++guard) {
+        auto m = rx::first("\\s*[\\(\\[]([^\\)\\]]*)[\\)\\]]?\\s*$", name);
+        if (!m || m->begin == 0) break;
+        std::string inner = str::lower(str::trimUnicode(m->group(1)));
+        if (inner == "home") {
+          out.homeSecond = second;
+        } else if (auto mat = rx::first("^mat\\W*0*(\\d+)$", inner)) {
+          if (!out.stage) out.stage = "Mat " + std::string(mat->group(1));
+        }
+        name = trimmed(name.substr(0, m->begin));
+      }
+    };
+    side(out.sides->first, false);
+    side(out.sides->second, true);
+    // The same name twice ("Western Colo., CO at Western Colo., CO (Mat 1)"):
+    // one school's event, not a matchup.
+    if (str::lower(out.sides->first) == str::lower(out.sides->second)) {
+      segments[sideAt] = out.sides->first;
+      out.sides.reset();
+      out.homeSecond = false;
+      sideAt = segments.size();
+    }
+  }
+  // Pieces that only repeat the sport ("Field Hockey") or give a date ("Oct
+  // 29th") say nothing on a tile.
+  std::string lowerLeagueName = str::lower(league);
+  auto filler = [&](const std::string& piece) {
+    std::string p = str::lower(piece);
+    if (p == lowerLeagueName || (wordFor(p) && wordFor(p)->sport)) return true;
+    return rx::test("^(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*,?\\s+)?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\.?\\s+\\d{1,2}(?:st|nd|rd|th)?(?:,?\\s+\\d{4})?$", p);
+  };
   std::vector<std::string> rest;
   for (size_t i = 0; i < segments.size(); ++i) {
     if (i == sideAt) continue;
     std::string s = segments[i];
+    if (i > 0 && filler(s) && !rx::test("\\bwomen\\W?s\\b|\\bmen\\W?s\\b", str::lower(s))) continue;
+    // Men's / Women's become the tag, below.
+    if (out.sides && rx::test("^(?:wo)?men'?s$", str::lower(s))) continue;
     if (!out.stage) {
       auto m = rx::first(kStage, s, true);
       if (m && (i > 0 || out.sides || m->end == s.size())) {
@@ -255,6 +387,19 @@ Title read(std::string_view title, std::string_view league) {
   if (out.icon.empty() && (lowerLeague == "other" || lowerLeague.empty() || lowerLeague == "fighting")) {
     if (const char* icon = iconIn(lowerTitle)) out.icon = icon;
   }
+  // "Falcon Open (MAT_04)": the mat is the tag.
+  if (auto mat = rx::first("\\s*[\\(\\[]\\s*mat\\W*0*(\\d+)\\s*[\\)\\]]\\s*$", out.name, true)) {
+    if (!out.stage) out.stage = "Mat " + std::string(mat->group(1));
+    out.name = trimmed(out.name.substr(0, mat->begin));
+  }
+  // Shouted or all lower case: ordinary capitals.
+  out.name = readable(out.name);
+  if (out.sides) {
+    out.sides->first = readable(out.sides->first);
+    out.sides->second = readable(out.sides->second);
+  }
+  if (out.subtitle) out.subtitle = readable(*out.subtitle);
+  if (out.stage) out.stage = readable(*out.stage);
   return out;
 }
 

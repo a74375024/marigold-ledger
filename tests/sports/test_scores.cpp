@@ -319,9 +319,9 @@ TEST_CASE("merging statuses: when a game was seen final") {
   final.phase = LivePhase::final;
   final.detail = "Final";
   scores.apply({{"NFL|1", final}, {"NFL|2", final}}, now, {});
-  // Seen ending now; already over when first looked at: 20 minutes ago.
+  // Seen ending now; already over when first looked at: not known (0).
   CHECK(scores.finalSeen().at("NFL|1") == now);
-  CHECK(scores.finalSeen().at("NFL|2") == now - 20 * 60);
+  CHECK(scores.finalSeen().at("NFL|2") == 0);
   int revision = scores.revision();
   scores.apply({{"NFL|1", final}}, now + 60, {});
   CHECK(scores.revision() == revision);  // nothing changed

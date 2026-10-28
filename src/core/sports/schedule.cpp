@@ -69,8 +69,23 @@ std::vector<std::string> queriesFor(const League& league, Seconds now, const tim
         queries.push_back("dates=" + text::yearMonthDay(text::addDays(now, i, zone), zone));
       }
       break;
-    case League::Mode::week:
-    case League::Mode::current: queries.emplace_back(); break;
+    case League::Mode::week: queries.emplace_back(); break;
+    case League::Mode::current:
+      queries.emplace_back();
+      // Racing: early in the week the current listing is still last
+      // weekend's race; the coming Sunday's date gives the next weekend
+      // (every session of it).
+      if (league.racing) {
+        for (int i = 0; i < 7; ++i) {
+          Seconds day = text::addDays(now, i, zone);
+          time::Civil c = time::civilFromSeconds(day + zone.offsetAt(day));
+          if (time::weekday(c.year, c.month, c.day) == 0) {
+            queries.push_back("dates=" + text::yearMonthDay(day, zone));
+            break;
+          }
+        }
+      }
+      break;
   }
   return queries;
 }

@@ -431,6 +431,7 @@ SportsTeam titleSide(const std::string& name) {
 // What a tile says about where its game is on (EventWhere).
 struct Place {
   std::optional<ChannelLabel> channel;
+  bool endGuessed = false;  // endedAt worked out, not seen
   bool inLineup = false;
   int feeds = 0;
   bool favorite = false;
@@ -504,6 +505,9 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
   } else {
     titles::Title read = titles::read(event.title, event.league);
     place.tag = read.stage;
+    // Men's / Women's with the sport, so the sport still shows: "VOLLEY · WOMEN'S".
+    if (read.stage && (*read.stage == "Men's" || *read.stage == "Women's") && !event.leagueShort.empty())
+      place.tag = event.leagueShort + kDot + *read.stage;
     place.chip = read.chip;
     place.icon = read.icon;
     place.title = read.name;
@@ -516,8 +520,6 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
       place.top = read.players ? namedSide("t|", read.sides->first) : titleSide(read.sides->first);
       place.bottom = read.players ? namedSide("t|", read.sides->second) : titleSide(read.sides->second);
       if (read.homeSecond) place.homeIsTop = false;
-    } else if (!place.subtitle && !event.league.empty() && event.league != "Other" && event.league != place.title) {
-      place.subtitle = event.league;
     }
   }
 
@@ -851,7 +853,14 @@ Tile makeTile(const SportsEvent& event, const Place& place, const std::string& r
       if (event.start) tile.statusText = "was " + clockText(*event.start, zone, settings.twelveHour);
       break;
     case State::finished:
-      if (place.endedAt) tile.statusText = "ended " + shortClockText(*place.endedAt, zone, settings.twelveHour);
+      if (place.endedAt) {
+        // Last night's game by its day; one whose end wasn't seen "~".
+        if (text::dayDifference(text::startOfDay(now, zone), *place.endedAt, zone) < 0)
+          tile.statusText = "ended " + weekdayName(*place.endedAt, zone, true);
+        else
+          tile.statusText = std::string(place.endGuessed ? "ended ~" : "ended ") +
+                            shortClockText(*place.endedAt, zone, settings.twelveHour);
+      }
       break;
     case State::unknownTime: break;
   }
@@ -1108,7 +1117,10 @@ Board build(const Input& in) {
   // Studio shows (pregame, countdown, weigh-ins) aren't games: never Live
   // now, at the end of their sport's row.
   for (const SportsEvent& e : all) {
-    if (!e.game && !str::startsWith(e.id, "whip|") && matcher::isStudioShow(e.title)) board.studio.insert(e.id);
+    if (e.game || str::startsWith(e.id, "whip|")) continue;
+    if (matcher::isStudioShow(e.title) || (!e.teams && matcher::isTeamSportShow(e.title, e.league)) ||
+        matcher::isNetworkAndSport(e.title))
+      board.studio.insert(e.id);
   }
   auto stateOf = [&](const SportsEvent& e) {
     auto it = states.find(e.id);
@@ -1117,16 +1129,22 @@ Board build(const Input& in) {
   // Live now is only what's surely on; "likely over" stays in its sport's row.
   auto isLive = [&](const SportsEvent& e) { return stateOf(e) == State::live && !board.studio.count(e.id); };
   const Seconds horizon = now + 8 * 24 * 3600;
-  // A game the scoreboard says is over stays as Final for 30 minutes.
+  // When a game the scoreboard says is over ended: as seen, else (over
+  // when first looked at) its start plus the sport's usual length.
+  std::set<std::string> endGuessed;
   auto endedAt = [&](const SportsEvent& e) -> std::optional<Seconds> {
     if (e.live != LivePhase::final || !e.game) return std::nullopt;
     auto it = in.finalSeen.find(e.game->id);
     if (it == in.finalSeen.end()) return std::nullopt;
-    return it->second;
+    if (it->second != 0) return it->second;
+    if (!e.start) return std::nullopt;
+    endGuessed.insert(e.id);
+    return std::min(now, *e.start + e.expectedLength());
   };
+  // Results stay as Final for 12 hours (the day's games, last night's).
   auto recentFinal = [&](const SportsEvent& e) {
     auto ended = endedAt(e);
-    return ended && now - *ended < 30 * 60;
+    return ended && now - *ended < 12 * 3600;
   };
   auto shown = [&](const SportsEvent& e) {
     State state = stateOf(e);
@@ -1140,8 +1158,9 @@ Board build(const Input& in) {
     return !e.sources.empty() || in.settings.showsUnwatchable;
   };
 
-  // Groups within a row: live, likely over, starting soon, later today,
-  // then by day; postponed; then games not in your channels.
+  // Groups within a row: live and likely over, then what's still to come
+  // today (starting soon, later today), then today's results, then by day;
+  // postponed; then games not in your channels.
   struct Bucket {
     int order;
     std::string label;
@@ -1153,15 +1172,15 @@ Board build(const Input& in) {
     if (board.studio.count(e.id)) return {70, "Shows"};
     switch (stateOf(e)) {
       case State::live: return {0, "Live"};
-      case State::finished: return {1, "Final"};
-      case State::mayHaveEnded: return {2, "Earlier"};
+      case State::mayHaveEnded: return {1, "Earlier"};
+      case State::finished: return {4, "Final"};
       case State::postponed: return {80, "Postponed"};
       default: break;
     }
     if (!e.start) return {85, ""};
-    if (*e.start - now <= 3600) return {3, "Starting Soon"};
+    if (*e.start - now <= 3600) return {2, "Starting Soon"};
     int days = text::dayDifference(today, *e.start, in.zone);
-    if (days <= 0) return {4, "Later Today"};
+    if (days <= 0) return {3, "Later Today"};
     if (days == 1) return {5, "Tomorrow"};
     return {5 + days, weekdayName(*e.start, in.zone, true)};
   };
@@ -1283,6 +1302,7 @@ Board build(const Input& in) {
       auto whip = whipInfo.find(e.id);
       Place place = describe(e, card != board.cards.end() ? &card->second : nullptr, ctx, endedAt(e),
                              whip != whipInfo.end() ? &whip->second : nullptr);
+      place.endGuessed = endGuessed.count(e.id) > 0;
       if (board.studio.count(e.id)) {
         place.studio = true;
         place.tag = std::string("STUDIO");

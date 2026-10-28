@@ -141,3 +141,50 @@ TEST_CASE("titles: a matchup repeated in brackets, and tags after it") {
   CHECK(exh.sides->second == "Valley");
   CHECK(exh.stage == "Exhibition");
 }
+
+TEST_CASE("titles: the provider's stand-ins, shouting, tags and odd sides") {
+  // Any case of the separator; ordinary capitals for a shouted title.
+  titles::Title loud = titles::read("HARBOR UNITED VS. VALLEY SUBURBS", "Soccer");
+  REQUIRE(loud.sides);
+  CHECK(loud.sides->first == "Harbor United");
+  CHECK(loud.sides->second == "Valley Suburbs");
+  titles::Title fc = titles::read("DISTRICT-17 FC VS. HARBOR FC", "Soccer");
+  REQUIRE(fc.sides);
+  CHECK(fc.sides->first == "District-17 FC");
+  // " _ " tails off the second side; "_" between letters a hyphen; "`" an apostrophe.
+  titles::Title tail = titles::read("Saint Harbor`s at Valley_Tech _ Women`s", "Volleyball");
+  REQUIRE(tail.sides);
+  CHECK(tail.sides->first == "Saint Harbor's");
+  CHECK(tail.sides->second == "Valley-Tech");
+  CHECK(tail.stage == "Women's");
+  titles::Title sport = titles::read("Harbor University at Valley _ Field Hockey", "Field Hockey");
+  REQUIRE(sport.sides);
+  CHECK(sport.sides->second == "Valley");
+  CHECK_FALSE(sport.stage);
+  // "(Home)" marks the home side and goes.
+  titles::Title home = titles::read("Harbor Hawks at Valley 67`s (Home)", "Hockey");
+  REQUIRE(home.sides);
+  CHECK(home.sides->second == "Valley 67's");
+  CHECK(home.homeSecond);
+  // The same school twice: one event, its mat the tag.
+  titles::Title mat = titles::read("Harbor Colo._ CO at Harbor Colo._ CO (Mat 1)", "Wrestling");
+  CHECK_FALSE(mat.sides);
+  CHECK(mat.name == "Harbor Colo., CO");
+  CHECK(mat.stage == "Mat 1");
+  // Feed details and a serial number aren't the event; a date tail goes.
+  titles::Title race = titles::read("2618 Harbor City GP F1", "Motorsport");
+  CHECK(race.name == "Harbor City GP F1");
+  titles::Title feed = titles::read("Harbor: Practice 1 [Main Broadcast] (UHD)", "Motorsport");
+  CHECK(feed.name.find("Main Broadcast") == std::string::npos);
+  CHECK(feed.name.find("UHD") == std::string::npos);
+  titles::Title radio = titles::read("HarborWrestling Radio Live _ Oct 29th", "Wrestling");
+  CHECK(radio.name == "HarborWrestling Radio Live");
+  // All lower case: capitals, state codes kept.
+  titles::Title low = titles::read("harbor field, mi", "Motorsport");
+  CHECK(low.name == "Harbor Field, MI");
+  titles::Title open = titles::read("Harbor Open (MAT_04)", "Wrestling");
+  CHECK(open.name == "Harbor Open");
+  CHECK(open.stage == "Mat 4");
+  // A race "at" a track has no sides.
+  CHECK_FALSE(titles::read("Harbor Series at Valley Speedway", "Motorsport").sides);
+}

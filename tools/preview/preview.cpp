@@ -29,6 +29,7 @@
 #include "core/net/http.hpp"
 #include "core/util/json.hpp"
 #include "core/util/time.hpp"
+#include "preview_icons.hpp"
 #include "preview_page.hpp"
 
 using namespace marigold;
@@ -494,6 +495,8 @@ int main(int argc, char** argv) {
   std::string page = preview::kPage;
   size_t at = page.find("__DATA__");
   page.replace(at, 8, safe);
+  at = page.find("__ICONS__");
+  page.replace(at, 9, preview::kIcons);
   {
     std::ofstream f(out, std::ios::binary | std::ios::trunc);
     f << page;
