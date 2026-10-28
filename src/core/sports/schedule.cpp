@@ -160,6 +160,26 @@ std::optional<std::string> note(const std::vector<std::string>& headlines,
 
 // MARK: Scoreboard
 
+// A short tag for a competition in the all-soccer listing: "NCAAW Soccer"
+// is "NCAA Women's"; long names have a shorter form.
+std::string soccerCompetitionTag(const std::string& competition) {
+  static const std::map<std::string, std::string> kShort = {
+      {"ncaaw soccer", "NCAA Women's"},
+      {"ncaam soccer", "NCAA Men's"},
+      {"uefa women's champions league", "UWCL"},
+      {"afc champions league two", "ACL Two"},
+      {"afc champions league elite", "ACL Elite"},
+      {"fifa u-17 women's world cup", "U-17 Women's World Cup"},
+      {"concacaf central american cup", "Central American Cup"},
+  };
+  auto found = kShort.find(str::lower(competition));
+  if (found != kShort.end()) return found->second;
+  if (str::endsWith(competition, " Soccer") && text::count(competition) > 7) {
+    return competition.substr(0, competition.size() - 7);
+  }
+  return competition;
+}
+
 std::optional<SportsGame> parseGame(const json::Value& event, const League& league) {
   auto id = text::text(event["id"]);
   auto start = text::date(text::text(event["date"]));
@@ -207,6 +227,18 @@ std::optional<SportsGame> parseGame(const json::Value& event, const League& leag
   game.postponed = contains("POSTPONED") || contains("CANCELED") || contains("CANCELLED");
   game.completed = text::flag(status["completed"]) || contains("FINAL");
   game.note = note(headlines, text::text(event["season"]["slug"]), league, *start);
+  if (league.shortName == kSoccerAll) {
+    // The all-soccer listing: the competition is in the game note
+    // ("UEFA Women's Champions League, League Phase").
+    std::string named = text::components(text::text(competition["altGameNote"]).value_or(""), ",").front();
+    named = std::string(str::trimUnicode(named));
+    if (!named.empty()) {
+      game.tournament = named;
+      std::string tag = soccerCompetitionTag(named);
+      if (game.note && text::count(tag + " \xC2\xB7 " + *game.note) <= 26) tag += " \xC2\xB7 " + *game.note;
+      game.note = tag;
+    }
+  }
   return game;
 }
 
@@ -501,6 +533,30 @@ std::optional<std::string> tennisRound(const std::optional<std::string>& input) 
   return std::nullopt;
 }
 
+// A tournament's name for a tag: "Toray Pan Pacific Open Tennis" is "Pan
+// Pacific Open"; no sponsors or "Tennis". A long name is its city's open.
+std::string tennisEventName(const std::string& tournament, const std::optional<std::string>& city) {
+  std::string name = tournament;
+  if (auto m = rx::first("\\s+(?:presentado por|presented by|powered by)\\s+.*$", name, true)) {
+    name = name.substr(0, m->begin);
+  }
+  name = rx::replace(name, "\\s+tennis(?:\\s+championships?)?$", "", true);
+  name = rx::replace(name, "\\s+ladies(?=\\s+open$)", "", true);
+  static const char* const kSponsors[] = {"toray ", "bbva ", "mubadala ", "dongfeng voyah ", "jasmin ", "hsbc ",
+                                          "abn amro ", "rolex ", "mutua ", "zavarovalnica triglav "};
+  for (const char* sponsor : kSponsors) {
+    std::string lowered = str::lower(name);
+    if (str::startsWith(lowered, sponsor) && text::count(name) > text::count(sponsor) + 4) {
+      name = name.substr(std::string_view(sponsor).size());
+    }
+  }
+  name = std::string(str::trimUnicode(name));
+  if (text::count(name) > 21 && city && !city->empty()) {
+    return str::icontains(name, "open") ? *city + " Open" : *city;
+  }
+  return name;
+}
+
 std::string tennisShort(const SportsTeam& team) {
   if (team.name.find('/') != std::string::npos) return team.name;
   std::vector<std::string> words = text::words(team.name);
@@ -644,10 +700,13 @@ std::optional<std::vector<SportsGame>> parseTennisMatches(std::string_view body,
       } else {
         roundText = text::text(competition["round"]);
       }
-      std::optional<std::string> place = city ? std::optional<std::string>(text::components(*city, ",").front()) : tournament;
+      std::optional<std::string> town;
+      if (city) town = std::string(str::trimUnicode(text::components(*city, ",").front()));
+      // "PAN PACIFIC OPEN · R2": the tournament, then the round.
       std::vector<std::string> tag;
+      if (tournament) tag.push_back(tennisEventName(*tournament, town));
+      else if (town) tag.push_back(*town);
       if (auto round = tennisRound(roundText)) tag.push_back(*round);
-      if (place) tag.push_back(*place);
       const json::Value& status = competition["status"]["type"];
       auto state = text::text(status["state"]);
       SportsGame game;
@@ -1013,8 +1072,23 @@ Published Schedule::publish(const Context& ctx) const {
   if (!ctx.enabled) return out;
   std::vector<League> active = activeLeagues(ctx.prefs, ctx.seen, ctx.now);
   std::set<std::string> shorts = shortsOf(active);
+  // A game of a league asked for on its own isn't also kept from the
+  // all-soccer listing (the same ESPN event under another id).
+  auto eventOf = [](const std::string& id) {
+    size_t bar = id.find('|');
+    return bar == std::string::npos ? id : id.substr(bar + 1, id.find('|', bar + 1) - bar - 1);
+  };
+  std::set<std::string> elsewhere;
+  for (const SportsGame& g : saved_.games) {
+    const League* league = leagueByShort(g.leagueShort);
+    if (g.leagueShort != kSoccerAll && league && league->soccer && shorts.count(g.leagueShort)) {
+      elsewhere.insert(eventOf(g.id));
+    }
+  }
   for (SportsGame& g : keeping(saved_.games, ctx.now - kSavedFor)) {
-    if (shorts.count(g.leagueShort)) out.games.push_back(std::move(g));
+    if (!shorts.count(g.leagueShort)) continue;
+    if (g.leagueShort == kSoccerAll && elsewhere.count(eventOf(g.id))) continue;
+    out.games.push_back(std::move(g));
   }
   std::stable_sort(out.games.begin(), out.games.end(),
                    [](const SportsGame& a, const SportsGame& b) { return a.start < b.start; });

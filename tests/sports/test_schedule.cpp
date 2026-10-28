@@ -6,6 +6,7 @@
 #include "core/sports/my_sports.hpp"
 #include "core/sports/profiles.hpp"
 #include "core/sports/schedule.hpp"
+#include "core/util/json.hpp"
 #include "doctest.h"
 #include "sports/helpers.hpp"
 
@@ -253,6 +254,11 @@ TEST_CASE("tennis: matches between players and pairs, round and place tag") {
   CHECK(tennisRound(std::string("Round of 16")) == "R16");
   CHECK(tennisRound(std::string("Final")) == "F");
   CHECK(tennisRound(std::nullopt) == std::nullopt);
+  CHECK(tennisEventName("Toray Harbor Open Tennis", std::nullopt) == "Harbor Open");
+  CHECK(tennisEventName("Harbor Open presentado por Banco", std::nullopt) == "Harbor Open");
+  CHECK(tennisEventName("Harbor Bay Ladies Open", std::nullopt) == "Harbor Bay Open");
+  CHECK(tennisEventName("BBVA Open Internacional De Harbor", std::string("Harbor")) == "Harbor Open");
+  CHECK(tennisEventName("Swiss Indoors Harbor", std::nullopt) == "Swiss Indoors Harbor");
   League atp = *leagueByShort("ATP");
   const char* body = R"JSON({"events":[{"id":"80","shortName":"Harbor Open","groupings":[{"competitions":[
     {"id":"1","date":"2026-10-24T12:00Z","round":{"displayName":"Semifinal"},
@@ -274,7 +280,7 @@ TEST_CASE("tennis: matches between players and pairs, round and place tag") {
   const SportsGame& sf = (*matches)[0];
   CHECK(sf.id == "ATP|80|1");
   CHECK(sf.customTitle == "Racket vs Player");
-  CHECK(sf.note == "SF \xC2\xB7 Harbor City");
+  CHECK(sf.note == "Harbor Open \xC2\xB7 SF");
   CHECK(sf.venue == "Center Court");
   CHECK(sf.home.rank == 3);
   CHECK(sf.home.country == "ITA");
@@ -387,6 +393,20 @@ TEST_CASE("active leagues: the standard set until My Sports is set up, then pick
   CHECK(leagueByShort("NCAASB")->path == "baseball/college-softball");
   CHECK(sportLeagues("S:Lacrosse").size() == 3);
   CHECK(sportLeagues("S:Nothing").empty());
+  // The all-soccer listing comes with any soccer league.
+  prefs.configured = false;
+  shorts.clear();
+  for (const League& l : activeLeagues(prefs, seen, now)) shorts.insert(l.shortName);
+  CHECK(shorts.count(kSoccerAll));
+  prefs.configured = true;
+  prefs.leagues = {"EPL"};
+  shorts.clear();
+  for (const League& l : activeLeagues(prefs, seen, now)) shorts.insert(l.shortName);
+  CHECK(shorts.count(kSoccerAll));
+  prefs.leagues = {"NBA"};
+  shorts.clear();
+  for (const League& l : activeLeagues(prefs, seen, now)) shorts.insert(l.shortName);
+  CHECK_FALSE(shorts.count(kSoccerAll));
 }
 
 TEST_CASE("sport feeds seen: F1, NASCAR and tennis, at most every 6 hours") {
@@ -697,4 +717,32 @@ TEST_CASE("schedule: racing also asks for the coming Sunday (the next race weeke
   CHECK(q == std::vector<std::string>{"", "dates=20261101"});
   f1.racing = false;
   CHECK(queriesFor(f1, utc(2026, 10, 28, 15, 0), time::Zone::utc()) == std::vector<std::string>{""});
+}
+
+TEST_CASE("all-soccer listing: the competition as the tag, a league's own game kept once") {
+  std::optional<json::Value> event = json::parse(R"JSON({"id":"77","date":"2026-10-28T17:45Z",
+    "season":{"slug":"league-phase"},
+    "competitions":[{"altGameNote":"UEFA Women's Champions League, League Phase","competitors":[
+      {"homeAway":"home","team":{"id":"1","displayName":"Harbor"}},
+      {"homeAway":"away","team":{"id":"2","displayName":"Valley"}}]}]})JSON");
+  REQUIRE(event);
+  auto game = parseGame(*event, soccerAllLeague());
+  REQUIRE(game);
+  CHECK(game->note == "UWCL \xC2\xB7 League Phase");
+  CHECK(game->tournament == "UEFA Women's Champions League");
+  CHECK(soccerCompetitionTag("NCAAW Soccer") == "NCAA Women's");
+  CHECK(soccerCompetitionTag("Harbor Cup") == "Harbor Cup");
+
+  Seconds now = utc(2026, 10, 26, 16, 0);
+  Saved saved;
+  auto g = [&](const std::string& league, const std::string& id) {
+    return sportsdata::game(league, "Soccer", id, sportsdata::team("1", "A"), sportsdata::team("2", "B"), now + 3600);
+  };
+  saved.games = {g("EPL", "10"), g(kSoccerAll, "10"), g(kSoccerAll, "11")};
+  Schedule schedule(saved);
+  Context ctx = nflOnly(now);
+  ctx.prefs.leagues = {"EPL"};
+  std::vector<std::string> ids;
+  for (const SportsGame& each : schedule.publish(ctx).games) ids.push_back(each.id);
+  CHECK(ids == std::vector<std::string>{"EPL|10", std::string(kSoccerAll) + "|11"});
 }

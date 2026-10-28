@@ -245,6 +245,16 @@ const League& cricketLeague() {
   return kCricket;
 }
 
+const League& soccerAllLeague() {
+  static const League kAll = [] {
+    League l = make("soccer/all", "Soccer", kSoccerAll, "Soccer", "Soccer", true);
+    l.mode = League::Mode::days;
+    l.days = 5;
+    return l;
+  }();
+  return kAll;
+}
+
 const std::vector<League>& allLeagues() {
   static const std::vector<League> kAll = [] {
     std::vector<League> v = leagues();
@@ -252,6 +262,7 @@ const std::vector<League>& allLeagues() {
       v.insert(v.end(), list->begin(), list->end());
     }
     v.push_back(cricketLeague());
+    v.push_back(soccerAllLeague());
     return v;
   }();
   return kAll;
@@ -298,6 +309,7 @@ std::vector<League> activeLeagues(const MySportsPrefs& prefs, const SportFeedsSe
     if (tennisSeen) out.insert(out.end(), tennisLeagues().begin(), tennisLeagues().end());
     if (seen.golfSeen(now)) out.insert(out.end(), golfLeagues().begin(), golfLeagues().end());
     if (seen.cricketSeen(now)) out.push_back(cricketLeague());
+    out.push_back(soccerAllLeague());
     return out;
   }
   std::set<std::string> picked(prefs.leagues.begin(), prefs.leagues.end());
@@ -309,6 +321,7 @@ std::vector<League> activeLeagues(const MySportsPrefs& prefs, const SportFeedsSe
     bool european = l.shortName == "UCL" || l.shortName == "UEL" || l.shortName == "UECL";
     if (picked.count(l.shortName) || (soccer && european)) out.push_back(l);
   }
+  if (soccer) out.push_back(soccerAllLeague());
   if (picked.count("S:Fighting")) out.insert(out.end(), fightLeagues().begin(), fightLeagues().end());
   for (const League& l : racingLeagues()) {
     // F1 and NASCAR also when their feeds were seen lately; IndyCar when picked.

@@ -62,6 +62,11 @@ const std::vector<League>& teamSportLeagues();
 const std::vector<League>& golfLeagues();
 // Cricket: one listing of every series under way (cricket.hpp).
 const League& cricketLeague();
+// Every soccer game ESPN lists on a day, whatever the league (women's
+// leagues and cups, college, other countries): looked up with soccer, its
+// games kept only when no league above has them. Not a My Sports pick.
+constexpr const char* kSoccerAll = "SOC";
+const League& soccerAllLeague();
 // leagues + fights + racing + tennis + golf + teamSportLeagues.
 const std::vector<League>& allLeagues();
 const League* leagueByShort(std::string_view shortName);

@@ -202,18 +202,16 @@ TEST_CASE("groups inside a row and which games a row shows") {
   CHECK(r.grouped);
   // What's on, what's still to come today, today's results, then the days ahead.
   CHECK(groupLabels(r) == std::vector<std::string>{"Live", "Earlier", "Starting Soon", "Later Today", "Final",
-                                                   "Tomorrow", "Monday", "Shows", "Postponed",
-                                                   "Not in your channels"});
+                                                   "Tomorrow", "Monday", "Postponed", "Not in your channels"});
   CHECK(tile(b, "sev|NFL|final").statusText.rfind("ended ", 0) == 0);
   CHECK(std::count(r.eventIDs.begin(), r.eventIDs.end(), ended) == 0);
   CHECK(std::count(r.eventIDs.begin(), r.eventIDs.end(), far) == 0);
   CHECK(r.groups[0].tiles[0].id == live);
-  // The studio show is never Live now.
+  // A studio show isn't on the board at all (the guide has it).
   CHECK(row(b, "live").eventIDs == std::vector<std::string>{live});
-  CHECK(tile(b, "show").studio);
-  CHECK(tile(b, "show").tag == "STUDIO");
-  CHECK(tile(b, "show").pill == Pill::onNow);
-  CHECK(tile(b, "show").pillText == "ON NOW");
+  CHECK(std::none_of(b.rows.begin(), b.rows.end(), [](const Row& each) {
+    return std::count(each.eventIDs.begin(), each.eventIDs.end(), "show") > 0;
+  }));
   // Over when first looked at: its end worked out from its start ("~").
   in.finalSeen["NFL|final"] = 0;
   CHECK(tile(build(in), "sev|NFL|final").statusText.rfind("ended ~", 0) == 0);

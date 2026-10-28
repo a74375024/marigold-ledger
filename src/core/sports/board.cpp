@@ -5,6 +5,7 @@
 #include <unordered_map>
 
 #include "core/guide/names.hpp"
+#include "core/sports/leagues.hpp"
 #include "core/sports/matcher.hpp"
 #include "core/sports/player_photos.hpp"
 #include "core/sports/profiles.hpp"
@@ -1114,8 +1115,8 @@ Board build(const Input& in) {
   std::map<std::string, State> states;
   for (const SportsEvent& e : all) states[e.id] = e.state(now);
   std::map<std::string, WhipInfo> whipInfo = addWhipArounds(all, states, in.statuses, in.whips, now);
-  // Studio shows (pregame, countdown, weigh-ins) aren't games: never Live
-  // now, at the end of their sport's row.
+  // Studio shows (pregame, countdown, weigh-ins) aren't games: they're not
+  // on the board (the guide, My Lineup and search have them).
   for (const SportsEvent& e : all) {
     if (e.game || str::startsWith(e.id, "whip|")) continue;
     if (matcher::isStudioShow(e.title) || (!e.teams && matcher::isTeamSportShow(e.title, e.league)) ||
@@ -1147,6 +1148,7 @@ Board build(const Input& in) {
     return ended && now - *ended < 12 * 3600;
   };
   auto shown = [&](const SportsEvent& e) {
+    if (board.studio.count(e.id)) return false;
     State state = stateOf(e);
     bool timely = state == State::live || state == State::mayHaveEnded || state == State::upcoming ||
                   state == State::postponed || recentFinal(e);
@@ -1155,6 +1157,8 @@ Board build(const Input& in) {
     if (e.game && e.game->isTennis()) return !e.sources.empty();
     // Cricket too: the listing has every domestic match as well.
     if (e.game && e.game->isCricket()) return !e.sources.empty();
+    // And the all-soccer listing (every competition, every day).
+    if (e.game && e.game->leagueShort == kSoccerAll) return !e.sources.empty();
     return !e.sources.empty() || in.settings.showsUnwatchable;
   };
 
@@ -1169,7 +1173,6 @@ Board build(const Input& in) {
   auto bucket = [&](const SportsEvent& e) -> Bucket {
     if (str::startsWith(e.id, "whip|")) return {-1, "Whip-around"};
     if (e.sources.empty()) return {90, "Not in your channels"};
-    if (board.studio.count(e.id)) return {70, "Shows"};
     switch (stateOf(e)) {
       case State::live: return {0, "Live"};
       case State::mayHaveEnded: return {1, "Earlier"};
@@ -1287,7 +1290,7 @@ Board build(const Input& in) {
   }
   std::vector<SportsEvent> untimed;
   for (const SportsEvent& e : all) {
-    if (stateOf(e) == State::unknownTime && !e.sources.empty()) untimed.push_back(e);
+    if (stateOf(e) == State::unknownTime && !e.sources.empty() && !board.studio.count(e.id)) untimed.push_back(e);
   }
   if (!untimed.empty()) drafts.push_back({"untimed", "Time not listed", untimed, {}, 0, true});
 

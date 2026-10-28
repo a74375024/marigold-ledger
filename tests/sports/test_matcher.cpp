@@ -716,6 +716,7 @@ TEST_CASE("shows: titles that name no teams, a network and a sport, old years") 
   CHECK(isStudioShow("HarborWrestling Radio Live"));
   CHECK(isStudioShow("Race Day Live"));
   CHECK_FALSE(isStudioShow("Tonight: Harbor vs Valley"));
+  CHECK(isStudioShow("HPL Auction"));
   CHECK(isNetworkAndSport("ESPN B\xC3\xA9isbol"));
   CHECK(isNetworkAndSport("Fox Soccer"));
   CHECK_FALSE(isNetworkAndSport("Harbor Soccer"));
@@ -724,4 +725,13 @@ TEST_CASE("shows: titles that name no teams, a network and a sport, old years") 
   CHECK_FALSE(namesPastYear("Harbor v Valley PREM Rugby Round 5 2026/27", now));
   CHECK_FALSE(namesPastYear("2025-26 Harbor Cup", now));
   CHECK_FALSE(namesPastYear("Harbor City GP 2026", now));
+}
+
+TEST_CASE("team names: channels' spellings the schedule writes another way") {
+  std::vector<SportsGame> games = {
+      sportsdata::game("BUN", "Soccer", "1", sportsdata::team("1", "Hamburg SV"),
+                       sportsdata::team("2", "Harbor Kickers"), utc(2026, 11, 1, 16, 30))};
+  TeamIndex index(games);
+  auto all = [](int) { return true; };
+  CHECK(index.matches("Harbor Kickers vs. Hamburger SV", all) == std::vector<int>{0});
 }

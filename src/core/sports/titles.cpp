@@ -197,6 +197,9 @@ std::string withoutAsides(const std::string& piece) {
   return std::string(str::trimUnicode(out));
 }
 
+// "Live" says what every listing here is.
+constexpr const char* kLiveWords = "^(?:live|live now|live coverage|en vivo|ao vivo|in diretta|en direct)$";
+
 // "A vs B" in one piece of a title.
 std::optional<std::tuple<std::string, std::string, bool>> matchup(const std::string& whole, bool places) {
   const std::pair<const char*, bool> separators[] = {
@@ -248,7 +251,12 @@ Title read(std::string_view title, std::string_view league) {
   if (pieces.size() >= 2) {
     std::string head = trimmed(pieces[0]);
     lead = wordFor(head);
-    if (lead || text::count(head) <= 16) {
+    if (rx::test(kLiveWords, head, true)) {
+      // "live: Harbor vs Valley": no prefix to show.
+      lead = nullptr;
+      body = trimmed(full.substr(full.find(": ") + 2));
+      pieces.erase(pieces.begin());
+    } else if (lead || text::count(head) <= 16) {
       prefix = head;
       body = trimmed(full.substr(full.find(": ") + 2));
     }
@@ -325,6 +333,8 @@ Title read(std::string_view title, std::string_view league) {
     if (i == sideAt) continue;
     std::string s = segments[i];
     if (i > 0 && filler(s) && !rx::test("\\bwomen\\W?s\\b|\\bmen\\W?s\\b", str::lower(s))) continue;
+    // "Live" (first or last) says what every listing here is.
+    if (rx::test(kLiveWords, s, true)) continue;
     // Men's / Women's become the tag, below.
     if (out.sides && rx::test("^(?:wo)?men'?s$", str::lower(s))) continue;
     if (!out.stage) {

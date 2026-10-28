@@ -1436,9 +1436,22 @@ std::string normalized(std::string_view input) {
   return " " + str::join(tokens, " ") + " ";
 }
 
+// Names channels use that the schedule spells another way.
+const std::map<std::string, std::vector<std::string>>& teamAliases() {
+  static const std::map<std::string, std::vector<std::string>> kAliases = {
+      {"athletic club", {"athletic bilbao"}},
+      {"internazionale", {"inter milano", "inter milan"}},
+      {"hamburg sv", {"hamburger sv"}},
+      {"d c united", {"d c"}},
+  };
+  return kAliases;
+}
+
 std::vector<std::string> teamVariants(const SportsTeam& team, bool college) {
   std::vector<std::string> names = {team.name};
   names.insert(names.end(), team.alternates.begin(), team.alternates.end());
+  auto alias = teamAliases().find(trimmed(normalized(team.name)));
+  if (alias != teamAliases().end()) names.insert(names.end(), alias->second.begin(), alias->second.end());
   if (college && team.location) names.push_back(*team.location);
   std::vector<std::string> words = splitWords(normalized(team.name));
   if (words.size() >= 2) {
@@ -1482,7 +1495,7 @@ bool isStudioShow(std::string_view title) {
       " post show ",  " prerace ",    " postrace ",   " post fight ", " pre fight ",  " fight conference ",
       " qualifying replay ", " radio ",    " podcast ",    " tonight ",    " talk ",      " hour ",
       " insider ",    " insiders ",   " report ",     " daily ",      " roundtable ", " magazine ",
-      " weekly ",     " race day live ", " center ",  " show "};
+      " weekly ",     " race day live ", " center ",  " show ",       " auction "};
   std::string t = normalized(title);
   for (const char* w : kStudio) {
     if (has(t, w)) return true;

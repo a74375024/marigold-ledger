@@ -185,6 +185,13 @@ TEST_CASE("titles: the provider's stand-ins, shouting, tags and odd sides") {
   titles::Title open = titles::read("Harbor Open (MAT_04)", "Wrestling");
   CHECK(open.name == "Harbor Open");
   CHECK(open.stage == "Mat 4");
+  // "Live" says nothing on a tile.
+  titles::Title live = titles::read("Harbor vs Valley - Live", "Soccer");
+  CHECK(live.name == "Harbor vs Valley");
+  CHECK_FALSE(live.subtitle);
+  titles::Title lead = titles::read("live:  Harbor vs Valley _ Field Hockey", "Field Hockey");
+  CHECK(lead.name == "Harbor vs Valley");
+  CHECK_FALSE(lead.subtitle);
   // A race "at" a track has no sides.
   CHECK_FALSE(titles::read("Harbor Series at Valley Speedway", "Motorsport").sides);
 }

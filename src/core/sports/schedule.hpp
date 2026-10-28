@@ -116,6 +116,11 @@ std::optional<std::string> note(const std::vector<std::string>& headlines,
 std::string raceName(std::string_view name);
 // "Quarterfinal" -> "QF", "Qualifying 1st Round" -> "Q1", "2nd Round" -> "R2".
 std::optional<std::string> tennisRound(const std::optional<std::string>& text);
+// A tournament's name for a tag ("Toray Pan Pacific Open Tennis" is "Pan
+// Pacific Open"); a long one is its city's open.
+std::string tennisEventName(const std::string& tournament, const std::optional<std::string>& city);
+// A competition in the all-soccer listing, short for a tag.
+std::string soccerCompetitionTag(const std::string& competition);
 // The surname a tile shows ("Rybakina"; doubles as is).
 std::string tennisShort(const SportsTeam& team);
 
