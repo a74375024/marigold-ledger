@@ -14,10 +14,10 @@ const std::vector<CoreChannel>& coreChannels() {
       {"MSNBC", LineupCategory::news, {"msnbc", "ms now"}},
       {"CNBC", LineupCategory::news, {"cnbc"}},
       {"Bloomberg TV", LineupCategory::news, {"bloomberg", "bloomberg tv", "bloomberg television"}},
-      {"NewsNation", LineupCategory::news, {"newsnation", "news nation"}},
+      {"NewsNation", LineupCategory::news, {"newsnation", "news nation", "wgn america"}},
       {"Newsmax", LineupCategory::news, {"newsmax", "newsmax tv"}},
       {"C-SPAN", LineupCategory::news, {"c span", "cspan", "c span 1"}},
-      {"C-SPAN 2", LineupCategory::news, {"c span 2", "cspan 2", "cspan2"}},
+      {"C-SPAN 2", LineupCategory::news, {"c span 2", "cspan 2", "cspan2", "c span2"}},
       {"The Weather Channel", LineupCategory::news, {"weather channel", "the weather channel", "twc"}},
       {"ABC News Live", LineupCategory::news, {"abc news live", "abc news"}},
       {"CBS News", LineupCategory::news, {"cbs news", "cbs news 24 7", "cbs news national stream"}},
@@ -39,7 +39,7 @@ const std::vector<CoreChannel>& coreChannels() {
       {"NBA TV", LineupCategory::sports, {"nba tv", "nbatv"}},
       {"NHL Network", LineupCategory::sports, {"nhl network"}},
       {"Golf Channel", LineupCategory::sports, {"golf channel", "golf"}},
-      {"Tennis Channel", LineupCategory::sports, {"tennis channel"}},
+      {"Tennis Channel", LineupCategory::sports, {"tennis channel", "tennis"}},
       {"CBS Sports Network", LineupCategory::sports, {"cbs sports network", "cbssn", "cbs sports"}},
       {"beIN Sports", LineupCategory::sports, {"bein sports", "bein sports usa"}},
       {"TNT", LineupCategory::entertainment, {"tnt", "tnt east"}},
@@ -53,7 +53,7 @@ const std::vector<CoreChannel>& coreChannels() {
       {"Bravo", LineupCategory::entertainment, {"bravo"}},
       {"E!", LineupCategory::entertainment, {"e", "e entertainment", "e entertainment television"}},
       {"Syfy", LineupCategory::entertainment, {"syfy"}},
-      {"Paramount Network", LineupCategory::entertainment, {"paramount network"}},
+      {"Paramount Network", LineupCategory::entertainment, {"paramount network", "paramount"}},
       {"Comedy Central", LineupCategory::entertainment, {"comedy central"}},
       {"A&E", LineupCategory::entertainment, {"a and e", "ae"}},
       {"History", LineupCategory::entertainment, {"history", "history channel"}},
@@ -61,12 +61,12 @@ const std::vector<CoreChannel>& coreChannels() {
       {"LMN", LineupCategory::entertainment, {"lmn", "lifetime movies", "lifetime movie network"}},
       {"Hallmark Channel", LineupCategory::entertainment, {"hallmark", "hallmark channel"}},
       {"Hallmark Family", LineupCategory::entertainment, {"hallmark family", "hallmark drama"}},
-      {"Hallmark Movies & Mysteries", LineupCategory::entertainment, {"hallmark movies and mysteries", "hallmark mystery", "hallmark mysteries", "hmm"}},
+      {"Hallmark Movies & Mysteries", LineupCategory::entertainment, {"hallmark movies and mysteries", "hallmark mystery", "hallmark mysteries", "hmm", "hallmark m and m", "hallmark movies mysteries"}},
       {"Discovery Channel", LineupCategory::entertainment, {"discovery", "discovery channel"}},
       {"TLC", LineupCategory::entertainment, {"tlc"}},
       {"Animal Planet", LineupCategory::entertainment, {"animal planet"}},
       {"Investigation Discovery", LineupCategory::entertainment, {"investigation discovery", "id", "id investigation discovery", "investigation discovery us"}},
-      {"Science Channel", LineupCategory::entertainment, {"science", "science channel"}},
+      {"Science Channel", LineupCategory::entertainment, {"science", "science channel", "discovery science"}},
       {"HGTV", LineupCategory::entertainment, {"hgtv", "home and garden television", "home and garden tv"}},
       {"Food Network", LineupCategory::entertainment, {"food network", "food"}},
       {"Travel Channel", LineupCategory::entertainment, {"travel channel", "travel", "the travel channel"}},
@@ -85,7 +85,7 @@ const std::vector<CoreChannel>& coreChannels() {
       {"Reelz", LineupCategory::entertainment, {"reelz", "reelzchannel", "reelz channel"}},
       {"Game Show Network", LineupCategory::entertainment, {"game show network", "gsn"}},
       {"BET", LineupCategory::entertainment, {"bet"}},
-      {"VH1", LineupCategory::entertainment, {"vh1"}},
+      {"VH1", LineupCategory::entertainment, {"vh1", "vh 1"}},
       {"Pop TV", LineupCategory::entertainment, {"pop", "pop tv"}},
       {"Motor Trend", LineupCategory::entertainment, {"motor trend", "motortrend"}},
       {"AXS TV", LineupCategory::entertainment, {"axs", "axs tv"}},
@@ -96,7 +96,7 @@ const std::vector<CoreChannel>& coreChannels() {
       {"Disney XD", LineupCategory::kids, {"disney xd"}},
       {"Nickelodeon", LineupCategory::kids, {"nickelodeon", "nick"}},
       {"Nick Jr.", LineupCategory::kids, {"nick jr", "nickjr", "nick junior"}},
-      {"Nicktoons", LineupCategory::kids, {"nicktoons"}},
+      {"Nicktoons", LineupCategory::kids, {"nicktoons", "nick toons"}},
       {"TeenNick", LineupCategory::kids, {"teennick", "teen nick"}},
       {"Cartoon Network", LineupCategory::kids, {"cartoon network"}},
       {"Boomerang", LineupCategory::kids, {"boomerang"}},
@@ -119,7 +119,7 @@ const std::vector<CoreChannel>& coreChannels() {
       {"MGM+", LineupCategory::movies, {"mgm plus", "mgm", "epix"}},
       {"TCM", LineupCategory::movies, {"tcm", "turner classic movies"}},
       {"The Movie Channel", LineupCategory::movies, {"the movie channel", "tmc", "movie channel"}},
-      {"FXM", LineupCategory::movies, {"fxm", "fx movie channel"}},
+      {"FXM", LineupCategory::movies, {"fxm", "fx movie channel", "fx movies"}},
   };
   // clang-format on
   return kList;
@@ -181,6 +181,66 @@ const std::string& regionPattern() {
   return kPattern;
 }
 
+namespace {
+
+// Lower case, letters and digits only, quality words dropped: "NBC Sports
+// Bay Area HD" -> "nbc sports bay area".
+std::string wordsKey(std::string_view name) {
+  static const std::vector<std::string> kDrop = {"hd", "fhd", "uhd", "sd", "4k", "us", "usa", "east"};
+  std::string lowered;
+  for (char c : name) {
+    char l = static_cast<char>(c >= 'A' && c <= 'Z' ? c + 32 : c);
+    lowered += (l >= 'a' && l <= 'z') || (l >= '0' && l <= '9') ? l : ' ';
+  }
+  // "Fox Sports South East": a region, not an East feed.
+  for (size_t at = lowered.find("south east"); at != std::string::npos; at = lowered.find("south east", at))
+    lowered.replace(at, 10, "southeast");
+  std::string key;
+  size_t i = 0;
+  while (i < lowered.size()) {
+    while (i < lowered.size() && lowered[i] == ' ') ++i;
+    size_t start = i;
+    while (i < lowered.size() && lowered[i] != ' ') ++i;
+    if (i > start) {
+      std::string w = lowered.substr(start, i - start);
+      if (std::find(kDrop.begin(), kDrop.end(), w) == kDrop.end()) key += (key.empty() ? "" : " ") + w;
+    }
+  }
+  return key;
+}
+
+bool startsWithWords(const std::string& key, const std::string& prefix) {
+  return key == prefix || key.rfind(prefix + " ", 0) == 0;
+}
+
+}  // namespace
+
+std::optional<std::vector<std::string>> regionalChannelPlaces(std::string_view name) {
+  struct Channel {
+    const char* name;
+    std::vector<std::string> places;
+  };
+  static const std::vector<Channel> kChannels = {
+      {"necn", {"boston"}},
+      {"new england cable news", {"boston"}},
+      {"spectrum oc16", {"honolulu"}},
+      {"oc16", {"honolulu"}},
+      {"ny1", {"new york"}},
+      {"spectrum news ny1", {"new york"}},
+      {"news 12", {"new york"}},
+      {"spectrum news 1", {"?"}},
+      {"spectrum news", {"?"}},
+  };
+  std::string key = wordsKey(name);
+  const Channel* best = nullptr;
+  for (const Channel& c : kChannels) {
+    std::string nm = c.name;
+    if (startsWithWords(key, nm) && (!best || nm.size() > std::string(best->name).size())) best = &c;
+  }
+  if (best) return best->places;
+  return std::nullopt;
+}
+
 // Regional sports networks and the markets they serve. Places are city
 // parts as MarketChoice::cityParts() gives them ("St. Louis" -> "louis").
 // Names are matched on whole words, as the start of the channel's name.
@@ -200,6 +260,7 @@ std::optional<std::vector<std::string>> regionalSportsPlaces(std::string_view na
       {"spectrum sportsnet la", {"los angeles"}},
       {"spectrum sportsnet", {"los angeles"}},
       {"spectrum sports net", {"los angeles"}},
+      {"sportsnet la", {"los angeles"}},
       {"nbc sports bay area", {"san francisco", "oakland", "san jose"}},
       {"nbc sports california", {"san francisco", "oakland", "san jose", "sacramento"}},
       {"marquee sports network", {"chicago"}},
@@ -210,6 +271,7 @@ std::optional<std::vector<std::string>> regionalSportsPlaces(std::string_view na
       {"nesn", {"boston"}},
       {"nbc sports boston", {"boston"}},
       {"nbc sports philadelphia", {"philadelphia"}},
+      {"nbc sports philadelfia", {"philadelphia"}},
       {"monumental sports network", {"washington"}},
       {"monumental sports", {"washington"}},
       {"nbc sports washington", {"washington"}},
@@ -221,8 +283,10 @@ std::optional<std::vector<std::string>> regionalSportsPlaces(std::string_view na
       {"altitude sports", {"denver"}},
       {"space city home network", {"houston"}},
       {"kjzz", {"salt lake city"}},
+      {"gulf coast sports", {"mobile", "pensacola"}},
   };
-  // FanDuel Sports Network (formerly Bally Sports) by region.
+  // FanDuel Sports Network (formerly Bally Sports, and before that Fox
+  // Sports: "Fox Sports North", "Fox Sports Prime Ticket") by region.
   struct Region {
     const char* word;
     std::vector<std::string> places;
@@ -237,42 +301,20 @@ std::optional<std::vector<std::string>> regionalSportsPlaces(std::string_view na
       {"southeast", {"atlanta"}},          {"southwest", {"dallas", "fort worth"}},
       {"wisconsin", {"milwaukee"}},        {"kansas city", {"kansas city"}},
       {"oklahoma", {"oklahoma city", "tulsa"}}, {"new orleans", {"new orleans"}},
-      {"indiana", {"indianapolis"}},
+      {"indiana", {"indianapolis"}},       {"prime ticket", {"los angeles"}},
   };
-  // Lower case, letters and digits only, quality words dropped.
-  static const std::vector<std::string> kDrop = {"hd", "fhd", "uhd", "sd", "4k", "us", "usa", "east"};
-  std::string lowered;
-  for (char c : name) {
-    char l = static_cast<char>(c >= 'A' && c <= 'Z' ? c + 32 : c);
-    lowered += (l >= 'a' && l <= 'z') || (l >= '0' && l <= '9') ? l : ' ';
-  }
-  std::vector<std::string> words;
-  size_t i = 0;
-  while (i < lowered.size()) {
-    while (i < lowered.size() && lowered[i] == ' ') ++i;
-    size_t start = i;
-    while (i < lowered.size() && lowered[i] != ' ') ++i;
-    if (i > start) {
-      std::string w = lowered.substr(start, i - start);
-      if (std::find(kDrop.begin(), kDrop.end(), w) == kDrop.end()) words.push_back(w);
-    }
-  }
-  std::string key;
-  for (const std::string& w : words) key += (key.empty() ? "" : " ") + w;
-  auto startsWithWords = [&](const std::string& prefix) {
-    return key == prefix || key.rfind(prefix + " ", 0) == 0;
-  };
+  std::string key = wordsKey(name);
   // Longest name first ("msg sportsnet" before "msg"); "yes" only alone.
   const Network* best = nullptr;
   for (const Network& n : kNetworks) {
     std::string nm = n.name;
-    bool hit = nm == "yes" ? key == "yes" : startsWithWords(nm);
+    bool hit = nm == "yes" ? key == "yes" : startsWithWords(key, nm);
     if (hit && (!best || nm.size() > std::string(best->name).size())) best = &n;
   }
   if (best) return best->places;
-  for (const char* brand : {"fanduel sports network", "fanduel sports", "bally sports"}) {
+  for (const char* brand : {"fanduel sports network", "fanduel sports", "bally sports", "fox sports"}) {
     std::string b = brand;
-    if (!startsWithWords(b)) continue;
+    if (!startsWithWords(key, b)) continue;
     std::string rest = key.size() > b.size() ? key.substr(b.size() + 1) : std::string();
     const Region* found = nullptr;
     for (const Region& r : kRegions) {

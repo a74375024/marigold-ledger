@@ -93,6 +93,8 @@ std::string normalize(std::string_view name) {
   return west && !key.empty() ? key + "~west" : key;
 }
 
+bool isCallStopWord(std::string_view sign) { return callStop().count(std::string(sign)) > 0; }
+
 std::vector<std::string> callsigns(std::string_view text, bool strongContext) {
   static const char* const kPattern =
       "(?<![A-Z0-9])([KW][A-Z]{2,3})(?:[- ]?(DT|TV|LD|LP|CD|CA|HD)(\\d)?)?(?![A-Z])";

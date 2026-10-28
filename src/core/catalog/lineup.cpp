@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "core/catalog/core_channels.hpp"
 #include "core/catalog/markets.hpp"
 #include "core/catalog/text.hpp"
 #include "core/util/rx.hpp"
@@ -396,8 +397,14 @@ bool suggests(const EntryInfo& entry, const LineupPrefs& prefs, bool hasGuide,
         !on(entry.category == LineupCategory::local ? LineupCategory::local : entry.category)) {
       return false;
     }
-    return hasGuide || entry.category == LineupCategory::sports ||
-           entry.category == LineupCategory::local;
+    // A regional sports network joins before its guide loads; its part-time
+    // overflow channels ("Plus 2", "Alternate") and channels it doesn't
+    // know (a network that has closed) only with one.
+    if (entry.category == LineupCategory::sports && !hasGuide) {
+      return regionalSportsPlaces(name).has_value() &&
+             !rx::test("\\b(plus \\d|alternate|alt|overflow|extra)\\b", name, true);
+    }
+    return hasGuide || entry.category == LineupCategory::local;
   }
   switch (entry.category) {
     case LineupCategory::local: {

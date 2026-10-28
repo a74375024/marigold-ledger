@@ -249,3 +249,17 @@ Before My Sports is set up, the sports your event channels have games of are loo
 | No sport named | A title like "Temple vs East Carolina" with no sport | Matched to the game at that time (volleyball Friday, not soccer Thursday) |
 | Only yours | College rows | No lists of other colleges' games under "Not in your channels" unless that league is picked in My Sports |
 
+
+## My Lineup: one row per channel, only your area and languages
+
+After the update the channel list is sorted again once (a minute or so on a big list).
+
+| Area | How to check | Pass |
+|---|---|---|
+| Same channel | Edit My Lineup, look for UP TV, FYI, Baby TV, The Movie Channel, Oxygen, Game Show Network, Hallmark Movies & Mysteries | One row each, every copy under Sources; The Movie Channel and Oxygen pick East or West like HBO |
+| Event feeds | NBC Sports 1/2/3, NBC Sports 4K (Event Only), Tennis Channel Plus N | Not in My Lineup; under Event channels as "NBC Sports" and "Tennis Channel Plus" |
+| Other languages | Channels like Aastha, ARY Digital, Mexicanal, Antena 3, the French France 24 | Not suggested for US English; they appear when you add their country or Spanish |
+| Out-of-town stations | MyNetworkTV stations of other cities, WGN, PBS12 | Not suggested unless you picked that market |
+| Regional channels | NECN, OC16, Spectrum News 1; Fox Sports North / South / Prime Ticket, SportsNet LA, NBC Sports Philadelphia | Only in their own area's lineup |
+| Bay Area sports | NBC Sports Bay Area and California | Suggested; their part-time Plus 2 / Alternate channels only when they have a guide |
+| Yours stay | A channel you added yourself | Still in My Lineup (if it was a second copy that is now part of another row, add that row again) |

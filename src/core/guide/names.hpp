@@ -44,6 +44,8 @@ std::string normalize(std::string_view name);
 // only counts in a locals context, in parentheses, or with a -DT style
 // suffix, so "WILD" or "KIDS" in a network name don't.
 std::vector<std::string> callsigns(std::string_view text, bool strongContext);
+// Words shaped like call signs that aren't ones ("WWE", "KIDS", "WEST").
+bool isCallStopWord(std::string_view sign);
 
 // "NBC 5 Chicago" -> WMAQ: a network word plus the station's city in the
 // name (the channel number breaks ties). `requireNumber`: a name with a

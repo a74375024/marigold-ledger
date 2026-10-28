@@ -4,6 +4,7 @@
 #include <map>
 #include <unordered_set>
 
+#include "core/catalog/lineup.hpp"
 #include "core/catalog/text.hpp"
 #include "core/util/rx.hpp"
 #include "core/util/strings.hpp"
@@ -133,6 +134,59 @@ bool isSpanishUS(std::string_view name, std::string_view group) {
          rx::test("latino|telemundo|univision|spanish|espa[nñ]ol|hispan", group);
 }
 
+// US-carried channels in another language: the market they belong to, from
+// a language tag after the country ("US (FR) France 24", "US (Spanish)
+// beIN SPORTS en Español") or the channel's own name ("Zee TV", "ARY
+// Digital"). nullopt: US English. ("(SP)" is a provider's source tag, not
+// Spanish.)
+std::optional<std::string> otherLanguageMarket(std::string_view name) {
+  if (hasAnyOf(name, "(")) {
+    if (rx::test("\\((fr|french|fran[cç]ais)\\)", name, true)) return std::string("FR");
+    if (rx::test("\\((spanish|espa[nñ]ol)\\)", name, true)) return std::string("US-ES");
+  }
+  struct Language {
+    const char* market;
+    const char* pattern;
+  };
+  static const Language kLanguages[] = {
+      {"US-ES",
+       "\\b(antena 3|mexicanal|cinema dinamita|cine mexicano|sony cine|nat geo mundo|ntn ?24|n\\+ ?foro|"
+       "tc internacional|telecentro|video ?rola|mega tv|hola!? tv|gol ?tv|pantaya|caracol|ecuavisa|"
+       "multimedios|imagen tv|telefe|tv chile|canal sur|hitn|en espa)"},
+      {"IN",
+       "\\b(aastha|sanskar|zee (tv|cinema|bollywood|anmol|punjabi|smile)|sony (kal|sab|set|max)|"
+       "star (plus|bharat|gold|india)|colors (tv|cineplex|rishtey)|b4u|tv asia|aaj tak|ndtv)\\b"},
+      {"PK",
+       "\\b(ary (digital|news|zindagi|musik|qtv)|geo (tv|news|entertainment|kahani)|"
+       "hum (tv|masala|sitaray|news)|ptv (home|news|global)|express news)\\b"},
+      {"AE", "\\b(sky news arabia|al arabiya)\\b"},
+      {"UK", "\\b(nick jr\\.? ?too|tnt sports box office|bbc (one|two|three|four))\\b"},
+      {"FR", "\\btv5 ?monde\\b"},
+      {"IT", "\\brai italia\\b"},
+      {"PL", "\\b(tv polonia|polsat)\\b"},
+      {"PT", "\\brtp (internacional|africa)\\b"},
+      {"BR", "\\b(record|globo|band) internacional\\b"},
+      {"KR", "\\bkbs world\\b"},
+      {"CN", "\\bcctv\\b"},
+      {"PH", "\\b(tfc|gma (pinoy|life))\\b"},
+  };
+  for (const Language& l : kLanguages) {
+    if (rx::test(l.pattern, name, true)) return std::string(l.market);
+  }
+  return std::nullopt;
+}
+
+// Event-only feeds a provider lists like channels: "NBC Sports 2", "NBC
+// Sports 4K (Event Only)", "Tennis Channel Plus 9". Their brand ("NBC
+// Sports"), as written.
+std::optional<std::string> eventFeedBrand(std::string_view display) {
+  if (auto m = rx::first("^(.{2,40}?)\\s*\\(?\\bevent only\\b\\)?\\s*$", display, true))
+    return std::string(str::trimUnicode(m->group(1)));
+  if (auto m = rx::first("^(nbc sports|tennis channel plus)\\s*\\d{1,3}$", display, true))
+    return std::string(m->group(1));
+  return std::nullopt;
+}
+
 bool isEventish(std::string_view name) {
   return rx::test(
       "\\b(vs\\.?|v)\\b|\\s@\\s|\\bat\\b.*\\d|^(next|live|ended|end|now|upcoming)\\s*\\||\\b\\d{1,"
@@ -163,6 +217,7 @@ std::string scopeFor(std::string_view display, StationLike stationLike) {
   if (auto place = text::firstGroup(regionPattern(), display, 1, true)) {
     return "regional:" + str::lower(*place);
   }
+  if (auto places = regionalChannelPlaces(display)) return "regional:" + str::join(*places, "|");
   if (stationLike()) return "regional:?";
   return "national";
 }
@@ -195,7 +250,8 @@ LineupCategory categoryFor(std::string_view lower, std::string_view group,
   static const std::string kNews =
       alternation({"cnn", "msnbc", "fox news", "cnbc", "bloomberg", "newsmax", "news", "weather",
                    "c-span", "cspan", "hln", "newsnation", "fox business", "cheddar",
-                   "yahoo finance", "scripps", "euronews", "al jazeera", "local now"});
+                   "yahoo finance", "scripps", "euronews", "al jazeera", "local now",
+                   "necn", "ny1", "france 24"});
   static const std::string kSports = alternation(
       {"espn",       "espn2",       "espnu",       "fox sports",  "fs1",        "fs2",
        "nfl",        "nba",         "mlb",         "nhl",         "golf",       "tennis",
@@ -233,6 +289,61 @@ LineupCategory categoryFor(std::string_view lower, std::string_view group,
   return LineupCategory::entertainment;
 }
 
+// One channel spelled two ways ("UP TV" / "UPtv", "FYI" / "FYI Network",
+// "The Cowboy Channel" / "Cowboy Channel", "Baby TV" / "BabyTV"): the same
+// key. No leading "the", no trailing "tv", "network", "channel" or
+// "television" (also run into the name), and a few renamed channels.
+std::string sameChannelKey(const ChannelTraits& traits) {
+  std::string lowered = str::replaceAll(str::lower(traits.displayName), "&", " and ");
+  lowered = rx::replace(lowered, "[\\(\\[][^\\)\\]]*[\\)\\]]", " ");
+  static const std::unordered_set<std::string> kDrop = {"hd", "fhd", "uhd", "sd", "4k", "us", "usa",
+                                                        "east", "west", "pacific", "feed"};
+  std::vector<std::string> words;
+  std::string word;
+  auto flush = [&] {
+    if (!word.empty() && !kDrop.count(word)) words.push_back(word);
+    word.clear();
+  };
+  for (char c : lowered) {
+    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+      word += c;
+    } else {
+      flush();
+    }
+  }
+  flush();
+  for (std::string& w : words) {
+    if (w == "xtra") w = "extra";  // "Willow Cricket Xtra", "The Movie Channel Xtra"
+  }
+  if (words.size() > 1 && words.front() == "the") words.erase(words.begin());
+  std::string market = traits.market ? *traits.market : std::string("?");
+  std::string west = traits.isWest ? "~west" : "";
+  static const std::unordered_map<std::string, std::string> kRenamed = {
+      {"starzfamily", "starzencorefamily"},
+      {"fetv", "familyentertainment"},
+  };
+  if (auto it = kRenamed.find(str::join(words, "")); it != kRenamed.end()) return market + ":" + it->second + west;
+  static const std::vector<std::string> kTails = {"television", "network", "channel", "tv"};
+  for (bool again = true; again && !words.empty();) {
+    again = false;
+    std::string& last = words.back();
+    for (const std::string& tail : kTails) {
+      if (last == tail && words.size() > 1) {
+        words.pop_back();
+        again = true;
+        break;
+      }
+      // "uptv", "babytv": at least two letters left.
+      if (tail == "tv" && last.size() >= 4 && str::endsWith(last, tail)) {
+        last.resize(last.size() - 2);
+        again = true;
+        break;
+      }
+    }
+  }
+  return market + ":" + str::join(words, "") + west;
+}
+
 std::string bestDisplayName(const std::vector<std::string>& names) {
   // Prefer a mixed-case, reasonably short name (the first shortest wins).
   std::vector<const std::string*> mixed;
@@ -251,6 +362,13 @@ std::string bestDisplayName(const std::vector<std::string>& names) {
 }
 
 std::string familyDisplayName(const Channel* first, const std::string& family) {
+  if (str::startsWith(family, "feeds:")) {
+    // Event-only feeds: their brand as the first one writes it.
+    if (first) {
+      if (auto brand = eventFeedBrand(cleanName(first->name))) return *brand;
+    }
+    return text::capitalized(family.substr(6));
+  }
   if (str::startsWith(family, "grp:")) {
     // A provider group of event slots: its name without the country prefix.
     std::string group = first && first->group ? *first->group : family.substr(4);
@@ -295,6 +413,12 @@ CallsignContext::CallsignContext(const std::vector<Channel>& channels,
       bool leads = network && candidate.sign.size() == 4 && str::startsWith(upper, candidate.sign + " ");
       if (strong || (network && candidate.inParens) || leads) known.insert(candidate.sign);
       if (network) counts[candidate.sign][*network] += 3;
+    }
+    // Marigold: a call sign alone in a locals group ("US WGN (A)").
+    if (strong) {
+      if (auto sign = text::firstGroup("^([KW][A-Z]{2,3})$", cleanName(channel.name), 1)) {
+        if (!guide::isCallStopWord(*sign)) known.insert(*sign);
+      }
     }
   }
   // Lists that mark countries mark the US too; when hardly any channel is
@@ -352,7 +476,7 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
   // channels ("beIN Sports 4", "Fox 23") out. Event slots grouped by their
   // provider group always count.
   auto isFamily = [&](const std::string& key) {
-    if (str::startsWith(key, "grp:")) return true;
+    if (str::startsWith(key, "grp:") || str::startsWith(key, "feeds:")) return true;
     auto c = familyCounts.find(key);
     int count = c == familyCounts.end() ? 0 : c->second;
     auto s = familySeparators.find(key);
@@ -383,8 +507,11 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
     if (traits.familyKey && traits.kind == ChannelKind::channel) traits.kind = ChannelKind::event;
   }
 
-  // Pass 2: entries (clusters of variants), in first-seen order.
+  // Pass 2: entries (clusters of variants), in first-seen order. Names
+  // that are one channel spelled two ways join the first one seen, which
+  // keeps its id.
   std::unordered_map<std::string, std::vector<const Channel*>> clusters;
+  std::unordered_map<std::string, std::string> clusterOfSame;
   std::vector<std::string> order;
   for (const Channel& channel : channels) {
     auto it = result.traits.find(channel.id);
@@ -396,8 +523,12 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
         traits.kind == ChannelKind::event) {
       continue;
     }
-    auto& members = clusters[traits.clusterKey];
-    if (members.empty()) order.push_back(traits.clusterKey);
+    std::string clusterKey = traits.clusterKey;
+    if (str::startsWith(clusterKey, "n:")) {
+      clusterKey = clusterOfSame.emplace(sameChannelKey(traits), clusterKey).first->second;
+    }
+    auto& members = clusters[clusterKey];
+    if (members.empty()) order.push_back(clusterKey);
     members.push_back(&channel);
   }
   result.entries.reserve(order.size());
@@ -435,6 +566,8 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
       names.reserve(ranked.size());
       for (const Ranked& r : ranked) names.push_back(r.traits->displayName);
       entry.name = bestDisplayName(names);
+      // A West version is named so, as the core networks' are.
+      if (traits.isWest && !rx::test("\\b(west|pacific)\\b", entry.name, true)) entry.name += " West";
     }
     for (const Ranked& r : ranked) entry.members.push_back(r.channel->id);
     entry.category = traits.category;
@@ -639,8 +772,18 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
     if (context.unknownIsUS || coreMatch(cleanName(name))) country = "US";
   }
   std::optional<std::string> market = country;
-  if (country == std::string("US") && isSpanishUS(name, group)) market = "US-ES";
+  if (country == std::string("US")) {
+    if (auto other = otherLanguageMarket(name)) {
+      market = *other;
+    } else if (isSpanishUS(name, group)) {
+      market = "US-ES";
+    }
+  }
   std::string display = cleanName(name);
+  // "[Denver] PBS12", "[Seattle] Oxygen": the provider's note of where the
+  // feed comes from.
+  std::optional<std::string> bracketCity;
+  if (hasAnyOf(name, "[")) bracketCity = text::firstGroup("\\[([^\\]]{2,30})\\]", name, 1);
   // A network word in a name that isn't a national one ("FOX 5 Testville"):
   // asked up to three times below, worked out once.
   std::optional<bool> stationLikeMemo;
@@ -651,6 +794,8 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
   };
   std::optional<CoreHit> core = market == std::string("US") ? coreMatch(display) : std::nullopt;
   ChannelKind kind = kindFor(name, lower, group, core.has_value());
+  // A national channel's feed from a West city is its West feed.
+  if (!isWest && bracketCity && !stationLike() && marketIsWest(*bracketCity).value_or(false)) isWest = true;
 
   // Event family?
   std::optional<std::string> familyKey;
@@ -667,6 +812,14 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
       hasSeparator = family->separator;
     }
   }
+  if (!familyKey && !core && kind != ChannelKind::separator && kind != ChannelKind::placeholder) {
+    if (auto brand = eventFeedBrand(display)) {
+      familyKey = "feeds:" + str::lower(*brand);
+      familyNumber = trailingNumber(display);
+      hasSeparator = true;
+      kind = ChannelKind::event;
+    }
+  }
 
   // Call sign: only real ones (station directory, local groups, or written
   // next to a network name), never for other countries.
@@ -676,7 +829,8 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
     std::vector<CallsignCandidate> candidates;
     // Marigold: "WLS ABC 7", or "KGO" alone in a locals group.
     bool shortOk = networkWord(name).has_value() ||
-                   (localGroup && rx::test("^\\s*[KW][A-Z]{2}\\s*$", name));
+                   (localGroup && (rx::test("^\\s*[KW][A-Z]{2}\\s*$", name) ||
+                                   rx::test("^[KW][A-Z]{2}$", display)));
     for (CallsignCandidate& c : callsignCandidates(name, shortOk)) {
       if (c.sign.size() == 3 && !c.inParens && !context.known.count(c.sign)) continue;
       if (context.known.count(c.sign) || localGroup) candidates.push_back(std::move(c));
@@ -689,9 +843,16 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
     } else if (!candidates.empty()) {
       callsign = candidates.front().sign;
     }
-    // "FOX 2 LOCAL SAN FRANCISCO": network + city -> the station.
+    // "WGN9": a known sign and its channel number.
+    if (!callsign) {
+      if (auto sign = text::firstGroup("^([KW][A-Z]{2,3}) ?\\d{1,2}$", display, 1)) {
+        if (context.known.count(*sign)) callsign = *sign;
+      }
+    }
+    // "FOX 2 LOCAL SAN FRANCISCO", "[Denver] PBS12": network + city -> the station.
     if (!callsign && stationLike() && !context.stationsByNetwork.empty()) {
-      callsign = guide::stationCallsign(display, context.stationsByNetwork);
+      callsign = guide::stationCallsign(bracketCity ? display + " " + *bracketCity : display,
+                                        context.stationsByNetwork);
     }
   }
   if (familyKey && kind == ChannelKind::channel) kind = ChannelKind::event;
@@ -758,7 +919,14 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
 
   ChannelTraits traits;
   traits.clusterKey = std::move(key);
-  traits.displayName = core ? (isWest ? core->name + " West" : core->name) : display;
+  // A provider's code in capitals isn't part of the name ("ROAR (ROARTV)",
+  // "The Nest (THENEST)"); a station keeps its call sign ("NBC 11 (KNTV)").
+  std::string shown = display;
+  if (!callsign && hasAnyOf(shown, "(")) {
+    std::string bare(str::trimUnicode(rx::replace(shown, "\\s*\\((?![KW][A-Z]{2,3}\\))[A-Z][A-Z0-9]{2,9}\\)", "")));
+    if (!bare.empty()) shown = std::move(bare);
+  }
+  traits.displayName = core ? (isWest ? core->name + " West" : core->name) : shown;
   traits.quality = quality;
   traits.sourceTag = std::move(sourceTag);
   traits.callsign = std::move(callsign);
@@ -895,14 +1063,16 @@ std::vector<CallsignCandidate> callsignCandidates(std::string_view name, bool al
 }
 
 std::optional<std::string> networkWord(std::string_view name) {
+  // Marigold: also run into the channel number ("ABC7", "PBS12"), and
+  // MyNetworkTV as "MYNET" or "MY 40".
   auto word = text::firstGroup(
-      "\\b(ABC|CBS|NBC|FOX|CW|PBS|MYTV|MyNetworkTV|ION|Telemundo|Univision|UniMas|Independent|IND|"
-      "TMO)\\b",
+      "\\b(ABC|CBS|NBC|FOX|CW|PBS|MYTV|MyNetworkTV|MYNET|ION|Telemundo|Univision|UniMas|Independent|IND|"
+      "TMO|MY(?= ?\\d))(?=\\d|\\b)",
       name, 1, true);
   if (!word) return std::nullopt;
   std::string up = str::upper(*word);
   if (up == "TMO") return std::string("TELEMUNDO");
-  if (up == "MYNETWORKTV") return std::string("MYTV");
+  if (up == "MYNETWORKTV" || up == "MYNET" || up == "MY") return std::string("MYTV");
   if (up == "IND") return std::string("INDEPENDENT");
   return up;
 }
@@ -936,6 +1106,14 @@ CoreKey coreKey(std::string_view display) {
 }
 
 std::optional<CoreHit> coreMatch(std::string_view display) {
+  // Marigold: "The Movie Channel (TMC)", "Oxygen True Crime (OXYGEN)",
+  // "National Geographic (NGCHD)": a provider's code in brackets.
+  if (hasAnyOf(display, "([")) {
+    std::string bare = rx::replace(display, "\\s*[\\(\\[][^\\)\\]]*[\\)\\]]", " ");
+    if (bare != display) {
+      if (auto hit = coreMatch(bare)) return hit;
+    }
+  }
   std::string key = coreKey(display).key;
   const auto& byAlias = coreByAlias();
   auto hit = byAlias.find(key);
@@ -1015,7 +1193,7 @@ std::string cleanName(std::string_view name) {
   if (hasNonAscii(s)) {
     s = rx::replace(s,
                     "[\\x{1D2C}-\\x{1D6A}\\x{1D78}-\\x{1DBF}\\x{2070}-\\x{209F}\\x{2C7D}"
-                    "\\x{24B6}-\\x{24E9}\\x{02B0}-\\x{02FF}ⓧ]",
+                    "\\x{24B6}-\\x{24E9}\\x{02B0}-\\x{02FF}\\x{00B2}\\x{00B3}\\x{00B9}ⓧ]",
                     "");
   }
   // Provider prefixes in capitals: "TV:", "AT&T:", "PRIME:", "PL VIP:".
@@ -1033,6 +1211,7 @@ std::string cleanName(std::string_view name) {
       // US / USA, but not USA Network's own name.
       {"^\\s*(USA?|US)\\s+(?!network\\b)", "Uu"},
       {"^\\s*\\[[^\\]]{1,30}\\]\\s*", "["},                   // [Denver]
+      {"^\\s*(\\([A-Za-z0-9 ]{1,14}\\)\\s*)+", "("},          // US (English) ...
       {"\\s*\\((A|H|D|S|P|SP|RK|GT|DZ|XV|F|X|Prime|SD|HD|FHD|UHD|4K|Backup)\\)", "("},
       {"\\s*\\(\\d{3,4}p[^)]*\\)", "("},  // (720p29 @ 3.2Mbps)
       {"\\b(FHD|UHD|4K|8K|HEVC|RAW|VIP|60FPS|50FPS)\\b", nullptr},

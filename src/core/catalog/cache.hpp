@@ -27,7 +27,9 @@ namespace marigold::catalog::cache {
 // 3: a too-small numbered family no longer leaves its channels as events.
 // 7: free streaming decided by all of a channel's copies.
 // 8: sport words in event titles count only as whole words.
-constexpr int kVersion = 8;
+// 9: one channel spelled two ways is one entry; languages, regional
+//    channels, out-of-town stations and event-only feeds.
+constexpr int kVersion = 9;
 
 enum class Part { first, full };
 

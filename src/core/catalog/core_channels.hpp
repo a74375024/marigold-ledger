@@ -39,6 +39,11 @@ const std::vector<std::string>& regionWords();
 // new york; "NBC Sports California" -> the Bay Area and Sacramento), as
 // city parts of the markets it serves; nullopt for anything else.
 std::optional<std::vector<std::string>> regionalSportsPlaces(std::string_view name);
+// Other channels made for one area that don't name it the way locals do:
+// regional cable news and local cable channels ("NECN" -> boston, "OC16"
+// -> honolulu). "?" when the area isn't in the name ("Spectrum News 1" is
+// a different channel in each of its cities).
+std::optional<std::vector<std::string>> regionalChannelPlaces(std::string_view name);
 // One alternation, longest first ("new york" before "york"), group 1.
 const std::string& regionPattern();
 
