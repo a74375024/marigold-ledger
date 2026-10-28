@@ -6,7 +6,8 @@
 // lists are the backbone, each listed article's redirects and its Wikidata
 // facts add other names, languages and closing dates, and the iptv-org
 // database adds the same only for channels already listed (its own local
-// stations, public access and adult channels never become entries). The
+// stations, public access and adult channels never become entries), and
+// its US free streaming channels the lists don't have make a free tier. The
 // build packs the file into the app (cmake/channel-directory.cmake); a TV
 // never fetches it. Our corrections below win over every source.
 //
@@ -29,7 +30,9 @@ struct Entry {
   std::vector<std::string> aliases;  // other and former names
   std::string language;              // "en", "es", "hi"...; a Wikidata id ("Q9610") when unmapped; empty: unknown
   std::string genre;                 // the list section it sits in ("Sports", "Movies")
-  std::string list;                  // "pay", "broadcast", "spanish", "regional sports", "defunct"
+  // "pay", "broadcast", "spanish", "regional sports", "defunct", "local",
+  // "radio"; "free" for iptv-org's free streaming channels no list has
+  std::string list;
   std::vector<std::string> places;   // regional: the area words in its row ("minnesota")
   std::string closed;                // "2024-07-01", "yes" (date unknown), or empty
   std::string wikidata;              // "Q12345"
@@ -86,7 +89,8 @@ class Index {
   // A provider channel's cleaned name (catalog::cleanName). A name matches
   // an entry's own name (exact), one of its other names or a correction
   // (alias), or, failing both, a single entry's loose key (loose); a key
-  // shared by two entries matches neither (ambiguous).
+  // shared by two entries matches neither (ambiguous). The free tier is
+  // only asked when no listed channel has the name exactly.
   Match match(std::string_view name) const;
 
  private:
@@ -95,6 +99,9 @@ class Index {
   std::unordered_map<std::string, std::vector<size_t>> byName_;
   std::unordered_map<std::string, std::vector<size_t>> byAlias_;
   std::unordered_map<std::string, std::vector<size_t>> byLoose_;
+  std::unordered_map<std::string, std::vector<size_t>> freeByName_;
+  std::unordered_map<std::string, std::vector<size_t>> freeByAlias_;
+  std::unordered_map<std::string, std::vector<size_t>> freeByLoose_;
 };
 // The built-in directory's index, made on first use.
 const Index& builtInIndex();

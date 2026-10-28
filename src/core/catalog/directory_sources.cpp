@@ -406,24 +406,28 @@ std::vector<IptvChannel> parseIptvOrg(std::string_view channelsCsv, std::string_
     return it == head.end() ? head.size() : static_cast<size_t>(it - head.begin());
   };
   auto at = [](const std::vector<std::string>& row, size_t i) { return i < row.size() ? row[i] : std::string(); };
-  // The main feed's language, by channel.
-  std::unordered_map<std::string, std::string> languageOf;
+  // The main feed's language and area, by channel.
+  std::unordered_map<std::string, std::string> languageOf, areaOf;
   auto feedRows = logos::csvRows(feedsCsv);
   if (!feedRows.empty()) {
     const auto& head = feedRows.front();
-    size_t channel = column(head, "channel"), main = column(head, "is_main"), languages = column(head, "languages");
+    size_t channel = column(head, "channel"), main = column(head, "is_main"), languages = column(head, "languages"),
+           area = column(head, "broadcast_area");
     for (size_t r = 1; r < feedRows.size(); ++r) {
       const auto& row = feedRows[r];
       std::string id = at(row, channel);
+      if (id.empty()) continue;
+      bool isMain = at(row, main) == "TRUE";
+      std::string firstArea = at(row, area).substr(0, at(row, area).find(';'));
+      if (isMain || !areaOf.count(id)) areaOf[id] = firstArea;
       std::string first = at(row, languages).substr(0, at(row, languages).find(';'));
-      if (id.empty() || first.empty()) continue;
-      if (at(row, main) == "TRUE" || !languageOf.count(id)) languageOf[id] = language3to2(first);
+      if (!first.empty() && (isMain || !languageOf.count(id))) languageOf[id] = language3to2(first);
     }
   }
   const auto& head = channelRows.front();
   size_t id = column(head, "id"), name = column(head, "name"), alt = column(head, "alt_names"),
          country = column(head, "country"), closed = column(head, "closed"), categories = column(head, "categories"),
-         nsfw = column(head, "is_nsfw");
+         nsfw = column(head, "is_nsfw"), network = column(head, "network");
   for (size_t r = 1; r < channelRows.size(); ++r) {
     const auto& row = channelRows[r];
     IptvChannel c;
@@ -438,16 +442,40 @@ std::vector<IptvChannel> parseIptvOrg(std::string_view channelsCsv, std::string_
     c.closed = at(row, closed);
     c.categories = at(row, categories);
     c.nsfw = at(row, nsfw) == "TRUE";
+    c.network = at(row, network);
     if (auto it = languageOf.find(c.id); it != languageOf.end()) c.language = it->second;
+    if (auto it = areaOf.find(c.id); it != areaOf.end()) c.area = it->second;
     out.push_back(std::move(c));
   }
   return out;
 }
 
+namespace {
+
+bool iptvJunk(const IptvChannel& c) {
+  return c.nsfw || rx::test("\\b(legislative|xxx|shop)\\b", c.categories) ||
+         rx::test("^[KW][A-Z]{2,3}(-(TV|DT|LD|LP|CD|CA))?\\b", c.name) || c.network == "Infomercials";
+}
+
+}  // namespace
+
 bool iptvNoise(const IptvChannel& c) {
-  return c.nsfw || rx::test("\\b(legislative|xxx)\\b", c.categories) ||
-         rx::test("^[KW][A-Z]{2,3}(-(TV|DT|LD|LP|CD|CA))?\\b", c.name) ||
+  return iptvJunk(c) ||
          rx::test("^(PlutoTV|Samsung|Roku|Xumo|Tubi|Stirr|Plex|LocalNow|Distro|Vizio|Redbox|Freevee)", c.id);
+}
+
+bool iptvFreeChannel(const IptvChannel& c) {
+  return c.country == "US" && c.closed.empty() && !iptvJunk(c) && (c.area == "c/US" || c.area == "r/NAM");
+}
+
+std::string withoutService(std::string_view name) {
+  static const char* const kServices =
+      "(pluto tv|samsung tv plus|roku channel|the roku channel|roku|xumo play|xumo|tubi|plex|stirr|local now|"
+      "freevee|vizio watchfree\\+?|redbox|distro tv)";
+  std::string out = rx::replace(name, std::string("^\\s*") + kServices + "\\s*[:|-]?\\s+", "", true);
+  out = rx::replace(out, std::string("\\s+(by|on|from)?\\s*") + kServices + "\\s*$", "", true);
+  out = trimmed(out);
+  return out.empty() ? std::string(name) : out;
 }
 
 Data assemble(const Sources& sources, const std::string& made) {
@@ -623,6 +651,46 @@ Data assemble(const Sources& sources, const std::string& made) {
     for (const std::string& a : own->altNames) addAlias(e, d.keys, a);
     if (!own->closed.empty()) e.closed = own->closed;
     if (e.language.empty()) e.language = own->language;
+  }
+
+  // The free tier: iptv-org's US free streaming channels the lists don't
+  // have (Pluto TV's, FAST channels'), matched only when no listed channel
+  // is ("free" entries).
+  std::unordered_set<std::string> taken;
+  for (const Entry& e : data.entries) {
+    taken.insert(exactKey(e.name));
+    for (const std::string& a : e.aliases) taken.insert(exactKey(a));
+    if (!e.iptvOrg.empty()) taken.insert("id:" + e.iptvOrg);
+  }
+  for (const IptvChannel& c : sources.iptv) {
+    if (!iptvFreeChannel(c) || taken.count("id:" + c.id)) continue;
+    // A service's one-word channel keeps the service's name ("Pluto TV
+    // Horror", not "Horror", which names other channels too).
+    auto bare = [](const std::string& n) {
+      std::string without = withoutService(n);
+      return without != n && without.find(' ') == std::string::npos ? n : without;
+    };
+    std::string name = bare(c.name);
+    std::vector<std::string> names = c.altNames;
+    names.push_back(c.name);
+    names.push_back(name);
+    bool listedAlready = false;
+    for (const std::string& n : names) listedAlready = listedAlready || taken.count(exactKey(bare(n)));
+    if (listedAlready || exactKey(name).empty()) continue;
+    Entry e;
+    e.id = "iptv:" + c.id;
+    e.name = name;
+    e.list = "free";
+    e.genre = c.categories;
+    e.language = c.language;
+    e.iptvOrg = c.id;
+    std::set<std::string> keys;
+    for (const std::string& n : names) {
+      addAlias(e, keys, n);
+      addAlias(e, keys, bare(n));
+    }
+    taken.insert(exactKey(name));
+    data.entries.push_back(std::move(e));
   }
 
   // Names only other countries' channels have: a hint at the language

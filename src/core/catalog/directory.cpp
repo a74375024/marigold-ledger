@@ -221,11 +221,12 @@ const Data& builtIn() {
 Index::Index(const Data& data) : data_(&data) {
   for (size_t i = 0; i < data.entries.size(); ++i) {
     const Entry& e = data.entries[i];
-    addUnique(byName_, exactKey(e.name), i);
-    addUnique(byLoose_, looseKey(e.name), i);
+    bool free = e.list == "free";
+    addUnique(free ? freeByName_ : byName_, exactKey(e.name), i);
+    addUnique(free ? freeByLoose_ : byLoose_, looseKey(e.name), i);
     for (const std::string& alias : e.aliases) {
-      addUnique(byAlias_, exactKey(alias), i);
-      addUnique(byLoose_, looseKey(alias), i);
+      addUnique(free ? freeByAlias_ : byAlias_, exactKey(alias), i);
+      addUnique(free ? freeByLoose_ : byLoose_, looseKey(alias), i);
     }
   }
   for (const Correction& c : corrections()) {
@@ -254,7 +255,11 @@ Match Index::match(std::string_view name) const {
   }
   if (auto it = byName_.find(key); it != byName_.end()) return pick(it->second, MatchKind::exact);
   if (auto it = byAlias_.find(key); it != byAlias_.end()) return pick(it->second, MatchKind::alias);
-  if (auto it = byLoose_.find(looseKey(name)); it != byLoose_.end()) return pick(it->second, MatchKind::loose);
+  if (auto it = freeByName_.find(key); it != freeByName_.end()) return pick(it->second, MatchKind::exact);
+  if (auto it = freeByAlias_.find(key); it != freeByAlias_.end()) return pick(it->second, MatchKind::alias);
+  std::string loose = looseKey(name);
+  if (auto it = byLoose_.find(loose); it != byLoose_.end()) return pick(it->second, MatchKind::loose);
+  if (auto it = freeByLoose_.find(loose); it != freeByLoose_.end()) return pick(it->second, MatchKind::loose);
   if (auto it = data_->elsewhere.find(key); it != data_->elsewhere.end()) m.elsewhere = it->second;
   return m;
 }

@@ -79,12 +79,22 @@ struct IptvChannel {
   std::string closed;
   std::string categories;
   bool nsfw = false;
+  std::string network;   // "Pluto TV"
   std::string language;  // "en", "es"...
+  std::string area;      // the main feed's: "c/US" (the country), "ct/USNYC" (a city)...
 };
 std::vector<IptvChannel> parseIptvOrg(std::string_view channelsCsv, std::string_view feedsCsv);
 // Entries that never become or enrich directory entries: local stations,
-// government and public access, adult channels, free-streaming copies.
+// government and public access, adult channels, infomercials, and (for
+// the lists' channels) free-streaming copies.
 bool iptvNoise(const IptvChannel& channel);
+// A US free streaming channel the lists don't have, for the directory's
+// free tier: national, open, not noise (a free-streaming service's copy
+// is fine here).
+bool iptvFreeChannel(const IptvChannel& channel);
+// A free streaming channel's name without its service ("Pluto TV Cheers"
+// -> "Cheers").
+std::string withoutService(std::string_view name);
 
 // The directory from the parsed sources. `rows` by list ("pay" -> rows),
 // `pages` and `leadsTo` from parsePagesAnswer, `entities` by item.

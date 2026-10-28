@@ -315,3 +315,53 @@ TEST_CASE("directory: umbrella articles, other channels' names, rebrands") {
   CHECK(north->closed.empty());
   CHECK(std::find(north->aliases.begin(), north->aliases.end(), "Fox Sports North") != north->aliases.end());
 }
+
+TEST_CASE("directory: iptv-org's free streaming channels, a tier below the lists") {
+  CHECK(withoutService("Pluto TV Cheers") == "Cheers");
+  CHECK(withoutService("Westerns by Pluto TV") == "Westerns");
+  CHECK(withoutService("Bowling TV") == "Bowling TV");
+  Sources src;
+  src.rows["pay"] = {{"", "FYI", "English language", "FYI"}};
+  src.iptv = parseIptvOrg(
+      "id,name,alt_names,network,owners,country,categories,is_nsfw,launched,closed,replaced_by,website\n"
+      "CheersPlusFrasier.us,Cheers + Frasier,,Pluto TV,,US,series,FALSE,,,,\n"
+      "PlutoTVMTVClassic.us,Pluto TV MTV Classic,,Pluto TV,,US,music,FALSE,,,,\n"
+      "FYIPluto.us,FYI,,Pluto TV,,US,series,FALSE,,,,\n"
+      "CityNews.us,City News,,,,US,news,FALSE,,,,\n"
+      "OldFast.us,Old Fast,,,,US,movies,FALSE,,2023-01-01,,\n"
+      "Deals.us,Deals,,Infomercials,,US,shop,FALSE,,,,\n"
+      "PlutoTVHorror.us,Pluto TV Horror,,Pluto TV,,US,movies,FALSE,,,,\n",
+      "channel,id,name,alt_names,is_main,broadcast_area,timezones,languages,format\n"
+      "CheersPlusFrasier.us,SD,SD,,TRUE,c/US,America/New_York,eng,480i\n"
+      "PlutoTVMTVClassic.us,SD,SD,,TRUE,c/US,America/New_York,eng,480i\n"
+      "FYIPluto.us,SD,SD,,TRUE,c/US,America/New_York,eng,480i\n"
+      "CityNews.us,SD,SD,,TRUE,ct/USNYC,America/New_York,eng,480i\n"
+      "OldFast.us,SD,SD,,TRUE,c/US,America/New_York,eng,480i\n"
+      "Deals.us,SD,SD,,TRUE,c/US,America/New_York,eng,480i\n"
+      "PlutoTVHorror.us,SD,SD,,TRUE,c/US,America/New_York,eng,480i\n");
+  Data data = assemble(src, "2026-10-28");
+  auto find = [&](const char* id) -> const Entry* {
+    auto it = std::find_if(data.entries.begin(), data.entries.end(), [&](const Entry& e) { return e.id == id; });
+    return it == data.entries.end() ? nullptr : &*it;
+  };
+  const Entry* cheers = find("iptv:CheersPlusFrasier.us");
+  REQUIRE(cheers);
+  CHECK(cheers->list == "free");
+  CHECK(cheers->language == "en");
+  const Entry* mtv = find("iptv:PlutoTVMTVClassic.us");
+  REQUIRE(mtv);
+  CHECK(mtv->name == "MTV Classic");
+  CHECK_FALSE(find("iptv:FYIPluto.us"));  // the lists have FYI
+  CHECK_FALSE(find("iptv:CityNews.us"));  // one city's
+  CHECK_FALSE(find("iptv:OldFast.us"));   // shut down
+  CHECK_FALSE(find("iptv:Deals.us"));     // infomercials
+  // Matching: a listed channel first, the free tier after.
+  Index index(data);
+  CHECK(index.match("Cheers + Frasier").entry == cheers);
+  CHECK(index.match("MTV Classic").entry == mtv);
+  CHECK(index.match("FYI").entry->id == "FYI");
+  // A one-word name stays with its service.
+  REQUIRE(find("iptv:PlutoTVHorror.us"));
+  CHECK(find("iptv:PlutoTVHorror.us")->name == "Pluto TV Horror");
+  CHECK(index.match("HORROR").kind == MatchKind::none);
+}
