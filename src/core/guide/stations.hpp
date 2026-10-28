@@ -1,7 +1,8 @@
 // US broadcast stations (call sign -> network, city, channel) from
 // Wikipedia's affiliate lists, so "NBC 5 Chicago" can be matched to its
-// station (StationDirectory in tvOS). The app fetches the pages about once a
-// month; here the page text is the input and the caller does the requests.
+// station (StationDirectory in tvOS). The build reads the pages (tools/
+// wikidata) and the app carries the result (catalog/wiki_data.hpp); here the
+// page text is the input.
 #pragma once
 
 #include <optional>
@@ -41,11 +42,6 @@ inline bool isFresh(time::Seconds modified, time::Seconds now, bool empty) {
 
 std::string toJson(const std::vector<Station>& stations);
 std::optional<std::vector<Station>> fromJson(std::string_view text);
-
-// Wikimedia asks every client for a User-Agent with contact information
-// (https://meta.wikimedia.org/wiki/User-Agent_policy) and rate-limits ones
-// without it: every Wikipedia request sends this.
-constexpr const char* kUserAgent = "Marigold/0.1 (https://github.com/a74375024/marigold-ledger; webOS TV app)";
 
 // The Wikipedia API request for a page's wikitext, and the text out of its
 // answer ({"parse": {"wikitext": {"*": "..."}}}).

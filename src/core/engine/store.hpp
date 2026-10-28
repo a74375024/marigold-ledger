@@ -197,10 +197,8 @@ class Store {
   // My Lineup setup (LineupSetupView). The draft is the caller's until
   // buildLineup().
   catalog::LineupPrefs lineupPrefs() const;
-  // Market list: saved on the TV for 90 days, else read from Wikipedia.
+  // Market list: built into the app (the build reads it from Wikipedia).
   void loadMarkets(std::function<void(TvMarkets)> done);
-  // Reads the list page again in the background (the list shown stays).
-  void refreshMarkets(const std::string& path);
   // Each picked market with its stations' call signs (kept from the draft
   // when it already has them).
   void resolveMarkets(const std::vector<std::string>& names, const catalog::LineupPrefs& draft,
@@ -318,7 +316,6 @@ class Store {
   void readStations();
   void readLogoIndex();
   void fetchLogoIndex();
-  void fetchStations();
   void rebuildCatalog();
   void installCatalog(std::shared_ptr<const std::vector<Channel>> list,
                       std::shared_ptr<const catalog::CatalogResult> cat, bool partial);

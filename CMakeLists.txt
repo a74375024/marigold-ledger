@@ -35,6 +35,7 @@ marigold_warnings(marigold_core)
 find_package(Threads REQUIRED)
 find_package(ZLIB REQUIRED)
 target_link_libraries(marigold_core PUBLIC Threads::Threads pcre2 ZLIB::ZLIB PRIVATE qrcodegen)
+include(cmake/wiki-data.cmake)
 
 # Legacy headers that are pure C and safe to test on the host.
 add_library(legacy_pure INTERFACE)
@@ -57,6 +58,7 @@ endif()
 
 if(MARIGOLD_BUILD_PREVIEW)
   add_subdirectory(tools/preview)
+  add_subdirectory(tools/wikidata)
 endif()
 
 if(MARIGOLD_BUILD_TESTS)

@@ -59,11 +59,60 @@ jobs:
             ctest --test-dir build --output-on-failure
           fi
 
-  webos:
+  # Wikipedia's US TV-market and station lists, read at most once a week and
+  # built into the apps (a TV never contacts Wikipedia). A failed read keeps
+  # the last good data; only fresh data is saved.
+  wikidata:
     runs-on: ubuntu-24.04
-    needs: [hygiene, host]
+    outputs:
+      key: ${{ steps.week.outputs.key }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: This week
+        id: week
+        run: echo "key=wikidata-v1-$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+      - name: This week's data, if read already
+        id: cache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: data/wiki-data.json
+          key: ${{ steps.week.outputs.key }}
+          restore-keys: wikidata-v1-
+      - name: Read Wikipedia (once a week)
+        id: read
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          cmake -S . -B build-wiki -DCMAKE_BUILD_TYPE=Release -DMARIGOLD_BUILD_TESTS=OFF -DMARIGOLD_BUILD_PREVIEW=ON
+          cmake --build build-wiki --target marigold-wikidata --parallel
+          mkdir -p data
+          if ./build-wiki/tools/wikidata/marigold-wikidata data/wiki-data.new.json; then
+            mv data/wiki-data.new.json data/wiki-data.json
+            echo "fresh=true" >> "$GITHUB_OUTPUT"
+          elif [ -f data/wiki-data.json ]; then
+            echo "::warning::Wikipedia couldn't be read; the apps keep the last data"
+          else
+            echo "::error::Wikipedia couldn't be read and there is no earlier data"
+            exit 1
+          fi
+      - name: Keep this week's data
+        if: steps.read.outputs.fresh == 'true'
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: data/wiki-data.json
+          key: ${{ steps.week.outputs.key }}
+
+  webos:
+    runs-on: ubuntu-24.04
+    needs: [hygiene, host, wikidata]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Built-in Wikipedia data
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: data/wiki-data.json
+          key: ${{ needs.wikidata.outputs.key }}
+          restore-keys: wikidata-v1-
+          fail-on-cache-miss: true
       - name: SDK cache key
         id: sdk
         run: echo "key=webos-sdk-$(sha256sum tools/sdk.conf | cut -c1-16)" >> "$GITHUB_OUTPUT"
@@ -88,9 +137,16 @@ jobs:
 
   android:
     runs-on: ubuntu-24.04
-    needs: [hygiene, host]
+    needs: [hygiene, host, wikidata]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Built-in Wikipedia data
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: data/wiki-data.json
+          key: ${{ needs.wikidata.outputs.key }}
+          restore-keys: wikidata-v1-
+          fail-on-cache-miss: true
       - name: Java 17 (the runner's)
         run: echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
       - name: Install the NDK and CMake the build pins
@@ -140,9 +196,16 @@ jobs:
   # .ipa for a signing service to install, and a start in the tvOS Simulator.
   tvos:
     runs-on: macos-15
-    needs: [hygiene, host]
+    needs: [hygiene, host, wikidata]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Built-in Wikipedia data
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: data/wiki-data.json
+          key: ${{ needs.wikidata.outputs.key }}
+          restore-keys: wikidata-v1-
+          fail-on-cache-miss: true
       - name: Host tests with Apple clang
         env:
           ASAN_OPTIONS: halt_on_error=1

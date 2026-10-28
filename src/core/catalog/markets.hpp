@@ -1,9 +1,8 @@
 // US TV markets (Nielsen DMAs) and the stations in each, from Wikipedia
-// (MarketDirectory in tvOS): the market list is fetched once, and only the
-// picked market's station list after that, falling back to station-directory
-// cities when Wikipedia can't be reached. The page text is the input here;
-// the caller does the requests (guide::stations::wikiRequestUrl) and keeps
-// the cache file.
+// (MarketDirectory in tvOS). The build reads the list and every market's
+// station list (tools/wikidata) and the app carries the result (catalog/
+// wiki_data.hpp), falling back to station-directory cities. The page text is
+// the input here.
 #pragma once
 
 #include <optional>

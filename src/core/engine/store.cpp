@@ -23,6 +23,7 @@
 #include "core/catalog/catalog.hpp"
 #include "core/catalog/lineup.hpp"
 #include "core/catalog/markets.hpp"
+#include "core/catalog/wiki_data.hpp"
 #include "core/catalog/work.hpp"
 #include "core/guide/genre.hpp"
 #include "core/guide/outside.hpp"
@@ -96,10 +97,6 @@ std::string randomId() {
   }
   return str::hex64(str::fnv1a64(std::to_string(seed))).substr(0, 12);
 }
-
-// One Wikipedia page's wikitext, on a pool thread (station directory, markets).
-std::optional<std::string> wikitext(http::Pool& pool, const std::string& title,
-                                    http::Priority priority = http::Priority::Visible);
 
 // Waits while full screen video plays (big downloads).
 struct GuideReadStateLite {
@@ -889,7 +886,6 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
           MLOG_I("store", "refresh: the channel list is unchanged");
           status_.problem = str::join(problems, "\n");
           status_.line.clear();
-          if (!mm.stationsFresh) fetchStations();
           fetchLogoIndex();
           afterBigJob("channel list checked");
           return;
@@ -910,7 +906,6 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
           startGuides(wasEmpty);
         }
         saveCatalog();
-        if (!mm.stationsFresh) fetchStations();
         fetchLogoIndex();
         afterBigJob("channels sorted");
       },
@@ -920,64 +915,22 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
 // ------------------------------------------------------------ station directory
 
 void Store::readStations() {
-  // Small (a few thousand stations): read before the first catalog build.
+  // Built into the app (the build reads Wikipedia's affiliate lists; the TV
+  // never does). A directory an older version saved is used only when this
+  // build has none.
+  const catalog::wiki::Data& built = catalog::wiki::builtIn();
+  if (!built.stations.empty()) {
+    impl_->stations = std::make_shared<std::vector<guide::Station>>(built.stations);
+    MLOG_I("store", "station directory: %zu stations (built in, %s)", built.stations.size(), built.made.c_str());
+    return;
+  }
   Files& st = host_.files;
-  std::string path = st.path(kStationsFile);
-  struct stat sb;
-  if (stat(path.c_str(), &sb) != 0) return;
   auto text = st.read(kStationsFile);
   if (!text) return;
   auto list = guide::stations::fromJson(*text);
   if (!list) return;
-  impl_->stationsFresh = guide::stations::isFresh(sb.st_mtime, time::now(), list->empty());
   impl_->stations = std::make_shared<std::vector<guide::Station>>(std::move(*list));
-  MLOG_I("store", "station directory: %zu stations%s", impl_->stations->size(), impl_->stationsFresh ? "" : " (old)");
-}
-
-void Store::fetchStations() {
-  Impl& m = *impl_;
-  time::Seconds now = time::now();
-  if (m.stationsFetching || m.stationsFresh || now - m.stationsTriedAt < 6 * 3600) return;
-  m.stationsFetching = true;
-  m.stationsTriedAt = now;
-  auto out = std::make_shared<std::vector<guide::Station>>();
-  http::Pool& pool = host_.pool;
-  std::string path = host_.files.path(kStationsFile);
-  auto stop = m.stopJobs;
-  host_.pool.post(
-      [out, &pool, path, stop] {
-        std::vector<std::pair<std::string, std::string>> texts;
-        bool first = true;
-        for (const guide::stations::Page& page : guide::stations::pages()) {
-          for (const std::string& title : page.titles) {
-            if (stop->load()) return;
-            if (!first) pool.pause(guide::stations::kRequestSpacingMs);
-            first = false;
-            if (auto text = wikitext(pool, title, http::Priority::Background)) {
-              texts.push_back({page.network, std::move(*text)});
-              break;
-            }
-          }
-        }
-        *out = guide::stations::collect(texts);
-        if (!out->empty()) writeFileAtomic(path, guide::stations::toJson(*out));
-      },
-      [this, out] {
-        Impl& mm = *impl_;
-        mm.stationsFetching = false;
-        if (out->empty()) {
-          MLOG_W("store", "station directory: couldn't read the affiliate lists");
-          return;
-        }
-        bool changed = *out != *mm.stations;
-        mm.stationsFresh = true;
-        mm.stations = out;
-        MLOG_I("store", "station directory: %zu stations", out->size());
-        if (!changed) return;
-        rebuildCatalog();
-        if (guide::needsStationDirectory(guideShards())) scheduleOutside(true);
-      },
-      http::Priority::Long);
+  MLOG_I("store", "station directory: %zu stations (saved)", impl_->stations->size());
 }
 
 // ------------------------------------------------------------ fallback logos
@@ -1184,48 +1137,6 @@ void Store::rebuildEntries() {
 
 catalog::LineupPrefs Store::lineupPrefs() const { return impl_->prefs; }
 
-namespace {
-
-// One Wikipedia page's wikitext, on a pool thread. Wikimedia answers 429 to
-// clients whose User-Agent has no contact address (a URL or an email), and
-// to bursts: the agent names the project's page, and a 429 waits as long as
-// the server asks (or 3, 8, then 15 s) before trying again.
-std::optional<std::string> wikitext(http::Pool& pool, const std::string& title, http::Priority priority) {
-  http::Request q;
-  q.url = guide::stations::wikiRequestUrl(title);
-  q.headers.push_back("User-Agent: " + std::string(guide::stations::kUserAgent));
-  q.tag = "wiki";
-  q.timeoutMs = 60000;
-  q.maxBytes = 8u << 20;
-  q.priority = priority;
-  static const unsigned kBackoffS[] = {3, 8, 15};
-  for (int attempt = 0; attempt < 4; ++attempt) {
-    http::Response r = pool.fetchNow(q);
-    if (r.status == 429 || r.status == 503) {
-      if (attempt == 3) {
-        MLOG_W("wiki", "page request rate limited (status %d)", r.status);
-        break;
-      }
-      unsigned wait = std::max<unsigned>(kBackoffS[attempt], static_cast<unsigned>(std::clamp(r.retryAfterS, 0, 30)));
-      pool.pause(wait * 1000u);
-      continue;
-    }
-    if (!r.ok) {
-      MLOG_W("wiki", "page request failed (status %d, %s)", r.status, r.error.c_str());
-      if (attempt < 2) {
-        pool.pause(2000);
-        continue;
-      }
-      break;
-    }
-    auto text = guide::stations::wikitextFromResponse(r.body);
-    if (!text) MLOG_W("wiki", "page answer unreadable (status %d, %zu bytes)", r.status, r.body.size());
-    return text;
-  }
-  return std::nullopt;
-}
-
-}  // namespace
 
 void Store::loadMarkets(std::function<void(TvMarkets)> done) {
   Impl& m = *impl_;
@@ -1242,110 +1153,52 @@ void Store::loadMarkets(std::function<void(TvMarkets)> done) {
   if (names->size() > 6000) names->resize(6000);
   auto result = std::make_shared<TvMarkets>();
   auto list = std::make_shared<std::vector<catalog::markets::Market>>();
-  // The saved list (however old) or the built-in one straight away, so
-  // "Where do you watch?" never waits on Wikipedia; an old or missing list
-  // is fetched again in the background for station look-ups and next time.
-  auto refresh = std::make_shared<bool>(false);
+  // The list built into the app (read from Wikipedia by the build); else
+  // one an older version saved, else the built-in names. Never fetched.
   host_.pool.post(
-      [path, names, result, list, refresh] {
-        struct stat st;
+      [path, names, result, list] {
+        const catalog::wiki::Data& built = catalog::wiki::builtIn();
         std::string text;
-        time::Seconds now = time::now();
-        if (stat(path.c_str(), &st) == 0 && readFile(path, text)) {
-          if (auto saved = catalog::markets::fromJson(text)) {
-            *refresh = !catalog::markets::cacheFresh(st.st_mtime, now, saved->empty());
-            *list = std::move(*saved);
-          }
-        } else {
-          *refresh = true;
+        if (!built.markets.empty()) {
+          *list = built.markets;
+        } else if (readFile(path, text)) {
+          if (auto saved = catalog::markets::fromJson(text)) *list = std::move(*saved);
         }
-        if (list->empty()) {
-          *refresh = true;
-          *list = catalog::markets::builtinMarkets();
-        }
+        if (list->empty()) *list = catalog::markets::builtinMarkets();
         for (const auto& mk : *list) result->all.push_back(mk.name);
         for (const auto& mk : catalog::markets::suggested(*list, *names)) result->suggested.push_back(mk.name);
       },
-      [this, result, list, done, refresh, path] {
+      [this, result, list, done] {
         impl_->tvMarkets = *list;
         done(*result);
-        if (*refresh) refreshMarkets(path);
       },
       http::Priority::Visible);
-}
-
-void Store::refreshMarkets(const std::string& path) {
-  if (impl_->marketsRefreshing) return;
-  impl_->marketsRefreshing = true;
-  auto fresh = std::make_shared<std::vector<catalog::markets::Market>>();
-  http::Pool& pool = host_.pool;
-  host_.pool.post(
-      [path, fresh, &pool] {
-        if (auto page = wikitext(pool, catalog::markets::kListPage, http::Priority::Background))
-          *fresh = catalog::markets::parseMarkets(*page);
-        if (!fresh->empty()) writeFileAtomic(path, catalog::markets::toJson(*fresh));
-        else MLOG_W("lineup", "market list page unavailable; keeping the list shown");
-      },
-      [this, fresh] {
-        impl_->marketsRefreshing = false;
-        // Their template pages, for the markets picked from the list shown.
-        for (const auto& mk : *fresh) impl_->tvMarketTemplates[catalog::markets::nameKey(mk.name)] = mk;
-      },
-      http::Priority::Background);
 }
 
 void Store::resolveMarkets(const std::vector<std::string>& names, const catalog::LineupPrefs& draft,
                            std::function<void(std::vector<catalog::MarketChoice>)> done) {
-  std::vector<catalog::MarketChoice> known;
-  std::vector<catalog::markets::Market> todo;
+  // Each picked market's call signs: from the data built into the app (its
+  // Wikipedia station list), else station-directory stations in its cities.
+  const catalog::wiki::Data& built = catalog::wiki::builtIn();
+  std::vector<catalog::MarketChoice> out;
   for (const std::string& name : names) {
     auto existing = std::find_if(draft.markets.begin(), draft.markets.end(),
                                  [&](const catalog::MarketChoice& c) { return c.name == name; });
-    if (existing != draft.markets.end() && !existing->callsigns.empty()) continue;
+    if (existing != draft.markets.end() && !existing->callsigns.empty()) {
+      out.push_back(*existing);
+      continue;
+    }
     auto mk = std::find_if(impl_->tvMarkets.begin(), impl_->tvMarkets.end(),
                            [&](const catalog::markets::Market& x) { return x.name == name; });
     catalog::markets::Market pick = mk != impl_->tvMarkets.end() ? *mk : catalog::markets::Market{name, std::nullopt};
-    if (!pick.templateName) {
-      // Picked from the built-in list: the page's spelling of it, once read.
-      auto t = impl_->tvMarketTemplates.find(catalog::markets::nameKey(name));
-      if (t != impl_->tvMarketTemplates.end()) pick.templateName = t->second.templateName;
-    }
-    todo.push_back(std::move(pick));
+    catalog::MarketChoice choice;
+    choice.name = pick.name;
+    choice.templateName = pick.templateName;
+    if (const std::vector<std::string>* calls = built.callsignsOf(name)) choice.callsigns = *calls;
+    if (choice.callsigns.empty()) choice.callsigns = catalog::markets::fallbackCallsigns(pick, *impl_->stations);
+    out.push_back(std::move(choice));
   }
-  auto fetched = std::make_shared<std::map<std::string, catalog::MarketChoice>>();
-  http::Pool& pool = host_.pool;
-  host_.pool.post(
-      [todo, fetched, &pool, stations = impl_->stations] {
-        bool first = true;
-        for (const auto& mk : todo) {
-          catalog::MarketChoice choice;
-          choice.name = mk.name;
-          choice.templateName = mk.templateName;
-          if (mk.templateName) {
-            // Wikipedia rate-limits bursts.
-            if (!first) pool.pause(guide::stations::kRequestSpacingMs);
-            first = false;
-            if (auto page = wikitext(pool, *mk.templateName))
-              choice.callsigns = catalog::markets::callsignsInWikitext(*page);
-          }
-          if (choice.callsigns.empty()) choice.callsigns = catalog::markets::fallbackCallsigns(mk, *stations);
-          (*fetched)[mk.name] = std::move(choice);
-        }
-      },
-      [names, draft, fetched, done] {
-        std::vector<catalog::MarketChoice> out;
-        for (const std::string& name : names) {
-          auto f = fetched->find(name);
-          if (f != fetched->end()) {
-            out.push_back(f->second);
-            continue;
-          }
-          for (const catalog::MarketChoice& c : draft.markets)
-            if (c.name == name) out.push_back(c);
-        }
-        done(std::move(out));
-      },
-      http::Priority::Visible);
+  done(std::move(out));
 }
 
 std::vector<MarketSummary> Store::countries(const std::set<std::string>& selected) const {

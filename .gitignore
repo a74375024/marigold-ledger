@@ -44,3 +44,6 @@ compile_commands.json
 *.swp
 .DS_Store
 .claude/
+
+# Wikipedia data fetched at build time (tools/wikidata); built into the app
+data/wiki-data.json

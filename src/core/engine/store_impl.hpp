@@ -173,13 +173,8 @@ struct Store::Impl {
   bool savedListingsRead = false;
   std::string guideLine;  // status line of a running guide job
   std::vector<catalog::markets::Market> tvMarkets;  // last list loaded for the setup
-  // The list page's markets by nameKey (template pages for built-in names).
-  std::unordered_map<std::string, catalog::markets::Market> tvMarketTemplates;
-  bool marketsRefreshing = false;
-  // Station directory (Wikipedia affiliate lists, about monthly).
+  // Station directory (Wikipedia's affiliate lists, built into the app).
   std::shared_ptr<const std::vector<guide::Station>> stations = std::make_shared<std::vector<guide::Station>>();
-  bool stationsFresh = false, stationsFetching = false;
-  time::Seconds stationsTriedAt = 0;
   // Fallback logos for national channels (weekly).
   std::shared_ptr<const logos::IptvOrgIndex> iptvOrg;
   bool iptvOrgFetching = false;
