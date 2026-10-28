@@ -80,6 +80,8 @@ struct IptvChannel {
   std::string categories;
   bool nsfw = false;
   std::string network;   // "Pluto TV"
+  std::string owners;    // "FX Networks LLC;The Walt Disney Company"
+  std::string launched;  // "1994-10-31"
   std::string language;  // "en", "es"...
   std::string area;      // the main feed's: "c/US" (the country), "ct/USNYC" (a city)...
 };
@@ -95,6 +97,10 @@ bool iptvFreeChannel(const IptvChannel& channel);
 // A free streaming channel's name without its service ("Pluto TV Cheers"
 // -> "Cheers").
 std::string withoutService(std::string_view name);
+// Two iptv-org rows of one channel under an old and a new name ("FXM" and
+// "FX Movie Channel"): the same launch date, or the same owners with a
+// launch date missing. C-SPAN and C-SPAN 2 have different launch dates.
+bool sameIptvChannel(const IptvChannel& a, const IptvChannel& b);
 
 // The directory from the parsed sources. `rows` by list ("pay" -> rows),
 // `pages` and `leadsTo` from parsePagesAnswer, `entities` by item.

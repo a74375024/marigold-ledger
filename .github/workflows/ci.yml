@@ -73,7 +73,7 @@ jobs:
         id: week
         run: |
           echo "key=wikidata-v1-$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
-          echo "directory=channeldir-v4-$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+          echo "directory=channeldir-v5-$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
       - name: This week's data, if read already
         id: cache
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
@@ -113,7 +113,7 @@ jobs:
         with:
           path: data/channel-directory.json
           key: ${{ steps.week.outputs.directory }}
-          restore-keys: channeldir-v4-
+          restore-keys: channeldir-v5-
       - name: Make the channel directory (once a week)
         id: dirread
         if: steps.dircache.outputs.cache-hit != 'true'
@@ -157,7 +157,7 @@ jobs:
         with:
           path: data/channel-directory.json
           key: ${{ needs.wikidata.outputs.directory }}
-          restore-keys: channeldir-v4-
+          restore-keys: channeldir-v5-
       - name: SDK cache key
         id: sdk
         run: echo "key=webos-sdk-$(sha256sum tools/sdk.conf | cut -c1-16)" >> "$GITHUB_OUTPUT"
@@ -197,7 +197,7 @@ jobs:
         with:
           path: data/channel-directory.json
           key: ${{ needs.wikidata.outputs.directory }}
-          restore-keys: channeldir-v4-
+          restore-keys: channeldir-v5-
       - name: Java 17 (the runner's)
         run: echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
       - name: Install the NDK and CMake the build pins
@@ -265,7 +265,7 @@ jobs:
         with:
           path: data/channel-directory.json
           key: ${{ needs.wikidata.outputs.directory }}
-          restore-keys: channeldir-v4-
+          restore-keys: channeldir-v5-
       - name: Host tests with Apple clang
         env:
           ASAN_OPTIONS: halt_on_error=1

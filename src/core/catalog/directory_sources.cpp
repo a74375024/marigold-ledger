@@ -427,7 +427,8 @@ std::vector<IptvChannel> parseIptvOrg(std::string_view channelsCsv, std::string_
   const auto& head = channelRows.front();
   size_t id = column(head, "id"), name = column(head, "name"), alt = column(head, "alt_names"),
          country = column(head, "country"), closed = column(head, "closed"), categories = column(head, "categories"),
-         nsfw = column(head, "is_nsfw"), network = column(head, "network");
+         nsfw = column(head, "is_nsfw"), network = column(head, "network"), owners = column(head, "owners"),
+         launched = column(head, "launched");
   for (size_t r = 1; r < channelRows.size(); ++r) {
     const auto& row = channelRows[r];
     IptvChannel c;
@@ -443,6 +444,8 @@ std::vector<IptvChannel> parseIptvOrg(std::string_view channelsCsv, std::string_
     c.categories = at(row, categories);
     c.nsfw = at(row, nsfw) == "TRUE";
     c.network = at(row, network);
+    c.owners = at(row, owners);
+    c.launched = at(row, launched);
     if (auto it = languageOf.find(c.id); it != languageOf.end()) c.language = it->second;
     if (auto it = areaOf.find(c.id); it != areaOf.end()) c.area = it->second;
     out.push_back(std::move(c));
@@ -462,6 +465,11 @@ bool iptvJunk(const IptvChannel& c) {
 bool iptvNoise(const IptvChannel& c) {
   return iptvJunk(c) ||
          rx::test("^(PlutoTV|Samsung|Roku|Xumo|Tubi|Stirr|Plex|LocalNow|Distro|Vizio|Redbox|Freevee)", c.id);
+}
+
+bool sameIptvChannel(const IptvChannel& a, const IptvChannel& b) {
+  if (!a.launched.empty() && !b.launched.empty()) return a.launched == b.launched;
+  return !a.owners.empty() && a.owners == b.owners;
 }
 
 bool iptvFreeChannel(const IptvChannel& c) {
@@ -616,7 +624,7 @@ Data assemble(const Sources& sources, const std::string& made) {
     }
   }
   // Each entry's iptv-org channel, by the names the lists give it: one, or none.
-  std::unordered_set<std::string> listedNames;
+  std::unordered_set<std::string> listedNames, claimed;
   for (const Entry& e : data.entries) listedNames.insert(exactKey(e.name));
   for (size_t i = 0; i < data.entries.size(); ++i) {
     Entry& e = data.entries[i];
@@ -640,15 +648,25 @@ Data assemble(const Sources& sources, const std::string& made) {
     }
     const IptvChannel* own = found.size() == 1 ? &sources.iptv[*found.begin()] : nullptr;
     // The article's other names, unless one is another channel: another
-    // entry's name, or another iptv-org channel's ("ActionMax" redirects
-    // to Cinemax, "C-SPAN2" to C-SPAN).
+    // entry's name, or another iptv-org channel's ("C-SPAN2" redirects to
+    // C-SPAN). An iptv-org row of this channel under its other name
+    // ("FXM" beside "FX Movie Channel") is this channel's: claimed, so the
+    // free tier doesn't list it again.
     if (e.list != "local" && e.list != "radio") {
       for (const std::string& a : d.fromArticle) {
         std::string key = exactKey(withoutBrackets(a));
         if (notAChannelName(a) || listedNames.count(key)) continue;
         auto other = usByKey.find(key);
-        if (other != usByKey.end() &&
-            (!own || std::find(other->second.begin(), other->second.end(), *found.begin()) == other->second.end())) {
+        if (other != usByKey.end() && own) {
+          bool mine = false;
+          for (size_t x : other->second) {
+            if (x == *found.begin() || sameIptvChannel(*own, sources.iptv[x])) {
+              mine = true;
+              claimed.insert(sources.iptv[x].id);
+            }
+          }
+          if (!mine) continue;
+        } else if (other != usByKey.end()) {
           continue;
         }
         addAlias(e, d.keys, a);
@@ -675,6 +693,7 @@ Data assemble(const Sources& sources, const std::string& made) {
     for (const std::string& a : e.aliases) taken.insert(exactKey(a));
     if (!e.iptvOrg.empty()) taken.insert("id:" + e.iptvOrg);
   }
+  for (const std::string& id : claimed) taken.insert("id:" + id);
   for (const IptvChannel& c : sources.iptv) {
     if (!iptvFreeChannel(c) || taken.count("id:" + c.id)) continue;
     // A service's one-word channel keeps the service's name ("Pluto TV

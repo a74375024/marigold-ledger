@@ -389,3 +389,29 @@ TEST_CASE("directory: an article's other name that is its own iptv-org channel s
   CHECK(fxm->id == "FX Movie Channel");
   CHECK(fxm->language == "en");  // its list section, over iptv-org's feed
 }
+
+TEST_CASE("directory: iptv-org's two rows of one channel are one, of two channels two") {
+  Sources src;
+  src.rows["pay"] = {{"FX Movie Channel", "FX Movie Channel", "English language", ""},
+                     {"C-SPAN", "C-SPAN", "English language", ""}};
+  src.pages["FX Movie Channel"] = {{"FXM", "Fox Movie Channel"}, ""};
+  src.pages["C-SPAN"] = {{"C-SPAN2"}, ""};
+  src.iptv = parseIptvOrg(
+      "id,name,alt_names,network,owners,country,categories,is_nsfw,launched,closed,replaced_by,website\n"
+      "FXMovieChannel.us,FX Movie Channel,,FX Channels,FX Networks LLC,US,movies,FALSE,1994-10-31,,,\n"
+      "FXM.us,FXM,,FX Channels,FX Networks LLC,US,movies,FALSE,1994-10-31,,,\n"
+      "CSPAN.us,C-SPAN,,,National Cable Satellite Corporation,US,news,FALSE,1979-03-19,,,\n"
+      "CSPAN2.us,C-SPAN 2,C-SPAN2,,National Cable Satellite Corporation,US,news,FALSE,1986-06-02,,,\n",
+      "channel,id,name,alt_names,is_main,broadcast_area,timezones,languages,format\n"
+      "FXMovieChannel.us,SD,SD,,TRUE,c/US,America/New_York,eng,480i\n"
+      "FXM.us,SD,SD,,TRUE,c/US,America/New_York,eng,480i\n"
+      "CSPAN.us,SD,SD,,TRUE,c/US,America/New_York,eng,480i\n"
+      "CSPAN2.us,SD,SD,,TRUE,c/US,America/New_York,eng,480i\n");
+  Data data = assemble(src, "2026-10-28");
+  Index index(data);
+  REQUIRE(index.match("FXM").entry);
+  CHECK(index.match("FXM").entry->id == "FX Movie Channel");  // not a free-tier copy
+  REQUIRE(index.match("C-SPAN 2").entry);
+  CHECK(index.match("C-SPAN 2").entry->list == "free");  // its own channel, not C-SPAN
+  CHECK(index.match("C-SPAN").entry->id == "C-SPAN");
+}
