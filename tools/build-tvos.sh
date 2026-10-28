@@ -24,13 +24,15 @@ if [ ! -d "$xcf" ]; then
 fi
 
 case "$kind" in
-  device) sdk=appletvos; slice=tvos-arm64; out="$root/build-tvos" ;;
-  simulator) sdk=appletvsimulator; slice=tvos-arm64_x86_64-simulator; out="$root/build-tvos-sim" ;;
+  device) sdk=appletvos; slice=tvos-arm64; arch=arm64; out="$root/build-tvos" ;;
+  # The simulator runs on this Mac's own kind of processor (Apple Silicon or
+  # Intel); the framework's simulator slice has both.
+  simulator) sdk=appletvsimulator; slice=tvos-arm64_x86_64-simulator; arch="$(uname -m)"; out="$root/build-tvos-sim" ;;
   *) echo "build-tvos: device or simulator" >&2; exit 2 ;;
 esac
 
 cmake -S "$root" -B "$out" -G Xcode \
-  -DCMAKE_SYSTEM_NAME=tvOS -DCMAKE_OSX_SYSROOT="$sdk" -DCMAKE_OSX_ARCHITECTURES=arm64 \
+  -DCMAKE_SYSTEM_NAME=tvOS -DCMAKE_OSX_SYSROOT="$sdk" -DCMAKE_OSX_ARCHITECTURES="$arch" \
   -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 -DMARIGOLD_VLCKIT="$xcf/$slice/TVVLCKit.framework" \
   -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO >&2
 cmake --build "$out" --config Release --target Marigold -- -quiet CODE_SIGNING_ALLOWED=NO >&2
