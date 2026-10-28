@@ -218,6 +218,9 @@ bool isTeamSportShow(std::string_view title, std::string_view league);
 // A year before this one in the title ("2024 Round 5"; a "2025/26" season
 // still counts): an old event shown again.
 bool namesPastYear(std::string_view title, Seconds now);
+// A date in the title that's gone by ("9 Feb", "Feb 9", "Sun 6th" when no
+// Sunday the 6th is near, a last "5.28"): an old game shown again.
+bool namesPastDate(std::string_view title, Seconds now);
 // Only a network and a sport ("ESPN Beisbol", "Fox Soccer"): a channel's
 // name, not an event.
 bool isNetworkAndSport(std::string_view title);

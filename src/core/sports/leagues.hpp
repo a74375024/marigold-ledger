@@ -3,6 +3,7 @@
 // or the standard set until My Sports is set up.
 #pragma once
 
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -44,6 +45,9 @@ struct League {
   // "soccer-women/d3"): Divisions II and III, which the other scoreboards
   // don't list.
   bool ncaaPage = false;
+  // Hundreds of games a day (college sports): only the ones you can watch
+  // are listed and polled, unless the league itself is picked in My Sports.
+  bool everyGame = false;
 
   bool college() const { return group.rfind("College", 0) == 0; }
 };
@@ -71,12 +75,16 @@ const League& cricketLeague();
 // games kept only when no league above has them. Not a My Sports pick.
 constexpr const char* kSoccerAll = "SOC";
 const League& soccerAllLeague();
-// Divisions II and III soccer (women's and men's), field hockey and
-// women's volleyball, from the NCAA's pages (ncaa.hpp). Looked up while
-// your channels have college games of those sports.
+// Divisions II and III soccer (women's and men's), field hockey, women's
+// volleyball, hockey (Division III) and basketball, from the NCAA's pages
+// (ncaa.hpp). Looked up while your channels have college games of the sport.
 const std::vector<League>& smallCollegeLeagues();
+// More college schedules from the scoreboard: FCS football, Divisions II
+// and III football, men's and women's college hockey. Not My Sports picks;
+// looked up while your channels have those games.
+const std::vector<League>& collegeExtraLeagues();
 // leagues + fights + racing + tennis + golf + teamSportLeagues + cricket,
-// all-soccer and the small college leagues.
+// all-soccer, the small college leagues and the other college schedules.
 const std::vector<League>& allLeagues();
 const League* leagueByShort(std::string_view shortName);
 
@@ -89,8 +97,10 @@ struct SportFeedsSeen {
   std::optional<time::Seconds> nascar;
   std::optional<time::Seconds> golf;
   std::optional<time::Seconds> cricket;
-  // College soccer, field hockey or volleyball event feeds.
-  std::optional<time::Seconds> smallCollege;
+  // Event feeds of games by row group ("Rugby", "WNBA", "Hockey"), and
+  // those naming a college ("Harbor College vs Valley").
+  std::map<std::string, time::Seconds> groups;
+  std::map<std::string, time::Seconds> colleges;
 
   static constexpr time::Seconds kWindow = 14 * 86'400;
   bool racingSeen(time::Seconds now) const { return racing && now - *racing < kWindow; }
@@ -98,11 +108,16 @@ struct SportFeedsSeen {
   bool nascarSeen(time::Seconds now) const { return nascar && now - *nascar < kWindow; }
   bool golfSeen(time::Seconds now) const { return golf && now - *golf < kWindow; }
   bool cricketSeen(time::Seconds now) const { return cricket && now - *cricket < kWindow; }
-  bool smallCollegeSeen(time::Seconds now) const { return smallCollege && now - *smallCollege < kWindow; }
+  bool groupSeen(const std::string& group, time::Seconds now) const { return within(groups, group, now); }
+  bool collegeSeen(const std::string& group, time::Seconds now) const { return within(colleges, group, now); }
+  static bool within(const std::map<std::string, time::Seconds>& m, const std::string& key, time::Seconds now) {
+    auto it = m.find(key);
+    return it != m.end() && now - it->second < kWindow;
+  }
 
   bool operator==(const SportFeedsSeen& o) const {
     return racing == o.racing && tennis == o.tennis && nascar == o.nascar && golf == o.golf && cricket == o.cricket &&
-           smallCollege == o.smallCollege;
+           groups == o.groups && colleges == o.colleges;
   }
 };
 json::Value toJson(const SportFeedsSeen& seen);

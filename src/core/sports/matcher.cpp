@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <unordered_set>
 
@@ -499,6 +500,21 @@ std::optional<BuildResult> build(const BuildInput& in) {
       std::set<std::string> leagues;
       for (int g : candidates) leagues.insert(games[static_cast<size_t>(g)].league);
       ambiguous = leagues.size() > 1;
+      // Two schools playing soccer Thursday and volleyball Friday: the
+      // feed's time says which.
+      if (ambiguous && event.start && !event.guessed) {
+        std::vector<int> near;
+        std::set<std::string> nearLeagues;
+        for (int g : candidates) {
+          if (std::llabs(games[static_cast<size_t>(g)].start - *event.start) > 90 * 60) continue;
+          near.push_back(g);
+          nearLeagues.insert(games[static_cast<size_t>(g)].league);
+        }
+        if (nearLeagues.size() == 1) {
+          candidates = std::move(near);
+          ambiguous = false;
+        }
+      }
     }
     if (candidates.empty() || ambiguous) {
       unmatched.push_back(event);
@@ -894,8 +910,9 @@ std::optional<BuildResult> build(const BuildInput& in) {
   std::set<std::string> scheduledOrgs;
   for (const auto& [card, indices] : cards) scheduledOrgs.insert(text::components(card, "|").front());
   auto notAnEvent = [&](const ProviderEvent& event) {
-    // "2024 Round 5: Detroit": an old race or game shown again.
-    if (namesPastYear(event.title, now)) {
+    // "2024 Round 5: Detroit", "Harbor vs Valley 9 Feb": an old race or game
+    // shown again.
+    if (namesPastYear(event.title, now) || namesPastDate(event.title, now)) {
       stats.replays += 1;
       return true;
     }
@@ -1443,6 +1460,19 @@ const std::map<std::string, std::vector<std::string>>& teamAliases() {
       {"internazionale", {"inter milano", "inter milan"}},
       {"hamburg sv", {"hamburger sv"}},
       {"d c united", {"d c"}},
+      {"newcastle falcons", {"newcastle red bulls"}},
+      // Schools by their short names.
+      {"massachusetts", {"umass"}},
+      {"boston university", {"boston u"}},
+      {"connecticut", {"uconn"}},
+      {"mississippi", {"ole miss"}},
+      {"pittsburgh", {"pitt"}},
+      {"southern california", {"usc"}},
+      {"central florida", {"ucf"}},
+      {"virginia commonwealth", {"vcu"}},
+      {"texas christian", {"tcu"}},
+      {"brigham young", {"byu"}},
+      {"southern methodist", {"smu"}},
   };
   return kAliases;
 }
@@ -1450,8 +1480,14 @@ const std::map<std::string, std::vector<std::string>>& teamAliases() {
 std::vector<std::string> teamVariants(const SportsTeam& team, bool college) {
   std::vector<std::string> names = {team.name};
   names.insert(names.end(), team.alternates.begin(), team.alternates.end());
-  auto alias = teamAliases().find(trimmed(normalized(team.name)));
-  if (alias != teamAliases().end()) names.insert(names.end(), alias->second.begin(), alias->second.end());
+  for (const std::optional<std::string>& key : {std::optional<std::string>(team.name), team.location}) {
+    if (!key) continue;
+    std::string k = trimmed(normalized(*key));
+    auto alias = teamAliases().find(k);
+    if (alias != teamAliases().end()) names.insert(names.end(), alias->second.begin(), alias->second.end());
+    // "Wisconsin-Whitewater" is also "UW-Whitewater".
+    if (str::startsWith(k, "wisconsin ") && k.size() > 12) names.push_back("uw " + k.substr(10));
+  }
   if (college && team.location) names.push_back(*team.location);
   std::vector<std::string> words = splitWords(normalized(team.name));
   if (words.size() >= 2) {
@@ -1557,6 +1593,61 @@ bool namesPastYear(std::string_view title, Seconds now) {
   return false;
 }
 
+bool namesPastDate(std::string_view title, Seconds now) {
+  time::Civil today = time::civilFromSeconds(now);
+  const int64_t day0 = time::daysFromCivil(today.year, today.month, today.day);
+  auto month = [](std::string_view name) {
+    static const char* const kMonths[] = {"jan", "feb", "mar", "apr", "may", "jun",
+                                          "jul", "aug", "sep", "oct", "nov", "dec"};
+    std::string lower = str::lower(name.substr(0, 3));
+    for (int i = 0; i < 12; ++i) {
+      if (lower == kMonths[i]) return i + 1;
+    }
+    return 0;
+  };
+  // A day and month: gone by unless it's within the last two days or its
+  // next time is in the next two months (late December's "3 Jan" is next
+  // week).
+  auto pastDay = [&](int m, int d) {
+    if (m < 1 || m > 12 || d < 1 || d > 31) return false;
+    bool any = false;
+    for (int year = today.year - 1; year <= today.year + 1; ++year) {
+      if (d > time::daysInMonth(year, m)) continue;
+      any = true;
+      int64_t diff = time::daysFromCivil(year, m, d) - day0;
+      if (diff >= -2 && diff <= 60) return false;
+    }
+    return any;
+  };
+  const char* kMonth = "(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\.?";
+  // "9 Feb", "12th January".
+  for (const rx::Match& m : rx::all(std::string("\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+") + kMonth + "\\b", title, true)) {
+    if (pastDay(month(m.group(2)), std::atoi(std::string(m.group(1)).c_str()))) return true;
+  }
+  // "Feb 9", "October 3rd" (not "May 2026").
+  for (const rx::Match& m : rx::all(std::string("\\b") + kMonth + "\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b(?!\\d)", title, true)) {
+    if (pastDay(month(m.group(1)), std::atoi(std::string(m.group(2)).c_str()))) return true;
+  }
+  // "Sun 6th", "Sat 10": no such day in the days around now.
+  for (const rx::Match& m :
+       rx::all("\\b(mon|tue|wed|thu|fri|sat|sun)[a-z]*\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b(?![:./]\\d)", title, true)) {
+    static const std::string kDays = "sunmontuewedthufrisat";
+    int wanted = static_cast<int>(kDays.find(str::lower(m.group(1).substr(0, 3)))) / 3;
+    int d = std::atoi(std::string(m.group(2)).c_str());
+    bool found = false;
+    for (int offset = -2; offset <= 10 && !found; ++offset) {
+      time::Civil c = time::civilFromSeconds(now + offset * 86'400);
+      found = c.day == d && time::weekday(c.year, c.month, c.day) == wanted;
+    }
+    if (!found) return true;
+  }
+  // A last piece "5.28" or "10.25" (month and day).
+  if (auto m = rx::first("(?:^|\\s)(\\d{1,2})\\.(\\d{1,2})\\s*$", title)) {
+    if (pastDay(std::atoi(std::string(m->group(1)).c_str()), std::atoi(std::string(m->group(2)).c_str()))) return true;
+  }
+  return false;
+}
+
 bool excluded(std::string_view t) {
   static const char* const kWords[] = {" pregame ",    " pre game ", " postgame ", " post game ",
                                        " countdown ",  " preview ",  " highlights ", " replay ",
@@ -1610,9 +1701,40 @@ std::string shortLeague(std::string_view league) {
 // MARK: TeamIndex
 
 TeamIndex::TeamIndex(const std::vector<SportsGame>& games) {
+  // Clubs known by their first word ("Montpellier" for Montpellier Hérault,
+  // "Castres" for Castres Olympique): soccer and rugby, when no other team
+  // of the sport has that first word.
+  auto firstWord = [](const SportsTeam& team) {
+    std::vector<std::string> words = splitWords(normalized(team.name));
+    return words.size() >= 2 && text::count(words.front()) >= 5 && !genericWords().count(words.front())
+               ? words.front()
+               : std::string();
+  };
+  std::map<std::pair<std::string, std::string>, std::set<std::string>> clubsByWord;
+  for (const SportsGame& game : games) {
+    if (game.league != "Soccer" && game.league != "Rugby") continue;
+    for (const SportsTeam* team : {&game.home, &game.away}) {
+      if (std::string w = firstWord(*team); !w.empty()) clubsByWord[{game.league, w}].insert(team->id);
+    }
+  }
   for (size_t i = 0; i < games.size(); ++i) {
     const SportsGame& game = games[i];
-    bool college = game.league == "College Football" || game.league == "College Basketball";
+    if (game.league != "Soccer" && game.league != "Rugby") continue;
+    int side = 0;
+    for (const SportsTeam* team : {&game.home, &game.away}) {
+      std::string w = firstWord(*team);
+      if (!w.empty() && clubsByWord[{game.league, w}].size() == 1) {
+        byFirstWord_[w].push_back(Name{static_cast<int>(i), side, team->id, {w}, std::nullopt, false});
+      }
+      side += 1;
+    }
+  }
+  for (size_t i = 0; i < games.size(); ++i) {
+    const SportsGame& game = games[i];
+    // College games in any sport: the school's name ("Massachusetts") counts.
+    const League* league = leagueByShort(game.leagueShort);
+    bool college = game.league == "College Football" || game.league == "College Basketball" ||
+                   (league && league->everyGame);
     add(game.home, static_cast<int>(i), 0, college, true);
     add(game.away, static_cast<int>(i), 1, college, true);
   }

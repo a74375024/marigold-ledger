@@ -66,6 +66,14 @@ std::vector<std::string> queriesFor(const League& league, Seconds now, const tim
       std::string last = text::yearMonth(text::addDays(now, 8, zone), zone);
       queries.push_back("dates=" + first);
       if (last != first) queries.push_back("dates=" + last);
+      // Rugby's month listing can leave out its last day (Saturday the 31st
+      // is in neither October's nor November's): that day on its own.
+      for (int i = -7; i <= 8 && str::startsWith(league.path, "rugby/"); ++i) {
+        Seconds day = text::addDays(now, i, zone);
+        if (text::yearMonth(text::addDays(day, 1, zone), zone) != text::yearMonth(day, zone)) {
+          queries.push_back("dates=" + text::yearMonthDay(day, zone));
+        }
+      }
       // Fight cards: also the default listing (the next cards), in case the
       // month form leaves some out.
       if (league.fights) queries.emplace_back();
@@ -1290,6 +1298,11 @@ void Schedule::onAnswer(int status, Answer answer) {
     saved_.leagueForm[league.shortName] = "plain";
   }
   f.retrying = false;
+  // An NCAA page for a day without games is "not found".
+  if (status == 404 && league.ncaaPage) {
+    answer.league = LeagueResult();
+    status = 200;
+  }
   if (status == 200 && answer.league) {
     LeagueResult& part = *answer.league;
     for (SportsGame& g : part.games) f.list.push_back(std::move(g));

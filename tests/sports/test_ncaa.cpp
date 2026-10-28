@@ -92,7 +92,7 @@ TEST_CASE("ncaa: games and statuses from a page") {
   CHECK(ncaa::statuses("<html></html>", d3Women()).empty());
 }
 
-TEST_CASE("ncaa: looked up while your channels have college games of those sports") {
+TEST_CASE("leagues of the sports your channels show games of, colleges by sport") {
   MySportsPrefs prefs;
   SportFeedsSeen seen;
   Seconds now = 1793203200;
@@ -103,19 +103,36 @@ TEST_CASE("ncaa: looked up while your channels have college games of those sport
     return false;
   };
   CHECK_FALSE(has("D3WSO"));
+  CHECK_FALSE(has("URC"));
   std::optional<Seconds> checked;
-  std::vector<catalog::LiveEvent> events(1);
-  events[0].title = "Harbor College vs Valley College";
-  events[0].league = "Soccer";
+  auto feed = [](const char* title, const char* league) {
+    catalog::LiveEvent e;
+    e.title = title;
+    e.league = league;
+    return e;
+  };
+  std::vector<catalog::LiveEvent> events = {feed("Harbor College vs Valley College", "Soccer"),
+                                            feed("Harbor vs Valley", "Rugby"), feed("Cove at Ridge", "Hockey"),
+                                            feed("Bay vs Point", "Football"), feed("Harbor Show", "WNBA")};
   CHECK(noteSportFeeds(seen, checked, events, now));
-  CHECK(has("D3WSO"));
-  CHECK(has("D2FH"));
-  CHECK(has("NCAAWV"));
-  CHECK(has("NCAAFH"));
+  CHECK(has("D3WSO"));    // a college soccer game: Divisions II and III soccer
+  CHECK_FALSE(has("D2FH"));  // no college field hockey on your channels
+  CHECK(has("URC"));      // rugby games: the rugby competitions
+  CHECK(has("NCAAMH"));   // hockey games: college hockey
+  CHECK_FALSE(has("D3MHK"));  // but no college named: not Division III hockey
+  CHECK(has("FCS"));      // football games: FCS
+  CHECK_FALSE(has("D2/D3"));
+  CHECK_FALSE(has("WNBA"));  // not a game
+  // Saved and read back.
+  SportFeedsSeen back = sportFeedsSeenFromJson(toJson(seen));
+  CHECK(back == seen);
   // With My Sports set up: only with the sport picked.
   prefs.configured = true;
-  prefs.leagues = {"S:Volleyball"};
-  CHECK(has("D3WVB"));
+  prefs.leagues = {"NHL"};
+  CHECK(has("NCAAMH"));
   CHECK_FALSE(has("D3WSO"));
-  CHECK_FALSE(has("D2FH"));
+  CHECK_FALSE(has("URC"));
+  prefs.leagues = {"EPL"};
+  CHECK(has("D3WSO"));
+  CHECK_FALSE(has("NCAAMH"));
 }

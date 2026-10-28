@@ -760,12 +760,13 @@ std::optional<int> leader(const std::optional<std::string>& top, const std::opti
   return *a > *b ? 0 : 1;
 }
 
-// A listing of hundreds of games a day: a college division's NCAA page,
-// college volleyball and field hockey.
-bool listsEveryGame(const SportsGame& game) {
-  if (game.leagueShort == "NCAAWV" || game.leagueShort == "NCAAMV" || game.leagueShort == "NCAAFH") return true;
+// A listing of hundreds of games a day (college sports) that you didn't
+// pick in My Sports yourself.
+bool listsEveryGame(const SportsGame& game, const MySportsPrefs& prefs) {
   const League* league = leagueByShort(game.leagueShort);
-  return league && league->ncaaPage;
+  if (!league || !league->everyGame) return false;
+  return !prefs.configured ||
+         std::find(prefs.leagues.begin(), prefs.leagues.end(), game.leagueShort) == prefs.leagues.end();
 }
 
 std::string lastName(const SportsTeam& fighter) {
@@ -1166,7 +1167,7 @@ Board build(const Input& in) {
     // Cricket too: the listing has every domestic match as well.
     if (e.game && e.game->isCricket()) return !e.sources.empty();
     // And the listings of every game of a day (all soccer, a college division).
-    if (e.game && (e.game->leagueShort == kSoccerAll || listsEveryGame(*e.game))) return !e.sources.empty();
+    if (e.game && (e.game->leagueShort == kSoccerAll || listsEveryGame(*e.game, in.prefs))) return !e.sources.empty();
     return !e.sources.empty() || in.settings.showsUnwatchable;
   };
 

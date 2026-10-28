@@ -461,10 +461,10 @@ sources::Request scoreboardRequest(const League& league, std::string_view day) {
 
 namespace {
 
-// A game from a page listing a whole division's day.
+// A game of a listing with hundreds of games a day (college sports).
 bool listsEveryGame(const SportsGame& game) {
   const League* league = leagueByShort(game.leagueShort);
-  return league && league->ncaaPage;
+  return league && league->everyGame;
 }
 
 }  // namespace

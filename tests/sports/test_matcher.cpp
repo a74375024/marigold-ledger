@@ -734,4 +734,56 @@ TEST_CASE("team names: channels' spellings the schedule writes another way") {
   TeamIndex index(games);
   auto all = [](int) { return true; };
   CHECK(index.matches("Harbor Kickers vs. Hamburger SV", all) == std::vector<int>{0});
+  // A club by its first word, when no other club of the sport has it.
+  std::vector<SportsGame> rugby = {
+      sportsdata::game("T14", "Rugby", "1", sportsdata::team("1", "Harborville Herault"),
+                       sportsdata::team("2", "Valleyton Olympique"), utc(2026, 10, 31, 15, 35)),
+      sportsdata::game("T14", "Rugby", "2", sportsdata::team("3", "Coveland Rouge"),
+                       sportsdata::team("4", "Coveland Bleu"), utc(2026, 10, 31, 15, 35))};
+  TeamIndex clubs(rugby);
+  CHECK(clubs.matches("Harborville vs Valleyton", all) == std::vector<int>{0});
+  CHECK(clubs.matches("Coveland vs Valleyton", all).empty());  // two clubs start "Coveland"
+}
+
+TEST_CASE("replays: a date in the title that's gone by") {
+  Seconds now = utc(2026, 10, 28, 12, 0);  // a Wednesday
+  CHECK(namesPastDate("Harbor vs Valley 9 Feb", now));
+  CHECK(namesPastDate("Harbor v Valley Feb 9", now));
+  CHECK(namesPastDate("Harbor vs Valley Sun 6th", now));  // no Sunday the 6th near
+  CHECK(namesPastDate("LIGA \xC2\xB7 Harbor vs Valley \xC2\xB7 \xC2\xB7 5.28", now));
+  CHECK_FALSE(namesPastDate("Harbor vs Valley Sat 31st", now));
+  CHECK_FALSE(namesPastDate("Harbor vs Valley 28 Oct", now));
+  CHECK_FALSE(namesPastDate("Harbor vs Valley Nov 7", now));
+  CHECK_FALSE(namesPastDate("Harbor 500 May 2026", now));
+  CHECK_FALSE(namesPastDate("Harbor vs Valley 7:30", now));
+  // Late December: early January is next week.
+  CHECK_FALSE(namesPastDate("Harbor vs Valley 3 Jan", utc(2026, 12, 28, 12, 0)));
+}
+
+TEST_CASE("team names: schools by their short names") {
+  SportsTeam home = sportsdata::team("1", "Massachusetts Minutewomen");
+  home.location = "Massachusetts";
+  SportsTeam away = sportsdata::team("2", "Wisconsin-Harbor Hawks");
+  away.location = "Wisconsin-Harbor";
+  std::vector<SportsGame> games = {sportsdata::game("NCAAFH", "Field Hockey", "1", home, away, utc(2026, 10, 30, 18, 0))};
+  TeamIndex index(games);
+  auto all = [](int) { return true; };
+  CHECK(index.matches("UW-Harbor vs UMass", all) == std::vector<int>{0});
+}
+
+TEST_CASE("a feed of no known sport: the schools' game at the feed's time") {
+  Seconds friday = utc(2026, 10, 30, 23, 0);
+  BuildInput in;
+  in.games = {sportsdata::game("SOC", "Soccer", "1", sportsdata::team("1", "Harbor State"),
+                               sportsdata::team("2", "Valley Tech"), friday - 86'400),
+              sportsdata::game("NCAAWV", "Volleyball", "2", sportsdata::team("3", "Harbor State"),
+                               sportsdata::team("4", "Valley Tech"), friday)};
+  in.now = friday - 3 * 3600;
+  in.zone = time::Zone::usEastern();
+  in.events = {provider("f1", "Harbor State vs Valley Tech", "Other", friday, {"xt|1"})};
+  auto out = build(in);
+  REQUIRE(out);
+  CHECK(std::any_of(out->events.begin(), out->events.end(), [](const SportsEvent& e) {
+    return e.game && e.game->id == "NCAAWV|2" && !e.sources.empty();
+  }));
 }

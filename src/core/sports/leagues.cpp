@@ -52,6 +52,7 @@ const std::vector<League>& leagues() {
     mcb.extra = "&groups=50";
     mcb.mode = League::Mode::days;
     mcb.days = 3;
+    mcb.everyGame = true;
     v.push_back(mcb);
     League wcb = make("basketball/womens-college-basketball", "College Basketball", "NCAAW",
                       "Women's College", "Basketball", false);
@@ -59,6 +60,7 @@ const std::vector<League>& leagues() {
     wcb.mode = League::Mode::days;
     wcb.days = 3;
     wcb.keywords = {"women", "womens"};
+    wcb.everyGame = true;
     v.push_back(wcb);
     v.push_back(standard(make("baseball/mlb", "MLB", "MLB", "MLB", "Baseball", false)));
     v.push_back(standard(make("hockey/nhl", "NHL", "NHL", "NHL", "Hockey", false)));
@@ -154,6 +156,7 @@ League college(const char* path, const char* group, const char* shortName, const
   League l = make(path, group, shortName, name, group, false);
   l.mode = League::Mode::days;
   l.days = 3;
+  l.everyGame = true;
   return l;
 }
 
@@ -262,6 +265,12 @@ const std::vector<League>& smallCollegeLeagues() {
       l.mode = League::Mode::days;
       l.days = 4;
       l.ncaaPage = true;
+      l.everyGame = true;
+      return l;
+    };
+    auto basketball = [&](const char* path, const char* shortName, const char* name) {
+      League l = page(path, "College Basketball", shortName, name, false);
+      l.days = 3;
       return l;
     };
     return std::vector<League>{
@@ -272,9 +281,32 @@ const std::vector<League>& smallCollegeLeagues() {
         page("fieldhockey/d2", "Field Hockey", "D2FH", "Division II", false),
         page("fieldhockey/d3", "Field Hockey", "D3FH", "Division III", false),
         page("volleyball-women/d2", "Volleyball", "D2WVB", "Women's Division II", false),
-        page("volleyball-women/d3", "Volleyball", "D3WVB", "Women's Division III", false)};
+        page("volleyball-women/d3", "Volleyball", "D3WVB", "Women's Division III", false),
+        page("icehockey-men/d3", "Hockey", "D3MHK", "Men's Division III", false),
+        page("icehockey-women/d3", "Hockey", "D3WHK", "Women's Division III", false),
+        basketball("basketball-men/d2", "D2MBB", "Men's Division II"),
+        basketball("basketball-men/d3", "D3MBB", "Men's Division III"),
+        basketball("basketball-women/d2", "D2WBB", "Women's Division II"),
+        basketball("basketball-women/d3", "D3WBB", "Women's Division III")};
   }();
   return kSmall;
+}
+
+const std::vector<League>& collegeExtraLeagues() {
+  static const std::vector<League> kExtra = [] {
+    auto football = [](const char* shortName, const char* name, const char* groups) {
+      League l = make("football/college-football", "College Football", shortName, name, "Football", false);
+      l.extra = groups;
+      l.mode = League::Mode::week;
+      l.everyGame = true;
+      return l;
+    };
+    return std::vector<League>{football("FCS", "FCS", "&groups=81"),
+                               football("D2/D3", "Divisions II & III", "&groups=35"),
+                               college("hockey/mens-college-hockey", "Hockey", "NCAAMH", "Men's College"),
+                               college("hockey/womens-college-hockey", "Hockey", "NCAAWH", "Women's College")};
+  }();
+  return kExtra;
 }
 
 const std::vector<League>& allLeagues() {
@@ -286,6 +318,7 @@ const std::vector<League>& allLeagues() {
     v.push_back(cricketLeague());
     v.push_back(soccerAllLeague());
     v.insert(v.end(), smallCollegeLeagues().begin(), smallCollegeLeagues().end());
+    v.insert(v.end(), collegeExtraLeagues().begin(), collegeExtraLeagues().end());
     return v;
   }();
   return kAll;
@@ -305,7 +338,11 @@ json::Value toJson(const SportFeedsSeen& seen) {
   if (seen.nascar) v.set("nascar", static_cast<int64_t>(*seen.nascar));
   if (seen.golf) v.set("golf", static_cast<int64_t>(*seen.golf));
   if (seen.cricket) v.set("cricket", static_cast<int64_t>(*seen.cricket));
-  if (seen.smallCollege) v.set("smallCollege", static_cast<int64_t>(*seen.smallCollege));
+  for (const auto* list : {&seen.groups, &seen.colleges}) {
+    json::Value m = json::Value::object();
+    for (const auto& [group, at] : *list) m.set(group, static_cast<int64_t>(at));
+    v.set(list == &seen.groups ? "groups" : "colleges", m);
+  }
   return v;
 }
 
@@ -316,9 +353,36 @@ SportFeedsSeen sportFeedsSeenFromJson(const json::Value& v) {
   if (v["nascar"].isNumber()) seen.nascar = v["nascar"].asInt();
   if (v["golf"].isNumber()) seen.golf = v["golf"].asInt();
   if (v["cricket"].isNumber()) seen.cricket = v["cricket"].asInt();
-  if (v["smallCollege"].isNumber()) seen.smallCollege = v["smallCollege"].asInt();
+  for (auto* list : {&seen.groups, &seen.colleges}) {
+    const json::Value& m = v[list == &seen.groups ? "groups" : "colleges"];
+    for (const auto& [group, at] : m.fields()) {
+      if (at.isNumber()) (*list)[group] = at.asInt();
+    }
+  }
   return seen;
 }
+
+namespace {
+
+// The row groups a league's games show up under as event feeds.
+std::vector<std::string> feedGroups(const League& l) {
+  if (l.group == "College Basketball") return {"College Basketball", "Basketball"};
+  if (l.group == "College Football") return {"College Football", "Football"};
+  return {l.group};
+}
+
+// Your channels had games of the league's sport lately. `college`: games
+// naming a college, for the small-college pages and Divisions II and III
+// football (FCS and college hockey only need the sport).
+bool feedsOf(const SportFeedsSeen& seen, const League& l, time::Seconds now, bool college) {
+  bool namesCollege = college && (l.ncaaPage || l.shortName == "D2/D3");
+  for (const std::string& g : feedGroups(l)) {
+    if (namesCollege ? seen.collegeSeen(g, now) : seen.groupSeen(g, now)) return true;
+  }
+  return false;
+}
+
+}  // namespace
 
 std::vector<League> activeLeagues(const MySportsPrefs& prefs, const SportFeedsSeen& seen,
                                   time::Seconds now) {
@@ -335,13 +399,17 @@ std::vector<League> activeLeagues(const MySportsPrefs& prefs, const SportFeedsSe
     if (seen.golfSeen(now)) out.insert(out.end(), golfLeagues().begin(), golfLeagues().end());
     if (seen.cricketSeen(now)) out.push_back(cricketLeague());
     out.push_back(soccerAllLeague());
-    if (seen.smallCollegeSeen(now)) {
-      // College games of these sports on your channels: Division I women's
-      // volleyball and field hockey too, then Divisions II and III.
-      for (const League& l : teamSportLeagues()) {
-        if (l.shortName == "NCAAWV" || l.shortName == "NCAAFH") out.push_back(l);
+    // Sports your channels show games of: their leagues too.
+    for (const League& l : leagues()) {
+      if (!l.standard && !l.soccer && feedsOf(seen, l, now, false)) out.push_back(l);
+    }
+    for (const League& l : teamSportLeagues()) {
+      if (feedsOf(seen, l, now, false)) out.push_back(l);
+    }
+    for (const auto* list : {&collegeExtraLeagues(), &smallCollegeLeagues()}) {
+      for (const League& l : *list) {
+        if (feedsOf(seen, l, now, true)) out.push_back(l);
       }
-      out.insert(out.end(), smallCollegeLeagues().begin(), smallCollegeLeagues().end());
     }
     return out;
   }
@@ -369,12 +437,17 @@ std::vector<League> activeLeagues(const MySportsPrefs& prefs, const SportFeedsSe
   for (const SportList& list : sportLists()) {
     if (picked.count(list.id)) out.insert(out.end(), list.leagues.begin(), list.leagues.end());
   }
-  // Divisions II and III with their sport, while your channels have them.
-  if (seen.smallCollegeSeen(now)) {
-    for (const League& l : smallCollegeLeagues()) {
-      bool wanted = l.group == "Soccer" ? soccer : l.group == "Field Hockey" ? picked.count("S:FieldHockey") > 0
-                                                                              : picked.count("S:Volleyball") > 0;
-      if (wanted) out.push_back(l);
+  // The other college schedules with their sport, while your channels have
+  // those games.
+  for (const auto* list : {&collegeExtraLeagues(), &smallCollegeLeagues()}) {
+    for (const League& l : *list) {
+      bool sport = l.group == "Soccer"             ? soccer
+                   : l.group == "Field Hockey"     ? picked.count("S:FieldHockey") > 0
+                   : l.group == "Volleyball"       ? picked.count("S:Volleyball") > 0
+                   : l.group == "Hockey"           ? picked.count("NHL") > 0
+                   : l.group == "College Football" ? picked.count("NCAAF") > 0
+                                                   : picked.count("NCAAM") > 0 || picked.count("NCAAW") > 0;
+      if (sport && feedsOf(seen, l, now, true)) out.push_back(l);
     }
   }
   return out;
@@ -398,11 +471,13 @@ bool noteSportFeeds(SportFeedsSeen& seen, std::optional<time::Seconds>& checkedA
                             [](const catalog::LiveEvent& e) { return str::icontains(e.title, "nascar"); });
   bool golf = std::any_of(events.begin(), events.end(), [](const catalog::LiveEvent& e) { return e.league == "Golf"; });
   bool cricket = std::any_of(events.begin(), events.end(), [](const catalog::LiveEvent& e) { return e.league == "Cricket"; });
-  // College soccer, field hockey or volleyball: a matchup naming a college.
-  bool smallCollege = std::any_of(events.begin(), events.end(), [](const catalog::LiveEvent& e) {
-    if (e.league != "Soccer" && e.league != "Field Hockey" && e.league != "Volleyball") return false;
-    return rx::test("\\b(college|university|univ\\.?)\\b", e.title, true) && matcher::looksLikeGame(e.title);
-  });
+  // Games by row group, and those naming a college ("Harbor College vs Valley").
+  std::set<std::string> groups, colleges;
+  for (const catalog::LiveEvent& e : events) {
+    if (e.league.empty() || e.league == "Other" || !matcher::looksLikeGame(e.title)) continue;
+    groups.insert(e.league);
+    if (rx::test("\\b(college|university|univ\\.?)\\b", e.title, true)) colleges.insert(e.league);
+  }
   bool changed = false;
   if (nascar) {
     changed = changed || !seen.nascarSeen(now);
@@ -424,9 +499,13 @@ bool noteSportFeeds(SportFeedsSeen& seen, std::optional<time::Seconds>& checkedA
     changed = changed || !seen.cricketSeen(now);
     seen.cricket = now;
   }
-  if (smallCollege) {
-    changed = changed || !seen.smallCollegeSeen(now);
-    seen.smallCollege = now;
+  for (const std::string& g : groups) {
+    changed = changed || !seen.groupSeen(g, now);
+    seen.groups[g] = now;
+  }
+  for (const std::string& g : colleges) {
+    changed = changed || !seen.collegeSeen(g, now);
+    seen.colleges[g] = now;
   }
   return changed;
 }

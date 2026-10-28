@@ -235,3 +235,17 @@ Channels with small-college soccer, field hockey or volleyball (event channels t
 | Scores | A game on now | The score with the period and clock as the NCAA gives them ("2nd Half 61:05", "Halftime"); "Final" when over |
 | Only yours | Scroll the rows | No list of other colleges' games under "Not in your channels" |
 | My Sports | Set up My Sports without Soccer, then with it | Division II and III soccer only with a soccer pick; field hockey and volleyball only with those sports |
+
+## More schedules for the sports your channels show
+
+Before My Sports is set up, the sports your event channels have games of are looked up too.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Rugby | Rugby games on your channels (Top 14, Premiership, URC) | Tiles with both clubs and scores, Saturday's round included ("Montpellier vs Castres") |
+| College football | FCS and Division II/III games (event channels) | Matched in College Football, with logos; a separate "Football" row is mostly gone |
+| College hockey | College hockey on your channels | Matched in Hockey with scores; Division III from the NCAA pages |
+| Replays | Titles with a past date ("Harbor vs Valley 9 Feb", "Sun 6th") | Not in Live Events |
+| No sport named | A title like "Temple vs East Carolina" with no sport | Matched to the game at that time (volleyball Friday, not soccer Thursday) |
+| Only yours | College rows | No lists of other colleges' games under "Not in your channels" unless that league is picked in My Sports |
+

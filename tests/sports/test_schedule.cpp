@@ -343,6 +343,9 @@ TEST_CASE("queries: a month or two, day by day, or this week") {
   // 2026-10-26: two days back is October, eight ahead November.
   Seconds now = utc(2026, 10, 26, 16, 0);
   CHECK(queriesFor(nfl(), now, et) == std::vector<std::string>{"dates=202610", "dates=202611"});
+  // Rugby: the 31st on its own too (its October listing leaves it out).
+  CHECK(queriesFor(*leagueByShort("T14"), now, et) ==
+        std::vector<std::string>{"dates=202610", "dates=202611", "dates=20261031"});
   CHECK(queriesFor(nfl(), utc(2026, 10, 10, 16, 0), et) == std::vector<std::string>{"dates=202610"});
   CHECK(queriesFor(*leagueByShort("UFC"), utc(2026, 10, 10, 16, 0), et) ==
         std::vector<std::string>{"dates=202610", ""});
