@@ -139,7 +139,9 @@ EventTile toTile(const sb::Tile& t, const sports::SportsEvent* event, const time
   if (o.sides.size() == 2 && !o.sides[0].score.empty() && !o.sides[1].score.empty())
     o.heroTitle = o.sides[0].name + " " + o.sides[0].score + " \xe2\x80\x93 " + o.sides[1].score + " " + o.sides[1].name;
   else if (o.sides.size() == 2)
-    o.heroTitle = o.sides[0].name + " at " + o.sides[1].name;
+    // "A at B" only with the second side at home (not tennis, soccer's home
+    // first, or a "vs" title).
+    o.heroTitle = o.sides[0].name + (o.sides[1].home && !o.sides[0].home ? " at " : " vs ") + o.sides[1].name;
   else
     o.heroTitle = o.title;
   o.heroStatus = o.status + (o.statusExtra.empty() ? "" : " " + o.statusExtra);

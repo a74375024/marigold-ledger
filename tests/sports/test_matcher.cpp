@@ -671,3 +671,36 @@ TEST_CASE("a feed under the wrong sport's name goes to the game at its time; an 
   CHECK(std::find(feeds.begin(), feeds.end(), "e|1") != feeds.end());
   CHECK(find(out->events, "x2"));
 }
+
+TEST_CASE("tennis: a tournament's feed is each of that day's matches") {
+  Seconds noon = utc(2026, 10, 28, 3, 0);
+  auto match = [&](const std::string& league, const std::string& id, const std::string& tournament,
+                   const std::string& venue, Seconds start) {
+    SportsGame g = game(league, "Tennis", id, team(id + "a", "Ann Player"), team(id + "b", "Bea Racket"), start);
+    g.tennis = true;
+    g.tournament = tournament;
+    g.venue = venue;
+    return g;
+  };
+  std::vector<SportsGame> games = {
+      match("WTA", "1", "Harbor Pan Pacific Open Tennis", "Tokyo, Japan", noon),
+      match("WTA", "2", "Harbor Pan Pacific Open Tennis", "Tokyo, Japan", noon + 2 * 3600),
+      match("WTA", "3", "Valley Open", "Valley City, Somewhere", noon + 3600),
+      match("ATP", "4", "Coast Indoors", "Coastville, Elsewhere", noon),
+      match("WTA", "5", "Harbor Pan Pacific Open Tennis", "Tokyo, Japan", noon + 3 * 86'400),  // another day
+  };
+  std::vector<int> all = {0, 1, 2, 3, 4};
+  CHECK(tennisLevel("WTA", "Harbor Pan Pacific Open Tennis") == std::optional<std::string>("500"));
+  CHECK_FALSE(tennisLevel("WTA", "Valley Open"));
+  // By its level: the only WTA 500 that day.
+  CHECK(tennisTargets("Day 3 WTA 500", "", noon - 3600, noon, all, games) == std::vector<int>{0, 1});
+  // By its name or city.
+  CHECK(tennisTargets("Tennis: Valley Open", "", std::nullopt, noon, all, games) == std::vector<int>{2});
+  CHECK(tennisTargets("WTA Tokyo Day 3", "", std::nullopt, noon, all, games) == std::vector<int>{0, 1});
+  // The only ATP event.
+  CHECK(tennisTargets("ATP Tennis", "", std::nullopt, noon, all, games) == std::vector<int>{3});
+  // A level nothing on has, two WTA events and no level, or the players named: none.
+  CHECK(tennisTargets("Day 3 WTA 1000", "", std::nullopt, noon, all, games).empty());
+  CHECK(tennisTargets("WTA Tennis", "", std::nullopt, noon, all, games).empty());
+  CHECK(tennisTargets("Player vs Racket", "", std::nullopt, noon, all, games).empty());
+}

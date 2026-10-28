@@ -356,10 +356,11 @@ std::optional<BuildResult> build(const BuildInput& in) {
   }
   // Race weekend sessions, for feeds named after a session; golf
   // tournaments, for feeds named after one.
-  std::vector<int> raceSessions, golfTournaments;
+  std::vector<int> raceSessions, golfTournaments, tennisMatches;
   for (size_t i = 0; i < gameCount; ++i) {
     if (games[i].isRacing()) raceSessions.push_back(static_cast<int>(i));
     if (games[i].isGolf()) golfTournaments.push_back(static_cast<int>(i));
+    if (games[i].isTennis()) tennisMatches.push_back(static_cast<int>(i));
   }
   // Other races (NASCAR) are found by their name's distinctive words and
   // number ("YellaWood 500" -> yellawood, 500).
@@ -426,6 +427,24 @@ std::optional<BuildResult> build(const BuildInput& in) {
         if (!value.family) value.family = event.family;
         byGame[t] = std::move(value);
         if (!firstProviderID[t]) firstProviderID[t] = event.id;
+        stats.matchedEvents += 1;
+        continue;
+      }
+    }
+    // A tennis tournament's feed ("Day 3 WTA 500"): each of the day's
+    // matches gets it, so every match is a tile with its score.
+    if (inWindow && !tennisMatches.empty() && event.league == "Tennis") {
+      std::vector<int> targets = tennisTargets(event.title, event.family, event.guessed ? std::nullopt : event.start,
+                                               now, tennisMatches, games);
+      if (!targets.empty()) {
+        stats.filtered += 1;
+        for (int gi : targets) {
+          size_t g = static_cast<size_t>(gi);
+          SportsEvent value = entry(g);
+          addFeeds(value, event);
+          if (!value.family) value.family = event.family;
+          byGame[g] = std::move(value);
+        }
         stats.matchedEvents += 1;
         continue;
       }
@@ -1286,6 +1305,109 @@ std::vector<int> fightTargets(const FightKey& key, std::optional<Seconds> start,
 std::string matchupKey(std::string_view title) {
   if (auto key = pairKey(title)) return *key;
   return normalized(title);
+}
+
+std::optional<std::string> tennisLevel(std::string_view tour, std::string_view tournament) {
+  // Words of the tournaments' own names (ESPN's "Toray Pan Pacific Open
+  // Tennis", "Mutua Madrid Open"), by tour and level.
+  struct Level {
+    const char* tour;
+    const char* level;
+    std::vector<const char*> words;
+  };
+  static const std::vector<Level> kLevels = {
+      {"wta", "1000",
+       {"qatar", "doha", "dubai", "indian wells", "bnp paribas", "miami", "madrid", "internazionali", "rome",
+        "national bank", "canadian", "cincinnati", "china open", "wuhan"}},
+      {"wta", "500",
+       {"brisbane", "adelaide", "abu dhabi", "charleston", "credit one", "stuttgart", "porsche", "berlin", "queen",
+        "bad homburg", "eastbourne", "washington", "mubadala", "korea open", "pan pacific", "ningbo", "linz",
+        "strasbourg", "monterrey", "san diego", "san antonio"}},
+      {"atp", "1000",
+       {"indian wells", "bnp paribas", "miami", "monte carlo", "madrid", "internazionali", "rome",
+        "national bank", "canadian", "cincinnati", "shanghai", "paris"}},
+      {"atp", "500",
+       {"rotterdam", "dallas", "rio open", "acapulco", "abierto mexicano", "dubai", "qatar", "doha", "barcelona",
+        "munich", "bmw open", "halle", "terra wortmann", "queen", "hamburg", "washington", "mubadala",
+        "china open", "japan open", "kinoshita", "basel", "swiss indoors", "vienna", "erste bank"}},
+  };
+  std::string name = normalized(tournament);
+  std::string onTour = str::lower(tour);
+  for (const Level& l : kLevels) {
+    if (onTour != l.tour) continue;
+    for (const char* w : l.words) {
+      if (has(name, std::string(" ") + w + " ")) return std::string(l.level);
+    }
+  }
+  return std::nullopt;
+}
+
+std::vector<int> tennisTargets(std::string_view titleIn, std::string_view family, std::optional<Seconds> start,
+                               Seconds now, const std::vector<int>& matches, const std::vector<SportsGame>& games) {
+  if (matches.empty() || looksLikeGame(titleIn)) return {};
+  std::string title = normalized(std::string(titleIn) + " " + std::string(family));
+  std::optional<std::string> tour;
+  if (has(title, " wta ")) tour = "WTA";
+  if (has(title, " atp ")) tour = tour ? std::optional<std::string>() : std::optional<std::string>("ATP");
+  std::optional<std::string> level;
+  if (auto m = rx::first("\\b(?:wta|atp)\\s*(1000|500|250|125)\\b", title)) level = std::string(m->group(1));
+  // The day's play: from a little before the feed's start into the night (a
+  // tournament abroad plays overnight here); without a start, today's.
+  Seconds from = start ? *start - 6 * 3600 : now - 12 * 3600;
+  Seconds to = start ? *start + 16 * 3600 : now + 18 * 3600;
+  static const std::set<std::string> kStop = {"open", "tennis", "championships", "championship", "cup",
+                                              "international", "internationals", "ladies", "tournament",
+                                              "presented", "classic", "masters", "trophy", "the", "and"};
+  struct Candidate {
+    std::string name;
+    int words = 0;
+    bool levelMatches = false;
+    std::vector<int> today;
+  };
+  std::map<std::string, Candidate> byTournament;
+  for (int index : matches) {
+    const SportsGame& g = games[static_cast<size_t>(index)];
+    if (!g.isTennis() || !g.tournament) continue;
+    if (tour && g.leagueShort != *tour) continue;
+    if (g.start < from || g.start > to) continue;
+    Candidate& c = byTournament[g.leagueShort + "|" + *g.tournament];
+    if (c.name.empty()) {
+      c.name = *g.tournament;
+      for (const std::string& w : splitWords(normalized(*g.tournament))) {
+        if (text::count(w) >= 4 && !kStop.count(w) && has(title, " " + w + " ")) c.words += 1;
+      }
+      if (g.venue) {
+        // The city ("Tokyo, Japan" -> tokyo).
+        std::string city = normalized(text::components(*g.venue, ",").front());
+        if (city.size() > 4 && has(title, city)) c.words += 1;
+      }
+      c.levelMatches = level && tennisLevel(g.leagueShort, *g.tournament) == level;
+    }
+    c.today.push_back(index);
+  }
+  const Candidate* pick = nullptr;
+  int bestWords = 0;
+  for (const auto& [key, c] : byTournament) {
+    if (c.words > bestWords) {
+      bestWords = c.words;
+      pick = &c;
+    }
+  }
+  if (!pick && level) {
+    // "WTA 500": the only one of that level on.
+    for (const auto& [key, c] : byTournament) {
+      if (!c.levelMatches) continue;
+      if (pick) return {};  // two: can't tell
+      pick = &c;
+    }
+  }
+  if (!pick && tour && !level && byTournament.size() == 1) pick = &byTournament.begin()->second;
+  if (!pick) return {};
+  std::vector<int> out = pick->today;
+  std::sort(out.begin(), out.end(), [&](int a, int b) {
+    return games[static_cast<size_t>(a)].start < games[static_cast<size_t>(b)].start;
+  });
+  return out;
 }
 
 bool looksLikeGame(std::string_view title) {

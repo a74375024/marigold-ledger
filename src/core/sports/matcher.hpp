@@ -181,6 +181,17 @@ std::vector<int> fightTargets(const FightKey& key, std::optional<Seconds> start,
                               const std::map<std::string, std::vector<int>>& cards,
                               const std::vector<SportsGame>& games);
 
+// The matches a tennis feed named after its tournament shows ("Day 3 WTA
+// 500", "Tennis: Pan Pacific Open"): every match (game indices) of that
+// tournament on that day. The tournament is the one the title names, else
+// the only one of its tour and level (WTA 500) on, else the only one of its
+// tour. Empty for a feed that names its players (matched as a game).
+std::vector<int> tennisTargets(std::string_view title, std::string_view family, std::optional<Seconds> start,
+                               Seconds now, const std::vector<int>& matches, const std::vector<SportsGame>& games);
+// A tournament's level ("500"), for the tours' biggest events; nullopt for
+// the rest (250s, 125s, Challengers).
+std::optional<std::string> tennisLevel(std::string_view tour, std::string_view tournament);
+
 // MARK: Names
 
 // "rams|seahawks", or the tidied title when it has no two sides.
