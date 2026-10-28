@@ -62,9 +62,19 @@ std::vector<std::string> letterNumberTokens(std::string_view text) {
   return out;
 }
 
+bool namesWestFeed(std::string_view lowered) {
+  // At the end ("HBO West", "HBO 2 WEST HD") or in brackets ("A&E (West)");
+  // "EPL West Ham", "Wild West TV", "Pacific Blue" and West Palm Beach
+  // locals aren't West feeds.
+  return rx::test("[\\(\\[]\\s*(west|pacific)(\\s+feed)?\\s*[\\)\\]]", lowered) ||
+         rx::test("(?<!wild )\\b(west|pacific)(\\s+(hd|fhd|uhd|sd|4k|raw|feed))*"
+                  "(\\s*[\\(\\[][^\\)\\]]*[\\)\\]])*[^\\p{L}\\p{N}]*$",
+                  lowered);
+}
+
 std::string normalize(std::string_view name) {
   std::string s = str::replaceAll(str::replaceAll(str::lower(name), "&", " and "), "+", " plus ");
-  bool west = rx::test("\\b(west|pacific)\\b", s);
+  bool west = namesWestFeed(s);
   s = rx::replace(s, "[\\[\\(][^\\]\\)]*[\\]\\)]", " ");
   s = rx::replace(s, "^\\s*[^:|]{1,24}[:|]\\s*", "");
   std::string key;
@@ -76,7 +86,8 @@ std::string normalize(std::string_view name) {
     while (i < s.size() && asciiAlnum(s[i])) ++i;
     if (i > start) {
       std::string token = s.substr(start, i - start);
-      if (!drop.count(token)) key += token;
+      // "west" in a name that isn't a West feed is part of the name.
+      if (!drop.count(token) || (!west && (token == "west" || token == "pacific"))) key += token;
     }
   }
   return west && !key.empty() ? key + "~west" : key;

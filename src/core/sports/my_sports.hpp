@@ -59,6 +59,10 @@ struct OtherSport {
   std::string name;
 };
 const std::vector<OtherSport>& otherSports();
+// Pro wrestling is a pick like the other sports, but off by default: Live
+// Events leaves it out (WWE, AEW...) unless My Sports has it.
+constexpr const char* kProWrestlingPick = "S:ProWrestling";
+bool proWrestlingOn(const MySportsPrefs& prefs);
 
 // Display name of a picked id (league or other sport).
 std::optional<std::string> nameOf(std::string_view id);

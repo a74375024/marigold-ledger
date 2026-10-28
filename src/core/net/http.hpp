@@ -18,7 +18,9 @@ namespace marigold::http {
 // `Long` is for jobs that hold a thread for minutes (guide builds, big
 // downloads): they run one at a time on a thread of their own, so they can
 // never take every worker away from what is on screen.
-enum class Priority { Background = 0, Normal = 1, Visible = 2, Long = 3 };
+// `LongFirst` is a long job that goes ahead of the other waiting long jobs
+// (the provider's own guide before outside listings and logo files).
+enum class Priority { Background = 0, Normal = 1, Visible = 2, Long = 3, LongFirst = 4 };
 
 struct Response;
 // Worker thread, after the transfer and before the UI callback: the place to

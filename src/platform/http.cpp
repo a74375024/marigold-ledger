@@ -130,8 +130,14 @@ Ticket Client::enqueue(std::shared_ptr<Ticket::Job> job) {
     job->cancelled = true;
     return Ticket(job);
   }
-  if (job->req.priority == Priority::Long) {
-    longQueue_.push_back(job);
+  if (job->req.priority == Priority::Long || job->req.priority == Priority::LongFirst) {
+    if (job->req.priority == Priority::LongFirst) {
+      auto pos = std::find_if(longQueue_.begin(), longQueue_.end(),
+                              [](const auto& other) { return other->req.priority != Priority::LongFirst; });
+      longQueue_.insert(pos, job);
+    } else {
+      longQueue_.push_back(job);
+    }
     cv_.notify_all();
     return Ticket(job);
   }

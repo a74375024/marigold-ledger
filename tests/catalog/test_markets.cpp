@@ -12,3 +12,10 @@ TEST_CASE("markets: the built-in list has every US market, biggest first") {
   REQUIRE_FALSE(picks.empty());
   CHECK(picks.front().name == "San Francisco-Oakland-San Jose");
 }
+
+TEST_CASE("markets: the built-in and the list page's spellings share a key") {
+  using marigold::catalog::markets::nameKey;
+  CHECK(nameKey("San Francisco-Oakland-San Jose") == nameKey("San Francisco\xe2\x80\x93Oakland\xe2\x80\x93San Jose"));
+  CHECK(nameKey("Washington, DC (Hagerstown)") == nameKey("Washington, D.C. (Hagerstown)"));
+  CHECK(nameKey("Dallas-Ft. Worth") != nameKey("Houston"));
+}

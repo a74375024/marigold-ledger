@@ -45,6 +45,11 @@ std::vector<Market> parseMarkets(std::string_view wikitext);
 // from the station directory (fallbackCallsigns).
 const std::vector<Market>& builtinMarkets();
 
+// One key for the built-in and the list page's spellings of a market:
+// "San Francisco-Oakland-San Jose" and "San Francisco–Oakland–San Jose",
+// "Washington, DC (Hagerstown)" and "Washington, D.C. (Hagerstown)".
+std::string nameKey(std::string_view name);
+
 // When the list page can't be read: cities from the station directory,
 // sorted by name.
 std::vector<Market> fallbackMarkets(const std::vector<guide::Station>& stations);

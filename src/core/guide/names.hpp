@@ -35,6 +35,9 @@ StationsByNetwork groupByNetwork(const std::vector<Station>& stations);
 // Comparable form of a channel name. East is the default feed and is
 // dropped; West / Pacific feeds keep a "~west" marker so they never match
 // East.
+// Whether a (lowercased) channel name is a West feed: "west" or "pacific"
+// at its end or in brackets.
+bool namesWestFeed(std::string_view lowered);
 std::string normalize(std::string_view name);
 
 // Call signs ("WNBC", "KABC-2" for a sub-channel). A bare four-letter word

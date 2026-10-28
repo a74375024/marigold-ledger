@@ -8,7 +8,9 @@
 
 #include "core/engine/store.hpp"
 #include "core/engine/store_impl.hpp"
+#include "core/catalog/catalog.hpp"
 #include "core/sports/leagues.hpp"
+#include "core/sports/my_sports.hpp"
 #include "core/sports/network_map.hpp"
 #include "core/sports/special_feeds.hpp"
 #include "core/util/log.hpp"
@@ -450,6 +452,16 @@ void Store::buildBoard() {
   sb::Input in;
   in.events = e.events;
   in.families = m.catalog->families;
+  if (!sports::proWrestlingOn(e.mySports)) {
+    // Pro wrestling only when picked in My Sports.
+    auto wrestling = [](const std::string& league) { return league == catalog::kProWrestling; };
+    in.events.erase(std::remove_if(in.events.begin(), in.events.end(),
+                                   [&](const auto& ev) { return wrestling(ev.league); }),
+                    in.events.end());
+    in.families.erase(std::remove_if(in.families.begin(), in.families.end(),
+                                     [&](const catalog::EventFamily& f) { return wrestling(f.league); }),
+                      in.families.end());
+  }
   in.prefs = e.mySports;
   in.statuses = e.scores.statuses();
   in.finalSeen = e.scores.finalSeen();

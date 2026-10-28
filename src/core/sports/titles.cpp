@@ -103,19 +103,35 @@ std::string trimmed(std::string_view s) {
   return std::string(str::trimUnicode(out));
 }
 
+// "Saddleback College vs Orange Coast College _ Women`s (Saddleback vs
+// Orange Coast)": the piece without its asides (brackets, closed or cut
+// off, and what follows " _ ").
+std::string withoutAsides(const std::string& piece) {
+  std::string out = rx::replace(piece, "\\s*[\\(\\[][^\\)\\]]*[\\)\\]]?", "");
+  size_t cut = out.find(" _ ");
+  if (cut != std::string::npos) out.resize(cut);
+  return std::string(str::trimUnicode(out));
+}
+
 // "A vs B" in one piece of a title.
-std::optional<std::tuple<std::string, std::string, bool>> matchup(const std::string& piece) {
+std::optional<std::tuple<std::string, std::string, bool>> matchup(const std::string& whole) {
   const std::pair<const char*, bool> separators[] = {
       {" vs. ", false}, {" vs ", false}, {" VS ", false}, {" v. ", false}, {" v ", false}, {" at ", true}, {" @ ", true}};
-  for (const auto& [separator, homeSecond] : separators) {
-    std::vector<std::string> parts = text::components(piece, separator);
-    if (parts.size() != 2) continue;
-    std::string a = trimmed(parts[0]), b = trimmed(parts[1]);
-    size_t na = text::count(a), nb = text::count(b);
-    if (na < 2 || nb < 2 || na > 40 || nb > 40) continue;
-    // "Round 2 at Augusta" is a place, not a side.
-    if (stageIn(a) || stageIn(b)) continue;
-    return std::make_tuple(a, b, homeSecond);
+  // As named, else without its asides (which often repeat the matchup).
+  std::string bare = withoutAsides(whole);
+  for (int pass = 0; pass < 2; ++pass) {
+    const std::string& piece = pass == 0 ? whole : bare;
+    if (pass == 1 && bare == whole) break;
+    for (const auto& [separator, homeSecond] : separators) {
+      std::vector<std::string> parts = text::components(piece, separator);
+      if (parts.size() != 2) continue;
+      std::string a = trimmed(parts[0]), b = trimmed(parts[1]);
+      size_t na = text::count(a), nb = text::count(b);
+      if (na < 2 || nb < 2 || na > 40 || nb > 40) continue;
+      // "Round 2 at Augusta" is a place, not a side.
+      if (stageIn(a) || stageIn(b)) continue;
+      return std::make_tuple(a, b, homeSecond);
+    }
   }
   return std::nullopt;
 }
@@ -202,7 +218,15 @@ Title read(std::string_view title, std::string_view league) {
   if (lead && lead->icon) out.icon = lead->icon;
 
   if (out.sides) {
-    out.name = segments[sideAt];
+    out.name = out.sides->first + (out.homeSecond ? " at " : " vs ") + out.sides->second;
+    if (text::count(segments[sideAt]) <= text::count(out.name) + 2) out.name = segments[sideAt];
+    // "_ Women`s" / "(Women's)": the side of the sport it is.
+    if (!out.stage) {
+      // "(EXH)": a preseason exhibition (no schedule lists it).
+      if (rx::test("\\b(exh|exhibition)\\b", lowerTitle)) out.stage = "Exhibition";
+      else if (rx::test("\\bwomen\\W?s\\b", lowerTitle)) out.stage = "Women's";
+      else if (rx::test("\\bmen\\W?s\\b", lowerTitle)) out.stage = "Men's";
+    }
     // A short piece beside the matchup tags it ("Six Nations", "Heavyweight").
     if (!out.stage && !rest.empty() && text::count(rest.front()) <= 22) {
       out.stage = rest.front();

@@ -121,3 +121,23 @@ TEST_CASE("titles: icons from words, places that aren't sides") {
   CHECK(show.name == "The Harbor Morning Sports Hour");
   CHECK(show.subtitle == "Weekend Preview");
 }
+
+TEST_CASE("titles: a matchup repeated in brackets, and tags after it") {
+  titles::Title t = titles::read("Harbor College vs Valley Tech _ Women`s (Harbor vs Valley)", "Soccer");
+  REQUIRE(t.sides);
+  CHECK(t.sides->first == "Harbor College");
+  CHECK(t.sides->second == "Valley Tech");
+  CHECK(t.stage == "Women's");
+  CHECK(t.name == "Harbor College vs Valley Tech");
+
+  // Cut off at the end, with a language tag.
+  titles::Title cut = titles::read("Harbor FC vs. Valley United (ESP) (Harbor FC vs. Valley", "Soccer");
+  REQUIRE(cut.sides);
+  CHECK(cut.sides->first == "Harbor FC");
+  CHECK(cut.sides->second == "Valley United");
+
+  titles::Title exh = titles::read("Harbor St vs. Valley (EXH) (Harbor St vs. Valley", "Basketball");
+  REQUIRE(exh.sides);
+  CHECK(exh.sides->second == "Valley");
+  CHECK(exh.stage == "Exhibition");
+}

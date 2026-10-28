@@ -10,6 +10,11 @@
 
 namespace marigold::catalog {
 
+const char* const kProWrestling = "Pro Wrestling";
+const char* const kProWrestlingWords =
+    "\\b(wwe|aew|nxt|tna|roh)\\b|ring of honor|impact wrestling|smackdown|monday night raw|\\bwwe raw\\b|"
+    "aew (dynamite|collision|rampage)|lucha libre|\\bnjpw\\b|new japan pro";
+
 const char* const kFightWords =
     "\\b(ufc|bkfc|pfl)(\\b|_|\\d)|\\b(mma|bellator|wwe|aew|kickboxing|muay "
     "thai)\\b|\\bboxing\\b(?! "
@@ -439,6 +444,9 @@ std::string leagueFor(std::string_view family, std::string_view group, std::stri
   std::string all =
       str::lower(std::string(family) + " " + std::string(group) + " " + std::string(title));
   auto has = [&](std::string_view w) { return text::hasWord(all, w); };
+  // Pro wrestling first (shown in Live Events only when My Sports says so):
+  // "Wrestling: WWE NXT" is entertainment, not the sport.
+  if (rx::test(kProWrestlingWords, all)) return kProWrestling;
   // 1. A sport named at the start of the title ("Football: ...",
   // "volleyball:  ...") says more than the channel's group.
   if (auto m = text::firstMatch("^\\s*[a-z][a-z ]{1,20}(?=:)", titleText)) {
@@ -451,7 +459,8 @@ std::string leagueFor(std::string_view family, std::string_view group, std::stri
     if (sport == "basketball") {
       if (has("wnba")) return "WNBA";
       if (rx::test("\\bnba\\b", all)) return "NBA";
-      return rx::test("\\b(ncaa|ncaab|ncaam|ncaaw|college|men's|women's)\\b", all)
+      // "UCF vs. Kentucky (EXH)": college exhibitions say only that.
+      return rx::test("\\b(ncaa|ncaab|ncaam|ncaaw|college|men's|women's|exh|exhibition)\\b", all)
                  ? "College Basketball"
                  : "Basketball";
     }

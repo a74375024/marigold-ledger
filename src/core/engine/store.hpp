@@ -196,6 +196,8 @@ class Store {
   catalog::LineupPrefs lineupPrefs() const;
   // Market list: saved on the TV for 90 days, else read from Wikipedia.
   void loadMarkets(std::function<void(TvMarkets)> done);
+  // Reads the list page again in the background (the list shown stays).
+  void refreshMarkets(const std::string& path);
   // Each picked market with its stations' call signs (kept from the draft
   // when it already has them).
   void resolveMarkets(const std::vector<std::string>& names, const catalog::LineupPrefs& draft,

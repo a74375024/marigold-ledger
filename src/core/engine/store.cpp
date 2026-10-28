@@ -1242,43 +1242,56 @@ void Store::loadMarkets(std::function<void(TvMarkets)> done) {
   if (names->size() > 6000) names->resize(6000);
   auto result = std::make_shared<TvMarkets>();
   auto list = std::make_shared<std::vector<catalog::markets::Market>>();
-  http::Pool& pool = host_.pool;
+  // The saved list (however old) or the built-in one straight away, so
+  // "Where do you watch?" never waits on Wikipedia; an old or missing list
+  // is fetched again in the background for station look-ups and next time.
+  auto refresh = std::make_shared<bool>(false);
   host_.pool.post(
-      [path, names, result, list, &pool, stations = m.stations] {
+      [path, names, result, list, refresh] {
         struct stat st;
         std::string text;
         time::Seconds now = time::now();
         if (stat(path.c_str(), &st) == 0 && readFile(path, text)) {
           if (auto saved = catalog::markets::fromJson(text)) {
-            if (catalog::markets::cacheFresh(st.st_mtime, now, saved->empty())) *list = std::move(*saved);
+            *refresh = !catalog::markets::cacheFresh(st.st_mtime, now, saved->empty());
+            *list = std::move(*saved);
           }
+        } else {
+          *refresh = true;
         }
         if (list->empty()) {
-          if (auto page = wikitext(pool, catalog::markets::kListPage)) *list = catalog::markets::parseMarkets(*page);
-          if (!list->empty()) writeFileAtomic(path, catalog::markets::toJson(*list));
-        }
-        if (list->empty() && readFile(path, text)) {
-          // An old saved list beats none.
-          if (auto saved = catalog::markets::fromJson(text)) *list = std::move(*saved);
-        }
-        if (list->empty()) {
-          // Offline, or the page changed: the built-in list of every market.
-          MLOG_W("lineup", "market list page unavailable; using the built-in list");
+          *refresh = true;
           *list = catalog::markets::builtinMarkets();
-        }
-        (void)stations;
-        if (list->empty()) {
-          result->problem = "Couldn't load the list of TV markets. Check the connection and try again, or skip local stations.";
-          return;
         }
         for (const auto& mk : *list) result->all.push_back(mk.name);
         for (const auto& mk : catalog::markets::suggested(*list, *names)) result->suggested.push_back(mk.name);
       },
-      [this, result, list, done] {
+      [this, result, list, done, refresh, path] {
         impl_->tvMarkets = *list;
         done(*result);
+        if (*refresh) refreshMarkets(path);
       },
       http::Priority::Visible);
+}
+
+void Store::refreshMarkets(const std::string& path) {
+  if (impl_->marketsRefreshing) return;
+  impl_->marketsRefreshing = true;
+  auto fresh = std::make_shared<std::vector<catalog::markets::Market>>();
+  http::Pool& pool = host_.pool;
+  host_.pool.post(
+      [path, fresh, &pool] {
+        if (auto page = wikitext(pool, catalog::markets::kListPage, http::Priority::Background))
+          *fresh = catalog::markets::parseMarkets(*page);
+        if (!fresh->empty()) writeFileAtomic(path, catalog::markets::toJson(*fresh));
+        else MLOG_W("lineup", "market list page unavailable; keeping the list shown");
+      },
+      [this, fresh] {
+        impl_->marketsRefreshing = false;
+        // Their template pages, for the markets picked from the list shown.
+        for (const auto& mk : *fresh) impl_->tvMarketTemplates[catalog::markets::nameKey(mk.name)] = mk;
+      },
+      http::Priority::Background);
 }
 
 void Store::resolveMarkets(const std::vector<std::string>& names, const catalog::LineupPrefs& draft,
@@ -1291,7 +1304,13 @@ void Store::resolveMarkets(const std::vector<std::string>& names, const catalog:
     if (existing != draft.markets.end() && !existing->callsigns.empty()) continue;
     auto mk = std::find_if(impl_->tvMarkets.begin(), impl_->tvMarkets.end(),
                            [&](const catalog::markets::Market& x) { return x.name == name; });
-    todo.push_back(mk != impl_->tvMarkets.end() ? *mk : catalog::markets::Market{name, std::nullopt});
+    catalog::markets::Market pick = mk != impl_->tvMarkets.end() ? *mk : catalog::markets::Market{name, std::nullopt};
+    if (!pick.templateName) {
+      // Picked from the built-in list: the page's spelling of it, once read.
+      auto t = impl_->tvMarketTemplates.find(catalog::markets::nameKey(name));
+      if (t != impl_->tvMarketTemplates.end()) pick.templateName = t->second.templateName;
+    }
+    todo.push_back(std::move(pick));
   }
   auto fetched = std::make_shared<std::map<std::string, catalog::MarketChoice>>();
   http::Pool& pool = host_.pool;
@@ -1926,13 +1945,25 @@ namespace {
 struct GuideReadState {
   std::shared_ptr<std::atomic<bool>> playing, stop;
   std::shared_ptr<std::atomic<int>> foreground;
+  // Half seconds waited for playback so far in this build (shared by every
+  // wait in it), and whether it waits at all: a first guide doesn't.
+  std::shared_ptr<std::atomic<int>> waited = std::make_shared<std::atomic<int>>(0);
+  bool pauses = true;
+  std::shared_ptr<std::atomic<bool>> waiting;  // set while it waits, for the status line
 };
 
 // Guide reads wait while video plays full screen (it needs the CPU), up to
-// 5 minutes, and while a foreground job holds a lot of memory (the saved
-// lists loading, the channel sort), up to 3 minutes.
+// 5 minutes in all for one build, and while a foreground job holds a lot of
+// memory (the saved lists loading, the channel sort), up to 3 minutes.
 void waitForPlayback(const GuideReadState& st) {
-  for (int i = 0; i < 600 && st.playing->load() && !st.stop->load(); ++i) usleep(500000);
+  if (st.pauses && st.playing->load()) {
+    if (st.waiting) *st.waiting = true;
+    while (*st.waited < 600 && st.playing->load() && !st.stop->load()) {
+      usleep(500000);
+      ++*st.waited;
+    }
+    if (st.waiting) *st.waiting = false;
+  }
   for (int i = 0; i < 360 && st.foreground->load() > 0 && !st.stop->load(); ++i) usleep(500000);
 }
 
@@ -1975,13 +2006,22 @@ void Store::runProviderGuide() {
     auto saved = m.providerSaved.find(j.key);
     const guide::provider::Saved* s = saved == m.providerSaved.end() ? nullptr : &saved->second;
     if (!force && !guide::provider::needsRebuild(s, static_cast<int>(j.channels.size()), time::now())) continue;
+    j.saved = s;
     jobs.push_back(std::move(j));
   }
   if (jobs.empty()) return;
   m.providerRunning = true;
   auto results = std::make_shared<std::vector<std::pair<std::string, guide::provider::Outcome>>>();
+  // No guide yet: it loads while you watch too (there is nothing to show
+  // in its place).
+  bool first = std::all_of(jobs.begin(), jobs.end(), [](const Job& j) { return !j.saved; });
   auto shared = std::make_shared<std::vector<Job>>(std::move(jobs));
-  GuideReadState st{m.playingFull, m.stopJobs, m.foregroundJobs};
+  GuideReadState st;
+  st.playing = m.playingFull;
+  st.stop = m.stopJobs;
+  st.foreground = m.foregroundJobs;
+  st.pauses = !first;
+  st.waiting = m.providerWaiting;
   http::Pool& pool = host_.pool;
   std::string dir = host_.files.dir();
   Files* storage = &host_.files;
@@ -2052,7 +2092,7 @@ void Store::runProviderGuide() {
         scheduleLineupRefresh();
         afterBigJob("provider guide built");
       },
-      http::Priority::Long);
+      http::Priority::LongFirst);
   (void)dir;
 }
 
@@ -2092,7 +2132,10 @@ void Store::runOutsideGuide() {
   std::string guideDir = host_.files.path("guides");
   mkdir(guideDir.c_str(), 0700);
   std::string savedPath = host_.files.path(guide::savedFileName(m.signature));
-  GuideReadState st{m.playingFull, m.stopJobs, m.foregroundJobs};
+  GuideReadState st;
+  st.playing = m.playingFull;
+  st.stop = m.stopJobs;
+  st.foreground = m.foregroundJobs;
   http::Pool& pool = host_.pool;
   uint64_t gen = m.generation;
   auto newSaved = std::make_shared<std::optional<guide::Saved>>();

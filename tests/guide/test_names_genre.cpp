@@ -17,6 +17,15 @@ TEST_CASE("normalize: comparable names, West kept apart") {
   CHECK(normalize("UK| Thing One") == "thingone");
   CHECK(normalize("Canal Pacífico") == "canalpacfico");  // ASCII only, as in tvOS
   CHECK(normalize("West") == "");
+  CHECK(normalize("HBO 2 WEST HD") == "hbo2~west");
+  CHECK(normalize("US: A&E (West)") == "aande~west");
+  CHECK(normalize("Telemundo (WEST) \xe1\xb4\xb4\xe1\xb4\xb0") == "telemundo~west");
+  // Names with West or Pacific in them that aren't West feeds.
+  CHECK(normalize("EPL West Ham") == "eplwestham");
+  CHECK(normalize("Wild West TV") == "wildwest");
+  CHECK(normalize("Pluto TV Wild West") == "plutowildwest");
+  CHECK(normalize("Pacific Blue") == "pacificblue");
+  CHECK(normalize("NBC West Palm Beach (WPTV)") == "nbcwestpalmbeach");
   CHECK(normalize("") == "");
 }
 

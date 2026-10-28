@@ -629,7 +629,7 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
       break;
     }
   }
-  bool isWest = rx::test("\\b(west|pacific)\\b", lower);
+  bool isWest = guide::namesWestFeed(lower);
   std::optional<std::string> country =
       countryFor(name, lower, rawGroup, group, str::startsWith(channel.serverId, "xt:"));
   if (!country && latinScript(name)) {

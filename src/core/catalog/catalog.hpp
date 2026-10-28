@@ -156,5 +156,8 @@ std::string leagueFor(std::string_view family, std::string_view group, std::stri
 // Fight promotions and terms, as whole words ("ufc_ppv" and "ufc333" count;
 // "Boxing Day" football doesn't).
 extern const char* const kFightWords;
+// Pro wrestling (WWE, AEW, NXT, TNA, ROH...): its own league, "Pro Wrestling".
+extern const char* const kProWrestling;
+extern const char* const kProWrestlingWords;
 
 }  // namespace marigold::catalog

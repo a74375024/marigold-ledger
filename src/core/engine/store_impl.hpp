@@ -173,6 +173,9 @@ struct Store::Impl {
   bool savedListingsRead = false;
   std::string guideLine;  // status line of a running guide job
   std::vector<catalog::markets::Market> tvMarkets;  // last list loaded for the setup
+  // The list page's markets by nameKey (template pages for built-in names).
+  std::unordered_map<std::string, catalog::markets::Market> tvMarketTemplates;
+  bool marketsRefreshing = false;
   // Station directory (Wikipedia affiliate lists, about monthly).
   std::shared_ptr<const std::vector<guide::Station>> stations = std::make_shared<std::vector<guide::Station>>();
   bool stationsFresh = false, stationsFetching = false;
@@ -184,6 +187,8 @@ struct Store::Impl {
 
   // Shared with workers.
   std::shared_ptr<std::atomic<bool>> playingFull = std::make_shared<std::atomic<bool>>(false);
+  // The provider guide build is waiting for playback to stop (status line).
+  std::shared_ptr<std::atomic<bool>> providerWaiting = std::make_shared<std::atomic<bool>>(false);
   // Foreground jobs running now (loading the saved lists, the channel sort):
   // guide builds wait for them, so the memory peaks never add up.
   std::shared_ptr<std::atomic<int>> foregroundJobs = std::make_shared<std::atomic<int>>(0);

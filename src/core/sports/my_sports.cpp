@@ -75,7 +75,9 @@ bool isFavorite(const MySportsPrefs& prefs, const SportsGame& game) {
 
 const std::vector<OtherSport>& otherSports() {
   static const std::vector<OtherSport> kSports = {
-      {"S:Fighting", "Fighting", "UFC, PFL, boxing & wrestling"},
+      {"S:Fighting", "Fighting", "UFC, PFL & boxing"},
+      // Off unless picked: shown in Live Events only then (proWrestlingOn).
+      {kProWrestlingPick, "Pro Wrestling", "WWE, AEW, NXT, TNA & ROH"},
       {"S:Motorsport", "Motorsport", "Racing"},
       {"S:Tennis", "Tennis", "Tennis"},
       {"S:Golf", "Golf", "Golf"},
@@ -88,6 +90,10 @@ const std::vector<OtherSport>& otherSports() {
       {"S:Darts", "Darts", "Darts"},
   };
   return kSports;
+}
+
+bool proWrestlingOn(const MySportsPrefs& prefs) {
+  return std::find(prefs.leagues.begin(), prefs.leagues.end(), kProWrestlingPick) != prefs.leagues.end();
 }
 
 std::optional<std::string> nameOf(std::string_view id) {

@@ -1,6 +1,7 @@
 #include "core/catalog/markets.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <set>
 #include <unordered_set>
 
@@ -56,6 +57,22 @@ std::vector<Market> parseMarkets(std::string_view wikitext) {
     list.push_back({name, templ});
   }
   return list;
+}
+
+std::string nameKey(std::string_view name) {
+  std::string out;
+  std::string lower = str::lower(name);
+  for (size_t i = 0; i < lower.size(); ++i) {
+    unsigned char c = static_cast<unsigned char>(lower[i]);
+    if (std::isalnum(c)) {
+      out += static_cast<char>(c);
+    } else if (c == 0xE2 && i + 2 < lower.size() && static_cast<unsigned char>(lower[i + 1]) == 0x80) {
+      i += 2;  // an en or em dash: as "-", dropped like the rest
+    } else if (c >= 0x80) {
+      out += static_cast<char>(c);
+    }
+  }
+  return out;
 }
 
 const std::vector<Market>& builtinMarkets() {

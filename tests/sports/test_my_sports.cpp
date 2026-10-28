@@ -56,7 +56,8 @@ TEST_CASE("favorites, names and picked rows in the order picked") {
   // Soccer leagues share a row; men's and women's college basketball too.
   CHECK(pickedGroups(prefs) == std::vector<std::string>{"Soccer", "College Basketball", "Golf"});
   CHECK(nameOf("EPL") == "Premier League");
-  CHECK(nameOf("S:Fighting") == "UFC, PFL, boxing & wrestling");
+  CHECK(nameOf("S:Fighting") == "UFC, PFL & boxing");
+  CHECK(nameOf(kProWrestlingPick) == "WWE, AEW, NXT, TNA & ROH");
   CHECK(nameOf("S:FieldHockey") == "Field hockey");
   CHECK(nameOf("S:Motorsport") == "Racing");
   CHECK(nameOf("NOPE") == std::nullopt);

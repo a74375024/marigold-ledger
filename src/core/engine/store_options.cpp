@@ -196,7 +196,9 @@ GuideListingsStatus Store::guideListings() const {
     auto problem = m.providerProblems.find(key);
     auto saved = m.providerSaved.find(key);
     if (m.providerRunning) {
-      p.line = "Updating\xe2\x80\xa6 (pauses while you watch)";
+      p.line = m.providerWaiting->load() ? "Waiting until you stop watching, then updating"
+                                          : saved == m.providerSaved.end() ? "Loading the guide for the first time\xe2\x80\xa6"
+                                                                           : "Updating\xe2\x80\xa6";
     } else if (saved != m.providerSaved.end()) {
       const guide::provider::Saved& s = saved->second;
       p.line = "Listings for " + str::groupedThousands(static_cast<int>(s.programs.size())) + " of " +
@@ -218,7 +220,7 @@ GuideListingsStatus Store::guideListings() const {
   if (!settings_.fillMissingListings) {
     out.outsideLine = "Only your provider's guide is used.";
   } else if (m.outsideRunning) {
-    out.outsideLine = "Updating outside listings\xe2\x80\xa6 (runs in the background and pauses while you watch)";
+    out.outsideLine = "Updating outside listings\xe2\x80\xa6 (in the background; waits while you watch)";
   } else if (m.outsideSaved) {
     const guide::Saved& s = *m.outsideSaved;
     out.outsideLine = "Matched " + str::groupedThousands(static_cast<int>(s.programs.size())) + " of " +

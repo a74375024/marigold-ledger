@@ -242,6 +242,13 @@ TEST_CASE("sport words count only as whole words") {
   CHECK(leagueFor("x", "", "LIV Golf: Round 2") == "Golf");
   CHECK(leagueFor("x", "", "IPL: Team A vs Team B") == "Cricket");
   CHECK(leagueFor("x", "", "Men's Basketball: Team A vs Team B") == "College Basketball");
+  CHECK(leagueFor("x", "", "Basketball: Team A vs. Team B (EXH) (Team A vs. Team B") == "College Basketball");
+  // Pro wrestling is its own league, even under a "Wrestling:" or fight word.
+  CHECK(leagueFor("x", "", "WWE NXT") == "Pro Wrestling");
+  CHECK(leagueFor("x", "", "Wrestling: AEW Dynamite") == "Pro Wrestling");
+  CHECK(leagueFor("x", "PPV", "Ring of Honor Wrestling") == "Pro Wrestling");
+  CHECK(leagueFor("x", "", "Wrestling: Team A at Team B") == "Wrestling");
+  CHECK(leagueFor("x", "", "UFC Fight Night") == "Fighting");
 }
 
 TEST_CASE("whole words") {

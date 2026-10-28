@@ -9,6 +9,7 @@
 #include "core/catalog/lineup.hpp"
 #include "core/sports/my_sports.hpp"
 #include "core/util/memory.hpp"
+#include "core/util/strings.hpp"
 
 namespace marigold::app {
 namespace {
@@ -174,11 +175,16 @@ std::unique_ptr<Screen> makeCoast(App& app) {
     if (pairs.empty()) {
       p.items.push_back(ui::PanelItem::note("None of your channels have both versions right now."));
     } else {
-      std::string some;
-      for (size_t i = 0; i < pairs.size() && i < 4; ++i) some += (i ? ", " : "") + pairs[i];
       std::string count = std::to_string(pairs.size()) + (pairs.size() == 1 ? " channel has" : " channels have");
-      p.items.push_back(ui::PanelItem::note(count + " both here (" + some + (pairs.size() > 4 ? " and more" : "") +
-                                            "). The other version is one press away in Sources, Hold OK in the guide, or Edit My Lineup."));
+      p.items.push_back(ui::PanelItem::note(count + " both here. The other version is one press away in Sources and "
+                                            "Hold OK in the guide."));
+      // Every one of them, East / West / Both each.
+      ui::PanelItem each{ui::PanelItem::Kind::Chevron, "Choose Channel by Channel"};
+      each.value = std::to_string(pairs.size());
+      each.detail = str::join(std::vector<std::string>(pairs.begin(), pairs.begin() + std::min<size_t>(pairs.size(), 6)),
+                              ", ") + (pairs.size() > 6 ? "\xe2\x80\xa6" : "");
+      each.select = [&app] { app.nav().push(makeEditLineup(app)); };
+      p.items.push_back(each);
     }
   });
 }

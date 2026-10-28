@@ -78,7 +78,7 @@ class Client final : public Pool {
   mutable std::mutex mu_;
   std::condition_variable cv_;
   std::deque<std::shared_ptr<Ticket::Job>> queue_;
-  std::deque<std::shared_ptr<Ticket::Job>> longQueue_;  // Priority::Long, one at a time
+  std::deque<std::shared_ptr<Ticket::Job>> longQueue_;  // Priority::Long(First), one at a time
   std::vector<std::thread> threads_;
   bool stopping_ = false;
   transport::Group* group_ = nullptr;
