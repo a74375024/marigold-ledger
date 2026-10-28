@@ -19,6 +19,10 @@
 
 namespace marigold::catalog {
 
+namespace directory {
+class Index;
+}
+
 // Which call signs are real in this lineup, and each one's network.
 struct CallsignContext {
   std::unordered_set<std::string> known;
@@ -29,6 +33,8 @@ struct CallsignContext {
   // country in Latin script is taken as US. tvOS left them without a
   // country, so such lists had no core networks, locals or US count.
   bool unknownIsUS = false;
+  // The channel directory to tell channels by (none: the rules alone).
+  const directory::Index* directory = nullptr;
 
   CallsignContext() = default;
   // The station directory, plus signs seen in local groups or next to a
@@ -46,8 +52,11 @@ std::optional<std::string> markedCountry(const Channel& channel);
 
 // Pass 0: call-sign context; pass 1: traits and event families; pass 2:
 // entries (clusters of variants); pass 3: event families and events.
+// With a channel directory, a channel it knows is told by it
+// (catalog/directory.hpp): its row, language, area and whether it shut down.
 CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
-                    const std::vector<guide::Station>& stations = {});
+                    const std::vector<guide::Station>& stations = {},
+                    const directory::Index* directory = nullptr);
 
 struct EventsResult {
   std::vector<EventFamily> families;

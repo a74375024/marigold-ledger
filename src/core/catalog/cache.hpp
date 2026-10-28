@@ -29,7 +29,8 @@ namespace marigold::catalog::cache {
 // 8: sport words in event titles count only as whole words.
 // 9: one channel spelled two ways is one entry; languages, regional
 //    channels, out-of-town stations and event-only feeds.
-constexpr int kVersion = 9;
+// 10: the channel directory decides rows, language, area and closings.
+constexpr int kVersion = 10;
 
 enum class Part { first, full };
 

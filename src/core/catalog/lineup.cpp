@@ -347,6 +347,9 @@ bool suggests(const EntryInfo& entry, const LineupPrefs& prefs, bool hasGuide,
               std::string_view name, const CoastFeeds& coasts) {
   // Only the chosen countries / languages.
   if (!prefs.includes(entry.market)) return false;
+  // A channel that has shut down (per the channel directory) isn't
+  // suggested; it can still be found and added.
+  if (!entry.closed.empty()) return false;
   if (coasts.skips(entry)) return false;
   auto on = [&](LineupCategory c) { return prefs.categories.count(c) > 0; };
   switch (entry.kind) {

@@ -171,6 +171,15 @@ const std::vector<Correction>& corrections() {
   return kList;
 }
 
+std::string shownName(const Entry& entry) {
+  // Rows that link to their owner's article.
+  static const std::unordered_map<std::string, std::string> kShown = {
+      {"Blaze Media", "BlazeTV"},
+  };
+  auto it = kShown.find(entry.name);
+  return it == kShown.end() ? entry.name : it->second;
+}
+
 std::string toJson(const Data& data) {
   json::Value v = json::Value::object();
   v.set("version", 1);
@@ -235,10 +244,16 @@ const Data& builtIn() {
 Index::Index(const Data& data) : data_(&data) {
   for (size_t i = 0; i < data.entries.size(); ++i) {
     const Entry& e = data.entries[i];
+    byId_.emplace(e.id, i);
     bool free = e.list == "free";
     addUnique(free ? freeByName_ : byName_, exactKey(e.name), i);
     addUnique(free ? freeByLoose_ : byLoose_, looseKey(e.name), i);
+    std::string own = looseKey(e.name);
     for (const std::string& alias : e.aliases) {
+      // Its name and more ("GritXtra" leads to Grit's article) is a channel
+      // of its own, not another name.
+      std::string loose = looseKey(alias);
+      if (!own.empty() && loose.size() > own.size() && str::startsWith(loose, own)) continue;
       addUnique(free ? freeByAlias_ : byAlias_, exactKey(alias), i);
       addUnique(free ? freeByLoose_ : byLoose_, looseKey(alias), i);
     }
@@ -276,13 +291,18 @@ Match Index::match(std::string_view name) const {
   }
   if (auto it = byName_.find(key); it != byName_.end()) return pick(it->second, MatchKind::exact);
   if (auto it = byAlias_.find(key); it != byAlias_.end()) return pick(it->second, MatchKind::alias);
-  if (auto it = freeByName_.find(key); it != freeByName_.end()) return pick(it->second, MatchKind::exact);
-  if (auto it = freeByAlias_.find(key); it != freeByAlias_.end()) return pick(it->second, MatchKind::alias);
   std::string loose = looseKey(name);
   if (auto it = byLoose_.find(loose); it != byLoose_.end()) return pick(it->second, MatchKind::loose);
+  if (auto it = freeByName_.find(key); it != freeByName_.end()) return pick(it->second, MatchKind::exact);
+  if (auto it = freeByAlias_.find(key); it != freeByAlias_.end()) return pick(it->second, MatchKind::alias);
   if (auto it = freeByLoose_.find(loose); it != freeByLoose_.end()) return pick(it->second, MatchKind::loose);
   if (auto it = data_->elsewhere.find(key); it != data_->elsewhere.end()) m.elsewhere = it->second;
   return m;
+}
+
+const Entry* Index::entryById(const std::string& id) const {
+  auto it = byId_.find(id);
+  return it == byId_.end() ? nullptr : &data_->entries[it->second];
 }
 
 const Index& builtInIndex() {

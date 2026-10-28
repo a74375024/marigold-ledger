@@ -11,8 +11,8 @@
 // build packs the file into the app (cmake/channel-directory.cmake); a TV
 // never fetches it. Our corrections below win over every source.
 //
-// Phase 1: channels are matched and the match is reported (channel
-// report); the lineup doesn't use it yet.
+// The lineup uses it for channels that aren't stations (catalog::build):
+// a known channel's row, name, language, area and closing come from it.
 #pragma once
 
 #include <map>
@@ -82,6 +82,9 @@ struct Correction {
   const char* is;  // the entry's name
 };
 const std::vector<Correction>& corrections();
+// The name to show for an entry: its own, or the channel's where the list
+// row names its owner ("Blaze Media" is BlazeTV).
+std::string shownName(const Entry& entry);
 
 class Index {
  public:
@@ -90,12 +93,17 @@ class Index {
   // an entry's own name (exact), one of its other names or a correction
   // (alias), or, failing both, a single entry's loose key (loose); a key
   // shared by two entries matches neither (ambiguous). The free tier is
-  // only asked when no listed channel has the name exactly.
+  // only asked when no listed channel has the name, even loosely ("Bounce"
+  // is Bounce TV). An other name that is the entry's name and more
+  // ("GritXtra") isn't one.
   Match match(std::string_view name) const;
+  // The entry with this id (nullptr when none).
+  const Entry* entryById(const std::string& id) const;
 
  private:
   const Data* data_;
   std::unordered_map<std::string, size_t> byCorrection_;
+  std::unordered_map<std::string, size_t> byId_;
   std::unordered_map<std::string, std::vector<size_t>> byName_;
   std::unordered_map<std::string, std::vector<size_t>> byAlias_;
   std::unordered_map<std::string, std::vector<size_t>> byLoose_;

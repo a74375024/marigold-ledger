@@ -193,14 +193,20 @@ LineupOutput lineup(const LineupInput& input) {
   };
   LineupOutput out;
   CoastFeeds coasts = CoastFeeds::of(input.infos, input.coast);
+  // The user's choices, also those made under a row's earlier ids.
+  auto chosen = [](const std::set<std::string>& ids, const EntryInfo& info) {
+    if (ids.count(info.id)) return true;
+    return std::any_of(info.formerIds.begin(), info.formerIds.end(),
+                       [&](const std::string& id) { return ids.count(id) > 0; });
+  };
   for (const EntryInfo& info : input.infos) {
-    if (prefs.removed.count(info.id)) continue;
+    if (chosen(prefs.removed, info)) continue;
     bool favorite =
         std::any_of(info.members.begin(), info.members.end(), [&](const std::string& m) {
           const Channel* c = member(m);
           return c && c->isFavorite;
         });
-    if (favorite || prefs.added.count(info.id)) {
+    if (favorite || chosen(prefs.added, info)) {
       out.lineupIDs.insert(info.id);
     } else if (prefs.configured) {
       bool hasGuide =

@@ -264,3 +264,14 @@ After the update the channel list is sorted again once (a minute or so on a big 
 | Regional channels | NECN, OC16, Spectrum News 1; Fox Sports North / South / Prime Ticket, SportsNet LA, NBC Sports Philadelphia | Only in their own area's lineup |
 | Bay Area sports | NBC Sports Bay Area and California | Suggested; their part-time Plus 2 / Alternate channels only when they have a guide |
 | Yours stay | A channel you added yourself | Still in My Lineup (if it was a second copy that is now part of another row, add that row again) |
+
+## My Lineup from the channel directory
+
+The app knows real US channels by their other names, language and closing. After the update the channel list is sorted again once.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Names | Edit My Lineup: MeTV, C-SPAN 3, Scripps News (was Newsy), BlazeTV, Racer Network (was MAVTV) | Each shows its real name, every copy under Sources |
+| Stations | CBS KPIX, KMOV CBS 4, CBS (Buffalo), WGN | Still one row per station, by call sign |
+| Closed channels | El Rey, ThrillerMax | Not suggested; still found by Search and can be added |
+| Yours stay | Channels you added, removed or pinned a feed for before the update | Kept as you set them, even for a channel that has closed |

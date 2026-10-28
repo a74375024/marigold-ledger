@@ -59,6 +59,9 @@ json::Value toJson(const EntryInfo& e) {
   setOpt(v, "market", e.market);
   setOpt(v, "core", e.core);
   v.set("scope", e.scope);
+  if (!e.directoryId.empty()) v.set("directoryId", e.directoryId);
+  if (!e.closed.empty()) v.set("closed", e.closed);
+  if (!e.formerIds.empty()) v.set("formerIds", strings(e.formerIds));
   return v;
 }
 
@@ -77,6 +80,9 @@ std::optional<EntryInfo> entryFromJson(const json::Value& v) {
   e.market = optString(v, "market");
   e.core = optString(v, "core");
   e.scope = v["scope"].isString() ? v["scope"].asString() : "national";
+  e.directoryId = v["directoryId"].asString();
+  e.closed = v["closed"].asString();
+  e.formerIds = stringsFrom(v["formerIds"]);
   return e;
 }
 
@@ -190,6 +196,9 @@ json::Value toJson(const ChannelTraits& t) {
   setOpt(v, "market", t.market);
   setOpt(v, "core", t.core);
   v.set("scope", t.scope);
+  if (!t.directoryId.empty()) v.set("directoryId", t.directoryId);
+  if (!t.closed.empty()) v.set("closed", t.closed);
+  if (!t.formerKey.empty()) v.set("formerKey", t.formerKey);
   return v;
 }
 
@@ -213,6 +222,9 @@ std::optional<ChannelTraits> traitsFromJson(const json::Value& v) {
   t.market = optString(v, "market");
   t.core = optString(v, "core");
   t.scope = v["scope"].isString() ? v["scope"].asString() : "national";
+  t.directoryId = v["directoryId"].asString();
+  t.closed = v["closed"].asString();
+  t.formerKey = v["formerKey"].asString();
   return t;
 }
 

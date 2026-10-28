@@ -21,6 +21,7 @@
 #include "core/catalog/admission.hpp"
 #include "core/catalog/cache.hpp"
 #include "core/catalog/catalog.hpp"
+#include "core/catalog/directory.hpp"
 #include "core/catalog/lineup.hpp"
 #include "core/catalog/markets.hpp"
 #include "core/catalog/wiki_data.hpp"
@@ -45,9 +46,15 @@
 #include "core/util/strings.hpp"
 
 namespace marigold::engine {
+
 namespace {
 
 using catalog::CatalogResult;
+
+// The built-in channel directory, when the build has one.
+const catalog::directory::Index* builtInDirectory() {
+  return catalog::directory::builtIn().empty() ? nullptr : &catalog::directory::builtInIndex();
+}
 using catalog::EntryInfo;
 
 // LiveTVStore constants.
@@ -846,7 +853,10 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
         std::vector<Channel> list = std::move(*merged);
         // The same download (and countries) as the list on screen, from
         // this run or saved by the last one: nothing to sort again.
-        *print = catalog::fingerprint(list, wanted);
+        // (The built-in channel directory too: a new one sorts again.)
+        std::set<std::string> also = wanted;
+        also.insert("directory:" + catalog::directory::builtIn().made);
+        *print = catalog::fingerprint(list, also);
         if (lastPrint && *print == lastPrint) {
           *unchanged = true;
           return;
@@ -874,7 +884,7 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
             return;
           }
         }
-        *result = {annotated, std::make_shared<CatalogResult>(catalog::build(*annotated, now, *stations))};
+        *result = {annotated, std::make_shared<CatalogResult>(catalog::build(*annotated, now, *stations, builtInDirectory()))};
       },
       [this, gen, result, renamedCount, showing, problems, cut, print, unchanged] {
         if (gen != impl_->generation) return;
@@ -1007,7 +1017,9 @@ void Store::rebuildCatalog() {
   auto result = std::make_shared<std::shared_ptr<CatalogResult>>();
   uint64_t gen = m.generation;
   time::Seconds now = time::now();
-  host_.pool.post([list, stations, result, now] { *result = std::make_shared<CatalogResult>(catalog::build(*list, now, *stations)); },
+  host_.pool.post([list, stations, result, now] {
+    *result = std::make_shared<CatalogResult>(catalog::build(*list, now, *stations, builtInDirectory()));
+  },
                    [this, gen, list, result] {
                      if (gen != impl_->generation || list != impl_->channels || impl_->loading) return;
                      installCatalog(list, *result, false);
@@ -2331,7 +2343,16 @@ void Store::pinFeed(const std::string& entryId, const std::string& channelId) {
 
 std::string Store::pinnedFeed(const std::string& entryId) const {
   auto it = impl_->pinned.find(entryId);
-  return it == impl_->pinned.end() ? std::string() : it->second;
+  if (it != impl_->pinned.end()) return it->second;
+  // A feed pinned under the row's earlier id.
+  for (const catalog::EntryInfo& e : impl_->catalog->entries) {
+    if (e.id != entryId) continue;
+    for (const std::string& former : e.formerIds) {
+      if (auto old = impl_->pinned.find(former); old != impl_->pinned.end()) return old->second;
+    }
+    break;
+  }
+  return std::string();
 }
 
 // ------------------------------------------------------------ snapshots

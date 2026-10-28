@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <map>
+#include <set>
 #include <unordered_set>
 
+#include "core/catalog/directory.hpp"
 #include "core/catalog/lineup.hpp"
 #include "core/catalog/text.hpp"
 #include "core/util/rx.hpp"
@@ -174,6 +176,19 @@ std::optional<std::string> otherLanguageMarket(std::string_view name) {
     if (rx::test(l.pattern, name, true)) return std::string(l.market);
   }
   return std::nullopt;
+}
+
+// The market a directory language belongs to ("es" -> US Spanish, "ur" ->
+// Pakistan); nullopt for English or a language this doesn't place.
+std::optional<std::string> marketOfLanguage(std::string_view language) {
+  static const std::unordered_map<std::string, std::string> kMarkets = {
+      {"es", "US-ES"}, {"fr", "FR"}, {"pt", "BR"}, {"hi", "IN"}, {"pa", "IN"}, {"gu", "IN"}, {"ta", "IN"},
+      {"te", "IN"},    {"ml", "IN"}, {"bn", "IN"}, {"ur", "PK"}, {"ar", "AE"}, {"zh", "CN"}, {"ko", "KR"},
+      {"ja", "JP"},    {"it", "IT"}, {"de", "DE"}, {"pl", "PL"}, {"ru", "RU"}, {"vi", "VN"}, {"fa", "IR"},
+      {"tl", "PH"},    {"he", "IL"}, {"el", "GR"}, {"tr", "TR"}};
+  auto it = kMarkets.find(std::string(language));
+  if (it == kMarkets.end()) return std::nullopt;
+  return it->second;
 }
 
 // Event-only feeds a provider lists like channels: "NBC Sports 2", "NBC
@@ -455,11 +470,12 @@ std::optional<std::string> markedCountry(const Channel& channel) {
 // MARK: Build
 
 CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
-                    const std::vector<guide::Station>& stations) {
+                    const std::vector<guide::Station>& stations, const directory::Index* directory) {
   CatalogResult result;
   result.traits.reserve(channels.size());
   // Pass 0: which call signs are real here, and each sign's usual network.
   CallsignContext context(channels, stations);
+  context.directory = directory;
   // Pass 1: traits and candidate event families.
   std::unordered_map<std::string, int> familyCounts;
   std::unordered_map<std::string, int> familySeparators;
@@ -510,9 +526,26 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
   // Pass 2: entries (clusters of variants), in first-seen order. Names
   // that are one channel spelled two ways join the first one seen, which
   // keeps its id.
+  // A spelling the directory doesn't know joins the directory's row for
+  // another spelling of it ("ONE TV" with "TV One"), told apart by the key
+  // it would have had without the directory.
   std::unordered_map<std::string, std::vector<const Channel*>> clusters;
   std::unordered_map<std::string, std::string> clusterOfSame;
   std::vector<std::string> order;
+  auto sameKeyOf = [](const ChannelTraits& traits) {
+    if (traits.formerKey.empty()) return sameChannelKey(traits);
+    ChannelTraits before = traits;
+    std::string market = traits.formerKey.substr(2, traits.formerKey.find(':', 2) - 2);
+    before.market = market == "?" ? std::nullopt : std::optional<std::string>(market);
+    return sameChannelKey(before);
+  };
+  std::unordered_map<std::string, std::string> directoryRowOf;  // former key -> d: key
+  for (const Channel& channel : channels) {
+    auto it = result.traits.find(channel.id);
+    if (it == result.traits.end() || !str::startsWith(it->second.clusterKey, "d:")) continue;
+    clusterOfSame.emplace(sameKeyOf(it->second), it->second.clusterKey);
+    if (!it->second.formerKey.empty()) directoryRowOf.emplace(it->second.formerKey, it->second.clusterKey);
+  }
   for (const Channel& channel : channels) {
     auto it = result.traits.find(channel.id);
     if (it == result.traits.end()) continue;
@@ -525,7 +558,9 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
     }
     std::string clusterKey = traits.clusterKey;
     if (str::startsWith(clusterKey, "n:")) {
-      clusterKey = clusterOfSame.emplace(sameChannelKey(traits), clusterKey).first->second;
+      auto row = directoryRowOf.find(clusterKey);
+      clusterKey = row != directoryRowOf.end() ? row->second
+                                               : clusterOfSame.emplace(sameChannelKey(traits), clusterKey).first->second;
     }
     auto& members = clusters[clusterKey];
     if (members.empty()) order.push_back(clusterKey);
@@ -559,8 +594,16 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
     });
     EntryInfo entry;
     entry.id = "e|" + key;
+    const directory::Entry* listed = nullptr;
+    if (directory && !traits.directoryId.empty() && str::startsWith(key, "d:")) {
+      listed = directory->entryById(traits.directoryId);
+    }
     if (traits.core) {
       entry.name = traits.isWest ? *traits.core + " West" : *traits.core;
+    } else if (listed) {
+      // The directory's name for it ("Hallmark Mystery", not "HALLMARK M & M").
+      std::string shown = directory::shownName(*listed);
+      entry.name = shown + (traits.isWest && !rx::test("\\b(west|pacific)\\b", shown, true) ? " West" : "");
     } else {
       std::vector<std::string> names;
       names.reserve(ranked.size());
@@ -596,6 +639,16 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
     entry.market = traits.market;
     entry.core = traits.core;
     entry.scope = traits.scope;
+    entry.directoryId = traits.directoryId;
+    entry.closed = traits.closed;
+    // Its members' rows under the rules alone: the ids the user's choices
+    // may have been made under.
+    std::set<std::string> former;
+    for (const Ranked& r : ranked) {
+      std::string was = r.traits->formerKey.empty() ? r.traits->clusterKey : r.traits->formerKey;
+      if ("e|" + was != entry.id) former.insert("e|" + was);
+    }
+    entry.formerIds.assign(former.begin(), former.end());
     for (const std::string& member : entry.members) result.entryOf[member] = entry.id;
     result.entries.push_back(std::move(entry));
   }
@@ -855,6 +908,35 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
                                         context.stationsByNetwork);
     }
   }
+  // The channel directory, for channels that aren't stations: one it knows
+  // by name, another name or our corrections (not a loose match) is told
+  // by it. One on its distant-locals list is a station (WGN-TV); a name
+  // only another country's channels have, in a language a US English
+  // lineup doesn't carry under the same name, is that country's.
+  const directory::Entry* listed = nullptr;
+  const std::optional<std::string> marketBefore = market;
+  bool usMarket = market == std::string("US") || market == std::string("US-ES") || !country;
+  if (context.directory && kind == ChannelKind::channel && !core && !familyKey && !callsign && usMarket &&
+      !stationLike()) {
+    directory::Match m = context.directory->match(display);
+    if (m.entry && (m.kind == directory::MatchKind::exact || m.kind == directory::MatchKind::alias)) {
+      if (m.entry->list == "local") {
+        if (auto sign = text::firstGroup("^([KW][A-Z]{2,3})(-[A-Z]{2})?$", m.entry->name, 1)) callsign = *sign;
+      } else {
+        listed = m.entry;
+        if (market == std::string("US")) {
+          if (auto other = marketOfLanguage(listed->language)) market = *other;
+        }
+      }
+    } else if (!m.entry && !m.elsewhere.empty() && market == std::string("US")) {
+      std::string place = m.elsewhere.substr(0, m.elsewhere.find(':'));
+      std::string language = m.elsewhere.substr(m.elsewhere.find(':') + 1);
+      static const std::unordered_set<std::string> kApart = {"ur", "hi", "ar", "pa", "gu", "ta", "te", "ml", "bn",
+                                                             "zh", "ko", "ja", "fa", "ru", "vi", "he", "el", "tr"};
+      if (kApart.count(language)) market = place;
+    }
+  }
+
   if (familyKey && kind == ChannelKind::channel) kind = ChannelKind::event;
 
   std::string key;
@@ -879,6 +961,13 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
           (normalized.empty() ? lower : normalized) +
           (isWest && !str::endsWith(normalized, "~west") ? "~west" : "");
   }
+  // A directory channel's copies are one row, whatever each is called; the
+  // key the rules alone gave stays as the row's earlier id.
+  std::string formerKey;
+  if (str::startsWith(key, "n:") && (listed || market != marketBefore)) {
+    formerKey = "n:" + (marketBefore ? *marketBefore : std::string("?")) + key.substr(key.find(':', 2));
+    if (listed) key = "d:" + listed->id + (isWest ? "~west" : "");
+  }
 
   std::string scope;
   if (core) {
@@ -889,6 +978,11 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
     scope = scopeFor(display, stationLike);
   } else {
     scope = "national";
+  }
+  // A regional channel the directory knows is its area's.
+  if (listed && scope == "national" &&
+      (!listed->places.empty() || rx::test("\\bregional\\b", listed->genre, true))) {
+    scope = "regional:" + (listed->places.empty() ? std::string("?") : str::join(listed->places, "|"));
   }
 
   LineupCategory category;
@@ -941,6 +1035,11 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
   traits.market = std::move(market);
   if (core) traits.core = core->name;
   traits.scope = std::move(scope);
+  if (listed) {
+    traits.directoryId = listed->id;
+    traits.closed = listed->closed;
+  }
+  traits.formerKey = std::move(formerKey);
   return traits;
 }
 

@@ -94,6 +94,13 @@ struct ChannelTraits {
   std::optional<std::string> core;
   // "national", "local" (call sign), "team", or "regional:<place>".
   std::string scope = "national";
+  // The channel directory's entry it matched (catalog/directory.hpp), and
+  // when that channel shut down ("2025-03-06", "yes"); empty: none.
+  std::string directoryId;
+  std::string closed;
+  // The cluster key the rules before the directory gave it, when the
+  // directory gave another (its entry's earlier id).
+  std::string formerKey;
 };
 
 // A real-world channel: one guide entry with its variants as backups.
@@ -109,6 +116,11 @@ struct EntryInfo {
   std::optional<std::string> market;
   std::optional<std::string> core;
   std::string scope = "national";
+  std::string directoryId;  // the channel directory's entry, if any
+  std::string closed;       // when it shut down, per the directory
+  // Ids this entry had before the directory joined or renamed rows: the
+  // user's choices made under them (added, removed, pinned) still apply.
+  std::vector<std::string> formerIds;
 };
 
 // One live event, deduplicated across event families.
