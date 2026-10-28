@@ -39,6 +39,7 @@ Requests: race drivers and results only for race weekends you can watch
 | More logos | My Lineup: MTV2, Fuse, Revolt, Fox Weather, Cinemax and Starz channels, NBA TV, Tennis Channel, The Weather Channel | Their own logos, alone in the cell like the national networks |
 | White logos | Focus a channel whose logo is white (on the white focused cell) | A dark version of the logo; part-white logos sit on a small dark plate |
 | Logo report | Export Channel Report | logo_sources ("logo set, provider") and logo_status ("shown", "failed") per channel; "provider" is always last |
+| Directory report | Export Channel Report | directory_id (the channel directory's entry, when it has one) and directory_match ("exact", "other name", "loose", "ambiguous", "none", or "none (another country: PK)") per channel |
 | Free streaming | Free streaming off in My Lineup setup | Channels your provider also lists under Roku, Pluto, Tubi... (50 Cent Action, FailArmy, Tastemade) stay out of My Lineup; HBO, Starz, MGM+ and the national networks stay in |
 | Preview and Live Events | A preview playing in the guide, then the yellow key | The preview stops; back in the guide it starts again |
 | Edit My Lineup | Options › Edit My Lineup | Added by you / Removed by you / My Lineup; removing and adding back work |

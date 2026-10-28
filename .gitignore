@@ -47,3 +47,4 @@ compile_commands.json
 
 # Wikipedia data fetched at build time (tools/wikidata); built into the app
 data/wiki-data.json
+data/channel-directory.json

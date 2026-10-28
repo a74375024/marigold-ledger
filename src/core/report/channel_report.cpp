@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <utility>
 
+#include "core/catalog/catalog.hpp"
+#include "core/catalog/directory.hpp"
 #include "core/guide/genre.hpp"
 #include "core/report/csv.hpp"
 #include "core/util/redact.hpp"
@@ -194,7 +196,8 @@ const std::vector<std::string>& channelReportColumns() {
       "kind", "market", "core_network", "scope",
       "server_genre_tagged_next_3h", "outside_genre_tagged_next_3h",
       "provider_guide_genre_tagged_next_3h", "now_genres",
-      "now_subtitle", "now_description", "outside_listings_end", "logo_sources", "logo_status"};
+      "now_subtitle", "now_description", "outside_listings_end", "logo_sources", "logo_status",
+      "directory_id", "directory_match"};
   return kColumns;
 }
 
@@ -319,6 +322,15 @@ std::string channelReportCSV(const ChannelReportInput& in,
       listingsEnd = minuteStamp(static_cast<time::Seconds>(last) * 60, in.zone);
     }
 
+    // The channel directory's entry for it (phase 1: reported, not used).
+    std::string directoryId, directoryMatch;
+    if (!catalog::directory::builtIn().empty()) {
+      catalog::directory::Match m = catalog::directory::builtInIndex().match(catalog::cleanName(safeName));
+      if (m.entry) directoryId = m.entry->id;
+      directoryMatch = catalog::directory::rawValue(m.kind);
+      if (!m.elsewhere.empty()) directoryMatch += " (another country: " + m.elsewhere + ")";
+    }
+
     const std::string* provider = find(in.providerNames, channel.serverId);
     const std::pair<std::string, std::string>* logo = entryId ? find(in.logos, *entryId) : nullptr;
     const std::string empty;
@@ -361,6 +373,8 @@ std::string channelReportCSV(const ChannelReportInput& in,
         cell(listingsEnd),
         cell(logo ? logo->first : empty),
         cell(logo ? logo->second : empty),
+        cell(directoryId),
+        cell(directoryMatch),
     };
     out += str::join(row, ",");
     out += '\n';
