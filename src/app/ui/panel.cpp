@@ -67,8 +67,21 @@ bool ListPanel::key(Key k) {
     }
     return true;  // at an end: stay
   }
-  if (k == Key::Ok && focus_ >= 0 && focus_ < static_cast<int>(items.size())) {
-    PanelItem& it = items[static_cast<size_t>(focus_)];
+  if (focus_ < 0 || focus_ >= static_cast<int>(items.size())) return false;
+  PanelItem& it = items[static_cast<size_t>(focus_)];
+  if (it.kind == PanelItem::Kind::Choice && !it.choices.empty() &&
+      (k == Key::Left || k == Key::Right || k == Key::Ok)) {
+    int n = static_cast<int>(it.choices.size());
+    int next = k == Key::Left ? std::max(0, it.choice - 1)
+               : k == Key::Right ? std::min(n - 1, it.choice + 1)
+                                 : (it.choice + 1) % n;
+    if (next != it.choice && it.enabled) {
+      it.choice = next;
+      if (it.pick) it.pick(next);
+    }
+    return true;
+  }
+  if (k == Key::Ok) {
     if (it.focusable() && it.select) it.select();
     return true;
   }
@@ -165,6 +178,24 @@ void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
         labelIn(c, "\xe2\x80\xba", {right - 20, row.y, 20, row.h}, Weight::Bold, 30, sub, Align::Right);
         right -= 34;
         break;
+      case PanelItem::Kind::Choice: {
+        float segW = 0;
+        for (const std::string& s : it.choices) segW += textWidth(c, s, Weight::Bold, 18) + 28;
+        Rect box{right - segW - 8, row.y + (row.h - 44) * 0.5f, segW + 8, 44};
+        c.g.fill(box, focused ? theme::black(0.08f) : theme::white(0.08f), 12);
+        float sx = box.x + 4;
+        for (size_t k = 0; k < it.choices.size(); ++k) {
+          float w = textWidth(c, it.choices[k], Weight::Bold, 18) + 28;
+          Rect seg{sx, box.y + 4, w, 36};
+          bool on = static_cast<int>(k) == it.choice;
+          if (on) c.g.fill(seg, focused ? theme::black() : theme::white(0.22f), 9);
+          Color ink = on ? theme::white() : (focused ? theme::black(0.55f) : theme::white(0.6f));
+          labelIn(c, it.choices[k], seg, Weight::Bold, 18, ink, Align::Center);
+          sx += w;
+        }
+        right = box.x - 16;
+        break;
+      }
       default:
         break;
     }
@@ -178,12 +209,10 @@ void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
       x += 22;
     }
     float tw = right - x;
-    if (it.detail.empty()) {
-      labelIn(c, it.title, {x, row.y, tw, row.h}, Weight::Bold, 25, fg);
-    } else {
-      label(c, it.title, x, row.y + 12, Weight::Bold, 25, fg, tw);
-      label(c, it.detail, x, row.y + 46, Weight::Medium, 19, sub, tw);
-    }
+    float titleY = it.detail.empty() ? row.y + (row.h - c.t.lineHeight(Weight::Bold, 25)) * 0.5f : row.y + 12;
+    float titleW = label(c, it.title, x, titleY, Weight::Bold, 25, fg, tw);
+    if (it.coast >= 0) coastChip(c, it.coast == 1, x + titleW + 12, titleY + 5, 13);
+    if (!it.detail.empty()) label(c, it.detail, x, row.y + 46, Weight::Medium, 19, sub, tw);
   }
   c.g.popClip();
   if (!hint.empty())

@@ -234,7 +234,7 @@ class PlayerScreen : public Screen {
 
  private:
   enum class Zone { None, Row, EdgeGuide, EdgeLast };
-  enum class Pill { Cameras, Sources, Guide, Last, Favorite, More };
+  enum class Pill { Cameras, Sources, Coast, Guide, Last, Favorite, More };
 
   // ---------------------------------------------------------- actions
   bool bannerVisible() const { return app_.ms() >= bannerFrom_ && app_.ms() < bannerUntil_; }
@@ -261,6 +261,7 @@ class PlayerScreen : public Screen {
     pills_.clear();
     if (cameras_) pills_.push_back(Pill::Cameras);
     pills_.push_back(Pill::Sources);
+    if (!otherCoast().empty()) pills_.push_back(Pill::Coast);
     pills_.push_back(Pill::Guide);
     if (app_.store().channels()->find(p.previousEntry())) pills_.push_back(Pill::Last);
     if (app_.store().channels()->find(p.entry())) pills_.push_back(Pill::Favorite);
@@ -302,6 +303,17 @@ class PlayerScreen : public Screen {
     switch (pill) {
       case Pill::Cameras: zone_ = Zone::None; app_.nav().push(makeCameraPanel(app_)); break;
       case Pill::Sources: openSources(); break;
+      case Pill::Coast: {
+        // The other version, in place (Last goes back).
+        std::string other = otherCoast();
+        if (other.empty()) break;
+        if (!p.tune(other)) {
+          app_.toast("This version has no working feed right now");
+          break;
+        }
+        flipped(other);
+        break;
+      }
       case Pill::Guide: zone_ = Zone::None; openGuide(); break;
       case Pill::Last: zone_ = Zone::None; goPrevious(); break;
       case Pill::Favorite: {
@@ -313,6 +325,12 @@ class PlayerScreen : public Screen {
       }
       case Pill::More: app_.nav().push(makeOptions(app_)); break;
     }
+  }
+  // The other version of the channel playing, when it has both.
+  std::string otherCoast() const {
+    auto ch = app_.store().channels();
+    const GuideChannel* g = ch->find(app_.playback().entry());
+    return g && !g->partner.empty() && ch->find(g->partner) ? g->partner : std::string();
   }
   void openSources() {
     Playback& p = app_.playback();
@@ -496,7 +514,9 @@ class PlayerScreen : public Screen {
     const Listing* l = g ? current(g->id, c.now, &next) : nullptr;
     std::string where = g ? (g->number ? std::to_string(*g->number) + " \xc2\xb7 " : std::string()) + g->name : std::string();
     if (const EventTile* t = app_.store().eventTile(p.entry()); t && !g) where = t->leagueChip;
-    shadowed(c, where, tx, top + 2, Weight::Bold, 22, theme::white(0.9f), w - (tx - x));
+    float whereW = shadowed(c, where, tx, top + 2, Weight::Bold, 22, theme::white(0.9f), w - (tx - x));
+    // Which version plays, for channels with both.
+    if (g && !g->partner.empty()) ui::coastChip(c, g->west, tx + whereW + 14, top + 2, 14);
     float lx = tx + ui::chip(c, "LIVE", tx, top + 42, 16, theme::hex(kRed), theme::white()) + 12;
     std::string title = l ? l->title : (g ? g->name : std::string());
     if (const EventTile* t = app_.store().eventTile(p.entry()))
@@ -561,6 +581,7 @@ class PlayerScreen : public Screen {
       switch (pills_[i]) {
         case Pill::Cameras: title = "Cameras"; break;
         case Pill::Sources: title = "Sources"; extra = feedLine(); break;
+        case Pill::Coast: title = g && g->west ? "Watch East \xe2\x86\x94" : "Watch West \xe2\x86\x94"; break;
         case Pill::Guide: title = app_.store().isEvent(p.entry()) ? "Games" : "Guide"; break;
         case Pill::Last: title = "Back to " + nameOf(p.previousEntry()); break;
         case Pill::Favorite: title = g && g->favorite ? "Unfavorite" : "Favorite"; break;

@@ -27,6 +27,8 @@ struct GuideChannel {
   std::optional<int> number;
   int feeds = 1;
   bool west = false;
+  // The other version of a channel with both an East and a West one.
+  std::string partner;
   bool favorite = false;
   bool inLineup = false;
   // In All Channels' countries (or in My Lineup / a favorite). Another

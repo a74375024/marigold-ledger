@@ -379,6 +379,34 @@ void GuideScreen::longPress() {
       remind.select = [&app, id, l = *later] { app.store().toggleShowReminder(id, l); };
       p.items.push_back(remind);
     }
+    // East/West: the other version, to watch or to add next to this one.
+    const GuideChannel* other = c->partner.empty() ? nullptr : ch->find(c->partner);
+    if (other) {
+      ui::PanelItem watchOther{ui::PanelItem::Kind::Action, "Watch " + other->name};
+      watchOther.coast = other->west ? 1 : 0;
+      auto li = app.store().listings();
+      if (const std::vector<Listing>* v = li ? li->forChannel(other->id) : nullptr) {
+        time::Seconds now = time::now();
+        for (const Listing& l : *v)
+          if (l.isOn(now)) watchOther.detail = "Now: " + l.title + (l.episode.empty() ? "" : " \xc2\xb7 " + l.episode);
+      }
+      std::string oid = other->id;
+      watchOther.select = [&app, self, oid] {
+        app.nav().pop();
+        self->watch(oid);
+      };
+      p.items.push_back(watchOther);
+      if (!other->inLineup && c->inLineup) {
+        ui::PanelItem addOther{ui::PanelItem::Kind::Action, "+ Add " + other->name + " to My Lineup"};
+        addOther.detail = std::string("Right ") + (other->west ? "below " : "above ") + c->name + ", with its own listings";
+        std::string name = other->name;
+        addOther.select = [&app, oid, name] {
+          app.store().toggleLineup(oid);
+          app.toast(name + " added to My Lineup");
+        };
+        p.items.push_back(addOther);
+      }
+    }
     ui::PanelItem lineup{ui::PanelItem::Kind::Action, c->inLineup ? "Remove from My Lineup" : "Add to My Lineup"};
     lineup.select = [&app, id] { app.store().toggleLineup(id); };
     p.items.push_back(lineup);
@@ -947,11 +975,28 @@ void GuideScreen::drawHero(ui::Ctx& c) {
   nx += ui::label(c, g->name, nx, y + 1, Weight::Medium, 26, theme::white(), 600) + 14;
   if (g->favorite) nx += ui::label(c, "\xe2\x98\x85", nx, y + 2, Weight::Bold, 24, theme::hex(theme::kStar)) + 12;
   if (g->feeds > 1)
-    ui::chip(c, std::to_string(g->feeds) + " feeds", nx, y + 4, 18, theme::white(0.5f), theme::white(0.85f), true);
-  y += 46;
-
+    nx += ui::chip(c, std::to_string(g->feeds) + " feeds", nx, y + 4, 18, theme::white(0.5f), theme::white(0.85f), true) +
+          12;
   const Listing* l = focusedListing();
   time::Seconds now = c.now;
+  if (!g->partner.empty()) {
+    // East/West: which version, and when this show is on the other one.
+    nx += ui::coastChip(c, g->west, nx, y + 4, 16) + 14;
+    const GuideChannel* other = ch_->find(g->partner);
+    const std::vector<Listing>* ov = li_ && other ? li_->forChannel(other->id) : nullptr;
+    if (l && ov) {
+      for (const Listing& o : *ov) {
+        if (o.title != l->title || o.end <= now || o.start == l->start) continue;
+        std::string when = o.isOn(now) ? "now" : "at " + ui::clock(c, o.start);
+        std::string day = o.isOn(now) ? "" : ui::dayWord(c, o.start);
+        ui::label(c, "Also on " + other->name + " " + (day.empty() ? when : day + " " + when), nx, y + 2,
+                  Weight::Medium, 22, theme::white(0.7f), x + w - nx);
+        break;
+      }
+    }
+  }
+  y += 46;
+
   ui::label(c, l ? l->title : g->name, x, y, Weight::Bold, 44, theme::white(), w);
   y += 62;
   float bx = x;
@@ -1179,7 +1224,11 @@ void GuideScreen::drawChannelCell(ui::Ctx& c, const GuideChannel& g, Rect r, boo
     }
   }
   if (g.favorite) ui::label(c, "\xe2\x98\x85", r.x + r.w - 24, r.y + 6, Weight::Bold, 16, theme::hex(theme::kStar));
-  if (g.west) {
+  if (!g.partner.empty()) {
+    // A channel with both versions: blue EAST or amber WEST.
+    float w = ui::chipWidth(c, g.west ? "WEST" : "EAST", 12);
+    ui::coastChip(c, g.west, r.x + r.w - w - 8, r.y + r.h - 24, 12);
+  } else if (g.west) {
     float w = ui::chipWidth(c, "WEST", 12);
     ui::chip(c, "WEST", r.x + r.w - w - 8, r.y + r.h - 24, 12, focused ? theme::black(0.15f) : theme::white(0.2f), fg);
   }

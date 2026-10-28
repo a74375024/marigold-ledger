@@ -46,6 +46,11 @@ float chip(Ctx& c, const std::string& s, float x, float y, int px, Color fill, C
   return width;
 }
 
+float coastChip(Ctx& c, bool west, float x, float y, int px) {
+  return west ? chip(c, "WEST", x, y, px, theme::hex(theme::kWest), theme::hex(0x111111))
+              : chip(c, "EAST", x, y, px, theme::hex(theme::kEast), theme::white());
+}
+
 void logo(Ctx& c, const std::string& url, const std::string& fallback, Rect r, bool onLight,
           float opacity) {
   logos::Texture tex;

@@ -243,15 +243,25 @@ Coast resolveCoast(const LineupPrefs& prefs) {
   return resolveCoast(prefs, time::Zone::device().offsetAt(time::secondsFromCivil(january)));
 }
 
+std::string coastPartnerId(const std::string& entryId) {
+  if (isWestId(entryId)) return eastIdOf(entryId);
+  return entryId + std::string(kWestSuffix);
+}
+
+bool isWestId(const std::string& entryId) { return str::endsWith(entryId, kWestSuffix); }
+
+std::string eastIdOf(const std::string& entryId) {
+  return isWestId(entryId) ? entryId.substr(0, entryId.size() - kWestSuffix.size()) : entryId;
+}
+
 CoastFeeds CoastFeeds::of(const std::vector<EntryInfo>& entries, Coast resolved) {
   CoastFeeds out;
   out.coast = resolved;
-  if (resolved == Coast::both) return out;
   std::set<std::string> ids;
   for (const EntryInfo& e : entries) ids.insert(e.id);
   for (const std::string& id : ids) {
-    if (str::endsWith(id, kWestSuffix)) {
-      std::string east = id.substr(0, id.size() - kWestSuffix.size());
+    if (isWestId(id)) {
+      std::string east = eastIdOf(id);
       if (ids.count(east)) out.paired.insert(std::move(east));
     }
   }
@@ -259,12 +269,8 @@ CoastFeeds CoastFeeds::of(const std::vector<EntryInfo>& entries, Coast resolved)
 }
 
 bool CoastFeeds::skips(const EntryInfo& entry) const {
-  if (paired.empty() || coast == Coast::both) return false;
-  bool west = str::endsWith(entry.id, kWestSuffix);
-  if (west) {
-    return coast == Coast::east && paired.count(entry.id.substr(0, entry.id.size() - kWestSuffix.size()));
-  }
-  return coast == Coast::west && paired.count(entry.id);
+  if (coast == Coast::both || !paired.count(eastIdOf(entry.id))) return false;
+  return isWestId(entry.id) ? coast == Coast::east : coast == Coast::west;
 }
 
 std::string toJson(const LineupPrefs& prefs) {

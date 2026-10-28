@@ -96,6 +96,12 @@ std::optional<bool> marketIsWest(std::string_view marketName);
 Coast resolveCoast(const LineupPrefs& prefs, int winterOffset);
 Coast resolveCoast(const LineupPrefs& prefs);  // with the device's zone
 
+// An entry id's other version: "e|core:HBO" <-> "e|core:HBO~west" (whether
+// or not the provider has it), and which one an id is.
+std::string coastPartnerId(const std::string& entryId);
+bool isWestId(const std::string& entryId);
+std::string eastIdOf(const std::string& entryId);
+
 // The entries that have both an East and a West version ("e|core:HBO" and
 // "e|core:HBO~west"), and the coast whose version is suggested.
 struct CoastFeeds {

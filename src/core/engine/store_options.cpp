@@ -91,18 +91,57 @@ void Store::setCoast(catalog::Coast coast) {
 
 catalog::Coast Store::resolvedCoast() const { return catalog::resolveCoast(impl_->prefs); }
 
+std::vector<std::string> Store::coastPairs() const {
+  const Impl& m = *impl_;
+  std::vector<std::string> ids;
+  if (!m.catalog) return ids;
+  std::set<std::string> paired = catalog::CoastFeeds::of(m.catalog->entries, catalog::Coast::east).paired;
+  // Only the chosen countries' channels: the rest are never suggested.
+  for (const Channel& e : m.lineup.entries) {
+    if (!paired.count(e.id)) continue;
+    auto it = m.entryInfo.find(e.id);
+    if (it != m.entryInfo.end() && m.prefs.includes(m.catalog->entries[it->second].market)) ids.push_back(e.id);
+  }
+  return ids;
+}
+
 std::vector<std::string> Store::coastPairNames() const {
   const Impl& m = *impl_;
   std::vector<std::string> names;
-  if (!m.catalog) return names;
-  // Only the chosen countries' channels: the rest are never suggested.
-  for (const std::string& id : catalog::CoastFeeds::of(m.catalog->entries, catalog::Coast::east).paired) {
-    auto it = m.entryInfo.find(id);
-    if (it == m.entryInfo.end()) continue;
-    const EntryInfo& info = m.catalog->entries[it->second];
-    if (m.prefs.includes(info.market)) names.push_back(info.name);
-  }
+  for (const std::string& id : coastPairs()) names.push_back(m.catalog->entries[m.entryInfo.at(id)].name);
   return names;
+}
+
+catalog::Coast Store::channelCoast(const std::string& entryId) const {
+  const auto& in = impl_->lineup.lineupIDs;
+  std::string east = catalog::eastIdOf(entryId);
+  bool e = in.count(east) > 0, w = in.count(catalog::coastPartnerId(east)) > 0;
+  if (e && w) return catalog::Coast::both;
+  if (e || w) return e ? catalog::Coast::east : catalog::Coast::west;
+  return catalog::Coast::automatic;
+}
+
+void Store::setChannelCoast(const std::string& entryId, catalog::Coast coast) {
+  Impl& m = *impl_;
+  if (coast == catalog::Coast::automatic) return;
+  catalog::LineupPrefs p = m.prefs;
+  std::string east = catalog::eastIdOf(entryId);
+  // As if each version had been added or removed by hand.
+  auto set = [&](const std::string& id, bool on) {
+    if (on) {
+      p.removed.erase(id);
+      p.added.insert(id);
+      m.lineup.lineupIDs.insert(id);
+    } else {
+      p.added.erase(id);
+      p.removed.insert(id);
+      m.lineup.lineupIDs.erase(id);
+    }
+  };
+  set(east, coast != catalog::Coast::west);
+  set(catalog::coastPartnerId(east), coast != catalog::Coast::east);
+  m.channelsDirty = true;
+  setPrefs(p);
 }
 
 std::string Store::homeMarketName() const {

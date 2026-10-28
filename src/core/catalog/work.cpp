@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
 
 #include "core/catalog/text.hpp"
 #include "core/guide/genre.hpp"
@@ -211,10 +212,20 @@ LineupOutput lineup(const LineupInput& input) {
     }
   }
   // No channel numbers: channels come and go, and the remote can't dial.
+  // A channel's West version sorts right after its East one.
+  std::unordered_map<std::string, const EntryInfo*> byId;
+  for (const EntryInfo& info : input.infos) byId.emplace(info.id, &info);
+  auto sortAs = [&](const EntryInfo* e) {
+    if (!isWestId(e->id) || !coasts.paired.count(eastIdOf(e->id))) return e;
+    return byId.at(eastIdOf(e->id));
+  };
   std::vector<const EntryInfo*> ordered;
   ordered.reserve(input.infos.size());
   for (const EntryInfo& info : input.infos) ordered.push_back(&info);
-  std::sort(ordered.begin(), ordered.end(), [](const EntryInfo* a, const EntryInfo* b) {
+  std::sort(ordered.begin(), ordered.end(), [&](const EntryInfo* x, const EntryInfo* y) {
+    const EntryInfo* a = sortAs(x);
+    const EntryInfo* b = sortAs(y);
+    if (a == b) return !isWestId(x->id) && isWestId(y->id);
     int ra = rank(a->category), rb = rank(b->category);
     if (ra != rb) return ra < rb;
     if (a->category == LineupCategory::local) {

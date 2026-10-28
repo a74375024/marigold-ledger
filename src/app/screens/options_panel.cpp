@@ -66,6 +66,36 @@ std::unique_ptr<Screen> makeEditLineup(App& app) {
     };
     p.items.push_back(rebuild);
 
+    // East/West one channel at a time (as adding or removing each version).
+    std::vector<std::string> pairs = s.coastPairs();
+    if (!pairs.empty()) {
+      p.items.push_back(ui::PanelItem::header("EAST & WEST (" + std::to_string(pairs.size()) +
+                                              (pairs.size() == 1 ? " CHANNEL HAS BOTH)" : " CHANNELS HAVE BOTH)")));
+      for (const std::string& id : pairs) {
+        const GuideChannel* g = ch->find(id);
+        if (!g) continue;
+        ui::PanelItem it{ui::PanelItem::Kind::Choice, g->name};
+        it.choices = {"East", "West", "Both"};
+        switch (s.channelCoast(id)) {
+          case catalog::Coast::east: it.choice = 0; break;
+          case catalog::Coast::west: it.choice = 1; break;
+          case catalog::Coast::both: it.choice = 2; break;
+          case catalog::Coast::automatic: break;
+        }
+        it.detail = it.choice < 0 ? g->section + " \xc2\xb7 Not in My Lineup" : g->section;
+        it.pick = [&app, id](int k) {
+          static const catalog::Coast kPick[] = {catalog::Coast::east, catalog::Coast::west, catalog::Coast::both};
+          app.store().setChannelCoast(id, kPick[k]);
+        };
+        p.items.push_back(it);
+      }
+      bool west = s.resolvedCoast() == catalog::Coast::west;
+      bool both = s.resolvedCoast() == catalog::Coast::both;
+      p.items.push_back(ui::PanelItem::note(
+          "Left / Right picks. A channel set here keeps its choice; the rest follow Options \xe2\x80\xba East/West "
+          "Feeds (" + std::string(both ? "Both" : west ? "West" : "East") + " here)."));
+    }
+
     auto row = [&](const std::string& id, bool add) {
       const GuideChannel* g = ch->find(id);
       if (!g) return;
@@ -148,7 +178,7 @@ std::unique_ptr<Screen> makeCoast(App& app) {
       for (size_t i = 0; i < pairs.size() && i < 4; ++i) some += (i ? ", " : "") + pairs[i];
       std::string count = std::to_string(pairs.size()) + (pairs.size() == 1 ? " channel has" : " channels have");
       p.items.push_back(ui::PanelItem::note(count + " both here (" + some + (pairs.size() > 4 ? " and more" : "") +
-                                            "). The other version is in All Channels and search."));
+                                            "). The other version is one press away in Sources, Hold OK in the guide, or Edit My Lineup."));
     }
   });
 }

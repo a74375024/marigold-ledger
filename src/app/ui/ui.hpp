@@ -42,6 +42,7 @@ constexpr uint32_t kKeyYellow = 0xFDD835;
 constexpr uint32_t kKeyBlue = 0x1E88E5;
 constexpr uint32_t kNew = 0x1E88E5;
 constexpr uint32_t kStar = 0xE0A100;
+constexpr uint32_t kEast = 0x3D7BFF, kWest = 0xF59E0B;  // East/West version tags
 constexpr uint32_t kToggleOn = 0x34C759;
 constexpr uint32_t kWarning = 0xFF9F0A;
 
@@ -96,6 +97,8 @@ float textWidth(Ctx& c, const std::string& s, Weight w, int px);
 float chip(Ctx& c, const std::string& s, float x, float y, int px, Color fill, Color textCol,
            bool outline = false, Weight w = Weight::Bold);
 float chipWidth(Ctx& c, const std::string& s, int px, Weight w = Weight::Bold);
+// "EAST" (blue) or "WEST" (amber): which version of a channel with both.
+float coastChip(Ctx& c, bool west, float x, float y, int px);
 
 // A channel logo fitted inside `r` (aspect kept, centred), or the fallback
 // name in a pill until the logo is ready (or if there is none).

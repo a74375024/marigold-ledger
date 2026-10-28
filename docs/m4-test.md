@@ -211,3 +211,16 @@ Start with no providers (a fresh install, or remove them all in Options › Prov
 | From Options | Options › Providers › "Add from your phone" | The same scan screen; it closes with "Provider added" once the channels are in |
 | Network | Put the phone on mobile data | The page doesn't open; "Use the remote instead" works |
 | Apple TV | First scan screen on Apple TV | tvOS asks once to allow local network access; after allowing, the phone page opens |
+
+## East and West versions, one channel at a time
+
+A provider with both versions of a channel (HBO and HBO West). Options › East/West Feeds on Automatic.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Guide tags | Look at the pair in All Channels | A blue EAST tag on the East version and an amber WEST tag on the West one; the West row sits right below the East one; channels without a pair are unchanged |
+| Also on | Focus a show on the East version | Above the show title: the tag and "Also on HBO West at …" when the same show is on later there |
+| Hold OK | Hold OK (LG), hold Select (Fire TV), click and hold (Apple TV) on the version in My Lineup | "Watch HBO West" with what's on now, and "+ Add HBO West to My Lineup"; adding it puts it right below HBO in My Lineup |
+| Player | Watch the East version, press Down | "Watch West ↔" next to Sources; OK switches in place, the banner tag turns WEST, the pill reads "Watch East ↔"; Last goes back |
+| Sources | Open Sources while watching | VERSION with East and West (the playing one ticked, what's on the other); OK on the other switches; "+ Add … to My Lineup" adds it, then the row reads "Both versions are in My Lineup" (OK removes it) |
+| Edit My Lineup | Options › Edit My Lineup | EAST & WEST with East / West / Both for each pair; Left / Right changes My Lineup at once and the choice stays when the East/West setting changes |

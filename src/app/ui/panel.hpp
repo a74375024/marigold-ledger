@@ -13,7 +13,9 @@
 namespace marigold::ui {
 
 struct PanelItem {
-  enum class Kind { Header, Action, Chevron, Toggle, Check, Count, Note };
+  // Choice: a segmented control on the right ("East | West | Both"); Left /
+  // Right (or OK, to the next) picks.
+  enum class Kind { Header, Action, Chevron, Toggle, Check, Count, Note, Choice };
   Kind kind = Kind::Action;
   std::string title;
   std::string detail;  // second line, smaller
@@ -23,6 +25,10 @@ struct PanelItem {
   bool dot = false;    // red dot before the title (active filter, origin)
   std::function<void()> select;
   std::function<void()> hold;  // OK held (optional)
+  std::vector<std::string> choices;  // Choice
+  int choice = -1;                   // -1: none of them yet
+  std::function<void(int)> pick;
+  int coast = -1;  // an EAST (0) or WEST (1) tag after the title
 
   PanelItem() = default;
   PanelItem(Kind k, std::string t) : kind(k), title(std::move(t)) {}

@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 
+#include "core/catalog/lineup.hpp"
 #include "core/engine/store.hpp"
 #include "engine/loaded_store.hpp"
 #include "sources/mock_provider.hpp"
@@ -126,4 +127,60 @@ TEST_CASE("engine: an M3U account's guide link is read, and again after the next
   settle(again, tv);
   settle(again, tv);
   CHECK(tv.pool.asked[kGuide] == 2);
+}
+
+TEST_CASE("engine: a channel's East and West versions are set one by one, side by side") {
+  constexpr const char* kList = "http://mock.example.invalid:8080/coasts.m3u";
+  fake::Tv tv;
+  tv.pool.answer(kList,
+                 "#EXTM3U\n"
+                 "#EXTINF:-1 group-title=\"US Movies\",US: HBO\n"
+                 "http://mock.example.invalid:8080/1.ts\n"
+                 "#EXTINF:-1 group-title=\"US Movies\",US: HBO 2\n"
+                 "http://mock.example.invalid:8080/2.ts\n"
+                 "#EXTINF:-1 group-title=\"US Movies\",US: HBO West\n"
+                 "http://mock.example.invalid:8080/3.ts\n"
+                 "#EXTINF:-1 group-title=\"US News\",US: CNN\n"
+                 "http://mock.example.invalid:8080/4.ts\n");
+  Store store(tv.host());
+  AccountForm form = fake::m3uForm();
+  form.server = kList;
+  store.addAccount(form, [](std::string) {});
+  settle(store, tv);
+  auto ch = store.channels();
+  REQUIRE(ch);
+  auto named = [&](const std::string& name) -> const marigold::engine::GuideChannel* {
+    for (const auto& g : store.channels()->all)
+      if (g.name == name) return &g;
+    return nullptr;
+  };
+  const auto* east = named("HBO");
+  const auto* west = named("HBO West");
+  REQUIRE(east);
+  REQUIRE(west);
+  CHECK(east->partner == west->id);
+  CHECK(west->partner == east->id);
+  CHECK(west->west);
+  REQUIRE(named("CNN"));
+  CHECK(named("CNN")->partner.empty());
+  CHECK(store.coastPairs() == std::vector<std::string>{east->id});
+  // The West version right after the East one, before HBO 2.
+  int e = ch->byId.at(east->id), w = ch->byId.at(west->id);
+  CHECK(w == e + 1);
+
+  std::string eastId = east->id, westId = west->id;
+  store.setChannelCoast(westId, marigold::catalog::Coast::both);
+  settle(store, tv);
+  CHECK(store.channelCoast(eastId) == marigold::catalog::Coast::both);
+  CHECK(store.channels()->find(eastId)->inLineup);
+  CHECK(store.channels()->find(westId)->inLineup);
+  store.setChannelCoast(eastId, marigold::catalog::Coast::west);
+  settle(store, tv);
+  CHECK(store.channelCoast(westId) == marigold::catalog::Coast::west);
+  CHECK_FALSE(store.channels()->find(eastId)->inLineup);
+  CHECK(store.channels()->find(westId)->inLineup);
+  // Adding the other one back by hand makes it both.
+  store.toggleLineup(eastId);
+  settle(store, tv);
+  CHECK(store.channelCoast(eastId) == marigold::catalog::Coast::both);
 }

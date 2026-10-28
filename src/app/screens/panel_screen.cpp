@@ -42,7 +42,9 @@ bool PanelScreen::key(const KeyEvent& e) {
     rebuild();
     return used;
   }
-  return panel_.key(e.key);
+  bool used = panel_.key(e.key);
+  if (used && (e.key == Key::Left || e.key == Key::Right)) rebuild();  // a Choice row
+  return used;
 }
 
 void PanelScreen::draw(ui::Ctx& c) {

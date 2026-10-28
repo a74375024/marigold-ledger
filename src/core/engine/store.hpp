@@ -249,6 +249,13 @@ class Store {
   void setCoast(catalog::Coast coast);
   catalog::Coast resolvedCoast() const;
   std::vector<std::string> coastPairNames() const;
+  // Channels with both versions one by one: the East ids (the chosen
+  // countries', guide order), and which versions My Lineup holds (east,
+  // west, both; automatic = neither). Setting it keeps that channel's
+  // choice as the East/West setting or suggestions change.
+  std::vector<std::string> coastPairs() const;
+  catalog::Coast channelCoast(const std::string& entryId) const;
+  void setChannelCoast(const std::string& entryId, catalog::Coast coast);
   // Home city for Live Events (only with more than one market).
   std::string homeMarketName() const;
   void cycleHomeMarket();

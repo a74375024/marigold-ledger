@@ -2451,7 +2451,8 @@ void Store::publishChannels() {
     g.group = catalog::groupOf(e);
     if (g.group.empty()) g.group = kOtherGroup;
     g.feeds = ei ? static_cast<int>(ei->members.size()) : 1;
-    g.west = str::endsWith(e.id, "~west");
+    g.west = catalog::isWestId(e.id);
+    if (std::string other = catalog::coastPartnerId(e.id); lo.entryIndex.count(other)) g.partner = other;
     g.inLineup = lo.lineupIDs.count(e.id) > 0;
     g.favorite = m.favorites.count(e.id) > 0 || e.isFavorite;
     // Which logo a row tries and how its cell reads (ChannelLogos.spec).

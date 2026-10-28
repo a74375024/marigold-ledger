@@ -260,3 +260,31 @@ TEST_CASE("lineup: one of a channel's East and West versions, unless added by ha
   input.coast = Coast::both;
   CHECK(lineup(input).lineupIDs.size() == 3);
 }
+
+TEST_CASE("lineup: a channel's West version comes right after its East one") {
+  std::vector<Channel> channels = {channel("1", "US: HBO"), channel("2", "US: HBO 2"),
+                                   channel("3", "US: HBO West"), channel("4", "US: Starz West")};
+  auto movie = [](const std::string& id, const std::string& name, const std::string& member) {
+    EntryInfo e;
+    e.id = id;
+    e.name = name;
+    e.category = LineupCategory::movies;
+    e.members = {member};
+    e.market = "US";
+    return e;
+  };
+  LineupInput input;
+  input.infos = {movie("e|core:HBO~west", "HBO West", "xt:1|3"), movie("e|core:HBO 2", "HBO 2", "xt:1|2"),
+                 movie("e|core:HBO", "HBO", "xt:1|1"), movie("e|core:Starz~west", "Starz West", "xt:1|4")};
+  input.channels = channels;
+  for (size_t i = 0; i < channels.size(); ++i) input.indexByID[channels[i].id] = i;
+  std::vector<std::string> order;
+  for (const Channel& e : lineup(input).entries) order.push_back(e.id);
+  // Starz has no East version here: it sorts by its own name.
+  CHECK(order == std::vector<std::string>{"e|core:HBO", "e|core:HBO~west", "e|core:HBO 2", "e|core:Starz~west"});
+  CHECK(coastPartnerId("e|core:HBO") == "e|core:HBO~west");
+  CHECK(coastPartnerId("e|core:HBO~west") == "e|core:HBO");
+  CHECK(eastIdOf("e|core:HBO~west") == "e|core:HBO");
+  CHECK(isWestId("e|core:HBO~west"));
+  CHECK_FALSE(isWestId("e|core:HBO"));
+}
