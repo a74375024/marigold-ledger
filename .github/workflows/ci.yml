@@ -151,6 +151,19 @@ jobs:
           cmake -S . -B build-host -DCMAKE_BUILD_TYPE=Debug -DMARIGOLD_SANITIZE="address,undefined"
           cmake --build build-host --parallel
           ctest --test-dir build-host --output-on-failure
+      - name: Build marigold-preview (Live Events from a channel report)
+        run: |
+          cmake -S . -B build-preview -DCMAKE_BUILD_TYPE=Release -DMARIGOLD_BUILD_TESTS=OFF \
+            -DCMAKE_OSX_ARCHITECTURES=arm64
+          cmake --build build-preview --target marigold-preview --parallel
+          mkdir -p marigold-preview-mac
+          cp build-preview/tools/preview/marigold-preview tools/preview/README.md marigold-preview-mac/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: marigold-preview-mac-${{ github.run_number }}
+          path: marigold-preview-mac
+          if-no-files-found: error
+          retention-days: 30
       - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: ~/.cache/marigold-tvvlckit

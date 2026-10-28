@@ -574,6 +574,37 @@ void Store::eventsTick(uint32_t ms) {
 
 // ------------------------------------------------------------ lookups
 
+std::vector<std::string> Store::eventNotes(const std::string& eventId) const {
+  const EventsState& e = impl_->ev;
+  std::vector<std::string> out;
+  auto ev = e.board.events.find(eventId);
+  if (ev == e.board.events.end()) return out;
+  const sports::SportsEvent& s = ev->second;
+  if (s.game) {
+    out.push_back("Schedule game: " + s.game->leagueShort + " " + s.game->id + (s.game->completed ? " (completed)" : ""));
+  } else {
+    out.push_back("No schedule game: built from the channel's own title");
+  }
+  auto status = e.scores.statuses().find(s.game ? s.game->id : std::string());
+  if (status != e.scores.statuses().end()) {
+    out.push_back(std::string("Live score status: ") + sports::rawValue(status->second.phase));
+  } else if (s.game) {
+    out.push_back("No live score status yet");
+  }
+  auto when = [&](time::Seconds t) {
+    time::Civil c = time::civilFromSeconds(t + host_.zone().offsetAt(t));
+    return std::to_string(c.month) + "/" + std::to_string(c.day) + " " + sb::clockText(t, host_.zone(), true);
+  };
+  if (s.start) out.push_back("Start: " + when(*s.start));
+  else out.push_back("No start time in the title");
+  size_t feeds = s.feeds().size(), channels = s.channels().size();
+  out.push_back(std::to_string(channels) + (channels == 1 ? " channel, " : " channels, ") + std::to_string(feeds) +
+                (feeds == 1 ? " event feed" : " event feeds"));
+  if (s.family) out.push_back("Feed family: " + *s.family);
+  if (s.feedsEndedAt) out.push_back("Its feeds moved on at " + when(*s.feedsEndedAt));
+  return out;
+}
+
 bool Store::isEvent(const std::string& id) const { return impl_->ev.board.events.count(id) > 0; }
 
 const EventTile* Store::eventTile(const std::string& id) const {

@@ -171,6 +171,9 @@ class Store {
   // Personal lists.
   void toggleFavorite(const std::string& entryId);
   void toggleLineup(const std::string& entryId);
+  // Puts these channels in My Lineup in one go (the preview tool's copy of
+  // a report's lineup).
+  void addToLineup(const std::vector<std::string>& entryIds);
   void noteWatched(const std::string& entryId);
 
   // The provider a raw channel comes from, by the name it was given.
@@ -216,6 +219,9 @@ class Store {
   bool isEvent(const std::string& id) const;
   const EventTile* eventTile(const std::string& id) const;
   WhereToWatch whereToWatch(const std::string& eventId) const;
+  // How a tile came about, in plain lines (the preview tool's detail card):
+  // the schedule game or the channel title, its live status, its feeds.
+  std::vector<std::string> eventNotes(const std::string& eventId) const;
   // A provider feed family's feeds (raw channel ids, by number).
   std::vector<std::string> familyFeeds(const std::string& familyId) const;
   // The games Up/Down flips through when watching `eventId`.

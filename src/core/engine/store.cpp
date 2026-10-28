@@ -1443,6 +1443,18 @@ void Store::toggleLineup(const std::string& entryId) {
   setPrefs(p);
 }
 
+void Store::addToLineup(const std::vector<std::string>& entryIds) {
+  Impl& m = *impl_;
+  catalog::LineupPrefs p = m.prefs;
+  for (const std::string& id : entryIds) {
+    p.removed.erase(id);
+    p.added.insert(id);
+    m.lineup.lineupIDs.insert(id);
+  }
+  m.channelsDirty = true;
+  setPrefs(p);
+}
+
 void Store::toggleFavorite(const std::string& entryId) {
   Impl& m = *impl_;
   if (!m.favorites.erase(entryId)) m.favorites.insert(entryId);

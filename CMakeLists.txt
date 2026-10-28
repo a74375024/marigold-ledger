@@ -18,6 +18,7 @@ else()
 endif()
 option(MARIGOLD_BUILD_TESTS "Build host unit tests" ${_tests_default})
 option(MARIGOLD_BUILD_APP "Build the webOS app" ${MARIGOLD_WEBOS})
+option(MARIGOLD_BUILD_PREVIEW "Build marigold-preview (Live Events from a channel report)" ${_tests_default})
 
 include(cmake/warnings.cmake)
 include(cmake/sanitizers.cmake)
@@ -52,6 +53,10 @@ endif()
 # The Apple TV app (tools/build-tvos.sh builds it).
 if(CMAKE_SYSTEM_NAME STREQUAL "tvOS")
   add_subdirectory(src/platform/tvos)
+endif()
+
+if(MARIGOLD_BUILD_PREVIEW)
+  add_subdirectory(tools/preview)
 endif()
 
 if(MARIGOLD_BUILD_TESTS)
