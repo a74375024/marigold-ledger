@@ -365,3 +365,27 @@ TEST_CASE("directory: iptv-org's free streaming channels, a tier below the lists
   CHECK(find("iptv:PlutoTVHorror.us")->name == "Pluto TV Horror");
   CHECK(index.match("HORROR").kind == MatchKind::none);
 }
+
+TEST_CASE("directory: an article's other name that is its own iptv-org channel stays") {
+  Sources src;
+  src.rows["pay"] = {{"Spectrum News NECN", "Spectrum News NECN", "Regional channels", "Boston"},
+                     {"FX Movie Channel", "FX Movie Channel", "English language", ""}};
+  src.pages["Spectrum News NECN"] = {{"NECN", "New England Cable News"}, ""};
+  src.pages["FX Movie Channel"] = {{"FXM", "Fox Movie Channel"}, ""};
+  src.iptv = parseIptvOrg(
+      "id,name,alt_names,network,owners,country,categories,is_nsfw,launched,closed,replaced_by,website\n"
+      "NECN.us,NECN,,,,US,news,FALSE,,,,\n"
+      "FXM.us,FXM,,,,US,movies,FALSE,,,,\n",
+      "channel,id,name,alt_names,is_main,broadcast_area,timezones,languages,format\n"
+      "NECN.us,SD,SD,,TRUE,r/US-NE,America/New_York,eng,480i\n"
+      "FXM.us,SD,SD,,TRUE,c/US,America/New_York,spa,480i\n");
+  Data data = assemble(src, "2026-10-28");
+  Index index(data);
+  REQUIRE(index.match("NECN HD").entry);
+  CHECK(index.match("NECN HD").entry->id == "Spectrum News NECN");
+  CHECK(index.match("NECN HD").entry->iptvOrg == "NECN.us");
+  const Entry* fxm = index.match("FXM").entry;
+  REQUIRE(fxm);
+  CHECK(fxm->id == "FX Movie Channel");
+  CHECK(fxm->language == "en");  // its list section, over iptv-org's feed
+}

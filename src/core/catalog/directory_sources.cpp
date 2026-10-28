@@ -550,6 +550,9 @@ Data assemble(const Sources& sources, const std::string& made) {
         e.name = facts ? withoutBrackets(title) : withoutBrackets(row.text);
         e.list = list;
         e.genre = row.section;
+        // A list's language sections say it first.
+        if (rx::test("\\benglish\\b", row.section, true)) e.language = "en";
+        if (rx::test("\\bspanish\\b", row.section, true)) e.language = "es";
         data.entries.push_back(std::move(e));
         drafts.emplace_back();
       }
@@ -624,6 +627,16 @@ Data assemble(const Sources& sources, const std::string& made) {
     for (const std::string& n : names) {
       auto it = usByKey.find(exactKey(n));
       if (it != usByKey.end()) found.insert(it->second.begin(), it->second.end());
+    }
+    // None by those: the one the article's other names give, if just one
+    // ("NECN" for Spectrum News NECN, "FXM" for FX Movie Channel).
+    if (found.empty()) {
+      for (const std::string& a : d.fromArticle) {
+        std::string key = exactKey(withoutBrackets(a));
+        if (notAChannelName(a) || listedNames.count(key)) continue;
+        auto it = usByKey.find(key);
+        if (it != usByKey.end()) found.insert(it->second.begin(), it->second.end());
+      }
     }
     const IptvChannel* own = found.size() == 1 ? &sources.iptv[*found.begin()] : nullptr;
     // The article's other names, unless one is another channel: another
