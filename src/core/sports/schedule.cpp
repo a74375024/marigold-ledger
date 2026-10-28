@@ -8,9 +8,11 @@
 #include "core/sports/ncaa.hpp"
 #include "core/sports/parse.hpp"
 #include "core/sports/profiles.hpp"
+#include "core/sports/refusals.hpp"
 #include "core/sports/text.hpp"
 #include "core/util/json.hpp"
 #include "core/util/json_stream.hpp"
+#include "core/util/log.hpp"
 
 namespace marigold::sports::schedule {
 
@@ -933,6 +935,7 @@ std::string toJson(const Saved& s) {
   if (s.fetchedAt) v.set("fetchedAt", static_cast<int64_t>(*s.fetchedAt));
   v.set("leagueFetched", datesJson(s.leagueFetched));
   v.set("leagueWatchable", datesJson(s.leagueWatchable));
+  if (!s.refusedUntil.empty()) v.set("refusedUntil", datesJson(s.refusedUntil));
   if (s.failedAt) v.set("failedAt", static_cast<int64_t>(*s.failedAt));
   if (s.failures) v.set("failures", *s.failures);
   json::Value forms = json::Value::object();
@@ -966,6 +969,7 @@ std::optional<Saved> savedFromJson(std::string_view textBody) {
   if (v["fetchedAt"].isNumber()) s.fetchedAt = v["fetchedAt"].asInt();
   s.leagueFetched = datesFrom(v["leagueFetched"]);
   s.leagueWatchable = datesFrom(v["leagueWatchable"]);
+  s.refusedUntil = datesFrom(v["refusedUntil"]);
   if (v["failedAt"].isNumber()) s.failedAt = v["failedAt"].asInt();
   if (v["failures"].isNumber()) s.failures = static_cast<int>(v["failures"].asInt());
   for (const auto& [key, form] : v["leagueForm"].fields()) {
@@ -1196,6 +1200,12 @@ std::optional<Schedule::Pending> Schedule::nextRequest() {
           f.leagueIndex += 1;
           continue;
         }
+        // A source that refused us waits until its time is up, even on Refresh.
+        auto refused = saved_.refusedUntil.find(refusals::sourceOf(league));
+        if (refused != saved_.refusedUntil.end() && refused->second > f.now) {
+          f.leagueIndex += 1;
+          continue;
+        }
         f.leaguesAsked += 1;
         f.inLeague = true;
         f.queries = queriesFor(league, f.now, f.zone);
@@ -1256,7 +1266,7 @@ Schedule::Answer Schedule::parse(const Pending& pending, std::string_view body) 
   return answer;
 }
 
-void Schedule::onResponse(int status, std::string_view body) {
+void Schedule::onResponse(int status, std::string_view body, int retryAfterSeconds) {
   if (!fetch_ || !fetch_->awaiting) return;
   Answer answer;
   if (status == 200) {
@@ -1266,13 +1276,31 @@ void Schedule::onResponse(int status, std::string_view body) {
       answer.league = parseLeague(body, fetch_->active[fetch_->leagueIndex], fetch_->from, fetch_->to);
     }
   }
-  onAnswer(status, std::move(answer));
+  onAnswer(status, std::move(answer), retryAfterSeconds);
 }
 
-void Schedule::onAnswer(int status, Answer answer) {
+void Schedule::onAnswer(int status, Answer answer, int retryAfterSeconds) {
   if (!fetch_ || !fetch_->awaiting) return;
   FetchState& f = *fetch_;
   f.awaiting = false;
+  // Refused: that source is left alone for the rest of the day, its other
+  // leagues skipped; not a failure (the backoff is for a source that's down).
+  if (auto until = refusals::until(status, retryAfterSeconds, f.now, f.zone)) {
+    std::string source = f.awaitingSchools || f.leagueIndex >= f.active.size()
+                             ? refusals::sourceOf(schoolsRequest().url)
+                             : refusals::sourceOf(f.active[f.leagueIndex]);
+    saved_.refusedUntil[source] = *until;
+    dirty_ = true;
+    f.networkTrouble = true;
+    MLOG_W("schedule", "%s refused (HTTP %d): left alone for the rest of the day", source.c_str(), status);
+    if (f.awaitingSchools) {
+      f.awaitingSchools = false;
+    } else {
+      f.retrying = false;
+      f.queryIndex = f.queries.size();
+    }
+    return;
+  }
   // A request that failed for network reasons (offline, timeout) doesn't
   // count toward the backoff.
   if (status == 0) f.networkTrouble = true;

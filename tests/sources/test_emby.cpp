@@ -31,7 +31,7 @@ TEST_CASE("emby: request headers and URLs") {
         "http://emby.example.invalid:8096/LiveTv/Channels?EnableFavoriteSorting=true&EnableImageTypes=Primary"
         "&EnableUserData=true&Fields=ChannelInfo%2CTags%2CGenres&ImageTypeLimit=1&UserId=user1");
   std::string auth =
-      "MediaBrowser Client=\"Marigold\", Device=\"webOS TV\", DeviceId=\"Marigold-webOS\", Version=\"0.1.0\", "
+      "MediaBrowser Client=\"Media Player\", Device=\"TV\", DeviceId=\"srv1\", Version=\"0.1.0\", "
       "Token=\"tok\"";
   CHECK(r.header("Authorization") == auth);
   CHECK(r.header("X-Emby-Authorization") == auth);
@@ -260,7 +260,7 @@ TEST_CASE("emby: open stream request") {
   CHECK(b["IsPlayback"].asBool());
   CHECK(b["MaxStreamingBitrate"].asInt() == 120000000);
   const json::Value& profile = b["DeviceProfile"];
-  CHECK(profile["Name"].asString() == "Marigold webOS TV");
+  CHECK(profile["Name"].asString() == "Media Player TV");
   CHECK(profile["MaxStaticBitrate"].asInt() == 120000000);
   CHECK(profile["DirectPlayProfiles"][size_t{0}]["Container"].asString() ==
         "ts,mpegts,m2ts,mp4,m4v,mkv,mov,hls,m3u8,flv,avi,webm");
@@ -300,12 +300,12 @@ TEST_CASE("emby: stream choice order") {
       "DirectStreamUrl":"  ","SupportsDirectStream":true,"TranscodingUrl":"/videos/a1/master.m3u8"}]})");
   REQUIRE(staticTs.ok());
   CHECK(staticTs.value().url ==
-        "http://emby.example.invalid:8096/emby/Videos/a1/stream.ts?DeviceId=Marigold-webOS&LiveStreamId=l1"
+        "http://emby.example.invalid:8096/emby/Videos/a1/stream.ts?DeviceId=srv1&LiveStreamId=l1"
         "&MediaSourceId=m1&PlaySessionId=s1&Static=true&api_key=tok");
   CHECK_FALSE(staticTs.value().isTranscode);
   // No source id: the channel's item id.
   CHECK(open(R"({"MediaSources":[{"SupportsDirectStream":true}]})").value().url ==
-        "http://emby.example.invalid:8096/emby/Videos/a1/stream.ts?DeviceId=Marigold-webOS&MediaSourceId=a1"
+        "http://emby.example.invalid:8096/emby/Videos/a1/stream.ts?DeviceId=srv1&MediaSourceId=a1"
         "&Static=true&api_key=tok");
 
   // 3. TranscodingUrl.
@@ -352,7 +352,7 @@ TEST_CASE("emby: playback reports and the close sequence") {
   CHECK(body(close[0])["PlayMethod"].asString() == "Transcode");
   CHECK(close[1].method == "DELETE");
   CHECK(close[1].url ==
-        "http://emby.example.invalid:8096/Videos/ActiveEncodings?DeviceId=Marigold-webOS&PlaySessionId=s1");
+        "http://emby.example.invalid:8096/Videos/ActiveEncodings?DeviceId=srv1&PlaySessionId=s1");
   CHECK(close[1].body.empty());
   CHECK(close[2].method == "POST");
   CHECK(close[2].url == "http://emby.example.invalid:8096/LiveStreams/Close?LiveStreamId=l1");
@@ -369,13 +369,13 @@ TEST_CASE("emby: playback reports and the close sequence") {
 }
 
 TEST_CASE("emby: sign-in with user name and password") {
-  Request r = emby::authenticateRequest(" http://emby.example.invalid:8096/emby/ ", "u", "p", true);
+  Request r = emby::authenticateRequest(" http://emby.example.invalid:8096/emby/ ", "u", "p", true, "acc7");
   CHECK(r.method == "POST");
   CHECK(r.url == "http://emby.example.invalid:8096/emby/Users/AuthenticateByName");
   CHECK(r.allowInsecureTLS);
   CHECK(r.timeoutSeconds == 25);
   std::string auth =
-      "MediaBrowser Client=\"Marigold\", Device=\"webOS TV\", DeviceId=\"Marigold-webOS\", Version=\"0.1.0\"";
+      "MediaBrowser Client=\"Media Player\", Device=\"TV\", DeviceId=\"acc7\", Version=\"0.1.0\"";
   CHECK(r.header("X-Emby-Authorization") == auth);
   CHECK(r.header("Authorization") == auth);
   CHECK(r.header("X-Emby-Token") == "");

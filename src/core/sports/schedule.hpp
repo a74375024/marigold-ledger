@@ -168,6 +168,8 @@ struct Saved {
   std::optional<Seconds> schoolsFetchedAt;
   // The leagues the saved schedule was fetched for.
   std::optional<std::vector<std::string>> leagueSet;
+  // Sources that refused us ("espn.com") -> when they're asked again.
+  std::map<std::string, Seconds> refusedUntil;
   std::optional<int> schema;
 };
 std::string toJson(const Saved& saved);
@@ -243,10 +245,12 @@ class Schedule {
   std::optional<Pending> nextRequest();
   static Answer parse(const Pending& pending, std::string_view body);
   // The answer to the last request: HTTP status (0 = no response, which
-  // doesn't count toward the backoff) and its parsed body (parse only a 200).
-  void onAnswer(int status, Answer answer);
+  // doesn't count toward the backoff), its parsed body (parse only a 200)
+  // and the Retry-After seconds. A refusal (429, 403) leaves that source
+  // alone for the rest of the day; it doesn't count as a failure either.
+  void onAnswer(int status, Answer answer, int retryAfterSeconds = 0);
   // Both steps on this thread.
-  void onResponse(int status, std::string_view body);
+  void onResponse(int status, std::string_view body, int retryAfterSeconds = 0);
 
   struct Finished {
     bool succeeded = false;

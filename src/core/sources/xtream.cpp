@@ -70,7 +70,6 @@ Request Client::get(std::vector<std::pair<std::string, std::string>> query) cons
   r.url = std::move(url);
   r.timeoutSeconds = kTimeoutSeconds;
   r.allowInsecureTLS = account_.allowInsecureTLS;
-  r.headers.push_back({"User-Agent", std::string(kUserAgent)});
   return r;
 }
 

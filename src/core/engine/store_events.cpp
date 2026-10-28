@@ -263,7 +263,7 @@ void Store::pumpSchedule(uint32_t ms) {
     EventsState& ev = impl_->ev;
     ev.scheduleBusy = false;
     if (gen != impl_->generation) return;
-    ev.schedule.onAnswer(r.status, std::move(*answer));
+    ev.schedule.onAnswer(r.status, std::move(*answer), r.retryAfterS);
   });
 }
 
@@ -314,7 +314,7 @@ void Store::pumpScores(uint32_t ms) {
   host_.pool.submit(std::move(q), [this, body](http::Response&& r) {
     EventsState& ev = impl_->ev;
     ev.scoresBusy = false;
-    ev.scores.onResponse(r.status, *body, time::now());
+    ev.scores.onResponse(r.status, *body, time::now(), r.retryAfterS);
     if (ev.scores.revision() != ev.statusesRevision) ev.boardDirty = true;
   });
 }

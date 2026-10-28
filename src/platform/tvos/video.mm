@@ -14,11 +14,10 @@
 
 #include "core/util/log.hpp"
 #include "core/util/redact.hpp"
+#include "platform/tvos/agent.hpp"
 #include "platform/tvos/bridge.hpp"
 
 namespace {
-
-constexpr const char* kUserAgent = "Marigold/0.1 (tvOS)";
 
 struct Snapshot {
   bool active = false, ready = false, playing = false, failed = false, ended = false, picture = false;
@@ -158,7 +157,7 @@ MGPlayer* gPlayer;
 // referrer (other headers aren't passed to its HTTP module).
 NSArray<NSString*>* optionsFor(const std::string& headers) {
   NSMutableArray<NSString*>* out = [NSMutableArray array];
-  std::string agent = kUserAgent;
+  std::string agent = marigold::tvos::neutralUserAgent();
   size_t start = 0;
   while (start < headers.size()) {
     size_t end = headers.find('\n', start);
@@ -169,7 +168,7 @@ NSArray<NSString*>* optionsFor(const std::string& headers) {
     NSString* name = [@(line.substr(0, colon).c_str()) stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
     NSString* value = [@(line.substr(colon + 1).c_str()) stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
     if (!name || !value) continue;
-    if ([name caseInsensitiveCompare:@"User-Agent"] == NSOrderedSame) agent = value.UTF8String ?: kUserAgent;
+    if ([name caseInsensitiveCompare:@"User-Agent"] == NSOrderedSame) agent = value.UTF8String ? std::string(value.UTF8String) : marigold::tvos::neutralUserAgent();
     else if ([name caseInsensitiveCompare:@"Referer"] == NSOrderedSame)
       [out addObject:[@":http-referrer=" stringByAppendingString:value]];
   }

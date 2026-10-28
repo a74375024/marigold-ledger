@@ -9,8 +9,10 @@
 #include "core/sports/ncaa.hpp"
 #include "core/sports/parse.hpp"
 #include "core/sports/profiles.hpp"
+#include "core/sports/refusals.hpp"
 #include "core/sports/schedule.hpp"
 #include "core/sports/text.hpp"
+#include "core/util/log.hpp"
 
 namespace marigold::sports::scores {
 
@@ -565,6 +567,10 @@ std::optional<LiveScores::Request> LiveScores::nextRequest(Seconds now) {
       }
       const League* league = leagueByShort(shortName);
       if (!league) continue;
+      // A source that refused us waits until its time is up.
+      std::string source = refusals::sourceOf(*league);
+      auto refused = refusedUntil_.find(source);
+      if (refused != refusedUntil_.end() && refused->second > now) continue;
       if (!takeRequest(now)) {
         cappedNoted_ = true;  // daily cap reached: paused until tomorrow
         r.over = true;
@@ -574,6 +580,7 @@ std::optional<LiveScores::Request> LiveScores::nextRequest(Seconds now) {
       r.inLeague = true;
       r.shortName = shortName;
       r.league = *league;
+      r.source = source;
       r.days.clear();
       // A race weekend's listing has every session: one request, no day.
       if (league->racing || league->tennis) {
@@ -608,8 +615,15 @@ std::optional<LiveScores::Request> LiveScores::nextRequest(Seconds now) {
   }
 }
 
-void LiveScores::onResponse(int status, std::string_view body, Seconds now) {
+void LiveScores::onResponse(int status, std::string_view body, Seconds now, int retryAfterSeconds) {
   if (!round_ || !round_->awaiting) return;
+  if (auto until = refusals::until(status, retryAfterSeconds, now, zone_)) {
+    refusedUntil_[round_->source] = *until;
+    MLOG_W("scores", "%s refused (HTTP %d): left alone for the rest of the day", round_->source.c_str(), status);
+    onParsed(false, 0, {}, now);
+    round_->dayIndex = round_->days.size();
+    return;
+  }
   if (status != 200) {
     onParsed(false, 0, {}, now);
     return;

@@ -25,8 +25,6 @@ namespace marigold::sources::xtream {
 constexpr int kTimeoutSeconds = 45;
 // The short guide's default number of programmes per channel.
 constexpr int kShortEpgLimit = 10;
-// Sent with every request (the Swift app sends "Mozilla/5.0 (Apple TV) NuvioTV").
-constexpr std::string_view kUserAgent = "Mozilla/5.0 (webOS; Linux) Marigold";
 // Player API and full guide, under the server address.
 constexpr std::string_view kApiPath = "/player_api.php";
 constexpr std::string_view kGuidePath = "/xmltv.php";

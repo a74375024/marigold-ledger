@@ -149,9 +149,10 @@ class LiveScores {
   void beginRound(const RoundInput& input);
   // The next request of the round, or nullopt when the round is over.
   std::optional<Request> nextRequest(Seconds now);
-  // The answer: HTTP status (0 = none) and body; parsed here. Or parse on a
-  // worker with statuses() and call onParsed.
-  void onResponse(int status, std::string_view body, Seconds now);
+  // The answer: HTTP status (0 = none), body and the Retry-After seconds;
+  // parsed here. Or parse on a worker with statuses() and call onParsed. A
+  // refusal (429, 403) leaves that source alone for the rest of the day.
+  void onResponse(int status, std::string_view body, Seconds now, int retryAfterSeconds = 0);
   void onParsed(bool ok, size_t bytes, Statuses parsed, Seconds now);
   // Live Events closed mid-request: not a failure, nothing recorded.
   void cancelRound();
@@ -168,6 +169,8 @@ class LiveScores {
   // Persist across launches (UserDefaults in Swift).
   const DailyCount& daily() const { return daily_; }
   int requestsToday(Seconds now, const time::Zone& zone) const;
+  // Sources that refused us ("espn.com") -> when they're asked again.
+  const std::map<std::string, Seconds>& refusedUntil() const { return refusedUntil_; }
 
   // Merges fresh statuses (public for tests and for saved snapshots). A
   // game first seen final is stamped now if it was live, else 20 minutes
@@ -186,6 +189,7 @@ class LiveScores {
   std::map<std::string, int> failures_;
   std::map<std::string, size_t> lastBytes_;
   std::map<std::string, int> missing_;
+  std::map<std::string, Seconds> refusedUntil_;
   std::vector<Seconds> recent_;
   DailyCount daily_;
   bool cappedNoted_ = false;
@@ -205,6 +209,7 @@ class LiveScores {
     bool inLeague = false;
     std::string shortName;
     League league;
+    std::string source;  // "espn.com"
     std::vector<std::string> days;
     size_t dayIndex = 0;
     Statuses merged;

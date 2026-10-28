@@ -71,7 +71,7 @@ TEST_CASE("xtream: request builders") {
   CHECK(info.method == "GET");
   CHECK(info.url == "http://provider.example.invalid:8080/player_api.php?username=u&password=p");
   CHECK(info.timeoutSeconds == 45);
-  CHECK(info.header("User-Agent") == std::string(xtream::kUserAgent));
+  CHECK(info.header("User-Agent").empty());  // the TV's own agent, not the app's name
   CHECK(c.categoriesRequest().url ==
         "http://provider.example.invalid:8080/player_api.php?username=u&password=p&action=get_live_categories");
   CHECK(c.streamsRequest().url ==

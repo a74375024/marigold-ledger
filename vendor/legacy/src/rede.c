@@ -527,7 +527,7 @@ static void opcoesComuns(void *c, unsigned long prazoMs) {
   // esta escrita aqui de proposito.
   curl_setopt(c, OPT_SSL_VERIFYPEER, (long)0);
   curl_setopt(c, OPT_SSL_VERIFYHOST, (long)0);
-  curl_setopt(c, OPT_USERAGENT, "Marigold/0.1 (webOS)"   /* marigold: own user agent */);
+  curl_setopt(c, OPT_USERAGENT, "Mozilla/5.0 (Web0S; Linux/SmartTV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/53.0.2785.34 Safari/537.36 WebAppManager"   /* marigold: the TV's own web agent, without our name */);
   // Bundle embarcado como fallback: a verificacao esta desligada acima, mas se
   // um dia ligar (ou a lib ignorar o VERIFYPEER) nao ha "sem CA" no Android.
   if (caBundle[0]) curl_setopt(c, OPT_CAINFO, caBundle);

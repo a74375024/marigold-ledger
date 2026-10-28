@@ -21,9 +21,10 @@
 namespace marigold::sources::emby {
 
 constexpr int kTimeoutSeconds = 25;
-constexpr std::string_view kDeviceId = "Marigold-webOS";
-constexpr std::string_view kClientName = "Marigold";
-constexpr std::string_view kDeviceName = "webOS TV";
+// Plain names, not the app's; the device id is the account's own random id
+// (each TV its own, so two never share a session).
+constexpr std::string_view kClientName = "Media Player";
+constexpr std::string_view kDeviceName = "TV";
 constexpr std::string_view kClientVersion = "0.1.0";
 constexpr int kMaxStreamingBitrate = 120000000;
 // Search: results per route, and how far ahead upcoming programmes are looked for.
@@ -64,8 +65,10 @@ std::vector<std::string> lenientNames(const json::Value& v);
 // password exchanged once for an access token. The headers carry the client
 // identity and no token. The Request holds the password, so it is a secret.
 // When the base address can't be used the url is left empty (isValidBaseUrl).
+// The id sent as this TV's device for an account ("jf:<id>" or the bare id).
+std::string deviceIdFor(std::string_view sourceOrAccountId);
 Request authenticateRequest(std::string_view baseUrl, std::string_view user, std::string_view password,
-                            bool allowInsecureTLS = false);
+                            bool allowInsecureTLS = false, std::string_view deviceId = {});
 // (AccessToken, User.Id). 401 is "Wrong user name or password"; other
 // statuses as checkStatus(). Messages never quote the body or the request.
 Result<std::pair<std::string, std::string>> parseAuthenticate(int status, std::string_view body);
@@ -133,6 +136,7 @@ class Client {
         base_(std::move(base)),
         token_(std::move(token)),
         userId_(std::move(userId)),
+        deviceId_(deviceIdFor(serverId_)),
         insecure_(insecure) {}
 
   std::string makeURL(std::string_view path, std::vector<std::pair<std::string, std::string>> query) const;
@@ -145,6 +149,7 @@ class Client {
   std::string base_;
   std::string token_;
   std::string userId_;
+  std::string deviceId_;
   bool insecure_ = false;
 };
 

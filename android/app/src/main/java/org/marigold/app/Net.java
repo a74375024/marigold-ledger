@@ -31,7 +31,14 @@ import javax.net.ssl.X509TrustManager;
 final class Net {
   private Net() {}
 
-  private static final String USER_AGENT = "Marigold/0.1 (Android)";
+  // The device's stock agent ("Dalvik/2.1.0 (Linux; U; Android 9; AFTMM
+  // Build/PS7633)"), what any app on it sends, without our name.
+  private static final String USER_AGENT = stockAgent();
+
+  private static String stockAgent() {
+    String agent = System.getProperty("http.agent");
+    return agent == null || agent.isEmpty() ? "Dalvik/2.1.0 (Linux; U; Android)" : agent;
+  }
   private static final int MAX_REDIRECTS = 8;
   private static volatile SSLSocketFactory trustAll;
 

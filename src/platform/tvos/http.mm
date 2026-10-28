@@ -14,6 +14,7 @@
 #include <unordered_map>
 
 #include "platform/http_transport.hpp"
+#include "platform/tvos/agent.hpp"
 #include "platform/tvos/bridge.hpp"
 
 namespace marigold::http::transport {
@@ -21,7 +22,6 @@ namespace {
 
 constexpr size_t kPauseAbove = 4u << 20;   // queued body bytes: pause the download
 constexpr size_t kResumeBelow = 1u << 20;  // and go on below this
-constexpr const char* kUserAgent = "Marigold/0.1 (tvOS)";
 
 struct Call {
   std::mutex mu;
@@ -219,7 +219,7 @@ Result fetch(const Request& q, Handle*, size_t wireCap, const std::function<bool
     if ([name caseInsensitiveCompare:@"User-Agent"] == NSOrderedSame) agent = true;
     [r setValue:value forHTTPHeaderField:name];
   }
-  if (!agent) [r setValue:@(kUserAgent) forHTTPHeaderField:@"User-Agent"];
+  if (!agent) [r setValue:@(marigold::tvos::neutralUserAgent().c_str()) forHTTPHeaderField:@"User-Agent"];
   if (!q.body.empty() && ![method isEqualToString:@"GET"] && ![method isEqualToString:@"HEAD"])
     r.HTTPBody = [NSData dataWithBytes:q.body.data() length:q.body.size()];
 

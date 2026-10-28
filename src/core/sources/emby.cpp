@@ -43,9 +43,9 @@ bool readDate(const json::Value& v, time::Seconds& out) {
 std::string errorWhileReading() { return "The server sent a reply that couldn't be read."; }
 
 // The MediaBrowser authorization value; the Token part only once signed in.
-std::string authorization(std::string_view token) {
+std::string authorization(std::string_view token, std::string_view deviceId) {
   std::string auth = "MediaBrowser Client=\"" + std::string(kClientName) + "\", Device=\"" + std::string(kDeviceName) +
-                     "\", DeviceId=\"" + std::string(kDeviceId) + "\", Version=\"" + std::string(kClientVersion) + "\"";
+                     "\", DeviceId=\"" + std::string(deviceId) + "\", Version=\"" + std::string(kClientVersion) + "\"";
   if (!token.empty()) auth += ", Token=\"" + std::string(token) + "\"";
   return auth;
 }
@@ -121,8 +121,13 @@ std::vector<std::string> lenientNames(const json::Value& v) {
 // ---------------------------------------------------------------------------
 // Sign-in
 
+std::string deviceIdFor(std::string_view id) {
+  if (str::startsWith(id, "jf:")) id.remove_prefix(3);
+  return id.empty() ? std::string("tv") : std::string(id);
+}
+
 Request authenticateRequest(std::string_view baseUrl, std::string_view user, std::string_view password,
-                            bool allowInsecureTLS) {
+                            bool allowInsecureTLS, std::string_view deviceId) {
   Request r;
   r.method = "POST";
   std::string base = normalizedBase(baseUrl);
@@ -130,7 +135,7 @@ Request authenticateRequest(std::string_view baseUrl, std::string_view user, std
   r.timeoutSeconds = kTimeoutSeconds;
   r.allowInsecureTLS = allowInsecureTLS;
   // The Swift sends Authorization; Emby reads X-Emby-Authorization. Both go.
-  std::string auth = authorization({});
+  std::string auth = authorization({}, deviceIdFor(deviceId));
   r.headers.push_back({"Authorization", auth});
   r.headers.push_back({"X-Emby-Authorization", auth});
   r.headers.push_back({"Accept", "application/json"});
@@ -181,7 +186,7 @@ Request Client::request(std::string_view path, std::vector<std::pair<std::string
   r.url = makeURL(path, std::move(query));
   r.timeoutSeconds = kTimeoutSeconds;
   r.allowInsecureTLS = insecure_;
-  std::string auth = authorization(token_);
+  std::string auth = authorization(token_, deviceId_);
   r.headers.push_back({"Authorization", auth});
   r.headers.push_back({"X-Emby-Authorization", auth});
   r.headers.push_back({"X-Emby-Token", token_});
@@ -447,7 +452,7 @@ Result<Stream> Client::parseOpenStream(int status, std::string_view body, const 
   if (optBool(source["SupportsDirectStream"])) {
     std::vector<std::pair<std::string, std::string>> query = {{"Static", "true"},
                                                               {"MediaSourceId", s.mediaSourceId.value_or(channelItemId)},
-                                                              {"DeviceId", std::string(kDeviceId)},
+                                                              {"DeviceId", deviceId_},
                                                               {"api_key", token_}};
     if (s.liveStreamId) query.emplace_back("LiveStreamId", *s.liveStreamId);
     if (s.playSessionId) query.emplace_back("PlaySessionId", *s.playSessionId);
@@ -493,7 +498,7 @@ std::vector<Request> Client::closeStreamRequests(const Stream& stream) const {
   json::Value body = playbackBody(stream);
   out.push_back(request("Sessions/Playing/Stopped", {}, "POST", &body));
   if (stream.isTranscode) {
-    std::vector<std::pair<std::string, std::string>> query = {{"DeviceId", std::string(kDeviceId)}};
+    std::vector<std::pair<std::string, std::string>> query = {{"DeviceId", deviceId_}};
     if (stream.playSessionId) query.emplace_back("PlaySessionId", *stream.playSessionId);
     out.push_back(request("Videos/ActiveEncodings", std::move(query), "DELETE"));
   }

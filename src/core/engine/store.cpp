@@ -471,7 +471,7 @@ void Store::addAccount(const AccountForm& form, std::function<void(std::string)>
       a.kind = sources::AccountKind::Emby;
       a.serverUrl = sources::stripServerSecrets(server);
       a.userName = std::string(str::trim(form.user));
-      sources::Request req = sources::emby::authenticateRequest(a.serverUrl, a.userName, form.password, a.allowInsecureTLS);
+      sources::Request req = sources::emby::authenticateRequest(a.serverUrl, a.userName, form.password, a.allowInsecureTLS, a.id);
       pool.submit(toHttp(req, "emby.signin", http::Priority::Visible), [a, finish](http::Response&& r) mutable {
         if (!r.status) {
           finish(a, "Couldn't reach the server (" + r.error + ")");
