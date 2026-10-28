@@ -14,7 +14,12 @@ add_library(pcre2 STATIC
   src/pcre2_substring.c src/pcre2_tables.c src/pcre2_ucd.c src/pcre2_valid_utf.c
   src/pcre2_xclass.c
 )
-target_include_directories(pcre2 SYSTEM PUBLIC src)
+# Users include <marigold-pcre2/pcre2.h>: a plain <pcre2.h> can find another
+# PCRE2's header first (Homebrew's in /usr/local/include on Intel Macs),
+# which doesn't match this library.
+configure_file(src/pcre2.h ${CMAKE_CURRENT_BINARY_DIR}/include/marigold-pcre2/pcre2.h COPYONLY)
+target_include_directories(pcre2 PRIVATE src)
+target_include_directories(pcre2 SYSTEM PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/include)
 target_compile_definitions(pcre2
   PUBLIC PCRE2_CODE_UNIT_WIDTH=8 PCRE2_STATIC
   PRIVATE HAVE_CONFIG_H SUPPORT_PCRE2_8=1 SUPPORT_UNICODE=1 HAVE_MEMMOVE=1

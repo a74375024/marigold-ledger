@@ -1,6 +1,6 @@
 #include "core/util/rx.hpp"
 
-#include <pcre2.h>
+#include <marigold-pcre2/pcre2.h>
 
 #include <memory>
 #include <mutex>
