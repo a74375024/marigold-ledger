@@ -415,3 +415,15 @@ TEST_CASE("directory: iptv-org's two rows of one channel are one, of two channel
   CHECK(index.match("C-SPAN 2").entry->list == "free");  // its own channel, not C-SPAN
   CHECK(index.match("C-SPAN").entry->id == "C-SPAN");
 }
+
+TEST_CASE("directory: corrections reach the free tier too") {
+  Data data;
+  data.entries = {entry("FX Movie Channel", "FX Movie Channel"), entry("iptv:FXM.us", "FXM"),
+                  entry("iptv:Willow.us", "Willow")};
+  data.entries[1].list = "free";
+  data.entries[2].list = "free";
+  Index index(data);
+  CHECK(index.match("FXM").entry->id == "FX Movie Channel");  // our correction over the free tier's row
+  REQUIRE(index.match("Willow Cricket").entry);
+  CHECK(index.match("Willow Cricket").entry->id == "iptv:Willow.us");
+}

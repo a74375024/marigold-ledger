@@ -153,6 +153,20 @@ const std::vector<Correction>& corrections() {
       {"Starz Family", "Starz Encore Family"},
       {"FETV", "Family Entertainment Television"},
       {"Oxygen True Crime", "Oxygen"},
+      // Names the lists don't give (iptv-org has them as rows of their own).
+      {"FXM", "FX Movie Channel"},
+      {"Discovery Science", "Science Channel"},
+      {"Hallmark Movies & Mysteries", "Hallmark Mystery"},
+      {"Hallmark Movies/Mysteries", "Hallmark Mystery"},
+      {"Hallmark M & M", "Hallmark Mystery"},
+      {"Cinemax ThrillerMax", "ThrillerMax"},
+      // Providers' spellings.
+      {"Willow Cricket", "Willow"},
+      {"Willow Cricket Extra", "Willow Xtra"},
+      {"SportsNet LA Dodgers", "Spectrum SportsNet LA"},
+      {"SportsNet LA", "Spectrum SportsNet LA"},
+      {"NBC Sports Philadelfia", "NBC Sports Philadelphia"},
+      {"Fox Sports Prime Ticket", "FanDuel Sports Network SoCal"},
   };
   return kList;
 }
@@ -229,9 +243,16 @@ Index::Index(const Data& data) : data_(&data) {
       addUnique(free ? freeByLoose_ : byLoose_, looseKey(alias), i);
     }
   }
+  // A correction's channel: a listed one, else one of the free tier.
   for (const Correction& c : corrections()) {
-    auto target = byName_.find(exactKey(c.is));
-    if (target != byName_.end() && target->second.size() == 1) byCorrection_[exactKey(c.name)] = target->second.front();
+    std::string is = exactKey(c.is);
+    const std::vector<size_t>* target = nullptr;
+    if (auto it = byName_.find(is); it != byName_.end()) {
+      target = &it->second;
+    } else if (auto free = freeByName_.find(is); free != freeByName_.end()) {
+      target = &free->second;
+    }
+    if (target && target->size() == 1) byCorrection_[exactKey(c.name)] = target->front();
   }
 }
 
