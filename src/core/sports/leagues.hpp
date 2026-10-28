@@ -40,6 +40,10 @@ struct League {
   bool tennis = false;     // each event is a tournament of matches
   bool golf = false;       // each event is a tournament, its competitors a leaderboard
   bool cricket = false;    // every series' matches, from one live listing
+  // The NCAA's own scoreboard page for a sport and division (path
+  // "soccer-women/d3"): Divisions II and III, which the other scoreboards
+  // don't list.
+  bool ncaaPage = false;
 
   bool college() const { return group.rfind("College", 0) == 0; }
 };
@@ -67,7 +71,12 @@ const League& cricketLeague();
 // games kept only when no league above has them. Not a My Sports pick.
 constexpr const char* kSoccerAll = "SOC";
 const League& soccerAllLeague();
-// leagues + fights + racing + tennis + golf + teamSportLeagues.
+// Divisions II and III soccer (women's and men's), field hockey and
+// women's volleyball, from the NCAA's pages (ncaa.hpp). Looked up while
+// your channels have college games of those sports.
+const std::vector<League>& smallCollegeLeagues();
+// leagues + fights + racing + tennis + golf + teamSportLeagues + cricket,
+// all-soccer and the small college leagues.
 const std::vector<League>& allLeagues();
 const League* leagueByShort(std::string_view shortName);
 
@@ -80,6 +89,8 @@ struct SportFeedsSeen {
   std::optional<time::Seconds> nascar;
   std::optional<time::Seconds> golf;
   std::optional<time::Seconds> cricket;
+  // College soccer, field hockey or volleyball event feeds.
+  std::optional<time::Seconds> smallCollege;
 
   static constexpr time::Seconds kWindow = 14 * 86'400;
   bool racingSeen(time::Seconds now) const { return racing && now - *racing < kWindow; }
@@ -87,9 +98,11 @@ struct SportFeedsSeen {
   bool nascarSeen(time::Seconds now) const { return nascar && now - *nascar < kWindow; }
   bool golfSeen(time::Seconds now) const { return golf && now - *golf < kWindow; }
   bool cricketSeen(time::Seconds now) const { return cricket && now - *cricket < kWindow; }
+  bool smallCollegeSeen(time::Seconds now) const { return smallCollege && now - *smallCollege < kWindow; }
 
   bool operator==(const SportFeedsSeen& o) const {
-    return racing == o.racing && tennis == o.tennis && nascar == o.nascar && golf == o.golf && cricket == o.cricket;
+    return racing == o.racing && tennis == o.tennis && nascar == o.nascar && golf == o.golf && cricket == o.cricket &&
+           smallCollege == o.smallCollege;
   }
 };
 json::Value toJson(const SportFeedsSeen& seen);

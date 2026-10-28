@@ -760,6 +760,14 @@ std::optional<int> leader(const std::optional<std::string>& top, const std::opti
   return *a > *b ? 0 : 1;
 }
 
+// A listing of hundreds of games a day: a college division's NCAA page,
+// college volleyball and field hockey.
+bool listsEveryGame(const SportsGame& game) {
+  if (game.leagueShort == "NCAAWV" || game.leagueShort == "NCAAMV" || game.leagueShort == "NCAAFH") return true;
+  const League* league = leagueByShort(game.leagueShort);
+  return league && league->ncaaPage;
+}
+
 std::string lastName(const SportsTeam& fighter) {
   std::vector<std::string> words = text::words(fighter.name);
   return words.empty() ? fighter.name : words.back();
@@ -1157,8 +1165,8 @@ Board build(const Input& in) {
     if (e.game && e.game->isTennis()) return !e.sources.empty();
     // Cricket too: the listing has every domestic match as well.
     if (e.game && e.game->isCricket()) return !e.sources.empty();
-    // And the all-soccer listing (every competition, every day).
-    if (e.game && e.game->leagueShort == kSoccerAll) return !e.sources.empty();
+    // And the listings of every game of a day (all soccer, a college division).
+    if (e.game && (e.game->leagueShort == kSoccerAll || listsEveryGame(*e.game))) return !e.sources.empty();
     return !e.sources.empty() || in.settings.showsUnwatchable;
   };
 

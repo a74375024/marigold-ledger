@@ -224,3 +224,14 @@ A provider with both versions of a channel (HBO and HBO West). Options › East/
 | Player | Watch the East version, press Down | "Watch West ↔" next to Sources; OK switches in place, the banner tag turns WEST, the pill reads "Watch East ↔"; Last goes back |
 | Sources | Open Sources while watching | VERSION with East and West (the playing one ticked, what's on the other); OK on the other switches; "+ Add … to My Lineup" adds it, then the row reads "Both versions are in My Lineup" (OK removes it) |
 | Edit My Lineup | Options › Edit My Lineup | EAST & WEST with East / West / Both for each pair; Left / Right changes My Lineup at once and the choice stays when the East/West setting changes |
+
+## College games from Divisions II and III
+
+Channels with small-college soccer, field hockey or volleyball (event channels titled "Harbor College vs Valley College").
+
+| Area | How to check | Pass |
+|---|---|---|
+| Matched | Open Live Events, look at Soccer, Field Hockey and Volleyball | Division II and III games show both schools and the tag "DIVISION III · WOMEN'S" (or II, MEN'S); Division I women's volleyball and field hockey are matched too, before My Sports is set up |
+| Scores | A game on now | The score with the period and clock as the NCAA gives them ("2nd Half 61:05", "Halftime"); "Final" when over |
+| Only yours | Scroll the rows | No list of other colleges' games under "Not in your channels" |
+| My Sports | Set up My Sports without Soccer, then with it | Division II and III soccer only with a soccer pick; field hockey and volleyball only with those sports |

@@ -255,6 +255,28 @@ const League& soccerAllLeague() {
   return kAll;
 }
 
+const std::vector<League>& smallCollegeLeagues() {
+  static const std::vector<League> kSmall = [] {
+    auto page = [](const char* path, const char* group, const char* shortName, const char* name, bool soccer) {
+      League l = make(path, group, shortName, name, group, soccer);
+      l.mode = League::Mode::days;
+      l.days = 4;
+      l.ncaaPage = true;
+      return l;
+    };
+    return std::vector<League>{
+        page("soccer-women/d2", "Soccer", "D2WSO", "Women's Division II", true),
+        page("soccer-women/d3", "Soccer", "D3WSO", "Women's Division III", true),
+        page("soccer-men/d2", "Soccer", "D2MSO", "Men's Division II", true),
+        page("soccer-men/d3", "Soccer", "D3MSO", "Men's Division III", true),
+        page("fieldhockey/d2", "Field Hockey", "D2FH", "Division II", false),
+        page("fieldhockey/d3", "Field Hockey", "D3FH", "Division III", false),
+        page("volleyball-women/d2", "Volleyball", "D2WVB", "Women's Division II", false),
+        page("volleyball-women/d3", "Volleyball", "D3WVB", "Women's Division III", false)};
+  }();
+  return kSmall;
+}
+
 const std::vector<League>& allLeagues() {
   static const std::vector<League> kAll = [] {
     std::vector<League> v = leagues();
@@ -263,6 +285,7 @@ const std::vector<League>& allLeagues() {
     }
     v.push_back(cricketLeague());
     v.push_back(soccerAllLeague());
+    v.insert(v.end(), smallCollegeLeagues().begin(), smallCollegeLeagues().end());
     return v;
   }();
   return kAll;
@@ -282,6 +305,7 @@ json::Value toJson(const SportFeedsSeen& seen) {
   if (seen.nascar) v.set("nascar", static_cast<int64_t>(*seen.nascar));
   if (seen.golf) v.set("golf", static_cast<int64_t>(*seen.golf));
   if (seen.cricket) v.set("cricket", static_cast<int64_t>(*seen.cricket));
+  if (seen.smallCollege) v.set("smallCollege", static_cast<int64_t>(*seen.smallCollege));
   return v;
 }
 
@@ -292,6 +316,7 @@ SportFeedsSeen sportFeedsSeenFromJson(const json::Value& v) {
   if (v["nascar"].isNumber()) seen.nascar = v["nascar"].asInt();
   if (v["golf"].isNumber()) seen.golf = v["golf"].asInt();
   if (v["cricket"].isNumber()) seen.cricket = v["cricket"].asInt();
+  if (v["smallCollege"].isNumber()) seen.smallCollege = v["smallCollege"].asInt();
   return seen;
 }
 
@@ -310,6 +335,14 @@ std::vector<League> activeLeagues(const MySportsPrefs& prefs, const SportFeedsSe
     if (seen.golfSeen(now)) out.insert(out.end(), golfLeagues().begin(), golfLeagues().end());
     if (seen.cricketSeen(now)) out.push_back(cricketLeague());
     out.push_back(soccerAllLeague());
+    if (seen.smallCollegeSeen(now)) {
+      // College games of these sports on your channels: Division I women's
+      // volleyball and field hockey too, then Divisions II and III.
+      for (const League& l : teamSportLeagues()) {
+        if (l.shortName == "NCAAWV" || l.shortName == "NCAAFH") out.push_back(l);
+      }
+      out.insert(out.end(), smallCollegeLeagues().begin(), smallCollegeLeagues().end());
+    }
     return out;
   }
   std::set<std::string> picked(prefs.leagues.begin(), prefs.leagues.end());
@@ -336,6 +369,14 @@ std::vector<League> activeLeagues(const MySportsPrefs& prefs, const SportFeedsSe
   for (const SportList& list : sportLists()) {
     if (picked.count(list.id)) out.insert(out.end(), list.leagues.begin(), list.leagues.end());
   }
+  // Divisions II and III with their sport, while your channels have them.
+  if (seen.smallCollegeSeen(now)) {
+    for (const League& l : smallCollegeLeagues()) {
+      bool wanted = l.group == "Soccer" ? soccer : l.group == "Field Hockey" ? picked.count("S:FieldHockey") > 0
+                                                                              : picked.count("S:Volleyball") > 0;
+      if (wanted) out.push_back(l);
+    }
+  }
   return out;
 }
 
@@ -357,6 +398,11 @@ bool noteSportFeeds(SportFeedsSeen& seen, std::optional<time::Seconds>& checkedA
                             [](const catalog::LiveEvent& e) { return str::icontains(e.title, "nascar"); });
   bool golf = std::any_of(events.begin(), events.end(), [](const catalog::LiveEvent& e) { return e.league == "Golf"; });
   bool cricket = std::any_of(events.begin(), events.end(), [](const catalog::LiveEvent& e) { return e.league == "Cricket"; });
+  // College soccer, field hockey or volleyball: a matchup naming a college.
+  bool smallCollege = std::any_of(events.begin(), events.end(), [](const catalog::LiveEvent& e) {
+    if (e.league != "Soccer" && e.league != "Field Hockey" && e.league != "Volleyball") return false;
+    return rx::test("\\b(college|university|univ\\.?)\\b", e.title, true) && matcher::looksLikeGame(e.title);
+  });
   bool changed = false;
   if (nascar) {
     changed = changed || !seen.nascarSeen(now);
@@ -377,6 +423,10 @@ bool noteSportFeeds(SportFeedsSeen& seen, std::optional<time::Seconds>& checkedA
   if (cricket) {
     changed = changed || !seen.cricketSeen(now);
     seen.cricket = now;
+  }
+  if (smallCollege) {
+    changed = changed || !seen.smallCollegeSeen(now);
+    seen.smallCollege = now;
   }
   return changed;
 }

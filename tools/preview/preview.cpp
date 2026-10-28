@@ -156,7 +156,8 @@ class Requests final : public http::Pool {
  private:
   static bool allowed(const std::string& url) {
     return url.rfind("https://", 0) == 0 &&
-           (url.find(".espn.com/") != std::string::npos || url.find(".espncdn.com/") != std::string::npos);
+           (url.find(".espn.com/") != std::string::npos || url.find(".espncdn.com/") != std::string::npos ||
+            url.rfind("https://www.ncaa.com/scoreboard/", 0) == 0);
   }
   http::Response run(http::Request& req) {
     http::Response r;

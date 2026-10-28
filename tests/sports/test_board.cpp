@@ -708,6 +708,18 @@ TEST_CASE("cameras and tennis: hooks for later milestones") {
   CHECK_FALSE(t.tiles.count("sev|ATP|80|2"));  // tennis only shows matches you can watch
 }
 
+TEST_CASE("listings of every game of a day: only the games you can watch") {
+  SportsGame mine = game("D3WSO", "Soccer", "1", team("h", "Harbor"), team("v", "Valley"), kNow + 3600);
+  SportsGame other = game("D3WSO", "Soccer", "2", team("c", "Cove"), team("r", "Ridge"), kNow + 3600);
+  SportsGame volley = game("NCAAWV", "Volleyball", "3", team("b", "Bay"), team("p", "Point"), kNow + 3600);
+  SportsGame nfl = nflAt("n", kNow + 3600);
+  Board b = build(baseInput({eventOf(mine, {feed("xt|m")}), eventOf(other), eventOf(volley), eventOf(nfl)}));
+  CHECK(b.tiles.count("sev|D3WSO|1"));
+  CHECK_FALSE(b.tiles.count("sev|D3WSO|2"));
+  CHECK_FALSE(b.tiles.count("sev|NCAAWV|3"));
+  CHECK(b.tiles.count("sev|NFL|n"));  // a league's games not in your channels still show
+}
+
 TEST_CASE("tennis flags and race podiums") {
   SportsTeam ann = team("p1", "Ann Player");
   ann.country = std::string("ESP");

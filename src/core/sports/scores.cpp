@@ -6,6 +6,7 @@
 #include <unordered_set>
 
 #include "core/sports/cricket.hpp"
+#include "core/sports/ncaa.hpp"
 #include "core/sports/parse.hpp"
 #include "core/sports/profiles.hpp"
 #include "core/sports/schedule.hpp"
@@ -429,6 +430,7 @@ Statuses golfStatuses(std::string_view body, const League& league) {
 
 Statuses statuses(std::string_view body, const League& league) {
   if (league.cricket) return cricket::statuses(body, league);
+  if (league.ncaaPage) return ncaa::statuses(body, league);
   if (league.golf) return golfStatuses(body, league);
   if (league.racing) return raceStatuses(body, league);
   if (league.tennis) return tennisStatuses(body, league);
@@ -444,6 +446,11 @@ sources::Request scoreboardRequest(const League& league, std::string_view day) {
     request.timeoutSeconds = kTimeoutSeconds;
     return request;
   }
+  if (league.ncaaPage) {
+    request.url = ncaa::pageUrl(league, day);
+    request.timeoutSeconds = kTimeoutSeconds;
+    return request;
+  }
   std::string base = std::string(schedule::kApiBase) + league.path + "/scoreboard";
   request.url = day.empty() ? base : base + "?dates=" + std::string(day) + league.extra;
   request.timeoutSeconds = kTimeoutSeconds;
@@ -451,6 +458,16 @@ sources::Request scoreboardRequest(const League& league, std::string_view day) {
 }
 
 // MARK: Polling
+
+namespace {
+
+// A game from a page listing a whole division's day.
+bool listsEveryGame(const SportsGame& game) {
+  const League* league = leagueByShort(game.leagueShort);
+  return league && league->ncaaPage;
+}
+
+}  // namespace
 
 bool LiveScores::start(Holder holder, bool scheduleEnabled) {
   bool wasLooking = looking();
@@ -503,7 +520,7 @@ void LiveScores::beginRound(const RoundInput& input) {
   r.games = input.games;
   r.showsScores = input.showsScores;
   for (const SportsGame& game : input.games) {
-    if (game.isTennis() && !input.watchableTennis.count(game.id)) continue;
+    if ((game.isTennis() || listsEveryGame(game)) && !input.watchableListed.count(game.id)) continue;
     auto known = statuses_.find(game.id);
     std::optional<LivePhase> phase;
     if (known != statuses_.end()) phase = known->second.phase;
@@ -637,6 +654,8 @@ void LiveScores::endLeague(Seconds now) {
     if (r.league.racing) interval = std::max(interval, static_cast<double>(kQuietInterval));
     // Cricket's listing covers every series (and moves slowly): every two minutes at most.
     if (r.league.cricket) interval = std::max(interval, static_cast<double>(kQuietInterval));
+    // An NCAA page is a whole division's day: every two minutes at most.
+    if (r.league.ncaaPage) interval = std::max(interval, static_cast<double>(kQuietInterval));
     interval *= r.spread;
     if (recent_.size() >= static_cast<size_t>(kHourlyPace)) interval = std::max(interval, static_cast<double>(kPacedInterval));
     Seconds wait = static_cast<Seconds>(interval);

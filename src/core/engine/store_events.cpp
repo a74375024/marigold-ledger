@@ -280,8 +280,10 @@ void Store::pumpScores(uint32_t ms) {
     in.zone = host_.zone();
     for (const auto& [id, tile] : e.board.tiles) {
       auto ev = e.board.events.find(id);
-      if (ev != e.board.events.end() && ev->second.game && ev->second.game->isTennis() && tile.watchable)
-        in.watchableTennis.insert(ev->second.game->id);
+      if (ev == e.board.events.end() || !ev->second.game || !tile.watchable) continue;
+      const sports::League* league = sports::leagueByShort(ev->second.game->leagueShort);
+      if (ev->second.game->isTennis() || (league && league->ncaaPage))
+        in.watchableListed.insert(ev->second.game->id);
     }
     e.scores.beginRound(in);
     e.scoresRound = true;

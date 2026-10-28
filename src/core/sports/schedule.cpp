@@ -5,6 +5,7 @@
 
 #include "core/sports/cricket.hpp"
 #include "core/sports/matcher.hpp"
+#include "core/sports/ncaa.hpp"
 #include "core/sports/parse.hpp"
 #include "core/sports/profiles.hpp"
 #include "core/sports/text.hpp"
@@ -21,6 +22,12 @@ sources::Request scoreboardRequest(const League& league, std::string_view query,
     listing.url = cricket::listingUrl();
     listing.timeoutSeconds = kTimeoutSeconds;
     return listing;
+  }
+  if (league.ncaaPage) {
+    sources::Request page;
+    page.url = ncaa::pageUrl(league, str::startsWith(query, "dates=") ? query.substr(6) : query);
+    page.timeoutSeconds = kTimeoutSeconds;
+    return page;
   }
   std::vector<std::string> parts;
   if (!query.empty()) parts.emplace_back(query);
@@ -810,6 +817,15 @@ std::optional<LeagueResult> parseLeague(std::string_view body, const League& lea
     result.total = matches->size();
     for (SportsGame& g : *matches) {
       if (inWindow(g) || (g.end && *g.end >= from && g.start <= to)) result.games.push_back(std::move(g));
+    }
+    return result;
+  }
+  if (league.ncaaPage) {
+    auto games = ncaa::parseGames(body, league);
+    if (!games) return std::nullopt;
+    result.total = games->size();
+    for (SportsGame& g : *games) {
+      if (inWindow(g)) result.games.push_back(std::move(g));
     }
     return result;
   }

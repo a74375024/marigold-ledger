@@ -101,9 +101,10 @@ enum class Holder { board, guide };
 struct RoundInput {
   // The published schedule.
   std::vector<SportsGame> games;
-  // Tennis has matches all day on every court: only the ones you can watch
-  // (a tile with a source) keep a tour polled.
-  std::set<std::string> watchableTennis;
+  // Tennis has matches all day on every court, and an NCAA page every game
+  // of a division: only the ones you can watch (a tile with a source) keep
+  // a tour or a page polled.
+  std::set<std::string> watchableListed;
   // A channel is playing (Live Events may sit under the player).
   bool watching = false;
   bool showsScores = kShowsScoresByDefault;
