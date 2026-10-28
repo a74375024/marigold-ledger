@@ -14,9 +14,11 @@ extern const std::size_t kMarigoldChannelDirectorySize;
 namespace marigold::catalog::directory {
 namespace {
 
-// The accented letters channel names use, as plain ones ("Español").
+// The accented letters channel names use, as plain ones ("Español"), also
+// when a provider's list mangled them ("EspaÃ±ol").
 std::string plainLetters(std::string_view s) {
   static const std::pair<const char*, char> kAccents[] = {
+      {"Ã±", 'n'}, {"Ã¡", 'a'}, {"Ã©", 'e'}, {"Ã­", 'i'}, {"Ã³", 'o'}, {"Ãº", 'u'}, {"Ã¼", 'u'},
       {"á", 'a'}, {"à", 'a'}, {"â", 'a'}, {"ä", 'a'}, {"ã", 'a'}, {"é", 'e'}, {"è", 'e'}, {"ê", 'e'},
       {"ë", 'e'}, {"í", 'i'}, {"ì", 'i'}, {"î", 'i'}, {"ï", 'i'}, {"ó", 'o'}, {"ò", 'o'}, {"ô", 'o'},
       {"ö", 'o'}, {"õ", 'o'}, {"ú", 'u'}, {"ù", 'u'}, {"û", 'u'}, {"ü", 'u'}, {"ñ", 'n'}, {"ç", 'c'},

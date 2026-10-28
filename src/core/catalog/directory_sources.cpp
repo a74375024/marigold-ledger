@@ -1,6 +1,7 @@
 #include "core/catalog/directory_sources.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
@@ -126,6 +127,15 @@ void addAlias(Entry& e, std::set<std::string>& keys, const std::string& alias) {
   e.aliases.push_back(a);
 }
 
+// A redirect or Wikidata alias that names something other than a channel:
+// a call sign or a translator's ("WLS-DT", "K38CX"), a web address, a
+// sentence.
+bool notAChannelName(const std::string& alias) {
+  return rx::test("^[KW][A-Z0-9]{2,6}(-[A-Z]{1,3}\\d?)?$", alias) ||
+         rx::test("\\.(com|net|org)\\b", alias, true) ||
+         std::count(alias.begin(), alias.end(), ' ') >= 6;
+}
+
 std::string language3to2(std::string_view code) {
   static const std::unordered_map<std::string, std::string> kCodes = {
       {"eng", "en"}, {"spa", "es"}, {"fra", "fr"}, {"por", "pt"}, {"hin", "hi"}, {"urd", "ur"},
@@ -184,31 +194,71 @@ std::vector<Row> parseList(std::string_view wikitext) {
     bool header;
   };
   std::vector<Cell> cells;
+  // The table so far: rows still covered by a rowspan, by column, and the
+  // column its header names as the channel's ("Channel", "Network").
+  std::vector<int> spans;
+  int nameColumn = -1;
   auto addRow = [&](std::string text, std::string page, const std::string& rowText) {
     text = trimmed(text);
     if (text.empty() || text.size() > 80 || rx::test("^[\\d\\s.,–—-]*$", text)) return;
     if (rx::test("^list of ", page, true)) return;
     rows.push_back({std::move(page), std::move(text), section, rowText});
   };
+  auto number = [](const std::string& attrs, const char* name) {
+    if (auto m = rx::first(std::string(name) + "\\s*=\\s*\"?\\s*(\\d+)", attrs, true)) {
+      return std::max(1, std::atoi(std::string(m->group(1)).c_str()));
+    }
+    return 1;
+  };
   auto finishRow = [&] {
     if (cells.empty()) return;
     bool headerOnly = std::all_of(cells.begin(), cells.end(), [](const Cell& c) { return c.header; });
     std::string rowText;
     for (const Cell& c : cells) rowText += (rowText.empty() ? "" : " | ") + plainText(c.text);
-    if (!headerOnly) {
-      for (const Cell& c : cells) {
-        std::string content = cellContent(c.text);
-        std::string text = plainText(content);
-        if (text.empty()) continue;
-        if (auto link = firstLink(content)) {
-          addRow(link->text, link->page, rowText);
-        } else {
-          addRow(text, "", rowText);
-        }
-        break;
-      }
+    // Each cell's column, past the columns earlier rows' rowspans cover.
+    struct Placed {
+      size_t column;
+      std::string content;
+    };
+    std::vector<Placed> placed;
+    std::vector<int> fresh;
+    size_t column = 0;
+    for (const Cell& c : cells) {
+      std::string content = cellContent(c.text);
+      std::string attrs = content.size() < c.text.size() ? c.text.substr(0, c.text.size() - content.size()) : "";
+      int rowspan = number(attrs, "rowspan"), colspan = number(attrs, "colspan");
+      while (column < spans.size() && spans[column] > 0) ++column;
+      placed.push_back({column, content});
+      if (fresh.size() < column + static_cast<size_t>(colspan)) fresh.resize(column + static_cast<size_t>(colspan), 0);
+      for (int k = 0; k < colspan; ++k) fresh[column + static_cast<size_t>(k)] = rowspan - 1;
+      column += static_cast<size_t>(colspan);
     }
+    for (int& span : spans) span = std::max(0, span - 1);
+    if (spans.size() < fresh.size()) spans.resize(fresh.size(), 0);
+    for (size_t k = 0; k < fresh.size(); ++k) spans[k] = std::max(spans[k], fresh[k]);
     cells.clear();
+    if (headerOnly) {
+      for (const Placed& p : placed) {
+        std::string head = plainText(p.content);
+        if (nameColumn < 0 && rx::test("\\b(channel|network|name|service|station|title)s?\\b", head, true) &&
+            !rx::test("\\b(owner|parent|logo|former|affiliat\\w*|launch\\w*|date|notes?|type|language)\\b", head, true)) {
+          nameColumn = static_cast<int>(p.column);
+        }
+      }
+      return;
+    }
+    // The name column's cell (the next one when it holds only a logo).
+    for (const Placed& p : placed) {
+      if (nameColumn >= 0 && p.column < static_cast<size_t>(nameColumn)) continue;
+      std::string text = plainText(p.content);
+      if (text.empty()) continue;
+      if (auto link = firstLink(p.content)) {
+        addRow(link->text, link->page, rowText);
+      } else {
+        addRow(text, "", rowText);
+      }
+      break;
+    }
   };
   for (std::string_view line : str::split(wikitext, '\n')) {
     std::string t = trimmed(line);
@@ -223,6 +273,8 @@ std::vector<Row> parseList(std::string_view wikitext) {
     if (str::startsWith(t, "{|")) {
       finishRow();
       ++tables;
+      spans.clear();
+      nameColumn = -1;
       continue;
     }
     if (str::startsWith(t, "|}")) {
@@ -319,12 +371,12 @@ std::map<std::string, EntityFacts> parseEntities(std::string_view body) {
     for (const json::Value& a : entity["aliases"]["en"].items()) {
       if (a["value"].isString()) facts.aliases.push_back(a["value"].asString());
     }
+    // The first language, or English when it's one of them.
     for (const json::Value& claim : entity["claims"]["P407"].items()) {
       const json::Value& value = claim["mainsnak"]["datavalue"]["value"];
-      if (value["id"].isString()) {
-        facts.language = languageOfItem(value["id"].asString());
-        break;
-      }
+      if (!value["id"].isString()) continue;
+      std::string language = languageOfItem(value["id"].asString());
+      if (facts.language.empty() || language == "en") facts.language = language;
     }
     for (const json::Value& claim : entity["claims"]["P576"].items()) {
       const json::Value& value = claim["mainsnak"]["datavalue"]["value"];
@@ -414,21 +466,49 @@ Data assemble(const Sources& sources, const std::string& made) {
     }
     return sources.pages.count(t) ? t : std::string();
   };
-  std::vector<std::set<std::string>> aliasKeys;
+  // The list a row counts for: a list's "Defunct" section is the defunct
+  // list's; its distant locals and radio are stations, not channels.
+  auto listOf = [](const std::string& list, const Row& row) -> std::string {
+    if (rx::test("\\b(defunct|former)\\b", row.section, true)) return "defunct";
+    if (rx::test("\\b(distant locals?|superstations?)\\b", row.section, true)) return "local";
+    if (rx::test("\\bradio\\b", row.section, true)) return "radio";
+    return list;
+  };
+  // Several channels linking to one article (a company, a family of
+  // channels): only the one the article is named after takes its facts.
+  // (A defunct row is an old name, not another channel.)
+  std::unordered_map<std::string, std::set<std::string>> textsOf;
+  for (const auto& [list, rows] : sources.rows) {
+    for (const Row& row : rows) {
+      std::string title = resolve(row.title);
+      if (!title.empty() && listOf(list, row) != "defunct") textsOf[title].insert(looseKey(row.text));
+    }
+  }
+
+  struct Draft {
+    std::set<std::string> keys;              // alias keys so far
+    std::vector<std::string> fromArticle;    // redirects and Wikidata aliases, checked below
+    std::string articleClosed;               // Wikidata's closing date
+    bool current = false;                    // on a list of channels on the air
+  };
+  std::vector<Draft> drafts;
   std::unordered_map<std::string, size_t> byId;
   for (const ListPage& page : listPages()) {
     auto rowsIt = sources.rows.find(page.list);
     if (rowsIt == sources.rows.end()) continue;
     for (const Row& row : rowsIt->second) {
+      std::string list = listOf(page.list, row);
       std::string title = resolve(row.title);
       const PageFacts* facts = title.empty() ? nullptr : &sources.pages.at(title);
       // A row linking to a bigger article ("Starz Encore Action" to "Starz
-      // Encore") is its own channel, without the article's facts.
+      // Encore", "Comedy.TV" to its owner) is its own channel, without the
+      // article's facts.
       if (facts) {
         std::string rowKey = looseKey(row.text);
-        bool same = rowKey == looseKey(withoutBrackets(title));
+        bool named = rowKey == looseKey(withoutBrackets(title));
+        bool same = named;
         for (const std::string& r : facts->redirects) same = same || rowKey == looseKey(withoutBrackets(r));
-        if (!same) {
+        if (!same || (!named && textsOf[title].size() > 1)) {
           title.clear();
           facts = nullptr;
         }
@@ -440,37 +520,48 @@ Data assemble(const Sources& sources, const std::string& made) {
         Entry e;
         e.id = id;
         e.name = facts ? withoutBrackets(title) : withoutBrackets(row.text);
-        e.list = page.list;
+        e.list = list;
         e.genre = row.section;
         data.entries.push_back(std::move(e));
-        aliasKeys.emplace_back();
+        drafts.emplace_back();
       }
       Entry& e = data.entries[it->second];
-      std::set<std::string>& keys = aliasKeys[it->second];
-      addAlias(e, keys, row.text);
-      if (page.list == "defunct") {
-        auto years = rx::all("\\b(19|20)\\d{2}\\b", row.rowText);
-        e.closed = years.empty() ? std::string("yes") : std::string(years.back().group(0));
-      } else if (e.list == "defunct") {
-        // Also on a current list: the current one says what it is.
-        e.list = page.list;
-        e.genre = row.section;
+      Draft& d = drafts[it->second];
+      addAlias(e, d.keys, row.text);
+      if (list == "defunct") {
+        // A defunct row of a channel on a current list, or one under another
+        // name than its article's ("Fox Sports North" linking to FanDuel
+        // Sports Network North), is an old name, not a closing.
+        bool rebrand = facts && looseKey(row.text) != looseKey(withoutBrackets(title));
+        if (!d.current && fresh && !rebrand) {
+          auto years = rx::all("\\b(19|20)\\d{2}\\b", row.rowText);
+          e.closed = years.empty() ? std::string("yes") : std::string(years.back().group(0));
+        }
+      } else {
+        if (!d.current) {
+          e.list = list;
+          e.genre = row.section;
+          e.closed.clear();
+        }
+        d.current = true;
       }
-      if (page.list == "regional sports" && e.places.empty()) {
-        std::string lowered = str::lower(row.rowText);
-        for (const rx::Match& m : rx::all(regionPattern(), lowered)) {
-          std::string place(m.group(1));
-          if (std::find(e.places.begin(), e.places.end(), place) == e.places.end()) e.places.push_back(place);
+      if (list == "regional sports" || rx::test("\\bregional\\b", row.section, true)) {
+        if (e.places.empty()) {
+          std::string lowered = str::lower(row.rowText);
+          for (const rx::Match& m : rx::all(regionPattern(), lowered)) {
+            std::string place(m.group(1));
+            if (std::find(e.places.begin(), e.places.end(), place) == e.places.end()) e.places.push_back(place);
+          }
         }
       }
       if (!facts) continue;
-      for (const std::string& r : facts->redirects) addAlias(e, keys, r);
+      for (const std::string& r : facts->redirects) d.fromArticle.push_back(r);
       if (!facts->wikidata.empty()) {
         e.wikidata = facts->wikidata;
         if (auto entity = sources.entities.find(facts->wikidata); entity != sources.entities.end()) {
-          for (const std::string& a : entity->second.aliases) addAlias(e, keys, a);
+          for (const std::string& a : entity->second.aliases) d.fromArticle.push_back(a);
           if (e.language.empty()) e.language = entity->second.language;
-          if (!entity->second.closed.empty()) e.closed = entity->second.closed;
+          d.articleClosed = entity->second.closed;
         }
       }
     }
@@ -479,10 +570,8 @@ Data assemble(const Sources& sources, const std::string& made) {
     if (e.list == "spanish" && e.language.empty()) e.language = "es";
   }
 
-  // iptv-org, only for channels already listed: other names, a closing
-  // date, the language; one iptv-org channel per entry, or none.
+  // iptv-org's US channels (without its noise), by name.
   std::unordered_map<std::string, std::vector<size_t>> usByKey;
-  std::unordered_set<std::string> usKeys;
   for (size_t i = 0; i < sources.iptv.size(); ++i) {
     const IptvChannel& c = sources.iptv[i];
     if (c.country != "US" || iptvNoise(c)) continue;
@@ -493,11 +582,14 @@ Data assemble(const Sources& sources, const std::string& made) {
       if (key.empty()) continue;
       std::vector<size_t>& list = usByKey[key];
       if (std::find(list.begin(), list.end(), i) == list.end()) list.push_back(i);
-      usKeys.insert(key);
     }
   }
+  // Each entry's iptv-org channel, by the names the lists give it: one, or none.
+  std::unordered_set<std::string> listedNames;
+  for (const Entry& e : data.entries) listedNames.insert(exactKey(e.name));
   for (size_t i = 0; i < data.entries.size(); ++i) {
     Entry& e = data.entries[i];
+    Draft& d = drafts[i];
     std::set<size_t> found;
     std::vector<std::string> names = e.aliases;
     names.push_back(e.name);
@@ -505,16 +597,36 @@ Data assemble(const Sources& sources, const std::string& made) {
       auto it = usByKey.find(exactKey(n));
       if (it != usByKey.end()) found.insert(it->second.begin(), it->second.end());
     }
-    if (found.size() != 1) continue;
-    const IptvChannel& c = sources.iptv[*found.begin()];
-    e.iptvOrg = c.id;
-    addAlias(e, aliasKeys[i], c.name);
-    for (const std::string& a : c.altNames) addAlias(e, aliasKeys[i], a);
-    if (e.closed.empty() && !c.closed.empty()) e.closed = c.closed;
-    if (e.language.empty()) e.language = c.language;
+    const IptvChannel* own = found.size() == 1 ? &sources.iptv[*found.begin()] : nullptr;
+    // The article's other names, unless one is another channel: another
+    // entry's name, or another iptv-org channel's ("ActionMax" redirects
+    // to Cinemax, "C-SPAN2" to C-SPAN).
+    if (e.list != "local" && e.list != "radio") {
+      for (const std::string& a : d.fromArticle) {
+        std::string key = exactKey(withoutBrackets(a));
+        if (notAChannelName(a) || listedNames.count(key)) continue;
+        auto other = usByKey.find(key);
+        if (other != usByKey.end() &&
+            (!own || std::find(other->second.begin(), other->second.end(), *found.begin()) == other->second.end())) {
+          continue;
+        }
+        addAlias(e, d.keys, a);
+      }
+    }
+    // Closing dates: a defunct list's own, Wikidata's for channels on no
+    // current list; iptv-org's for any (Wikidata's "dissolved" is often an
+    // older name's, and a defunct row of a current channel its rebrand).
+    if (!d.current && !d.articleClosed.empty()) e.closed = d.articleClosed;
+    if (!own) continue;
+    e.iptvOrg = own->id;
+    addAlias(e, d.keys, own->name);
+    for (const std::string& a : own->altNames) addAlias(e, d.keys, a);
+    if (!own->closed.empty()) e.closed = own->closed;
+    if (e.language.empty()) e.language = own->language;
   }
 
-  // Names only other countries' channels have: a hint at the language.
+  // Names only other countries' channels have: a hint at the language
+  // ("PK:ur"; "CA:en" is English all the same).
   std::unordered_set<std::string> listed;
   for (const Entry& e : data.entries) {
     listed.insert(exactKey(e.name));
@@ -526,8 +638,9 @@ Data assemble(const Sources& sources, const std::string& made) {
     names.push_back(c.name);
     for (const std::string& n : names) {
       std::string key = exactKey(n);
-      if (key.size() < 4 || usKeys.count(key) || listed.count(key)) continue;
-      data.elsewhere.emplace(key, c.country == "GB" ? std::string("UK") : c.country);
+      if (key.size() < 4 || usByKey.count(key) || listed.count(key)) continue;
+      std::string country = c.country == "GB" ? std::string("UK") : c.country;
+      data.elsewhere.emplace(key, country + ":" + c.language);
     }
   }
   return data;

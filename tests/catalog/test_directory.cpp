@@ -34,6 +34,7 @@ TEST_CASE("directory: name keys") {
   CHECK(exactKey("USA Network") == "usanetwork");
   CHECK(exactKey("ESPN US") == "espn");
   CHECK(exactKey("beIN Sports en Español") == "beinsportsenespanol");
+  CHECK(exactKey("beIN SPORTS en EspaÃ±ol") == "beinsportsenespanol");
   CHECK(exactKey("Wild West TV") == "wildwesttv");
   CHECK(looseKey("UP TV") == "up");
   CHECK(looseKey("UPtv") == "up");
@@ -50,7 +51,7 @@ TEST_CASE("directory: matching a provider's name") {
                   entry("Nick Jr. Too", "Nick Jr. Too"), entry("Fight Network", "Fight Network"),
                   entry("Fight Channel", "The Fight Channel")};
   data.entries[2].closed = "2021";
-  data.elsewhere["arydigital"] = "PK";
+  data.elsewhere["arydigital"] = "PK:ur";
   Index index(data);
   Match m = index.match("UPtv");
   CHECK(m.kind == MatchKind::exact);
@@ -71,7 +72,7 @@ TEST_CASE("directory: matching a provider's name") {
   // Not listed, but another country's channel.
   m = index.match("ARY DIGITAL");
   CHECK(m.kind == MatchKind::none);
-  CHECK(m.elsewhere == "PK");
+  CHECK(m.elsewhere == "PK:ur");
   CHECK(index.match("Zeta Channel").kind == MatchKind::none);
 }
 
@@ -229,7 +230,7 @@ TEST_CASE("directory: assembled in layers") {
   REQUIRE(up);
   CHECK(up->name == "UPtv");
   CHECK(up->list == "pay");    // also on the defunct list (its old name), but current
-  CHECK(up->closed.empty() == false);  // the defunct row marks it; phase 1 keeps what the sources say
+  CHECK(up->closed.empty());  // its defunct row is its old name
   CHECK(up->wikidata == "Q42");
   CHECK(up->language == "en");
   for (const char* alias : {"UP", "Gospel Music Channel", "UP Faith & Family"}) {
@@ -256,6 +257,61 @@ TEST_CASE("directory: assembled in layers") {
   CHECK(std::find(north->places.begin(), north->places.end(), "minnesota") != north->places.end());
   CHECK(std::find(north->aliases.begin(), north->aliases.end(), "Fox Sports North") != north->aliases.end());
   CHECK(find("WGN America")->closed == "2021");
-  CHECK(data.elsewhere.at("arydigital") == "PK");
+  CHECK(data.elsewhere.at("arydigital") == "PK:");
   CHECK_FALSE(data.elsewhere.count("up"));
+}
+
+TEST_CASE("directory: a table's channel column, past owners spanning rows") {
+  const char* page =
+      "== English language ==\n"
+      "{| class=\"wikitable\"\n"
+      "! Owner !! Channel !! Launched\n"
+      "|-\n"
+      "| rowspan=\"2\" | [[Entertainment Studios]] || [[Comedy.TV]] || 2009\n"
+      "|-\n"
+      "| [[Recipe.TV]] || 2009\n"
+      "|-\n"
+      "| [[AMC Networks]] || [[AMC (TV channel)|AMC]] || 1984\n"
+      "|}\n";
+  std::vector<Row> rows = parseList(page);
+  REQUIRE(rows.size() == 3);
+  CHECK(rows[0].text == "Comedy.TV");
+  CHECK(rows[1].text == "Recipe.TV");
+  CHECK(rows[2].text == "AMC");
+  CHECK(rows[2].title == "AMC (TV channel)");
+  CHECK_FALSE(rowNamed(rows, "Entertainment Studios"));
+}
+
+TEST_CASE("directory: umbrella articles, other channels' names, rebrands") {
+  Sources src;
+  src.rows["pay"] = {{"Entertainment Studios Networks", "Comedy.TV", "English language", ""},
+                     {"Entertainment Studios Networks", "Recipe.TV", "English language", ""},
+                     {"Cinemax", "Cinemax", "English language", ""}};
+  src.rows["defunct"] = {{"FanDuel Sports Network North", "Fox Sports North", "Network rebrands", "2008–2021"}};
+  src.pages["Entertainment Studios Networks"] = {{"Comedy.tv", "Recipe.tv"}, ""};
+  src.pages["Cinemax"] = {{"ActionMAX", "Skinemax", "WCMX-LD"}, ""};
+  src.pages["FanDuel Sports Network North"] = {{"Bally Sports North", "Fox Sports North"}, ""};
+  src.iptv = parseIptvOrg(
+      "id,name,alt_names,network,owners,country,categories,is_nsfw,launched,closed,replaced_by,website\n"
+      "Cinemax.us,Cinemax,,,,US,movies,FALSE,,,,\n"
+      "ActionMAX.us,ActionMAX,,,,US,movies,FALSE,,,,\n",
+      "channel,id,name,alt_names,is_main,broadcast_area,timezones,languages,format\n");
+  Data data = assemble(src, "2026-10-28");
+  auto find = [&](const char* id) -> const Entry* {
+    auto it = std::find_if(data.entries.begin(), data.entries.end(), [&](const Entry& e) { return e.id == id; });
+    return it == data.entries.end() ? nullptr : &*it;
+  };
+  CHECK(find("Comedy.TV"));
+  CHECK(find("Recipe.TV"));
+  CHECK_FALSE(find("Entertainment Studios Networks"));
+  const Entry* cinemax = find("Cinemax");
+  REQUIRE(cinemax);
+  CHECK(cinemax->iptvOrg == "Cinemax.us");
+  CHECK(std::find(cinemax->aliases.begin(), cinemax->aliases.end(), "Skinemax") != cinemax->aliases.end());
+  CHECK(std::find(cinemax->aliases.begin(), cinemax->aliases.end(), "ActionMAX") == cinemax->aliases.end());
+  CHECK(std::find(cinemax->aliases.begin(), cinemax->aliases.end(), "WCMX-LD") == cinemax->aliases.end());
+  const Entry* north = find("FanDuel Sports Network North");
+  REQUIRE(north);
+  CHECK(north->closed.empty());
+  CHECK(std::find(north->aliases.begin(), north->aliases.end(), "Fox Sports North") != north->aliases.end());
 }

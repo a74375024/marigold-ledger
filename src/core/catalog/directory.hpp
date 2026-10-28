@@ -42,7 +42,8 @@ struct Data {
   std::string made;  // "2026-10-28"
   std::vector<Entry> entries;
   // Names found only among other countries' channels in iptv-org, by
-  // exact key: "arydigital" -> "PK". A hint at a channel's language.
+  // exact key, with the country and its feed's language: "arydigital" ->
+  // "PK:ur". A hint at a channel's language ("CA:en" is English all the same).
   std::map<std::string, std::string> elsewhere;
 
   bool empty() const { return entries.empty(); }
@@ -67,7 +68,7 @@ const char* rawValue(MatchKind kind);
 struct Match {
   const Entry* entry = nullptr;
   MatchKind kind = MatchKind::none;
-  // No entry, but the name is another country's channel ("PK").
+  // No entry, but the name is another country's channel ("PK:ur").
   std::string elsewhere;
 };
 

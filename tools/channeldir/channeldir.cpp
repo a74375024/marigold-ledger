@@ -22,6 +22,7 @@
 #include "core/catalog/directory.hpp"
 #include "core/catalog/directory_sources.hpp"
 #include "core/guide/stations.hpp"
+#include "core/util/strings.hpp"
 
 using namespace marigold;
 using namespace marigold::catalog::directory;
@@ -106,6 +107,16 @@ int main(int argc, char** argv) {
         if (!r.title.empty()) titles.insert(r.title);
       }
       std::fprintf(stderr, "%s: %s, %zu rows\n", page.list.c_str(), title.c_str(), rows.size());
+      // A page that gave little: how it's laid out, to fix its reading.
+      if (rows.size() < 20) {
+        size_t tablesSeen = 0, bullets = 0;
+        for (std::string_view line : marigold::str::split(*text, '\n')) {
+          if (marigold::str::startsWith(line, "{|")) ++tablesSeen;
+          if (marigold::str::startsWith(line, "*")) ++bullets;
+        }
+        std::fprintf(stderr, "    %zu bytes, %zu tables, %zu bullets; it starts:\n%s\n", text->size(), tablesSeen, bullets,
+                     text->substr(0, 1500).c_str());
+      }
       for (const auto& [section, n] : bySection) std::fprintf(stderr, "    %-50s %d\n", section.c_str(), n);
       src.rows[page.list] = std::move(rows);
       break;
