@@ -282,20 +282,25 @@ void Store::pumpScores(uint32_t ms) {
     e.scores.beginRound(in);
     e.scoresRound = true;
   }
-  auto req = e.scores.nextRequest(now);
-  if (!req) {
-    e.scoresRound = false;
-    e.scoresAt = ms + static_cast<uint32_t>(e.scores.waitSeconds()) * 1000u;
-    if (e.scores.revision() != e.statusesRevision) e.boardDirty = true;
-    return;
-  }
-  if (req->waitMs > 0 && !e.scoresPending) {
-    e.scoresPending = *req;
-    e.scoresAt = ms + static_cast<uint32_t>(req->waitMs);
-    return;
-  }
-  sports::scores::LiveScores::Request send = e.scoresPending ? *e.scoresPending : *req;
+  // A request waiting out its spacing goes first: the round is awaiting
+  // its answer, so it has no other.
+  std::optional<sports::scores::LiveScores::Request> req = std::move(e.scoresPending);
   e.scoresPending.reset();
+  if (!req) {
+    req = e.scores.nextRequest(now);
+    if (!req) {
+      e.scoresRound = false;
+      e.scoresAt = ms + static_cast<uint32_t>(e.scores.waitSeconds()) * 1000u;
+      if (e.scores.revision() != e.statusesRevision) e.boardDirty = true;
+      return;
+    }
+    if (req->waitMs > 0) {
+      e.scoresPending = std::move(req);
+      e.scoresAt = ms + static_cast<uint32_t>(e.scoresPending->waitMs);
+      return;
+    }
+  }
+  sports::scores::LiveScores::Request send = std::move(*req);
   e.scoresBusy = true;
   auto body = std::make_shared<std::string>();
   http::Request q = toHttp(send.request, "events.scores");

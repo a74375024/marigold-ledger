@@ -526,3 +526,11 @@ TEST_CASE("cricket: scores as the tile shows them, the batting side, the chase")
   CHECK(t.detail == "Match delayed - Rain");
   CHECK(t.homeScore == "402 & 5/0");
 }
+
+TEST_CASE("polling: no schedule yet looks again soon, not in 5 minutes") {
+  LiveScores scores;
+  CHECK(scores.start(Holder::board, true));
+  scores.beginRound(roundAt(utc(2026, 10, 25, 17, 0), {}));
+  CHECK_FALSE(scores.nextRequest(utc(2026, 10, 25, 17, 0)));
+  CHECK(scores.waitSeconds() == kMinimumWait);
+}

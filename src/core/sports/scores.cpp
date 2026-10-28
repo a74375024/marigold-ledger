@@ -517,7 +517,8 @@ void LiveScores::beginRound(const RoundInput& input) {
     r.windows[game.leagueShort].push_back(game);
   }
   if (r.windows.empty()) {
-    lastWait_ = kIdleWait;
+    // No schedule yet (Live Events just opened): look again soon.
+    lastWait_ = input.games.empty() ? kMinimumWait : kIdleWait;
     return;
   }
   recent_.erase(std::remove_if(recent_.begin(), recent_.end(), [&](Seconds t) { return now - t > 3600; }),
