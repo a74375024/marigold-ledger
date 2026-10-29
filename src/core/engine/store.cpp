@@ -55,6 +55,16 @@ using catalog::CatalogResult;
 const catalog::directory::Index* builtInDirectory() {
   return catalog::directory::builtIn().empty() ? nullptr : &catalog::directory::builtInIndex();
 }
+
+// A lineup row's directory entry's iptv-org id ("" when none), for its
+// fallback logo.
+std::string directoryIptvOrg(const catalog::EntryInfo* entry) {
+  if (!entry || entry->directoryId.empty()) return std::string();
+  const catalog::directory::Index* index = builtInDirectory();
+  const catalog::directory::Entry* listed = index ? index->entryById(entry->directoryId) : nullptr;
+  return listed ? listed->iptvOrg : std::string();
+}
+
 using catalog::EntryInfo;
 
 // LiveTVStore constants.
@@ -78,7 +88,7 @@ constexpr const char* kListsFile = "lists.json";
 constexpr const char* kLineupFile = "lineup.json";
 constexpr const char* kM3uStreamsFile = "m3u-streams.json";  // secret
 constexpr const char* kStationsFile = "stations-v2.json";  // v2: two-city cells, MyNetworkTV
-constexpr const char* kLogoIndexFile = "logo-index.json";
+constexpr const char* kOldLogoIndexFile = "logo-index.json";  // downloaded by builds before 89
 
 http::Request toHttp(const sources::Request& r, std::string tag, http::Priority p = http::Priority::Normal) {
   http::Request q;
@@ -298,7 +308,7 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
     m.runs[a.sourceId()];
   }
   readStations();
-  readLogoIndex();
+  useBuiltInLogos();
   loadEvents();
   MLOG_I("store", "%zu provider(s)", m.accounts.size());
   if (m.accounts.empty()) {
@@ -896,7 +906,6 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
           MLOG_I("store", "refresh: the channel list is unchanged");
           status_.problem = str::join(problems, "\n");
           status_.line.clear();
-          fetchLogoIndex();
           afterBigJob("channel list checked");
           return;
         }
@@ -916,7 +925,6 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
           startGuides(wasEmpty);
         }
         saveCatalog();
-        fetchLogoIndex();
         afterBigJob("channels sorted");
       },
       showing ? http::Priority::Background : http::Priority::Visible);
@@ -945,67 +953,17 @@ void Store::readStations() {
 
 // ------------------------------------------------------------ fallback logos
 
-void Store::readLogoIndex() {
-  std::string path = host_.files.path(kLogoIndexFile);
-  auto box = std::make_shared<std::optional<logos::IptvOrgIndex::Saved>>();
-  host_.pool.post(
-      [path, box] {
-        std::string text;
-        if (readFile(path, text)) *box = logos::IptvOrgIndex::fromJson(text);
-      },
-      [this, box] {
-        if (!*box || impl_->iptvOrg) return;
-        impl_->iptvOrg = std::make_shared<logos::IptvOrgIndex>(std::move(**box));
-        impl_->channelsDirty = true;
-      },
-      http::Priority::Normal);
-}
-
-void Store::fetchLogoIndex() {
-  Impl& m = *impl_;
-  time::Seconds now = time::now();
-  if (m.iptvOrgFetching || now - m.iptvOrgTriedAt < 6 * 3600) return;
-  if (m.iptvOrg && !m.iptvOrg->needsRefresh(now)) return;
-  m.iptvOrgFetching = true;
-  m.iptvOrgTriedAt = now;
-  auto out = std::make_shared<std::optional<logos::IptvOrgIndex::Saved>>();
-  http::Pool& pool = host_.pool;
-  std::string path = host_.files.path(kLogoIndexFile);
-  GuideReadStateLite st{m.playingFull, m.stopJobs};
-  host_.pool.post(
-      [out, &pool, path, st] {
-        auto get = [&pool, st](const char* file) -> std::optional<std::string> {
-          for (int i = 0; i < 600 && st.playing->load() && !st.stop->load(); ++i) usleep(500000);
-          http::Request q;
-          q.url = std::string(logos::IptvOrgIndex::kBase) + file;
-          q.tag = "logo.index";
-          q.timeoutMs = 120000;
-          q.maxBytes = 48u << 20;
-          q.follow = true;
-          q.priority = http::Priority::Background;
-          http::Response r = pool.fetchNow(std::move(q));
-          if (!r.ok || r.status != 200) return std::nullopt;
-          return std::move(r.body);
-        };
-        auto channels = get(logos::IptvOrgIndex::kChannelsFile);
-        if (!channels || st.stop->load()) return;
-        auto logoList = get(logos::IptvOrgIndex::kLogosFile);
-        if (!logoList) return;
-        *out = logos::IptvOrgIndex::build(*channels, *logoList, time::now());
-        if (*out) writeFileAtomic(path, logos::IptvOrgIndex::toJson(**out));
-      },
-      [this, out] {
-        Impl& mm = *impl_;
-        mm.iptvOrgFetching = false;
-        if (!*out) {
-          MLOG_W("store", "fallback logos: couldn't load the index");
-          return;
-        }
-        MLOG_I("store", "fallback logos: %zu by id, %zu by name", (*out)->byID.size(), (*out)->byName.size());
-        mm.iptvOrg = std::make_shared<logos::IptvOrgIndex>(std::move(**out));
-        mm.channelsDirty = true;
-      },
-      http::Priority::Long);
+// The fallback logos the channel directory carries (CI makes them); an
+// older build's downloaded copy is removed.
+void Store::useBuiltInLogos() {
+  std::remove(host_.files.path(kOldLogoIndexFile).c_str());
+  const catalog::directory::Data& data = catalog::directory::builtIn();
+  if (data.logos.empty() && data.logosByName.empty()) return;
+  logos::IptvOrgIndex::Saved saved;
+  saved.byID.insert(data.logos.begin(), data.logos.end());
+  saved.byName.insert(data.logosByName.begin(), data.logosByName.end());
+  impl_->iptvOrg = std::make_shared<logos::IptvOrgIndex>(std::move(saved));
+  MLOG_I("store", "fallback logos: %zu by id, %zu by name (built in)", data.logos.size(), data.logosByName.size());
 }
 
 // Classifies the current list again (the station directory changed).
@@ -2393,7 +2351,7 @@ void Store::publishChannels() {
     logos::LogoSpec spec = logos::spec(
         g.name, ei ? ei->core : std::nullopt, g.west, ei && cat == catalog::LineupCategory::local && ei->callsign,
         ei ? ei->callsign : std::nullopt, ei ? ei->virtualNumber : std::nullopt, e.imageUrl,
-        member ? member->epgId : std::nullopt, cat, m.iptvOrg.get());
+        member ? member->epgId : std::nullopt, cat, m.iptvOrg.get(), directoryIptvOrg(ei));
     g.logoUrl = logos::chain(spec.urls);
     g.logoSources = str::join(spec.sources, ", ");
     g.subtitle = spec.subtitle.value_or(catalog::genreTitle(cat));

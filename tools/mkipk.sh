@@ -47,13 +47,33 @@ mkdir -p "$out"
 out="$(cd "$out" && pwd)"
 ipk="$out/${id}_${version}_arm.ipk"
 rm -f "$ipk"
-(cd "$work" && ar rcD "$ipk" debian-binary control.tar.gz data.tar.gz)
+# The ar archive as ares-package and dpkg-deb write it, which webOS checks
+# (GNU ar's "name/" headers, mtime 0 and mode 644 fail with "ipk verified
+# failed"): names without a slash, a real mtime, mode 100644, odd sizes
+# padded with a newline.
+python3 - "$ipk" "${stamp}" "$work/debian-binary" "$work/control.tar.gz" "$work/data.tar.gz" <<'PY'
+import os, sys, time
+path, stamp, members = sys.argv[1], int(sys.argv[2]), sys.argv[3:]
+mtime = stamp if stamp > 0 else int(time.time())
+with open(path, "wb") as out:
+    out.write(b"!<arch>\n")
+    for member in members:
+        data = open(member, "rb").read()
+        name = os.path.basename(member)
+        out.write(f"{name:<16}{mtime:<12}{0:<6}{0:<6}{'100644':<8}{len(data):<10}`\n".encode())
+        out.write(data + (b"\n" if len(data) % 2 else b""))
+PY
 
 # Verify what was written, the way Legacy's arm.sh does: unpack the ar,
 # check the member order, the executable bit and that nothing private went in.
 check="$(mktemp -d)"
 trap 'rm -rf "$work" "$check"' EXIT
 (cd "$check" && ar x "$ipk")
+header="$(head -c 68 "$ipk" | tail -c 60)"
+case "$header" in
+  "debian-binary   "*"100644  4         \`") ;;
+  *) echo "mkipk: first member header is '$header', not webOS's" >&2; exit 1 ;;
+esac
 [ "$(ar t "$ipk" | tr '\n' ' ')" = "debian-binary control.tar.gz data.tar.gz " ] \
   || { echo "mkipk: wrong member order" >&2; exit 1; }
 mode=$(tar tvzf "$check/data.tar.gz" | awk -v f="usr/palm/applications/$id/$main" '$6 == f {print $1}')

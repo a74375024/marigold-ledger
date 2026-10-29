@@ -73,7 +73,9 @@ jobs:
         id: week
         run: |
           echo "key=wikidata-v1-$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
-          echo "directory=channeldir-v6-$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+          # Made again each week, and whenever the code that makes it changes.
+          code="${{ hashFiles('src/core/catalog/directory.cpp', 'src/core/catalog/directory_sources.cpp', 'src/core/logos/logos.cpp', 'tools/channeldir/channeldir.cpp') }}"
+          echo "directory=channeldir-v7-$(date -u +%G-W%V)-${code:0:12}" >> "$GITHUB_OUTPUT"
       - name: This week's data, if read already
         id: cache
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
@@ -104,16 +106,20 @@ jobs:
           path: data/wiki-data.json
           key: ${{ steps.week.outputs.key }}
       # The channel directory (catalog/directory.hpp): Wikipedia's channel
-      # lists, their articles' redirects and Wikidata facts, and iptv-org for
-      # the channels listed. Not used by the lineup yet, so a failed read
-      # only warns.
+      # lists, their articles' redirects and Wikidata facts, iptv-org for the
+      # channels listed, and the fallback logos. My Lineup depends on it, so
+      # a directory that couldn't be made, or one much thinner than last
+      # week's, leaves last week's in place; without any, the apps aren't
+      # built.
       - name: This week's channel directory, if made already
         id: dircache
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: data/channel-directory.json
           key: ${{ steps.week.outputs.directory }}
-          restore-keys: channeldir-v6-
+          restore-keys: |
+            channeldir-v7-
+            channeldir-v6-
       - name: Make the channel directory (once a week)
         id: dirread
         if: steps.dircache.outputs.cache-hit != 'true'
@@ -121,14 +127,26 @@ jobs:
           cmake -S . -B build-wiki -DCMAKE_BUILD_TYPE=Release -DMARIGOLD_BUILD_TESTS=OFF -DMARIGOLD_BUILD_PREVIEW=ON
           cmake --build build-wiki --target marigold-channeldir --parallel
           mkdir -p data
-          if ./build-wiki/tools/channeldir/marigold-channeldir data/channel-directory.new.json; then
+          last=()
+          [ -f data/channel-directory.json ] && last=(data/channel-directory.json)
+          rc=0
+          ./build-wiki/tools/channeldir/marigold-channeldir data/channel-directory.new.json "${last[@]}" || rc=$?
+          if [ "$rc" = 0 ]; then
             mv data/channel-directory.new.json data/channel-directory.json
-            echo "fresh=true" >> "$GITHUB_OUTPUT"
+            echo "keep=true" >> "$GITHUB_OUTPUT"
+          elif [ ${#last[@]} -gt 0 ]; then
+            if [ "$rc" = 3 ]; then
+              echo "::warning::This week's channel directory is much thinner than last week's (see the log); the apps keep last week's"
+              echo "keep=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "::warning::The channel directory couldn't be made; the apps keep last week's"
+            fi
           else
-            echo "::warning::The channel directory couldn't be made; the apps keep the last one, if any"
+            echo "::error::The channel directory couldn't be made and there is no earlier one"
+            exit 1
           fi
       - name: Keep this week's channel directory
-        if: steps.dirread.outputs.fresh == 'true'
+        if: steps.dirread.outputs.keep == 'true'
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: data/channel-directory.json
@@ -142,6 +160,8 @@ jobs:
 
   webos:
     runs-on: ubuntu-24.04
+    env:
+      MARIGOLD_REQUIRE_CHANNEL_DIRECTORY: "1"  # cmake/channel-directory.cmake
     needs: [hygiene, host, wikidata]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -152,12 +172,15 @@ jobs:
           key: ${{ needs.wikidata.outputs.key }}
           restore-keys: wikidata-v1-
           fail-on-cache-miss: true
-      - name: Built-in channel directory (when there is one)
+      - name: Built-in channel directory
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: data/channel-directory.json
           key: ${{ needs.wikidata.outputs.directory }}
-          restore-keys: channeldir-v6-
+          restore-keys: |
+            channeldir-v7-
+            channeldir-v6-
+          fail-on-cache-miss: true
       - name: SDK cache key
         id: sdk
         run: echo "key=webos-sdk-$(sha256sum tools/sdk.conf | cut -c1-16)" >> "$GITHUB_OUTPUT"
@@ -182,6 +205,8 @@ jobs:
 
   android:
     runs-on: ubuntu-24.04
+    env:
+      MARIGOLD_REQUIRE_CHANNEL_DIRECTORY: "1"  # cmake/channel-directory.cmake
     needs: [hygiene, host, wikidata]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -192,12 +217,15 @@ jobs:
           key: ${{ needs.wikidata.outputs.key }}
           restore-keys: wikidata-v1-
           fail-on-cache-miss: true
-      - name: Built-in channel directory (when there is one)
+      - name: Built-in channel directory
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: data/channel-directory.json
           key: ${{ needs.wikidata.outputs.directory }}
-          restore-keys: channeldir-v6-
+          restore-keys: |
+            channeldir-v7-
+            channeldir-v6-
+          fail-on-cache-miss: true
       - name: Java 17 (the runner's)
         run: echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
       - name: Install the NDK and CMake the build pins
@@ -250,6 +278,8 @@ jobs:
   # Apple TV's arm64 either way.
   tvos:
     runs-on: macos-15-intel
+    env:
+      MARIGOLD_REQUIRE_CHANNEL_DIRECTORY: "1"  # cmake/channel-directory.cmake
     needs: [hygiene, host, wikidata]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -260,12 +290,15 @@ jobs:
           key: ${{ needs.wikidata.outputs.key }}
           restore-keys: wikidata-v1-
           fail-on-cache-miss: true
-      - name: Built-in channel directory (when there is one)
+      - name: Built-in channel directory
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: data/channel-directory.json
           key: ${{ needs.wikidata.outputs.directory }}
-          restore-keys: channeldir-v6-
+          restore-keys: |
+            channeldir-v7-
+            channeldir-v6-
+          fail-on-cache-miss: true
       - name: Host tests with Apple clang
         env:
           ASAN_OPTIONS: halt_on_error=1

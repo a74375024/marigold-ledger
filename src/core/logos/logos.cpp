@@ -28,13 +28,6 @@ std::optional<size_t> column(const std::vector<std::string>& head, std::string_v
   return static_cast<size_t>(it - head.begin());
 }
 
-json::Value stringMap(const std::unordered_map<std::string, std::string>& m) {
-  // json objects are sorted maps: stable output.
-  json::Value o = json::Value::object();
-  for (const auto& [k, v] : m) o.set(k, v);
-  return o;
-}
-
 // "MTV2" -> "mtv2", "mtv-2"; "LAW & CRIME" -> "law-and-crime", then with
 // "-network" etc.: the file names the library might use for a channel name.
 std::vector<std::string> logoSetKeys(std::string_view name) {
@@ -99,7 +92,8 @@ LogoSpec spec(std::string_view name, const std::optional<std::string>& core, boo
               bool isLocal, const std::optional<std::string>& callsign,
               std::optional<int> virtualNumber, const std::string& provider,
               const std::optional<std::string>& epgID,
-              std::optional<catalog::LineupCategory> category, const IptvOrgIndex* iptvOrg) {
+              std::optional<catalog::LineupCategory> category, const IptvOrgIndex* iptvOrg,
+              const std::string& directoryIptvOrg) {
   auto url = [](const std::string& file) { return std::string(kLogoBase) + file; };
   LogoSpec out;
   auto add = [&out](std::string link, const char* from) {
@@ -171,7 +165,7 @@ LogoSpec spec(std::string_view name, const std::optional<std::string>& core, boo
   }
   // The provider's logo always comes last: it is usually the worst.
   if (iptvOrg) {
-    if (auto outside = iptvOrg->url(epgID, name)) add(*outside, "public database");
+    if (auto outside = iptvOrg->url(epgID, name, directoryIptvOrg)) add(*outside, "public database");
   }
   if (!provider.empty()) add(provider, "provider");
   out.style = LogoSpec::Style::named;
@@ -180,8 +174,7 @@ LogoSpec spec(std::string_view name, const std::optional<std::string>& core, boo
 }
 
 std::optional<IptvOrgIndex::Saved> IptvOrgIndex::build(std::string_view channelsCsv,
-                                                       std::string_view logosCsv,
-                                                       time::Seconds now) {
+                                                       std::string_view logosCsv) {
   std::vector<std::vector<std::string>> channelRows = csvRows(channelsCsv);
   std::vector<std::vector<std::string>> logoRows = csvRows(logosCsv);
   if (channelRows.empty() || logoRows.empty()) return std::nullopt;
@@ -223,7 +216,6 @@ std::optional<IptvOrgIndex::Saved> IptvOrgIndex::build(std::string_view channels
   }
 
   Saved saved;
-  saved.fetched = now;
   size_t need = std::max({*idCol, *nameCol, *countryCol});
   for (size_t r = 1; r < channelRows.size(); ++r) {
     const std::vector<std::string>& row = channelRows[r];
@@ -247,10 +239,11 @@ std::optional<IptvOrgIndex::Saved> IptvOrgIndex::build(std::string_view channels
   return saved;
 }
 
-std::optional<std::string> IptvOrgIndex::url(const std::optional<std::string>& epgID,
-                                             std::string_view name) const {
-  if (epgID) {
-    auto hit = saved_.byID.find(str::lower(*epgID));
+std::optional<std::string> IptvOrgIndex::url(const std::optional<std::string>& epgID, std::string_view name,
+                                             const std::string& directoryIptvOrg) const {
+  for (const std::optional<std::string>& id : {epgID, std::optional<std::string>(directoryIptvOrg)}) {
+    if (!id || id->empty()) continue;
+    auto hit = saved_.byID.find(str::lower(*id));
     if (hit != saved_.byID.end()) return hit->second;
   }
   std::string key = catalog::coreKey(name).key;
@@ -258,24 +251,6 @@ std::optional<std::string> IptvOrgIndex::url(const std::optional<std::string>& e
   auto hit = saved_.byName.find(key);
   if (hit == saved_.byName.end()) return std::nullopt;
   return hit->second;
-}
-
-std::string IptvOrgIndex::toJson(const Saved& saved) {
-  json::Value v = json::Value::object();
-  v.set("fetched", saved.fetched);
-  v.set("byID", stringMap(saved.byID));
-  v.set("byName", stringMap(saved.byName));
-  return json::write(v);
-}
-
-std::optional<IptvOrgIndex::Saved> IptvOrgIndex::fromJson(std::string_view text) {
-  auto parsed = json::parse(text);
-  if (!parsed || !parsed->isObject() || !(*parsed)["fetched"].isNumber()) return std::nullopt;
-  Saved saved;
-  saved.fetched = (*parsed)["fetched"].asInt();
-  for (const auto& [k, v] : (*parsed)["byID"].fields()) saved.byID[k] = v.asString();
-  for (const auto& [k, v] : (*parsed)["byName"].fields()) saved.byName[k] = v.asString();
-  return saved;
 }
 
 std::vector<std::vector<std::string>> csvRows(std::string_view text) {

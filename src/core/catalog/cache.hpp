@@ -30,7 +30,8 @@ namespace marigold::catalog::cache {
 // 9: one channel spelled two ways is one entry; languages, regional
 //    channels, out-of-town stations and event-only feeds.
 // 10: the channel directory decides rows, language, area and closings.
-constexpr int kVersion = 10;
+// 11: a directory row is named by a copy the directory knows; FETV is one row.
+constexpr int kVersion = 11;
 
 enum class Part { first, full };
 

@@ -307,7 +307,8 @@ LineupCategory categoryFor(std::string_view lower, std::string_view group,
 // One channel spelled two ways ("UP TV" / "UPtv", "FYI" / "FYI Network",
 // "The Cowboy Channel" / "Cowboy Channel", "Baby TV" / "BabyTV"): the same
 // key. No leading "the", no trailing "tv", "network", "channel" or
-// "television" (also run into the name), and a few renamed channels.
+// "television" (also run into the name). Renamed channels are the channel
+// directory's (its corrections: "Starz Family" is Starz Encore Family).
 std::string sameChannelKey(const ChannelTraits& traits) {
   std::string lowered = str::replaceAll(str::lower(traits.displayName), "&", " and ");
   lowered = rx::replace(lowered, "[\\(\\[][^\\)\\]]*[\\)\\]]", " ");
@@ -333,11 +334,6 @@ std::string sameChannelKey(const ChannelTraits& traits) {
   if (words.size() > 1 && words.front() == "the") words.erase(words.begin());
   std::string market = traits.market ? *traits.market : std::string("?");
   std::string west = traits.isWest ? "~west" : "";
-  static const std::unordered_map<std::string, std::string> kRenamed = {
-      {"starzfamily", "starzencorefamily"},
-      {"fetv", "familyentertainment"},
-  };
-  if (auto it = kRenamed.find(str::join(words, "")); it != kRenamed.end()) return market + ":" + it->second + west;
   static const std::vector<std::string> kTails = {"television", "network", "channel", "tv"};
   for (bool again = true; again && !words.empty();) {
     again = false;
@@ -570,7 +566,15 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
   for (const std::string& key : order) {
     std::vector<const Channel*>& members = clusters[key];
     if (members.empty()) continue;
-    const ChannelTraits& traits = result.traits[members.front()->id];
+    // A directory row is told by a copy the directory knows ("TV One", not
+    // the "ONE TV" seen first).
+    const Channel* told = members.front();
+    if (str::startsWith(key, "d:")) {
+      auto known = std::find_if(members.begin(), members.end(),
+                                [&](const Channel* c) { return result.traits[c->id].clusterKey == key; });
+      if (known != members.end()) told = *known;
+    }
+    const ChannelTraits& traits = result.traits[told->id];
     struct Ranked {
       const Channel* channel;
       const ChannelTraits* traits;

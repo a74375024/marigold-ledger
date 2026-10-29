@@ -526,6 +526,7 @@ Data assemble(const Sources& sources, const std::string& made) {
     std::vector<std::string> fromArticle;    // redirects and Wikidata aliases, checked below
     std::string articleClosed;               // Wikidata's closing date
     bool current = false;                    // on a list of channels on the air
+    bool renamed = false;                    // a defunct row is an old name of it
   };
   std::vector<Draft> drafts;
   std::unordered_map<std::string, size_t> byId;
@@ -572,6 +573,7 @@ Data assemble(const Sources& sources, const std::string& made) {
         // name than its article's ("Fox Sports North" linking to FanDuel
         // Sports Network North), is an old name, not a closing.
         bool rebrand = facts && looseKey(row.text) != looseKey(withoutBrackets(title));
+        d.renamed = d.renamed || rebrand;
         if (!d.current && fresh && !rebrand) {
           auto years = rx::all("\\b(19|20)\\d{2}\\b", row.rowText);
           e.closed = years.empty() ? std::string("yes") : std::string(years.back().group(0));
@@ -675,7 +677,9 @@ Data assemble(const Sources& sources, const std::string& made) {
     // Closing dates: a defunct list's own, Wikidata's for channels on no
     // current list; iptv-org's for any (Wikidata's "dissolved" is often an
     // older name's, and a defunct row of a current channel its rebrand).
-    if (!d.current && !d.articleClosed.empty()) e.closed = d.articleClosed;
+    // A channel the defunct list knows by an older name was renamed: its
+    // article's "dissolved" is the old name's.
+    if (!d.current && !d.renamed && !d.articleClosed.empty()) e.closed = d.articleClosed;
     if (!own) continue;
     e.iptvOrg = own->id;
     addAlias(e, d.keys, own->name);
@@ -744,6 +748,34 @@ Data assemble(const Sources& sources, const std::string& made) {
     }
   }
   return data;
+}
+
+const std::vector<std::string>& wellKnownChannels() {
+  static const std::vector<std::string> kList = {
+      "MeTV",          "HSN",           "QVC",          "Bounce TV",       "Grit",
+      "Cozi TV",       "Court TV",      "Laff",         "Comet",           "Charge!",
+      "TBN",           "Daystar",       "INSP",         "Ovation",         "Revolt",
+      "AXS TV",        "Outdoor Channel", "Sportsman Channel", "RFD-TV",   "Tennis Channel",
+      "Golf Channel",  "beIN Sports",   "Univision",    "Telemundo",       "UniMás",
+      "Galavisión",    "Starz",         "Cinemax",      "MGM+",            "Hallmark Channel",
+  };
+  return kList;
+}
+
+std::vector<std::string> tooDifferent(const Data& now, const Data& before) {
+  std::vector<std::string> why;
+  Index index(now);
+  for (const std::string& name : wellKnownChannels()) {
+    if (!index.match(name).entry) why.push_back("no " + name);
+  }
+  auto fewer = [&](const char* what, size_t was, size_t is, size_t percent) {
+    if (was > 0 && is * 100 < was * (100 - percent)) {
+      why.push_back(std::string(what) + ": " + std::to_string(is) + " (last time " + std::to_string(was) + ")");
+    }
+  };
+  fewer("entries", before.entries.size(), now.entries.size(), 10);
+  if (!before.logos.empty()) fewer("logos", before.logos.size(), now.logos.size(), 20);
+  return why;
 }
 
 }  // namespace marigold::catalog::directory::sources

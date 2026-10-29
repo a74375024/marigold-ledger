@@ -113,4 +113,12 @@ struct Sources {
 };
 Data assemble(const Sources& sources, const std::string& made);
 
+// Channels every week's directory must know; a list page read wrong or an
+// odd edit shows here first.
+const std::vector<std::string>& wellKnownChannels();
+// Why this week's directory shouldn't replace last week's (empty: it can):
+// a well-known channel gone, or many fewer entries (over 10%) or logos
+// (over 20%). Logos aren't compared when last week's had none.
+std::vector<std::string> tooDifferent(const Data& now, const Data& before);
+
 }  // namespace marigold::catalog::directory::sources

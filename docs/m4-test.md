@@ -275,3 +275,13 @@ The app knows real US channels by their other names, language and closing. After
 | Stations | CBS KPIX, KMOV CBS 4, CBS (Buffalo), WGN | Still one row per station, by call sign |
 | Closed channels | El Rey, ThrillerMax | Not suggested; still found by Search and can be added |
 | Yours stay | Channels you added, removed or pinned a feed for before the update | Kept as you set them, even for a channel that has closed |
+
+## Built-in logos and the LG package
+
+| Area | How to check | Pass |
+|---|---|---|
+| LG install | Install the .ipk on a webOS 6 TV (LG C1) | Installs; no "ipk verified failed" |
+| Fallback logos | Edit My Lineup: NRB TV, Aspire TV, DOGTV, Logo TV, Daystar, BlazeTV, BYUtv | Each has a logo |
+| Same logos | Channels that had a logo before | The same logo |
+| One FETV | Edit My Lineup: FETV | One row, every spelling under Sources |
+| Names | Cozi TV, FYI, Great, Comedy.TV, The Movie Channel Xtra | Shown with these names |

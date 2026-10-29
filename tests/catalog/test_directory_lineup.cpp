@@ -47,6 +47,9 @@ directory::Data sampleDirectory() {
       listed("Roar (TV network)", "Roar"),
       listed("CBS", "CBS", {}, "broadcast"),
       listed("WGN-TV", "WGN-TV", {"WGN"}, "local"),
+      listed("Starz Encore Family", "Starz Encore Family"),
+      listed("FETV", "FETV"),
+      listed("Get After It Media", "Get After It Media", {"The Action Channel"}, "broadcast"),
   };
   data.entries[6].closed = "2020-12-31";
   data.entries[7].language = "es";
@@ -75,12 +78,13 @@ struct Built {
 }  // namespace
 
 TEST_CASE("directory lineup: a known channel is one row, under the directory's id and name") {
-  Built b({channel("1", "US: TV ONE HD", "US| ENTERTAINMENT"), channel("2", "TV: ONE TV ᴿᴬᵂ", "US| TV"),
+  Built b({channel("2", "TV: ONE TV ᴿᴬᵂ", "US| TV"), channel("1", "US: TV ONE HD", "US| ENTERTAINMENT"),
            channel("3", "US: MAV TV", "US| SPORT"), channel("4", "US: Racer Network", "US| SPORT"),
            channel("5", "US: BLAZE TV", "US| ENTERTAINMENT")});
   const EntryInfo* one = b.entryOf("1");
   REQUIRE(one);
-  // "ONE TV" isn't a name the directory has, but it was the same row before.
+  // "ONE TV" isn't a name the directory has, but it was the same row before;
+  // seen first, it doesn't tell the row.
   CHECK(b.entryOf("2") == one);
   CHECK(one->id == "e|d:TV One (American TV channel)");
   CHECK(one->name == "TV One");
@@ -105,6 +109,29 @@ TEST_CASE("directory lineup: its name and more is another channel, and the lists
   REQUIRE(b.entryOf("3"));
   CHECK(b.entryOf("3") == b.entryOf("4"));
   CHECK(b.entryOf("3")->id == "e|d:Bounce TV");
+}
+
+TEST_CASE("directory lineup: a renamed channel is one row under either name (our corrections)") {
+  Built b({channel("1", "US: STARZ FAMILY HD", "US| MOVIES"), channel("2", "US: Starz Encore Family", "US| MOVIES"),
+           channel("3", "US: FETV (Family Entertainment)", "US| ENTERTAINMENT"),
+           channel("4", "TV: FAMILY ENTERTAINMENT TELEVISION ᴿᴬᵂ", "US| TV"),
+           channel("5", "US: FETV Family Entertainment Television", "US| ENTERTAINMENT")});
+  REQUIRE(b.entryOf("1"));
+  CHECK(b.entryOf("1") == b.entryOf("2"));
+  CHECK(b.entryOf("1")->name == "Starz Encore Family");
+  REQUIRE(b.entryOf("3"));
+  CHECK(b.entryOf("3") == b.entryOf("4"));
+  CHECK(b.entryOf("3") == b.entryOf("5"));
+  CHECK(b.entryOf("3")->name == "FETV");
+}
+
+TEST_CASE("directory lineup: a one-word other name matches only exactly") {
+  Built action({channel("1", "CINEBOX: ACTION", "US Movies")});
+  REQUIRE(action.entryOf("1"));
+  CHECK(action.entryOf("1")->directoryId.empty());
+  Built named({channel("2", "US: THE ACTION CHANNEL", "US| ENTERTAINMENT")});
+  REQUIRE(named.entryOf("2"));
+  CHECK(named.entryOf("2")->directoryId == "Get After It Media");
 }
 
 TEST_CASE("directory lineup: stations are still told by their call signs") {

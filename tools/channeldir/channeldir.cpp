@@ -6,7 +6,12 @@
 // contacts these sites. Requests go through the system's curl, one at a
 // time, with the contact address Wikimedia asks automated clients for.
 //
-//   marigold-channeldir data/channel-directory.json
+// It also packs iptv-org's US logos (logos::IptvOrgIndex) for the app's
+// fallback logos. Given last week's directory, it won't write one that lost
+// well-known channels or many entries or logos (exit 3; CI keeps last
+// week's).
+//
+//   marigold-channeldir data/channel-directory.new.json [data/channel-directory.json]
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -22,6 +27,8 @@
 #include "core/catalog/directory.hpp"
 #include "core/catalog/directory_sources.hpp"
 #include "core/guide/stations.hpp"
+#include "core/logos/logos.hpp"
+#include "core/util/rx.hpp"
 #include "core/util/strings.hpp"
 
 using namespace marigold;
@@ -87,8 +94,8 @@ std::string today() {
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc != 2) {
-    std::fprintf(stderr, "usage: marigold-channeldir <out.json>\n");
+  if (argc != 2 && argc != 3) {
+    std::fprintf(stderr, "usage: marigold-channeldir <out.json> [last week's.json]\n");
     return 2;
   }
   sources::Sources src;
@@ -118,6 +125,24 @@ int main(int argc, char** argv) {
                      text->substr(0, 1500).c_str());
       }
       for (const auto& [section, n] : bySection) std::fprintf(stderr, "    %-50s %d\n", section.c_str(), n);
+      // Closing years come from the defunct list's rows: its table headers
+      // and the rows of channels whose closing is in question, to check.
+      if (page.list == "defunct") {
+        int headers = 0;
+        for (std::string_view line : marigold::str::split(*text, '\n')) {
+          if (marigold::str::startsWith(line, "!") && headers++ < 40) {
+            std::fprintf(stderr, "    header: %s\n", std::string(line.substr(0, 200)).c_str());
+          }
+        }
+        for (const sources::Row& r : rows) {
+          if (!rx::test("fanduel|bally|fox sports|gol ?tv|this tv|hrtv|merit|nbc sports chicago|el rey|thrillermax",
+                        r.text + " " + r.title + " " + r.rowText, true)) {
+            continue;
+          }
+          std::fprintf(stderr, "    row [%s] title=%s text=%s | %s\n", r.section.c_str(), r.title.c_str(), r.text.c_str(),
+                       r.rowText.substr(0, 240).c_str());
+        }
+      }
       src.rows[page.list] = std::move(rows);
       break;
     }
@@ -168,6 +193,14 @@ int main(int argc, char** argv) {
   std::fprintf(stderr, "%zu iptv-org channels\n", src.iptv.size());
 
   Data data = sources::assemble(src, today());
+  // Fallback logos for the app (it never fetches them).
+  if (auto logoList = fetch(std::string(sources::kIptvOrgBase) + "logos.csv", false); logoList && channels) {
+    if (auto index = logos::IptvOrgIndex::build(*channels, *logoList)) {
+      data.logos.insert(index->byID.begin(), index->byID.end());
+      data.logosByName.insert(index->byName.begin(), index->byName.end());
+    }
+  }
+  std::fprintf(stderr, "%zu logos by id, %zu by name\n", data.logos.size(), data.logosByName.size());
   std::map<std::string, int> byList;
   size_t withLanguage = 0, closed = 0, withIptv = 0, aliases = 0, withWikidata = 0;
   for (const Entry& e : data.entries) {
@@ -189,6 +222,22 @@ int main(int argc, char** argv) {
   if (data.entries.size() < 300) {
     std::fprintf(stderr, "too little read; not writing %s\n", argv[1]);
     return 1;
+  }
+  if (argc == 3) {
+    std::string text;
+    if (FILE* f = std::fopen(argv[2], "rb")) {
+      char buf[65536];
+      for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) text.append(buf, n);
+      std::fclose(f);
+    }
+    if (auto before = fromJson(text)) {
+      std::vector<std::string> why = sources::tooDifferent(data, *before);
+      for (const std::string& w : why) std::fprintf(stderr, "too different from last week's: %s\n", w.c_str());
+      if (!why.empty()) {
+        std::fprintf(stderr, "not writing %s\n", argv[1]);
+        return 3;
+      }
+    }
   }
   std::ofstream out(argv[1], std::ios::binary);
   out << toJson(data);

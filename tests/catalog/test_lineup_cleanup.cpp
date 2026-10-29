@@ -46,8 +46,6 @@ TEST_CASE("one channel spelled two ways is one entry") {
       {"US: FYI HD", "USA: FYI NETWORK"},
       {"US: BABY TV HD", "AT&T: BABYTV ᴿᴬᵂ"},
       {"US: THE COWBOY CHANNEL", "US: Cowboy Channel"},
-      {"US: STARZ FAMILY HD", "US: Starz Encore Family"},
-      {"US: FETV (Family Entertainment)", "TV: FAMILY ENTERTAINMENT TELEVISION ᴿᴬᵂ"},
       {"US: Willow Cricket Extra", "US: Willow Cricket Xtra"},
   };
   for (const auto& pair : pairs) {

@@ -96,9 +96,8 @@ TEST_CASE("iptv-org index from the two CSV files") {
       "NoLogo.us,,,1,1,SVG,https://example.invalid/vector.svg\n"
       "NoLogo.us,,,1,1,,http://example.invalid/insecure.png\n"
       "Quoted.us,,,1,1,,https://example.invalid/QUOTED.JPG\n";
-  auto saved = IptvOrgIndex::build(channels, logos, 1000);
+  auto saved = IptvOrgIndex::build(channels, logos);
   REQUIRE(saved);
-  CHECK(saved->fetched == 1000);
   CHECK(saved->byID.size() == 2);
   CHECK(saved->byID.at("dreamchannel.us") == "https://example.invalid/main.png");
   CHECK(saved->byID.at("quoted.us") == "https://example.invalid/QUOTED.JPG");
@@ -113,12 +112,11 @@ TEST_CASE("iptv-org index from the two CSV files") {
   CHECK(index.url(std::nullopt, "Dream TV HD") == std::string("https://example.invalid/main.png"));
   CHECK_FALSE(index.url(std::nullopt, "Unknown"));
   CHECK_FALSE(index.url(std::nullopt, "HD"));
-  CHECK(index.needsRefresh(1000 + IptvOrgIndex::kMaxAge + 1));
-  CHECK_FALSE(index.needsRefresh(1000 + IptvOrgIndex::kMaxAge));
-  auto back = IptvOrgIndex::fromJson(IptvOrgIndex::toJson(*saved));
-  REQUIRE(back);
-  CHECK(back->byID == saved->byID);
-  CHECK(back->byName == saved->byName);
+  // A channel without a guide id, by its directory entry's iptv-org id.
+  CHECK(index.url(std::nullopt, "Some Other Name", "Quoted.us") == std::string("https://example.invalid/QUOTED.JPG"));
+  CHECK(index.url(std::string("unknown.us"), "Some Other Name", "DreamChannel.us") ==
+        std::string("https://example.invalid/main.png"));
+  CHECK_FALSE(index.url(std::nullopt, "Some Other Name", "NoLogo.us"));
 
   LogoSpec named = spec("Dream TV", std::nullopt, false, false, std::nullopt, std::nullopt,
                         "https://example.invalid/p.png", std::nullopt, std::nullopt, &index);
@@ -127,9 +125,9 @@ TEST_CASE("iptv-org index from the two CSV files") {
                                                "https://example.invalid/p.png"});
   CHECK(named.sources == std::vector<std::string>{"public database", "provider"});
 
-  CHECK_FALSE(IptvOrgIndex::build("name\nx\n", logos, 0));                     // columns missing
-  CHECK_FALSE(IptvOrgIndex::build("id,name,country\nA.uk,A,UK\n", logos, 0));  // nothing in the US
-  CHECK_FALSE(IptvOrgIndex::build("", "", 0));
+  CHECK_FALSE(IptvOrgIndex::build("name\nx\n", logos));                     // columns missing
+  CHECK_FALSE(IptvOrgIndex::build("id,name,country\nA.uk,A,UK\n", logos));  // nothing in the US
+  CHECK_FALSE(IptvOrgIndex::build("", ""));
 }
 
 TEST_CASE("CSV rows: quotes, doubled quotes, CRLF, line breaks in fields") {

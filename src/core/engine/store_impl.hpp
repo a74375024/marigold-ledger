@@ -177,8 +177,6 @@ struct Store::Impl {
   std::shared_ptr<const std::vector<guide::Station>> stations = std::make_shared<std::vector<guide::Station>>();
   // Fallback logos for national channels (weekly).
   std::shared_ptr<const logos::IptvOrgIndex> iptvOrg;
-  bool iptvOrgFetching = false;
-  time::Seconds iptvOrgTriedAt = 0;
 
   // Shared with workers.
   std::shared_ptr<std::atomic<bool>> playingFull = std::make_shared<std::atomic<bool>>(false);

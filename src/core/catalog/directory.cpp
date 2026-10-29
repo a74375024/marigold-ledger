@@ -112,7 +112,11 @@ bool Entry::operator==(const Entry& o) const {
 
 std::string exactKey(std::string_view name) { return str::join(nameWords(name), ""); }
 
-std::string looseKey(std::string_view name) {
+namespace {
+
+// A name's words without a leading "the" and trailing "tv", "network",
+// "channel" or "television".
+std::vector<std::string> looseWords(std::string_view name) {
   std::vector<std::string> words = nameWords(name);
   if (words.size() > 1 && words.front() == "the") words.erase(words.begin());
   static const char* const kTails[] = {"television", "network", "channel", "tv"};
@@ -133,8 +137,12 @@ std::string looseKey(std::string_view name) {
       }
     }
   }
-  return str::join(words, "");
+  return words;
 }
+
+}  // namespace
+
+std::string looseKey(std::string_view name) { return str::join(looseWords(name), ""); }
 
 const char* rawValue(MatchKind kind) {
   switch (kind) {
@@ -151,7 +159,8 @@ const std::vector<Correction>& corrections() {
   static const std::vector<Correction> kList = {
       {"WGN America", "NewsNation"},
       {"Starz Family", "Starz Encore Family"},
-      {"FETV", "Family Entertainment Television"},
+      {"Family Entertainment Television", "FETV"},
+      {"FETV Family Entertainment Television", "FETV"},
       {"Oxygen True Crime", "Oxygen"},
       // Names the lists don't give (iptv-org has them as rows of their own).
       {"FXM", "FX Movie Channel"},
@@ -203,6 +212,11 @@ std::string toJson(const Data& data) {
   json::Value elsewhere = json::Value::object();
   for (const auto& [key, country] : data.elsewhere) elsewhere.set(key, country);
   v.set("elsewhere", elsewhere);
+  for (const auto& [field, map] : {std::pair{"logos", &data.logos}, std::pair{"logosByName", &data.logosByName}}) {
+    json::Value logos = json::Value::object();
+    for (const auto& [key, url] : *map) logos.set(key, url);
+    v.set(field, logos);
+  }
   return json::write(v);
 }
 
@@ -225,6 +239,11 @@ std::optional<Data> fromJson(std::string_view text) {
     e.wikidata = item["wikidata"].asString();
     e.iptvOrg = item["iptvOrg"].asString();
     data.entries.push_back(std::move(e));
+  }
+  for (const auto& [field, map] : {std::pair{"logos", &data.logos}, std::pair{"logosByName", &data.logosByName}}) {
+    for (const auto& [key, url] : (*doc)[field].fields()) {
+      if (url.isString()) (*map)[key] = url.asString();
+    }
   }
   for (const auto& [key, country] : (*doc)["elsewhere"].fields()) {
     if (country.isString()) data.elsewhere[key] = country.asString();
@@ -255,7 +274,9 @@ Index::Index(const Data& data) : data_(&data) {
       std::string loose = looseKey(alias);
       if (!own.empty() && loose.size() > own.size() && str::startsWith(loose, own)) continue;
       addUnique(free ? freeByAlias_ : byAlias_, exactKey(alias), i);
-      addUnique(free ? freeByLoose_ : byLoose_, looseKey(alias), i);
+      // Loosely, an other name of one word is any channel's ("The Action
+      // Channel" is no "Action").
+      if (looseWords(alias).size() > 1) addUnique(free ? freeByLoose_ : byLoose_, loose, i);
     }
   }
   // A correction's channel: a listed one, else one of the free tier.

@@ -1,6 +1,8 @@
 # The channel directory, built into the app as bytes: tools/channeldir
 # writes data/channel-directory.json (CI makes it at most weekly). Without
-# the file the app has an empty directory, and it never fetches one.
+# the file the app has an empty directory (no directory rows, no fallback
+# logos) and it never fetches one; with MARIGOLD_REQUIRE_CHANNEL_DIRECTORY=1
+# (the apps' CI builds) a missing file stops the build.
 set(MARIGOLD_CHANNEL_DIRECTORY "${CMAKE_SOURCE_DIR}/data/channel-directory.json" CACHE FILEPATH "Built-in channel directory (JSON)")
 set(_blob "${CMAKE_BINARY_DIR}/generated/channel_directory_blob.cpp")
 set(_bytes "")
@@ -12,6 +14,9 @@ if(EXISTS "${MARIGOLD_CHANNEL_DIRECTORY}")
   math(EXPR _size "${_len} / 2")
   string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," _bytes "${_hex}")
   message(STATUS "Built-in channel directory: ${MARIGOLD_CHANNEL_DIRECTORY} (${_size} bytes)")
+elseif("$ENV{MARIGOLD_REQUIRE_CHANNEL_DIRECTORY}" STREQUAL "1")
+  # The apps' builds (CI): My Lineup and the fallback logos depend on it.
+  message(FATAL_ERROR "No channel directory at ${MARIGOLD_CHANNEL_DIRECTORY}; the apps aren't built without one")
 else()
   message(STATUS "Built-in channel directory: none (${MARIGOLD_CHANNEL_DIRECTORY} not found)")
 endif()

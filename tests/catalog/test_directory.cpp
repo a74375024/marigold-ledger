@@ -86,13 +86,52 @@ TEST_CASE("directory: saved and read back") {
   data.entries[0].wikidata = "Q1";
   data.entries[0].iptvOrg = "UPtv.us";
   data.elsewhere["arydigital"] = "PK";
+  data.logos["uptv.us"] = "https://example.invalid/up.png";
+  data.logosByName["up"] = "https://example.invalid/up.png";
   auto back = fromJson(toJson(data));
   REQUIRE(back);
   CHECK(back->made == "2026-10-28");
   REQUIRE(back->entries.size() == 1);
   CHECK(back->entries[0] == data.entries[0]);
   CHECK(back->elsewhere == data.elsewhere);
+  CHECK(back->logos == data.logos);
+  CHECK(back->logosByName == data.logosByName);
   CHECK_FALSE(fromJson("nope"));
+}
+
+TEST_CASE("directory: this week's replaces last week's only when it isn't much thinner") {
+  Data before;
+  for (const std::string& name : wellKnownChannels()) before.entries.push_back(entry(name.c_str(), name.c_str()));
+  for (int i = 0; i < 70; ++i) {
+    std::string n = "Channel " + std::to_string(i);
+    before.entries.push_back(entry(n.c_str(), n.c_str()));
+    before.logos["c" + std::to_string(i) + ".us"] = "https://example.invalid/l.png";
+  }
+  Data now = before;
+  CHECK(tooDifferent(now, before).empty());
+  // A few fewer is fine; over a tenth fewer entries or a fifth fewer logos isn't.
+  now.entries.resize(now.entries.size() - 9);
+  for (int i = 0; i < 13; ++i) now.logos.erase("c" + std::to_string(i) + ".us");
+  CHECK(tooDifferent(now, before).empty());
+  now.entries.resize(now.entries.size() - 2);
+  now.logos.erase("c13.us");
+  now.logos.erase("c14.us");
+  std::vector<std::string> why = tooDifferent(now, before);
+  REQUIRE(why.size() == 2);
+  CHECK(why[0] == "entries: 89 (last time 100)");
+  CHECK(why[1] == "logos: 55 (last time 70)");
+  // Last week's without logos (an older build's): logos aren't compared.
+  Data older = before;
+  older.logos.clear();
+  now = before;
+  now.logos.clear();
+  CHECK(tooDifferent(now, older).empty());
+  // A well-known channel gone.
+  now = before;
+  now.entries.erase(now.entries.begin());
+  why = tooDifferent(now, before);
+  REQUIRE(why.size() == 1);
+  CHECK(why[0] == "no " + wellKnownChannels().front());
 }
 
 TEST_CASE("directory: a list page's channels") {
@@ -290,7 +329,9 @@ TEST_CASE("directory: umbrella articles, other channels' names, rebrands") {
   src.rows["defunct"] = {{"FanDuel Sports Network North", "Fox Sports North", "Network rebrands", "2008–2021"}};
   src.pages["Entertainment Studios Networks"] = {{"Comedy.tv", "Recipe.tv"}, ""};
   src.pages["Cinemax"] = {{"ActionMAX", "Skinemax", "WCMX-LD"}, ""};
-  src.pages["FanDuel Sports Network North"] = {{"Bally Sports North", "Fox Sports North"}, ""};
+  src.pages["FanDuel Sports Network North"] = {{"Bally Sports North", "Fox Sports North"}, "Q9"};
+  // Wikidata's "dissolved" on a renamed channel's item is the old name's.
+  src.entities["Q9"].closed = "2024-10-21";
   src.iptv = parseIptvOrg(
       "id,name,alt_names,network,owners,country,categories,is_nsfw,launched,closed,replaced_by,website\n"
       "Cinemax.us,Cinemax,,,,US,movies,FALSE,,,,\n"

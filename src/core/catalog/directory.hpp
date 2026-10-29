@@ -48,6 +48,11 @@ struct Data {
   // exact key, with the country and its feed's language: "arydigital" ->
   // "PK:ur". A hint at a channel's language ("CA:en" is English all the same).
   std::map<std::string, std::string> elsewhere;
+  // Fallback logos (logos::IptvOrgIndex): iptv-org's US channels with a PNG
+  // or JPEG logo, by iptv-org id in lower case ("cnn.us", also a guide id),
+  // and by the names' core key ("cnn"). The TV never fetches them.
+  std::map<std::string, std::string> logos;
+  std::map<std::string, std::string> logosByName;
 
   bool empty() const { return entries.empty(); }
 };
@@ -95,7 +100,8 @@ class Index {
   // shared by two entries matches neither (ambiguous). The free tier is
   // only asked when no listed channel has the name, even loosely ("Bounce"
   // is Bounce TV). An other name that is the entry's name and more
-  // ("GritXtra") isn't one.
+  // ("GritXtra") isn't one, and one left with a single word ("The Action
+  // Channel") matches only exactly.
   Match match(std::string_view name) const;
   // The entry with this id (nullptr when none).
   const Entry* entryById(const std::string& id) const;

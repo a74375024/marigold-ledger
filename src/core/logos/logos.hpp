@@ -18,37 +18,30 @@
 namespace marigold::logos {
 
 // iptv-org channel database logos, for national channels with no curated
-// logo (tried before the provider's). Only US channels with PNG or JPEG logos are
-// kept, by guide id ("cnn.us", lower-cased) and by catalog core key.
+// logo (tried before the provider's). Only US channels with PNG or JPEG
+// logos are kept, by guide id ("cnn.us", lower-cased) and by catalog core
+// key. CI makes the index (tools/channeldir) and the app carries it in the
+// channel directory (catalog/directory.hpp); the TV never fetches it.
 class IptvOrgIndex {
  public:
   struct Saved {
-    time::Seconds fetched = 0;
     std::unordered_map<std::string, std::string> byID;
     std::unordered_map<std::string, std::string> byName;
   };
 
-  // The two files, downloaded at most once a week.
-  static constexpr const char* kBase = "https://cdn.jsdelivr.net/gh/iptv-org/database@master/data/";
-  static constexpr const char* kChannelsFile = "channels.csv";
-  static constexpr const char* kLogosFile = "logos.csv";
-  static constexpr time::Seconds kMaxAge = 7 * 24 * 3600;
-
   IptvOrgIndex() = default;
   explicit IptvOrgIndex(Saved saved) : saved_(std::move(saved)) {}
 
-  // Builds the index from channels.csv and logos.csv. nullopt when the
-  // columns are missing or no US channel has a usable logo.
-  static std::optional<Saved> build(std::string_view channelsCsv, std::string_view logosCsv,
-                                    time::Seconds now);
+  // Builds the index from iptv-org's channels.csv and logos.csv. nullopt
+  // when the columns are missing or no US channel has a usable logo.
+  static std::optional<Saved> build(std::string_view channelsCsv, std::string_view logosCsv);
 
-  std::optional<std::string> url(const std::optional<std::string>& epgID,
-                                 std::string_view name) const;
-  bool needsRefresh(time::Seconds now) const { return now - saved_.fetched > kMaxAge; }
+  // By the channel's guide id, then its directory entry's iptv-org id
+  // ("RacerNetwork.us"; empty when it has none), then its name.
+  std::optional<std::string> url(const std::optional<std::string>& epgID, std::string_view name,
+                                 const std::string& directoryIptvOrg = std::string()) const;
   const Saved& saved() const { return saved_; }
-
-  static std::string toJson(const Saved& saved);
-  static std::optional<Saved> fromJson(std::string_view text);
+  bool empty() const { return saved_.byID.empty() && saved_.byName.empty(); }
 
  private:
   Saved saved_;
@@ -98,7 +91,8 @@ LogoSpec spec(std::string_view name, const std::optional<std::string>& core, boo
               bool isLocal, const std::optional<std::string>& callsign,
               std::optional<int> virtualNumber, const std::string& provider,
               const std::optional<std::string>& epgID,
-              std::optional<catalog::LineupCategory> category, const IptvOrgIndex* iptvOrg);
+              std::optional<catalog::LineupCategory> category, const IptvOrgIndex* iptvOrg,
+              const std::string& directoryIptvOrg = std::string());
 
 // A small CSV reader (quoted fields, doubled quotes, CRLF).
 std::vector<std::vector<std::string>> csvRows(std::string_view text);
