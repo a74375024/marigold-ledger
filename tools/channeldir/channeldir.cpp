@@ -28,7 +28,6 @@
 #include "core/catalog/directory_sources.hpp"
 #include "core/guide/stations.hpp"
 #include "core/logos/logos.hpp"
-#include "core/util/rx.hpp"
 #include "core/util/strings.hpp"
 
 using namespace marigold;
@@ -125,24 +124,6 @@ int main(int argc, char** argv) {
                      text->substr(0, 1500).c_str());
       }
       for (const auto& [section, n] : bySection) std::fprintf(stderr, "    %-50s %d\n", section.c_str(), n);
-      // Closing years come from the defunct list's rows: its table headers
-      // and the rows of channels whose closing is in question, to check.
-      if (page.list == "defunct") {
-        int headers = 0;
-        for (std::string_view line : marigold::str::split(*text, '\n')) {
-          if (marigold::str::startsWith(line, "!") && headers++ < 40) {
-            std::fprintf(stderr, "    header: %s\n", std::string(line.substr(0, 200)).c_str());
-          }
-        }
-        for (const sources::Row& r : rows) {
-          if (!rx::test("fanduel|bally|fox sports|gol ?tv|this tv|hrtv|merit|nbc sports chicago|el rey|thrillermax",
-                        r.text + " " + r.title + " " + r.rowText, true)) {
-            continue;
-          }
-          std::fprintf(stderr, "    row [%s] title=%s text=%s | %s\n", r.section.c_str(), r.title.c_str(), r.text.c_str(),
-                       r.rowText.substr(0, 240).c_str());
-        }
-      }
       src.rows[page.list] = std::move(rows);
       break;
     }

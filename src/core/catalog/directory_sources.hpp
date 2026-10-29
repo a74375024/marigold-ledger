@@ -34,7 +34,13 @@ struct Row {
   std::string text;
   std::string section;
   std::string rowText;
+  // Its table's closing-date cell ("2025-12-31", "2024-04", "1998"; "yes"
+  // when the table has the column but the row no date); empty without one.
+  std::string closed = {};
 };
+// A closing date as written ("December 31, 2025", "April 2024", "1998")
+// as "2025-12-31", "2024-04", "1998"; empty when it holds no year.
+std::string closingDate(std::string_view text);
 // Per table row the first cell with a link (or the first cell's text); per
 // bullet its first link. Files, categories, references and the closing
 // sections (See also, References...) are skipped.

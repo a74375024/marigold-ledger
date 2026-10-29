@@ -184,6 +184,28 @@ std::string plainText(std::string_view wikitext) {
   return trimmed(rx::replace(s, "\\s+", " "));
 }
 
+std::string closingDate(std::string_view text) {
+  static const char* const kMonths[] = {"january", "february", "march",     "april",   "may",      "june",
+                                        "july",    "august",   "september", "october", "november", "december"};
+  std::string lower = str::lower(plainText(text));
+  auto year = rx::first("\\b((?:19|20)\\d{2})\\b", lower);
+  if (!year) return std::string();
+  std::string out(year->group(1));
+  for (int m = 0; m < 12; ++m) {
+    auto at = rx::first(std::string("\\b") + kMonths[m] + "\\b(?:\\s+(\\d{1,2})\\b)?", lower);
+    if (!at) continue;
+    char buf[16];
+    std::snprintf(buf, sizeof buf, "-%02d", m + 1);
+    out += buf;
+    if (!at->group(1).empty()) {
+      std::snprintf(buf, sizeof buf, "-%02d", std::atoi(std::string(at->group(1)).c_str()));
+      out += buf;
+    }
+    break;
+  }
+  return out;
+}
+
 std::vector<Row> parseList(std::string_view wikitext) {
   std::vector<Row> rows;
   std::string section;
@@ -196,13 +218,16 @@ std::vector<Row> parseList(std::string_view wikitext) {
   std::vector<Cell> cells;
   // The table so far: rows still covered by a rowspan, by column, and the
   // column its header names as the channel's ("Channel", "Network").
+  // Also the column of closing dates, and what a rowspan carries down.
   std::vector<int> spans;
+  std::vector<std::string> spanText;
   int nameColumn = -1;
-  auto addRow = [&](std::string text, std::string page, const std::string& rowText) {
+  int closedColumn = -1;
+  auto addRow = [&](std::string text, std::string page, const std::string& rowText, std::string closed = {}) {
     text = trimmed(text);
     if (text.empty() || text.size() > 80 || rx::test("^[\\d\\s.,–—-]*$", text)) return;
     if (rx::test("^list of ", page, true)) return;
-    rows.push_back({std::move(page), std::move(text), section, rowText});
+    rows.push_back({std::move(page), std::move(text), section, rowText, std::move(closed)});
   };
   auto number = [](const std::string& attrs, const char* name) {
     if (auto m = rx::first(std::string(name) + "\\s*=\\s*\"?\\s*(\\d+)", attrs, true)) {
@@ -222,6 +247,10 @@ std::vector<Row> parseList(std::string_view wikitext) {
     };
     std::vector<Placed> placed;
     std::vector<int> fresh;
+    std::map<size_t, std::string> carried;  // columns an earlier row's rowspan covers
+    for (size_t k = 0; k < spans.size(); ++k) {
+      if (spans[k] > 0 && k < spanText.size()) carried[k] = spanText[k];
+    }
     size_t column = 0;
     for (const Cell& c : cells) {
       std::string content = cellContent(c.text);
@@ -231,6 +260,10 @@ std::vector<Row> parseList(std::string_view wikitext) {
       placed.push_back({column, content});
       if (fresh.size() < column + static_cast<size_t>(colspan)) fresh.resize(column + static_cast<size_t>(colspan), 0);
       for (int k = 0; k < colspan; ++k) fresh[column + static_cast<size_t>(k)] = rowspan - 1;
+      if (rowspan > 1) {
+        if (spanText.size() < column + static_cast<size_t>(colspan)) spanText.resize(column + static_cast<size_t>(colspan));
+        for (int k = 0; k < colspan; ++k) spanText[column + static_cast<size_t>(k)] = content;
+      }
       column += static_cast<size_t>(colspan);
     }
     for (int& span : spans) span = std::max(0, span - 1);
@@ -244,8 +277,20 @@ std::vector<Row> parseList(std::string_view wikitext) {
             !rx::test("\\b(owner|parent|logo|former|affiliat\\w*|launch\\w*|date|notes?|type|language)\\b", head, true)) {
           nameColumn = static_cast<int>(p.column);
         }
+        if (closedColumn < 0 && rx::test("\\b(clos\\w*|defunct|ended|end date|ceased|shut ?down)\\b", head, true)) {
+          closedColumn = static_cast<int>(p.column);
+        }
       }
       return;
+    }
+    std::string closed;
+    if (closedColumn >= 0) {
+      auto cell = std::find_if(placed.begin(), placed.end(),
+                               [&](const Placed& p) { return p.column == static_cast<size_t>(closedColumn); });
+      auto down = carried.find(static_cast<size_t>(closedColumn));
+      std::string text = cell != placed.end() ? cell->content : down != carried.end() ? down->second : std::string();
+      closed = closingDate(text);
+      if (closed.empty()) closed = "yes";
     }
     // The name column's cell (the next one when it holds only a logo).
     for (const Placed& p : placed) {
@@ -253,9 +298,9 @@ std::vector<Row> parseList(std::string_view wikitext) {
       std::string text = plainText(p.content);
       if (text.empty()) continue;
       if (auto link = firstLink(p.content)) {
-        addRow(link->text, link->page, rowText);
+        addRow(link->text, link->page, rowText, closed);
       } else {
-        addRow(text, "", rowText);
+        addRow(text, "", rowText, closed);
       }
       break;
     }
@@ -274,7 +319,9 @@ std::vector<Row> parseList(std::string_view wikitext) {
       finishRow();
       ++tables;
       spans.clear();
+      spanText.clear();
       nameColumn = -1;
+      closedColumn = -1;
       continue;
     }
     if (str::startsWith(t, "|}")) {
@@ -572,11 +619,16 @@ Data assemble(const Sources& sources, const std::string& made) {
         // A defunct row of a channel on a current list, or one under another
         // name than its article's ("Fox Sports North" linking to FanDuel
         // Sports Network North), is an old name, not a closing.
-        bool rebrand = facts && looseKey(row.text) != looseKey(withoutBrackets(title));
+        // A row under "Network rebrands" is a rename too. The date is the
+        // table's closing-date cell; without that column, the row's last year.
+        bool rebrand = (facts && looseKey(row.text) != looseKey(withoutBrackets(title))) ||
+                       rx::test("\\b(rebrand\\w*|renam\\w*)\\b", row.section, true);
         d.renamed = d.renamed || rebrand;
         if (!d.current && fresh && !rebrand) {
           auto years = rx::all("\\b(19|20)\\d{2}\\b", row.rowText);
-          e.closed = years.empty() ? std::string("yes") : std::string(years.back().group(0));
+          e.closed = !row.closed.empty()  ? row.closed
+                     : years.empty()      ? std::string("yes")
+                                          : std::string(years.back().group(0));
         }
       } else {
         if (!d.current) {

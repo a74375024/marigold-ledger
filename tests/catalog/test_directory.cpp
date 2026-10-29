@@ -300,6 +300,63 @@ TEST_CASE("directory: assembled in layers") {
   CHECK_FALSE(data.elsewhere.count("up"));
 }
 
+TEST_CASE("directory: the defunct list's closing dates, from its closing-date column") {
+  CHECK(closingDate("December 31, 2025") == "2025-12-31");
+  CHECK(closingDate("April 2024") == "2024-04");
+  CHECK(closingDate("1998") == "1998");
+  CHECK(closingDate("") == "");
+  CHECK(closingDate("Launched on February 1, 2003.") == "2003-02-01");
+  // As the list writes it: headers over two lines, a closing date spanning
+  // two rows, notes full of launch years.
+  std::string page =
+      "== Spanish ==\n"
+      "{| class=\"wikitable\"\n"
+      "! Name || Owner\n"
+      "!Closure date|| Notes\n"
+      "|-\n"
+      "| [[GOL TV]] || Gol TV, Inc. || December 31, 2025 || Launched on February 1, 2003.\n"
+      "|}\n"
+      "== Regional sports ==\n"
+      "{| class=\"wikitable\"\n"
+      "! Name || Location || Owner\n"
+      "!Closure date|| Notes\n"
+      "|-\n"
+      "| [[FanDuel Sports Network Ohio]] || Ohio || Main Street Sports Group || September 30, 2026 || Known as "
+      "Fox Sports Ohio (2008-2021) and Bally Sports Ohio (2021-2024).\n"
+      "|-\n"
+      "| [[Fox Sports Carolinas]] || North/South Carolina || Fox || rowspan=\"2\" |March 31, 2021 || Launched on "
+      "October 31, 2008.\n"
+      "|-\n"
+      "| [[Fox Sports Tennessee]] || Tennessee || Fox || Launched on October 31, 2008.\n"
+      "|}\n"
+      "== Network rebrands ==\n"
+      "{| class=\"wikitable\"\n"
+      "! Name || Owner || Closure date || Notes\n"
+      "|-\n"
+      "| HRTV || Betfair || || Rebranded as TVG2 on October 28, 2015, and then FanDuel Racing in September 2022.\n"
+      "|}\n";
+  std::vector<Row> rows = parseList(page);
+  REQUIRE(rows.size() == 5);
+  CHECK(rows[0].closed == "2025-12-31");
+  CHECK(rows[1].closed == "2026-09-30");
+  CHECK(rows[2].closed == "2021-03-31");
+  CHECK(rows[3].closed == "2021-03-31");  // the rowspan's date
+  CHECK(rows[4].text == "HRTV");
+  CHECK(rows[4].closed == "yes");  // the column, but no date
+  Sources src;
+  src.rows["defunct"] = rows;
+  src.pages["GOL TV"] = {};
+  src.pages["FanDuel Sports Network Ohio"] = {};
+  Data data = assemble(src, "2026-10-28");
+  auto closedOf = [&](const char* name) {
+    auto it = std::find_if(data.entries.begin(), data.entries.end(), [&](const Entry& e) { return e.name == name; });
+    return it == data.entries.end() ? std::string("missing") : it->closed;
+  };
+  CHECK(closedOf("GOL TV") == "2025-12-31");
+  CHECK(closedOf("FanDuel Sports Network Ohio") == "2026-09-30");
+  CHECK(closedOf("HRTV") == "");  // a rename (now FanDuel Racing), not a closing
+}
+
 TEST_CASE("directory: a table's channel column, past owners spanning rows") {
   const char* page =
       "== English language ==\n"
