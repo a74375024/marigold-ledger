@@ -129,8 +129,9 @@ class Session {
   // The small note at the top right ("Reconnecting…"); empty = none.
   const std::string& note() const { return rec_.note(); }
   uint32_t tunedAt() const { return tunedAt_; }
-  // Why a feed last failed this session ("no picture after 20 s", "stopped
-  // after 4 s"), with when; nothing when it worked since.
+  // Why a feed last failed this session ("no picture after 10 s", "stopped
+  // after 4 s", "this TV can't play it"), with when; nothing when it worked
+  // since.
   struct FeedProblem {
     time::Seconds at = 0;
     std::string why;

@@ -20,7 +20,7 @@ std::vector<FeedInfo> embyFeeds(int n) {
 Actions failStart(Rig& t) {
   t.untilOpen();
   t.hand();
-  return t.wait(kStartupTimeoutMs);
+  return t.wait(marigold::playback::startupTimeout(t.r.feeds()[t.r.feedIndex()].kind));
 }
 
 // Opens what is due, plays it, then stalls for good.

@@ -121,6 +121,9 @@ struct Store::Impl {
   // time unless one is pinned.
   std::map<std::string, std::string> lastFeed;
   std::map<std::string, std::vector<int>> reliability;  // source tag -> {worked, failed}
+  // Raw channel id -> when this TV last couldn't play it (playback
+  // cannotPlayHere): tried after the channel's other versions for a while.
+  std::map<std::string, time::Seconds> unplayable;
   std::set<std::string> hiddenGroups;  // provider groups left out of All Channels
   catalog::LineupPrefs prefs;
 

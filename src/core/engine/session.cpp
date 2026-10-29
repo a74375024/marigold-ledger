@@ -186,8 +186,12 @@ void Session::apply(const playback::Actions& actions) {
             problems_.erase(id);
           } else {
             lastFailed_ = a.feed;
-            std::string why = "no picture after 20 s";
-            if (sawPicture_ && pictureAt_) {
+            if (a.unplayable) store_.markUnplayable(id);
+            std::string why = "no picture after " +
+                              std::to_string(playback::startupTimeout(rec_.feeds()[a.feed].kind) / 1000) + " s";
+            if (a.unplayable) {
+              why = "this TV can't play it";
+            } else if (sawPicture_ && pictureAt_) {
               uint32_t ran = (ms() - pictureAt_) / 1000;
               why = ran >= 120 ? "stopped after " + std::to_string(ran / 60) + " min"
                                : "stopped after " + std::to_string(std::max<uint32_t>(1, ran)) + " s";

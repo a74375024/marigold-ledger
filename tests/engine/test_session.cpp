@@ -4,6 +4,8 @@
 
 #include <memory>
 #include <optional>
+#include <algorithm>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -23,6 +25,7 @@ struct FakePlayer final : marigold::engine::Player {
   struct Shared {
     std::vector<std::string> plays;  // channel ids, in order
     std::set<std::string> dead;      // feeds that fail as soon as they start
+    std::map<std::string, std::string> errors;  // feeds that fail with this message
     PlayerState state;
     bool canRetry = false;
     int retries = 0, stops = 0;
@@ -32,6 +35,10 @@ struct FakePlayer final : marigold::engine::Player {
   void play(const Feed& f, bool) override {
     s_->plays.push_back(f.channelId);
     if (s_->dead.count(f.channelId)) s_->state.failed = true;
+    if (auto e = s_->errors.find(f.channelId); e != s_->errors.end()) {
+      s_->state.failed = true;
+      s_->state.error = e->second;
+    }
   }
   std::optional<Retry> retryAnotherWay() override {
     if (!s_->canRetry) return std::nullopt;
@@ -246,4 +253,35 @@ TEST_CASE("session: the feed that played last starts first next time, unless one
   // A pinned feed still wins.
   r.store->pinFeed(ids[0], feeds[0].channelId);
   CHECK(r.store->feeds(ids[0])[0].channelId == feeds[0].channelId);
+}
+
+TEST_CASE("session: a version this TV can't play is left at once and tried last next time") {
+  Rig r;
+  auto ids = r.entries(2);
+  REQUIRE_FALSE(ids.empty());
+  auto feeds = r.store->feeds(ids[0]);
+  REQUIRE(feeds.size() >= 2);
+  r.player->errors[feeds[0].channelId] = "601 Resource Allocation Error";
+  r.player->dead.insert(feeds[1].channelId);
+  r.session->setShowingFull(true);
+  REQUIRE(r.session->tune(ids[0]));
+  r.run(500);
+  // Straight on to the next version: no same-version retries, no grace.
+  REQUIRE(r.runUntilFeed(1));
+  CHECK(std::count(r.player->plays.begin(), r.player->plays.end(), feeds[0].channelId) == 1);
+  auto problem = r.session->feedProblem(feeds[0].channelId);
+  REQUIRE(problem);
+  CHECK(problem->why == "this TV can't play it");
+  r.run(120'000);
+  // Next time it comes after the channel's other versions...
+  auto again = r.store->feeds(ids[0]);
+  CHECK(again.front().channelId != feeds[0].channelId);
+  CHECK(again.back().channelId == feeds[0].channelId);
+  // ...unless the viewer pinned it.
+  r.store->pinFeed(ids[0], feeds[0].channelId);
+  CHECK(r.store->feeds(ids[0]).front().channelId == feeds[0].channelId);
+  r.store->pinFeed(ids[0], "");
+  // Once it plays, it's back in its place.
+  r.store->recordFeed(feeds[0].channelId, true);
+  CHECK(r.store->feeds(ids[0]).back().channelId != feeds[0].channelId);
 }

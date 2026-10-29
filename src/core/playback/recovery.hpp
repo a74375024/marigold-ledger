@@ -41,6 +41,10 @@ using Ms = int64_t;
 
 // Thresholds, named after the Swift constants (seconds there, ms here).
 inline constexpr Ms kStartupTimeoutMs = 20000;    // startupTimeout: no picture
+// Marigold: an Xtream picture comes within 6 s (the playback log: 161 starts,
+// the slowest 5.7 s), and a start that hangs comes back on the retry, so
+// Xtream waits 10 s; Emby / Jellyfin open on the server first and keep 20.
+inline constexpr Ms kXtreamStartupTimeoutMs = 10000;
 inline constexpr Ms kStallNoteDelayMs = 3000;     // stallNoteDelay: "Buffering…"
 inline constexpr Ms kStallTimeoutMs = 10000;      // stallTimeout
 inline constexpr int kMaxRecoveries = 6;          // maxRecoveries
@@ -65,6 +69,17 @@ enum class FeedKind {
   Emby,      // Emby / Jellyfin: the server opens (and must close) a stream
   Playlist,  // M3U link; direct like Xtream (see recovery.cpp)
 };
+
+// How long a feed of this kind has to show a first picture.
+Ms startupTimeout(FeedKind kind);
+// Marigold: a player error that means this TV can't play the stream at all.
+// webOS 601 "Resource Allocation Error": the resource manager has no decoder
+// setup for the stream's format (DTS audio on 2020-21 LG sets, an odd
+// codec / size / frame rate), so retrying it is pointless and the next
+// version is tried at once. Not 203 "AV Type Not Founded": that is data the
+// pipeline can't recognise (an error page, a stream the server hadn't opened
+// yet), which a retry or a later try can fix.
+bool cannotPlayHere(std::string_view message);
 
 struct FeedInfo {
   std::string id;  // stable feed id (never a URL)
@@ -95,7 +110,8 @@ struct Action {
     Note,
     // A short toast (`text`), e.g. "Playing a backup feed (2 of 3)".
     Toast,
-    // Source reliability: feed `feed` worked (`worked`) or failed.
+    // Source reliability: feed `feed` worked (`worked`) or failed (`text`
+    // says why; `unplayable` when this TV can't play it).
     RecordFeed,
     // A playback log line: `text` is the event, `detail` the rest; `feed` is
     // the feed it is about (npos for none). Never contains a link.
@@ -109,6 +125,8 @@ struct Action {
   bool worked = false;
   std::string text;
   std::string detail;
+  // RecordFeed, failed: this TV can't play the feed (cannotPlayHere).
+  bool unplayable = false;
 };
 using Actions = std::vector<Action>;
 
@@ -184,7 +202,7 @@ class Recovery {
   void beginTrouble(Ms since, std::string cause, Ms grace, Actions& out);
   void recoveredByItself(Ms now, Actions& out);
   void scheduleStartupFailure(Ms now, std::string reason);
-  void startupFailed(Ms now, const std::string& reason, Actions& out);
+  void startupFailed(Ms now, const std::string& reason, Actions& out, bool unplayable = false);
   void recover(Ms now, const std::string& reason, Actions& out);
   void moveToNext(Ms now, const std::string& reason, Actions& out);
   bool allowRecovery(Ms now);

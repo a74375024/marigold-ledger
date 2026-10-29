@@ -36,6 +36,12 @@ const char kDefaultOpenError[] = "This channel couldn't be opened right now.";
 
 }  // namespace
 
+Ms startupTimeout(FeedKind kind) { return kind == FeedKind::Xtream ? kXtreamStartupTimeoutMs : kStartupTimeoutMs; }
+
+bool cannotPlayHere(std::string_view message) {
+  return rx::test("resource allocation error", std::string(message), true);
+}
+
 std::string safeMessage(std::string_view text) {
   // Never show or keep a stream link (Xtream links carry the password).
   std::string out = rx::replace(text, "[a-z][a-z0-9+.-]*://\\S+", "the stream", true);
@@ -210,6 +216,9 @@ Actions Recovery::playerError(Ms now, std::string_view message) {
   log(out, "player error", text);
   if (sawFirstFrame_) {
     beginTrouble(now, "error: " + text, kErrorGraceMs, out);
+  } else if (cannotPlayHere(text)) {
+    // No grace and no retries: this version won't play on this TV.
+    startupFailed(now, "this TV can't play this version (" + text + ")", out, true);
   } else {
     scheduleStartupFailure(now, "error: " + text);
   }
@@ -250,12 +259,13 @@ Actions Recovery::tick(Ms now) {
   if (!playing()) return out;
   if (!sawFirstFrame_) {
     // armFirstFrameWatchdog and scheduleStartupFailure: whichever is due first.
-    Ms watchdog = handedAt_ + kStartupTimeoutMs;
+    Ms timeout = startupTimeout(feeds_[index_].kind);
+    Ms watchdog = handedAt_ + timeout;
     if (startupErrorAt_ && now >= *startupErrorAt_ && *startupErrorAt_ <= watchdog) {
       std::string reason = startupErrorReason_;
       startupFailed(now, reason, out);
     } else if (now >= watchdog) {
-      startupFailed(now, "no picture after " + seconds(kStartupTimeoutMs), out);
+      startupFailed(now, "no picture after " + seconds(timeout), out);
     }
     return out;
   }
@@ -376,11 +386,16 @@ void Recovery::scheduleStartupFailure(Ms now, std::string reason) {
 }
 
 // A feed that never showed a picture.
-void Recovery::startupFailed(Ms now, const std::string& reason, Actions& out) {
+void Recovery::startupFailed(Ms now, const std::string& reason, Actions& out, bool unplayable) {
   if (!playing()) return;
   startupErrorAt_.reset();
   const FeedInfo feed = feeds_[index_];
   log(out, "start failed", reason, index_);
+  if (unplayable) {
+    out.push_back({Action::Kind::RecordFeed, index_, 0, false, reason, {}, true});
+    moveToNext(now, reason, out);
+    return;
+  }
   // Xtream: retry the same feed (twice) before any backup. A failed start is
   // often the provider's connection limit while the previous stream lets go,
   // or a slow first segment.
@@ -399,7 +414,7 @@ void Recovery::startupFailed(Ms now, const std::string& reason, Actions& out) {
     startTune(now, index_, kXtreamRetryDelayMs, true, true, false, reason, out);
     return;
   }
-  out.push_back({Action::Kind::RecordFeed, index_, 0, false, {}, {}});
+  out.push_back({Action::Kind::RecordFeed, index_, 0, false, reason, {}});
   moveToNext(now, reason, out);
 }
 

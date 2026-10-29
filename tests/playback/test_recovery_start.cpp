@@ -4,6 +4,7 @@
 using namespace rig;
 using marigold::playback::kSettleMs;
 using marigold::playback::kStartupTimeoutMs;
+using marigold::playback::kXtreamStartupTimeoutMs;
 using marigold::playback::kXtreamRetryDelayMs;
 using Phase = Recovery::Phase;
 
@@ -176,7 +177,7 @@ TEST_CASE("an Xtream feed that won't start is retried twice, 2 s apart, before t
   for (int attempt = 1; attempt <= 2; ++attempt) {
     t.hand();
     Ms handed = t.now;
-    Actions fail = t.until(handed + kStartupTimeoutMs);
+    Actions fail = t.until(handed + kXtreamStartupTimeoutMs);
     // The note only goes out when it changes.
     CHECK(notes(fail) == (attempt == 1 ? std::vector<std::string>{"Retrying…"} : std::vector<std::string>{}));
     CHECK(t.r.note() == "Retrying…");
@@ -190,7 +191,7 @@ TEST_CASE("an Xtream feed that won't start is retried twice, 2 s apart, before t
     CHECK(t.now == failedAt + kSettleMs + kXtreamRetryDelayMs);
   }
   t.hand();
-  Actions third = t.until(t.now + kStartupTimeoutMs);
+  Actions third = t.until(t.now + kXtreamStartupTimeoutMs);
   const Action* rec = first(third, Kind::RecordFeed);
   REQUIRE(rec);
   CHECK_FALSE(rec->worked);
@@ -323,4 +324,38 @@ TEST_CASE("a channel with no feeds gives up at once") {
   CHECK(giveUpMessage(a) == "This channel couldn't be opened right now.");
   CHECK(has(a, Kind::CloseStream));
   CHECK(t.wait(5000).empty());
+}
+
+TEST_CASE("an Xtream feed has 10 s for a picture; Emby keeps 20") {
+  CHECK(marigold::playback::startupTimeout(marigold::playback::FeedKind::Xtream) == 10000);
+  CHECK(marigold::playback::startupTimeout(marigold::playback::FeedKind::Emby) == kStartupTimeoutMs);
+  Rig t;
+  t.tune({xt("a"), xt("b")});
+  t.untilOpen();
+  t.hand();
+  Ms handed = t.now;
+  CHECK_FALSE(logged(t.until(handed + kXtreamStartupTimeoutMs - 10), "start failed"));
+  Actions fail = t.until(handed + kXtreamStartupTimeoutMs);
+  CHECK(logDetail(fail, "start failed") == "no picture after 10s");
+}
+
+TEST_CASE("an error meaning this TV can't play the feed moves on at once, with no retries") {
+  CHECK(marigold::playback::cannotPlayHere("601 Resource Allocation Error"));
+  CHECK_FALSE(marigold::playback::cannotPlayHere("203 AV Type Not Founded"));
+  CHECK_FALSE(marigold::playback::cannotPlayHere("202 Media Not Found"));
+  Rig t;
+  t.tune({xt("a"), xt("b")});
+  t.untilOpen();
+  t.hand();
+  Actions a = t.take(t.r.playerError(t.now, "601 Resource Allocation Error"));
+  CHECK(logDetail(a, "start failed") == "this TV can't play this version (601 Resource Allocation Error)");
+  CHECK_FALSE(logged(a, "retry"));
+  const Action* rec = first(a, Kind::RecordFeed);
+  REQUIRE(rec);
+  CHECK_FALSE(rec->worked);
+  CHECK(rec->unplayable);
+  CHECK(rec->feed == 0);
+  CHECK(logged(a, "switch"));
+  Actions open = t.untilOpen();
+  CHECK(first(open, Kind::Play)->feed == 1);
 }

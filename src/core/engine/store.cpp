@@ -302,6 +302,7 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
         if (x.isString()) m.recents.push_back(x.asString());
       for (const auto& [k, x] : (*v)["pinned"].fields()) m.pinned[k] = x.asString();
       for (const auto& [k, x] : (*v)["lastFeed"].fields()) m.lastFeed[k] = x.asString();
+      for (const auto& [k, x] : (*v)["unplayable"].fields()) m.unplayable[k] = x.asInt();
       for (const auto& [k, x] : (*v)["reliability"].fields())
         m.reliability[k] = {static_cast<int>(x[size_t(0)].asInt()), static_cast<int>(x[size_t(1)].asInt())};
     }
@@ -356,6 +357,9 @@ void Store::saveLists() {
   json::Value last = json::Value::object();
   for (const auto& [k, x] : m.lastFeed) last.set(k, x);
   v.set("lastFeed", last);
+  json::Value unplayable = json::Value::object();
+  for (const auto& [k, at] : m.unplayable) unplayable.set(k, static_cast<int64_t>(at));
+  v.set("unplayable", unplayable);
   json::Value rel = json::Value::object();
   for (const auto& [k, x] : m.reliability) {
     json::Value pair = json::Value::array();
@@ -2258,9 +2262,11 @@ std::vector<std::string> Store::versionsOf(const std::string& id) const {
   std::optional<std::string> pinned;
   if (pin != m.pinned.end()) pinned = pin->second;
   else if (last != m.lastFeed.end()) pinned = last->second;
-  return sports::store::baseVersions(
+  std::vector<std::string> out = sports::store::baseVersions(
       id, ei, pinned, [this](const std::string& c) { return reliabilityOf(c); },
       [&m](const std::string& c) { return m.indexByID.count(c) > 0; });
+  lastIfUnplayable(out, pin != m.pinned.end() ? std::optional<std::string>(pin->second) : std::nullopt);
+  return out;
 }
 
 std::vector<Feed> Store::feeds(const std::string& entryId) const {
@@ -2390,12 +2396,30 @@ void Store::closeStream() {
 
 void Store::recordFeed(const std::string& channelId, bool worked) {
   Impl& m = *impl_;
+  if (worked) m.unplayable.erase(channelId);
   auto t = m.catalog->traits.find(channelId);
   std::string tag = t == m.catalog->traits.end() ? "" : t->second.sourceTag;
   auto& counts = m.reliability[tag];
   if (counts.size() < 2) counts = {0, 0};
   ++counts[worked ? 0 : 1];
   saveLists();
+}
+
+void Store::markUnplayable(const std::string& channelId) {
+  impl_->unplayable[channelId] = time::now();
+  saveLists();
+}
+
+void Store::lastIfUnplayable(std::vector<std::string>& ids, const std::optional<std::string>& pinned) const {
+  const Impl& m = *impl_;
+  if (m.unplayable.empty()) return;
+  time::Seconds now = time::now();
+  auto playable = [&](const std::string& id) {
+    if (pinned && id == *pinned) return true;  // the viewer's pick stays first
+    auto it = m.unplayable.find(id);
+    return it == m.unplayable.end() || now - it->second >= kUnplayableFor;
+  };
+  std::stable_partition(ids.begin(), ids.end(), playable);
 }
 
 void Store::rememberFeed(const std::string& entryId, const std::string& channelId) {

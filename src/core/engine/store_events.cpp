@@ -751,7 +751,9 @@ std::vector<Feed> Store::eventFeeds(const std::string& eventId, const std::strin
       if (std::find(members.begin(), members.end(), c) == members.end()) members.push_back(c);
     return feedsFor(members);
   }
-  return feedsFor(plan.candidates);
+  std::vector<std::string> candidates = plan.candidates;
+  lastIfUnplayable(candidates, std::nullopt);
+  return feedsFor(candidates);
 }
 
 void Store::noteEventFeed(const std::string& eventId, const std::string& channelId, bool sawPicture) {

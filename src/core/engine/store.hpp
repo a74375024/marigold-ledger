@@ -142,6 +142,9 @@ struct Settings {
   std::set<std::string> guideShards;  // outside listings to use; empty = the defaults
 };
 
+// How long a version this TV couldn't play is tried after the others.
+inline constexpr time::Seconds kUnplayableFor = 7 * 24 * 3600;
+
 class Store {
  public:
   explicit Store(Host host);
@@ -190,6 +193,9 @@ class Store {
   void closeStream();
   // Feed outcomes move reliable sources up.
   void recordFeed(const std::string& channelId, bool worked);
+  // This TV couldn't play that version (playback::cannotPlayHere): it is
+  // tried after the channel's other versions for kUnplayableFor.
+  void markUnplayable(const std::string& channelId);
   // The version of a channel that just played: it starts first next time
   // (unless one is pinned with pinFeed).
   void rememberFeed(const std::string& entryId, const std::string& channelId);
@@ -322,6 +328,9 @@ class Store {
                       std::shared_ptr<const catalog::CatalogResult> cat, bool partial);
   void saveCatalog();
   void rebuildEntries();
+  // Moves versions this TV couldn't play lately after the others (stable);
+  // `pinned` stays where it is.
+  void lastIfUnplayable(std::vector<std::string>& ids, const std::optional<std::string>& pinned) const;
   // Ready now if rows are on screen; else when the new list's are.
   void readyWhenShown();
   time::Seconds windowStart() const;

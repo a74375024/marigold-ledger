@@ -339,3 +339,13 @@ The app knows real US channels by their other names, language and closing. After
 | High-school titles | High School row | "KSHSAA 4A Girls Volleyball Championship" with "Seeds #3 and #6" under it; no year in front |
 | Divisions II & III | Volleyball (or Soccer) row | Division I games by day first; Division II and III after them in their own group |
 | Cal State | Volleyball row | "Cal State Dominguez Hills", "Cal State San Marcos" (not "Cal Saint") |
+
+## Faster failovers (Build 99)
+
+| Area | How to check | Pass |
+|---|---|---|
+| Xtream timeout | A version that hangs (Help › playback log after a stuck start) | "start failed · no picture after 10s", then the retry; never a 20 s wait on an Xtream feed |
+| Emby timeout | An Emby-only local that's slow to start | Still up to 20 s before the next version |
+| Can't play here | A feed that fails with "601 Resource Allocation Error" (the PDC board feed did) | The next version within a second or two, no "Retrying…", no same-version retries; Sources says "this TV can't play it" |
+| Remembered | Tune that channel again | Its other versions are tried first for a week; a version you pinned still goes first |
+| 203 stays a retry | A channel that fails with "203 AV Type Not Founded" | Handled as before (it means the server sent something that isn't video, and a later try can work); not remembered |
