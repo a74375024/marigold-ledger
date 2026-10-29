@@ -65,7 +65,7 @@ Actions Recovery::tune(Ms now, std::vector<FeedInfo> feeds, TuneOptions options)
     return out;
   }
   size_t start = options.start < feeds_.size() ? options.start : 0;
-  startTune(now, start, 0, false, false, true, {}, out);
+  startTune(now, start, 0, false, false, true, {}, out, options.settle);
   return out;
 }
 
@@ -108,7 +108,7 @@ Actions Recovery::streamHanded(Ms now, uint64_t token) {
   if (token != 0 && token == inFlight_) inFlight_ = 0;
   if (!isCurrent(token)) {
     // Superseded while the server was opening it: close it, never play it.
-    if (token != 0) out.push_back({Action::Kind::CloseStream, Action::npos, 0, false, {}, {}});
+    if (token != 0) out.push_back({Action::Kind::CloseStream, Action::npos, token, false, {}, {}});
     return out;
   }
   bool replacing = playerOnScreen_;
@@ -250,7 +250,9 @@ Actions Recovery::setPaused(Ms now, bool paused) {
 
 Actions Recovery::tick(Ms now) {
   Actions out;
-  if (phase_ == Phase::Waiting && pending_ && now >= pending_->due && inFlight_ == 0) {
+  // Server opens run one after another; a direct feed never waits for one.
+  if (phase_ == Phase::Waiting && pending_ && now >= pending_->due &&
+      (inFlight_ == 0 || (pending_->feed < feeds_.size() && feeds_[pending_->feed].kind != FeedKind::Emby))) {
     Pending p = *pending_;
     pending_.reset();
     startNow(now, p.feed, p.reconnect, out);
@@ -298,7 +300,7 @@ Actions Recovery::tick(Ms now) {
 // --- steps -------------------------------------------------------------------
 
 void Recovery::startTune(Ms now, size_t feed, Ms delay, bool inPlace, bool reconnect, bool newRound,
-                         std::string_view reason, Actions& out) {
+                         std::string_view reason, Actions& out, Ms settle) {
   bool replacing = inPlace && playerOnScreen_;
   clearTimers();
   ++token_;
@@ -321,14 +323,15 @@ void Recovery::startTune(Ms now, size_t feed, Ms delay, bool inPlace, bool recon
   sawFirstFrame_ = false;
   firstFrameAt_.reset();
   phase_ = Phase::Waiting;
-  pending_ = Pending{now + kSettleMs + delay, feed, reconnect};
+  // Retries, reconnects and switches wait only their own pause.
+  pending_ = Pending{now + settle + delay, feed, reconnect};
 }
 
 void Recovery::startNow(Ms /*now*/, size_t feed, bool reconnect, Actions& out) {
   index_ = feed;
   markTried(feed);
   phase_ = Phase::Opening;
-  inFlight_ = token_;
+  if (feeds_[feed].kind == FeedKind::Emby) inFlight_ = token_;
   // One stream at a time: close what is open before every open.
   out.push_back({Action::Kind::CloseStream, Action::npos, 0, false, {}, {}});
   out.push_back({reconnect ? Action::Kind::Reconnect : Action::Kind::Play, feed, token_, false, {}, {}});

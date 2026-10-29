@@ -490,6 +490,13 @@ std::vector<std::string> baseVersions(const std::string& id, const catalog::Entr
   return list;
 }
 
+void leadServerVersions(std::vector<std::string>& list, const std::string& last,
+                        const std::function<bool(const std::string&)>& serverOpened) {
+  auto at = std::find(list.begin(), list.end(), last);
+  auto firstServer = std::find_if(list.begin(), list.end(), serverOpened);
+  if (at != list.end() && firstServer < at) std::rotate(firstServer, at, at + 1);
+}
+
 std::vector<std::string> eventCandidates(const SportsEvent& event, const std::optional<std::string>& preferring,
                                          const Resolver& resolver) {
   std::vector<std::string> list;

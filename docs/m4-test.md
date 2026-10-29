@@ -349,3 +349,15 @@ The app knows real US channels by their other names, language and closing. After
 | Can't play here | A feed that fails with "601 Resource Allocation Error" (the PDC board feed did) | The next version within a second or two, no "Retrying…", no same-version retries; Sources says "this TV can't play it" |
 | Remembered | Tune that channel again | Its other versions are tried first for a week; a version you pinned still goes first |
 | 203 stays a retry | A channel that fails with "203 AV Type Not Founded" | Handled as before (it means the server sent something that isn't video, and a later try can work); not remembered |
+
+## Faster tunes (Build 100)
+
+| Area | How to check | Pass |
+|---|---|---|
+| Emby preview, then elsewhere | Rest on an Emby-only channel in the guide (its preview starts), then within a few seconds press OK on an Xtream channel | The Xtream channel starts in its usual ~2 s; it never waits for the Emby preview to open |
+| Emby after Emby | Change between two Emby-only channels quickly | Still one stream at a time (the server never holds two); no stuck "Loading" |
+| Channel up/down | CH+ once | The new channel starts loading about half a second after the press (it was about 0.85 s) |
+| Backup that played | A channel whose Xtream copy failed once and then played on Emby | Next time (or after 6 hours) it starts on Xtream again; a copy you pinned still goes first |
+| Guide while tuning | Scroll a page of the guide, then press OK on an Emby channel | No extra wait for the guide's listings to load first |
+| Half past | Leave the guide open across :00 or :30 | Rows whose listings still run 90 minutes ahead don't reload; rows about to run out do |
+| Log | Help › playback log | "server opened · N ms" after each Emby tune; a 601 says which audio the stream carries ("(audio: dts)") |

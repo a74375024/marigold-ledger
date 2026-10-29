@@ -454,3 +454,18 @@ TEST_CASE("the source remembered per game: 6 hours, 40 games") {
   CHECK(feedToRemember(false, std::string("xt|1"), std::string("xt|2"), {"xt|1", "xt|2"}) == "xt|2");
   CHECK_FALSE(feedToRemember(false, std::string("xt|1"), std::string("xt|7"), {"xt|1", "xt|2"}));
 }
+
+TEST_CASE("store: a server-opened version that played last leads only the server-opened ones") {
+  auto server = [](const std::string& id) { return id.rfind("jf:", 0) == 0; };
+  std::vector<std::string> list = {"xt:1", "xt:2", "jf:a", "jf:b"};
+  leadServerVersions(list, "jf:b", server);
+  CHECK(list == std::vector<std::string>{"xt:1", "xt:2", "jf:b", "jf:a"});
+  // Already first of its kind, or not in the list: unchanged.
+  leadServerVersions(list, "jf:b", server);
+  leadServerVersions(list, "jf:z", server);
+  CHECK(list == std::vector<std::string>{"xt:1", "xt:2", "jf:b", "jf:a"});
+  // Only server-opened versions: it goes first.
+  std::vector<std::string> only = {"jf:a", "jf:b"};
+  leadServerVersions(only, "jf:b", server);
+  CHECK(only == std::vector<std::string>{"jf:b", "jf:a"});
+}

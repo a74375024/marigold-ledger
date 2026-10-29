@@ -92,7 +92,7 @@ TEST_CASE("Xtream gets two reconnects, each after a 1 s pause") {
     CHECK(logDetail(r, "reconnect").find("attempt " + std::to_string(i) + " of 2") != std::string::npos);
     Ms at = t.now;
     t.untilOpen();
-    CHECK(t.now == at + kSettleMs + kXtreamReconnectDelayMs);
+    CHECK(t.now == at + kXtreamReconnectDelayMs);  // no second settle
     t.hand();
     t.picture();
   }

@@ -1,6 +1,7 @@
 #include "platform/video.hpp"
 
 #include <cmath>
+#include <string>
 
 #include "core/util/log.hpp"
 #include "core/util/redact.hpp"
@@ -62,6 +63,19 @@ VideoState Video::state() const {
   s.height = video_altura();
   s.hdr = video_hdr();
   s.error = redact(video_erro_texto());
+  // A 601 (no decoder setup for the stream's format): say which audio the
+  // stream carries, so the playback log shows whether DTS or the like is why.
+  if (s.error.find("601") != std::string::npos && video_n_audio() > 0) {
+    std::string codecs;
+    for (int i = 0; i < video_n_audio(); ++i) {
+      const VideoFaixa* f = video_audio(i);
+      if (!f || !f->codec[0]) continue;
+      if (codecs.find(f->codec) != std::string::npos) continue;
+      if (!codecs.empty()) codecs += ", ";
+      codecs += f->codec;
+    }
+    if (!codecs.empty()) s.error += " (audio: " + codecs + ")";
+  }
   return s;
 }
 

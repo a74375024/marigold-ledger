@@ -225,6 +225,10 @@ std::vector<std::string> bestFeeds(const std::vector<std::string>& ids,
 std::vector<std::string> baseVersions(const std::string& id, const catalog::EntryInfo* info,
                                       const std::optional<std::string>& pinned, const Reliability& reliability,
                                       const std::function<bool(const std::string&)>& exists);
+// Marigold: `last` (a server-opened version that played last) moves to the
+// front of the server-opened versions, behind every direct one.
+void leadServerVersions(std::vector<std::string>& list, const std::string& last,
+                        const std::function<bool(const std::string&)>& serverOpened);
 
 // What the store resolves for the candidates.
 struct ChannelRef {

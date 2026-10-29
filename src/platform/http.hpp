@@ -71,7 +71,8 @@ class Client final : public Pool {
   size_t running() const { return running_.load(); }
 
  private:
-  void worker(bool longLane);
+  enum class Lane { General, Long, Playback };
+  void worker(Lane lane);
   void execute(Ticket::Job& job);
   Ticket enqueue(std::shared_ptr<Ticket::Job> job);
 
@@ -79,6 +80,7 @@ class Client final : public Pool {
   std::condition_variable cv_;
   std::deque<std::shared_ptr<Ticket::Job>> queue_;
   std::deque<std::shared_ptr<Ticket::Job>> longQueue_;  // Priority::Long(First), one at a time
+  std::deque<std::shared_ptr<Ticket::Job>> playQueue_;  // Priority::Playback, its own thread
   std::vector<std::thread> threads_;
   bool stopping_ = false;
   transport::Group* group_ = nullptr;

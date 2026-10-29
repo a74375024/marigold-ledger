@@ -82,8 +82,9 @@ void Client::start(int threads, std::function<void()> wake) {
   group_ = transport::createGroup();
   wake_ = std::move(wake);
   stopping_ = false;
-  for (int i = 0; i < std::max(1, threads); ++i) threads_.emplace_back([this] { worker(false); });
-  threads_.emplace_back([this] { worker(true); });
+  for (int i = 0; i < std::max(1, threads); ++i) threads_.emplace_back([this] { worker(Lane::General); });
+  threads_.emplace_back([this] { worker(Lane::Long); });
+  threads_.emplace_back([this] { worker(Lane::Playback); });
 }
 
 void Client::stop() {
@@ -93,6 +94,7 @@ void Client::stop() {
     stopping_ = true;
     queue_.clear();
     longQueue_.clear();
+    playQueue_.clear();
   }
   if (group_) transport::cancelGroup(group_);
   cv_.notify_all();
@@ -130,6 +132,11 @@ Ticket Client::enqueue(std::shared_ptr<Ticket::Job> job) {
     job->cancelled = true;
     return Ticket(job);
   }
+  if (job->req.priority == Priority::Playback) {
+    playQueue_.push_back(job);
+    cv_.notify_all();
+    return Ticket(job);
+  }
   if (job->req.priority == Priority::Long || job->req.priority == Priority::LongFirst) {
     if (job->req.priority == Priority::LongFirst) {
       auto pos = std::find_if(longQueue_.begin(), longQueue_.end(),
@@ -146,7 +153,7 @@ Ticket Client::enqueue(std::shared_ptr<Ticket::Job> job) {
     return other->req.priority < job->req.priority;
   });
   queue_.insert(pos, job);
-  cv_.notify_all();  // the long-lane thread shares cv_
+  cv_.notify_all();  // the long and playback lanes share cv_
   return Ticket(job);
 }
 
@@ -166,6 +173,7 @@ void Client::cancelAll() {
     std::lock_guard<std::mutex> lock(mu_);
     queue_.clear();
     longQueue_.clear();
+    playQueue_.clear();
   }
   // Running requests see the new generation and stop at the next chunk;
   // any result they still post is dropped by pump().
@@ -176,7 +184,7 @@ void Client::cancelAll() {
 
 size_t Client::queued() const {
   std::lock_guard<std::mutex> lock(mu_);
-  return queue_.size() + longQueue_.size();
+  return queue_.size() + longQueue_.size() + playQueue_.size();
 }
 
 int Client::pump() {
@@ -200,8 +208,9 @@ int Client::pump() {
   return ran;
 }
 
-void Client::worker(bool longLane) {
-  std::deque<std::shared_ptr<Ticket::Job>>& queue = longLane ? longQueue_ : queue_;
+void Client::worker(Lane lane) {
+  std::deque<std::shared_ptr<Ticket::Job>>& queue =
+      lane == Lane::Long ? longQueue_ : lane == Lane::Playback ? playQueue_ : queue_;
   while (true) {
     std::shared_ptr<Ticket::Job> job;
     {

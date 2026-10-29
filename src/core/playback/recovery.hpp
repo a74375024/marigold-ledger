@@ -91,6 +91,10 @@ struct TuneOptions {
   // Surfing an event family: the feeds are different events, so a failure
   // "skips to the next feed" and no backup toast is shown.
   bool surf = false;
+  // A wait before the first open, so a burst of tunes only opens the last.
+  // 0 when the caller has already waited (OK, a settled channel flip, a
+  // preview after its dwell, a typed number).
+  Ms settle = kSettleMs;
 };
 
 struct Action {
@@ -102,7 +106,9 @@ struct Action {
     // The same, for the feed that is already playing (a reconnect).
     Reconnect,
     // Close the stream open on a server, if any. Always comes right before
-    // Play / Reconnect, and after GiveUp and stop().
+    // Play / Reconnect, and after GiveUp and stop(). With a `token`, it is
+    // a superseded server open that came back late: close that server
+    // stream only, and leave whatever the player is playing now alone.
     CloseStream,
     // Stop the player and show the "can't play" card with `text` (safe).
     GiveUp,
@@ -196,7 +202,7 @@ class Recovery {
   };
 
   void startTune(Ms now, size_t feed, Ms delay, bool inPlace, bool reconnect, bool newRound,
-                 std::string_view reason, Actions& out);
+                 std::string_view reason, Actions& out, Ms settle = 0);
   void startNow(Ms now, size_t feed, bool reconnect, Actions& out);
   void playerStarted(Ms now, Actions& out);
   void beginTrouble(Ms since, std::string cause, Ms grace, Actions& out);
@@ -218,7 +224,9 @@ class Recovery {
   bool surf_ = false;
   Phase phase_ = Phase::Idle;
   uint64_t token_ = 0;     // the current tune generation
-  uint64_t inFlight_ = 0;  // an open that has not reported back (0 = none)
+  // A server (Emby / Jellyfin) open that has not reported back (0 = none):
+  // the next server open waits for it; a direct feed doesn't.
+  uint64_t inFlight_ = 0;
   std::optional<Pending> pending_;
   bool playerOnScreen_ = false;
 

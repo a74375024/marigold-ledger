@@ -122,7 +122,11 @@ bool Session::begin(const std::string& entryId, std::vector<Feed> feeds, const s
   std::vector<playback::FeedInfo> infos;
   for (const Feed& f : feeds_) infos.push_back({f.channelId, kindOf(f)});
   logEvent("tune", std::to_string(feeds_.size()) + (feeds_.size() == 1 ? " feed" : " feeds"));
-  apply(rec_.tune(ms(), std::move(infos)));
+  // Every caller has already waited (OK, a settled flip, a preview's dwell,
+  // a typed number): no second settle.
+  playback::TuneOptions options;
+  options.settle = 0;
+  apply(rec_.tune(ms(), std::move(infos), options));
   return true;
 }
 
@@ -161,7 +165,8 @@ void Session::apply(const playback::Actions& actions) {
         break;
       case playback::Action::Kind::CloseStream:
         store_.closeStream();
-        player_->streamClosed();
+        // A late, superseded server open: what plays now keeps playing.
+        if (a.token == 0) player_->streamClosed();
         break;
       case playback::Action::Kind::GiveUp:
         player_->stop();
@@ -226,8 +231,11 @@ void Session::playFeed(size_t index, uint64_t token) {
   if (f.needsOpen) {
     // Emby / Jellyfin open the stream on the server first. Every open
     // reports back exactly once; a superseded one is closed again.
-    store_.open(f, [this, token, index](std::optional<Feed> opened) {
+    uint32_t asked = ms();
+    store_.open(f, [this, token, index, asked](std::optional<Feed> opened) {
       uint32_t now = ms();
+      // How long the server took to open it (the playback log, for tuning).
+      if (rec_.isCurrent(token)) logEvent("server opened", std::to_string(now - asked) + " ms");
       if (!opened) {
         apply(rec_.openFailed(now, token, "The server couldn't open this channel."));
         return;

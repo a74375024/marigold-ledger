@@ -144,6 +144,9 @@ struct Settings {
 
 // How long a version this TV couldn't play is tried after the others.
 inline constexpr time::Seconds kUnplayableFor = 7 * 24 * 3600;
+// How long a failed direct (Xtream / M3U) version lets a server-opened one
+// that played last start first.
+inline constexpr time::Seconds kDirectFailedFor = 6 * 3600;
 
 class Store {
  public:
@@ -362,6 +365,8 @@ class Store {
   void publishListings();
   double reliabilityOf(const std::string& channelId) const;
   std::vector<std::string> versionsOf(const std::string& id) const;
+  // The version is opened on its server first (Emby / Jellyfin).
+  bool serverOpened(const std::string& channelId) const;
   std::vector<Feed> feedsFor(const std::vector<std::string>& rawIds) const;
   std::vector<std::string> eventBackups(const std::string& entryId) const;
   // Live Events (store_events.cpp).

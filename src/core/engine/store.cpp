@@ -87,7 +87,13 @@ using catalog::EntryInfo;
 constexpr time::Seconds kChannelLifetime = 30 * 60;  // channel list re-read
 constexpr size_t kProgramBatch = 25;
 constexpr int kGuideConcurrency = 4;
-constexpr int kShortEpgParallel = 6;
+// Requests per batch at once: with kGuideConcurrency batches, at most 8
+// short-EPG requests in flight (it was 24), so a burst of guide rows can't
+// take every worker.
+constexpr int kShortEpgParallel = 2;
+// A row whose listings still run this long past a new half-hour window
+// keeps them; only rows about to run out are asked again.
+constexpr time::Seconds kListingsAheadEnough = 90 * 60;
 constexpr size_t kRecentMax = 30;
 constexpr size_t kRecentlyRequestedMax = 300;
 constexpr double kGuideHours = 3.0;
@@ -1467,6 +1473,16 @@ void Store::wantListings(const std::vector<std::string>& ids) {
       Impl::GuideState st = m.guideState[r];
       if (st == Impl::GuideState::Loading || m.pendingGuideSet.count(r)) continue;
       if (st == Impl::GuideState::Loaded && m.guideWindowByChannel[r] == start) continue;
+      if (st == Impl::GuideState::Loaded) {
+        auto have = m.serverPrograms.find(r);
+        time::Seconds until = 0;
+        if (have != m.serverPrograms.end())
+          for (const Program& p : have->second) until = std::max(until, p.end);
+        if (until >= start + kListingsAheadEnough) {
+          m.guideWindowByChannel[r] = start;
+          continue;
+        }
+      }
       m.pendingGuide.push_back(r);
       m.pendingGuideSet.insert(r);
       added = true;
@@ -2256,17 +2272,44 @@ std::vector<std::string> Store::versionsOf(const std::string& id) const {
   const Impl& m = *impl_;
   auto info = m.entryInfo.find(id);
   const EntryInfo* ei = info == m.entryInfo.end() ? nullptr : &m.catalog->entries[info->second];
-  // First: the pinned version, else the one that played last.
+  // First: the pinned version, else the one that played last. Marigold: a
+  // server-opened version (Emby / Jellyfin, about 10 s to a picture) that
+  // played last goes first only when the direct versions (about 2.6 s)
+  // failed lately; otherwise it leads the server-opened ones.
   auto pin = m.pinned.find(id);
   auto last = m.lastFeed.find(id);
   std::optional<std::string> pinned;
+  std::optional<std::string> leadServer;
+  time::Seconds now = time::now();
+  auto healthyDirect = [&] {
+    if (!ei) return false;
+    for (const std::string& c : ei->members) {
+      if (!m.indexByID.count(c) || serverOpened(c)) continue;
+      auto failed = m.failedAt.find(c);
+      if (failed == m.failedAt.end() || now - failed->second >= kDirectFailedFor) return true;
+    }
+    return false;
+  };
   if (pin != m.pinned.end()) pinned = pin->second;
+  else if (last != m.lastFeed.end() && serverOpened(last->second) && healthyDirect()) leadServer = last->second;
   else if (last != m.lastFeed.end()) pinned = last->second;
   std::vector<std::string> out = sports::store::baseVersions(
       id, ei, pinned, [this](const std::string& c) { return reliabilityOf(c); },
       [&m](const std::string& c) { return m.indexByID.count(c) > 0; });
+  if (leadServer)
+    sports::store::leadServerVersions(out, *leadServer, [this](const std::string& c) { return serverOpened(c); });
   lastIfUnplayable(out, pin != m.pinned.end() ? std::optional<std::string>(pin->second) : std::nullopt);
   return out;
+}
+
+bool Store::serverOpened(const std::string& channelId) const {
+  const Impl& m = *impl_;
+  auto ci = m.indexByID.find(channelId);
+  if (ci == m.indexByID.end()) return false;
+  const std::string& server = (*m.channels)[ci->second].serverId;
+  for (const sources::Account& a : m.accounts)
+    if (a.sourceId() == server) return a.kind == sources::AccountKind::Emby;
+  return false;
 }
 
 std::vector<Feed> Store::feeds(const std::string& entryId) const {
@@ -2357,7 +2400,7 @@ void Store::open(const Feed& feed, std::function<void(std::optional<Feed>)> done
   auto cl = std::make_shared<sources::emby::Client>(client.take());
   std::string item = c.itemId;
   auto stream = std::make_shared<std::optional<sources::emby::Stream>>();
-  http::Request q = toHttp(cl->openStreamRequest(item), "emby.open", http::Priority::Visible);
+  http::Request q = toHttp(cl->openStreamRequest(item), "emby.open", http::Priority::Playback);
   q.afterTransfer = [cl, item, stream](http::Response& r) {
     auto s = cl->parseOpenStream(r.status, r.body, item);
     if (s) *stream = s.take();
@@ -2396,7 +2439,12 @@ void Store::closeStream() {
 
 void Store::recordFeed(const std::string& channelId, bool worked) {
   Impl& m = *impl_;
-  if (worked) m.unplayable.erase(channelId);
+  if (worked) {
+    m.unplayable.erase(channelId);
+    m.failedAt.erase(channelId);
+  } else {
+    m.failedAt[channelId] = time::now();
+  }
   auto t = m.catalog->traits.find(channelId);
   std::string tag = t == m.catalog->traits.end() ? "" : t->second.sourceTag;
   auto& counts = m.reliability[tag];

@@ -188,7 +188,7 @@ TEST_CASE("an Xtream feed that won't start is retried twice, 2 s apart, before t
     const Action* re = first(open, Kind::Reconnect);
     REQUIRE(re);
     CHECK(re->feed == 0);
-    CHECK(t.now == failedAt + kSettleMs + kXtreamRetryDelayMs);
+    CHECK(t.now == failedAt + kXtreamRetryDelayMs);  // no second settle
   }
   t.hand();
   Actions third = t.until(t.now + kXtreamStartupTimeoutMs);
@@ -358,4 +358,51 @@ TEST_CASE("an error meaning this TV can't play the feed moves on at once, with n
   CHECK(logged(a, "switch"));
   Actions open = t.untilOpen();
   CHECK(first(open, Kind::Play)->feed == 1);
+}
+
+TEST_CASE("a direct feed doesn't wait for an Emby open still on its way") {
+  Rig t;
+  t.tune({emby("a")});
+  t.untilOpen();
+  uint64_t stale = t.token;
+  t.wait(650);
+  t.tune({xt("b")});
+  // The server is still opening "a", but "b" opens after its settle.
+  Actions open = t.until(t.now + kSettleMs);
+  const Action* play = first(open, Kind::Play);
+  REQUIRE(play);
+  CHECK(t.r.feeds()[play->feed].id == "b");
+  t.hand();
+  // "a" opens late: only its server stream is closed (the token says so),
+  // and "b" keeps playing.
+  Actions late = t.take(t.r.streamHanded(t.now, stale));
+  const Action* close = first(late, Kind::CloseStream);
+  REQUIRE(close);
+  CHECK(close->token == stale);
+  CHECK(t.r.phase() == Phase::Playing);
+  CHECK(t.r.feeds()[t.r.feedIndex()].id == "b");
+}
+
+TEST_CASE("an Emby open still waits for the one before it, even after a direct feed") {
+  Rig t;
+  t.tune({emby("a")});
+  t.untilOpen();
+  t.wait(100);
+  t.tune({xt("b")});
+  t.untilOpen();
+  t.hand();
+  t.tune({emby("c")});
+  t.wait(3000);
+  // "a" hasn't reported back: "c" doesn't open yet.
+  CHECK(t.opens == 2);
+}
+
+TEST_CASE("a tune with no settle opens at once") {
+  Rig t;
+  marigold::playback::TuneOptions o;
+  o.settle = 0;
+  t.take(t.r.tune(t.now, {xt("a")}, o));
+  Ms tuned = t.now;
+  CHECK(has(t.untilOpen(kSettleMs), Kind::Play));
+  CHECK(t.now - tuned < kSettleMs);  // the first tick, not after a settle
 }
