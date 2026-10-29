@@ -63,7 +63,7 @@ TEST_CASE("six recoveries in 180 s, then it stops: dropping") {
     CHECK(logged(playThenStall(t), "switch"));
   }
   Actions a = playThenStall(t);
-  CHECK(giveUpMessage(a) == "This channel keeps dropping. Try another version from Choose Feed, or try again later.");
+  CHECK(giveUpMessage(a) == "This channel keeps dropping. Pick another feed, or try again later.");
   CHECK(t.now < 180000);
 }
 
@@ -73,7 +73,7 @@ TEST_CASE("six recoveries in 180 s, then it stops: failing to start") {
   Actions a;
   for (int i = 0; i < 7; ++i) a = failStart(t);
   CHECK(giveUpMessage(a) ==
-        "This channel keeps failing to start. Try another version from Choose Feed, or try again later.");
+        "This channel keeps failing to start. Pick another feed, or try again later.");
 }
 
 TEST_CASE("six recoveries in 180 s, then it stops: failing") {
@@ -81,7 +81,7 @@ TEST_CASE("six recoveries in 180 s, then it stops: failing") {
   t.tune(embyFeeds(8));
   Actions a;
   for (int i = 0; i < 7; ++i) a = failStart(t);
-  CHECK(giveUpMessage(a) == "This channel keeps failing. Try another version from Choose Feed, or try again later.");
+  CHECK(giveUpMessage(a) == "This channel keeps failing. Pick another feed, or try again later.");
 }
 
 TEST_CASE("recoveries older than 180 s don't count") {

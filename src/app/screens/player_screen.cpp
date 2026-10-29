@@ -1,9 +1,11 @@
-// Full screen playback (LiveTVOverlay): the tuning and switching cards, the
-// info banner with its key guide, the action row (Sources, Guide, last
-// channel, Favorite, More), the backup card, the "nothing is working" card,
-// the one-time "Getting around" card, channel flipping, previous channel and
-// number keys. With the Magic Remote pointer the row and two edge buttons
-// (Guide, last channel) are clickable.
+// Full screen playback (LiveTVOverlay): the info banner, which also carries
+// every load state (tuning, reconnecting, another feed, still trying, not
+// playing) in one quiet line, with what's on and later on the channel; its
+// key guide; the action row (Sources, Guide, last channel, Favorite, More);
+// the one-time "Getting around" card; channel flipping (the banner shows the
+// channel at once, the one stopped on tunes), previous channel and number
+// keys. With the Magic Remote pointer the row and two edge buttons (Guide,
+// last channel) are clickable.
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -26,14 +28,16 @@ using ui::Rect;
 using ui::Weight;
 namespace theme = ui::theme;
 
-constexpr uint32_t kBannerDelayMs = 1500;
-constexpr uint32_t kBannerMs = 6000;
+constexpr uint32_t kBannerMs = 6000;       // after the picture comes up
 constexpr uint32_t kRowIdleMs = 10000;  // the action row hides after this long untouched
-constexpr uint32_t kBackupCardMs = 8000;
+constexpr uint32_t kFlipSettleMs = 500;    // channel keys: the channel stopped on tunes
+constexpr uint32_t kStillTryingMs = 7000;  // a first tune without a picture yet
+constexpr uint32_t kBackOnMs = 2000;       // "Back on CNN" after a backup took over
 constexpr uint32_t kDigitsMs = 1500;
 constexpr float kLeft = 96;
 constexpr float kBannerBottom = 870;  // the banner's lower edge
 constexpr float kRowY = 952;          // the key guide or the action row
+constexpr float kStripW = 500;        // "Later on this channel"
 constexpr uint32_t kRed = 0xE5372B, kBlue = 0x3D7BFF, kGreen = 0x34C759;
 
 // Pointer targets.
@@ -46,7 +50,7 @@ class PlayerScreen : public Screen {
   bool cameras_ = false;  // the race on screen has cameras (Down opens them)
 
  public:
-  explicit PlayerScreen(App& app) : Screen(app) { bannerFrom_ = app.ms() + kBannerDelayMs; }
+  explicit PlayerScreen(App& app) : Screen(app) { bannerFrom_ = app.ms(); }
   // Freed after the screen below has been shown again: the guide has taken
   // the picture into its corner by then. Anywhere else (Live Events, a
   // game's page, search), leaving the player ends the stream.
@@ -84,23 +88,23 @@ class PlayerScreen : public Screen {
     switch (e.key) {
       case Key::Up:
       case Key::ChannelUp:
-        flipped(p.flip(-1));
+        flipBy(-1);
         return true;
       case Key::Down:
         // The banner is up: Down goes to its action row.
-        if (bannerVisible() && p.ready()) {
+        if (bannerVisible() && p.ready() && pendingFlip_.empty()) {
           focusRow();
           return true;
         }
         // A race with cameras: Down opens them (channel keys still flip).
-        if (cameras_) {
+        if (cameras_ && pendingFlip_.empty()) {
           app_.nav().push(makeCameraPanel(app_));
           return true;
         }
-        flipped(p.flip(1));
+        flipBy(1);
         return true;
       case Key::ChannelDown:
-        flipped(p.flip(1));
+        flipBy(1);
         return true;
       case Key::Right:
         goPrevious();
@@ -153,11 +157,19 @@ class PlayerScreen : public Screen {
       app_.nav().pop();
       return false;
     }
+    // Channel keys: the channel stopped on tunes.
+    if (!pendingFlip_.empty() && ms >= flipAt_) {
+      std::string id = std::move(pendingFlip_);
+      pendingFlip_.clear();
+      if (id != p.entry()) flipped(p.tune(id) ? id : std::string());
+    }
     if (p.entry() != shownEntry_) {
       shownEntry_ = p.entry();
-      bannerFrom_ = ms + kBannerDelayMs;
-      bannerUntil_ = bannerFrom_ + kBannerMs;
+      // The banner is up while it loads; its few seconds start with the picture.
+      bannerFrom_ = bannerUntil_ = ms;
+      wasReady_ = pictureSeen_ = false;
       zone_ = Zone::None;
+      prefetch(shownEntry_);
       cameras_ = app_.store().isEvent(shownEntry_) && app_.store().hasCameras(shownEntry_);
       if (cameras_) app_.toast("Press Down for onboard cameras", true);
     }
@@ -172,7 +184,24 @@ class PlayerScreen : public Screen {
       zone_ = Zone::None;
       bannerUntil_ = ms;
     }
-    if (const auto& b = p.backupNotice(); b && ms - b->at > kBackupCardMs) p.dismissBackupNotice();
+    // The picture (first, or back after a reconnect or another feed): the
+    // banner's usual few seconds from now.
+    if (p.ready() && !wasReady_) {
+      bannerFrom_ = ms;
+      bannerUntil_ = std::max(bannerUntil_, ms + kBannerMs);
+      // A backup on the first start isn't "back on" anything: the banner
+      // said it was still trying.
+      if (!pictureSeen_) p.dismissBackupNotice();
+      pictureSeen_ = true;
+    }
+    wasReady_ = p.ready();
+    if (p.ready()) pictureFeed_ = p.feedIndex();
+    // A note from the recovery (buffering, reconnecting): the banner shows it.
+    if (p.ready() && !p.note().empty()) {
+      if (!bannerVisible()) bannerFrom_ = ms;
+      bannerUntil_ = std::max(bannerUntil_, ms + 1500);
+    }
+    if (const auto& b = p.backupNotice(); b && ms - b->at > kBackOnMs) p.dismissBackupNotice();
     if (!digits_.empty() && ms - digitsAt_ >= kDigitsMs) {
       int n = std::atoi(digits_.c_str());
       digits_.clear();
@@ -189,41 +218,42 @@ class PlayerScreen : public Screen {
     }
     bool bannerAnim = ms < bannerUntil_ + 50;
     bool note = !p.note().empty();
-    return opening || bannerAnim || note || !digits_.empty() || p.backupNotice().has_value() || zone_ == Zone::Row;
+    return opening || bannerAnim || note || !digits_.empty() || p.backupNotice().has_value() || zone_ == Zone::Row ||
+           !pendingFlip_.empty();
   }
 
   void draw(ui::Ctx& c) override {
     Playback& p = app_.playback();
     auto ch = app_.store().channels();
-    const GuideChannel* g = ch->find(p.entry());
-    if (!g) {
+    bool pending = !pendingFlip_.empty();
+    const GuideChannel* g = ch->find(pending ? pendingFlip_ : p.entry());
+    if (!g && !pending) {
       // A game: show the channel it plays on.
       if (!p.feeds().empty()) g = ch->find(app_.store().entryOfChannel(p.feeds()[std::min(p.feedIndex(), p.feeds().size() - 1)].channelId));
     }
     pointer_ = c.pointerActive;
-    if (p.failed()) {
-      drawFailed(c, g);
-    } else if (!p.ready()) {
-      drawTuning(c, g);
+    Rect screen{0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight};
+    bool picture = p.ready() && !pending && !p.failed();
+    // No loading screen: the banner carries it. Behind it, the picture (or
+    // what the player still holds of it after a stall), else black with a
+    // small spinner where the picture will be.
+    if (picture || (p.hadPicture() && !pending && !p.failed())) {
+      c.g.hole(screen);
     } else {
-      c.g.hole({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight});
-      bool banner = bannerVisible() || zone_ == Zone::Row || pointer_;
-      if (banner) {
-        drawScrim(c);
-        drawBanner(c, g);
-        if (zone_ == Zone::Row || pointer_) drawPills(c, g);
-        else drawKeyGuide(c);
-      }
-      if (pointer_) drawEdges(c);
-      if (p.backupNotice()) drawBackupCard(c);
+      c.g.fill(screen, theme::black());
+      if (!p.failed()) ui::spinner(c, gfx::kLayoutWidth * 0.5f, 400, 26);
     }
-    if (!p.note().empty() && !p.failed()) {
-      const std::string& note = p.note();
-      float w = ui::textWidth(c, note, Weight::Medium, 20) + 48;
-      Rect r{gfx::kLayoutWidth - 48 - w, 48, w, 48};
-      c.g.fill(r, theme::black(0.7f), 24);
-      ui::labelIn(c, note, r, Weight::Medium, 20, theme::white(0.9f), Align::Center);
+    if (p.failed() && !pending) {
+      drawScrim(c);
+      drawBanner(c, g, true);
+      drawFailButtons(c);
+    } else if (bannerVisible() || zone_ == Zone::Row || pointer_) {
+      drawScrim(c);
+      drawBanner(c, g, false);
+      if ((zone_ == Zone::Row || pointer_) && picture) drawPills(c, g);
+      else drawKeyGuide(c, g);
     }
+    if (pointer_ && picture) drawEdges(c);
     if (!digits_.empty()) {
       Rect r{gfx::kLayoutWidth - 80 - 220, 60, 220, 90};
       c.g.fill(r, theme::black(0.75f), 20);
@@ -237,7 +267,36 @@ class PlayerScreen : public Screen {
   enum class Pill { Cameras, Sources, Coast, Guide, Last, Favorite, More };
 
   // ---------------------------------------------------------- actions
-  bool bannerVisible() const { return app_.ms() >= bannerFrom_ && app_.ms() < bannerUntil_; }
+  // While it loads (or a channel key is pending) the banner stays up.
+  bool loading() const {
+    const Playback& p = app_.playback();
+    return !pendingFlip_.empty() || !p.ready() || p.failed();
+  }
+  bool bannerVisible() const { return loading() || (app_.ms() >= bannerFrom_ && app_.ms() < bannerUntil_); }
+  // Channel keys: the banner shows the channel at once; the one stopped on
+  // tunes after a moment (zapping past a channel doesn't open it).
+  void flipBy(int step) {
+    Playback& p = app_.playback();
+    std::string target = p.flipTarget(pendingFlip_, step);
+    if (target.empty()) return;
+    zone_ = Zone::None;
+    failButton_ = 0;
+    pendingFlip_ = target;
+    flipAt_ = app_.ms() + kFlipSettleMs;
+    prefetch(target);
+  }
+  // The listings the banner shows for a channel and its neighbours, asked
+  // for before they're needed.
+  void prefetch(const std::string& id) {
+    const std::vector<std::string>& list = app_.playback().flipList();
+    std::vector<std::string> ids = {id};
+    auto it = std::find(list.begin(), list.end(), id);
+    if (it != list.end()) {
+      long n = static_cast<long>(list.size()), i = it - list.begin();
+      for (long d : {-2L, -1L, 1L, 2L}) ids.push_back(list[static_cast<size_t>(((i + d) % n + n) % n)]);
+    }
+    app_.store().wantListings(ids);
+  }
   void showBanner() {
     bannerFrom_ = app_.ms();
     bannerUntil_ = bannerFrom_ + kBannerMs;
@@ -292,7 +351,7 @@ class PlayerScreen : public Screen {
       case Key::ChannelUp:
       case Key::ChannelDown:
         zone_ = Zone::None;
-        flipped(app_.playback().flip(e.key == Key::ChannelUp ? -1 : 1));
+        flipBy(e.key == Key::ChannelUp ? -1 : 1);
         return true;
       default:
         return true;
@@ -362,7 +421,7 @@ class PlayerScreen : public Screen {
 
   // ---------------------------------------------------------- failed
   std::vector<std::string> failButtons() const {
-    std::vector<std::string> out = {"Try Again", "Choose a Source"};
+    std::vector<std::string> out = {"Try again", "Pick a feed"};
     if (app_.store().channels()->find(app_.playback().previousEntry()))
       out.push_back("Back to " + nameOf(app_.playback().previousEntry()));
     return out;
@@ -395,13 +454,11 @@ class PlayerScreen : public Screen {
       case Key::Menu: openSources(); return true;
       case Key::Up:
       case Key::ChannelUp:
-        failButton_ = 0;
-        flipped(app_.playback().flip(-1));
+        flipBy(-1);
         return true;
       case Key::Down:
       case Key::ChannelDown:
-        failButton_ = 0;
-        flipped(app_.playback().flip(1));
+        flipBy(1);
         return true;
       case Key::Back: app_.nav().pop(); return true;
       default: return true;
@@ -421,8 +478,7 @@ class PlayerScreen : public Screen {
                        (t->heroTitle.empty() ? t->title : t->heroTitle),
                    true);
     }
-    bannerFrom_ = app_.ms() + kBannerDelayMs;
-    bannerUntil_ = bannerFrom_ + kBannerMs;
+    bannerFrom_ = bannerUntil_ = app_.ms();
   }
   std::string nameOf(const std::string& id) const {
     auto ch = app_.store().channels();
@@ -495,8 +551,9 @@ class PlayerScreen : public Screen {
     }
   }
 
-  void drawBanner(ui::Ctx& c, const GuideChannel* g) {
+  void drawBanner(ui::Ctx& c, const GuideChannel* g, bool failed) {
     Playback& p = app_.playback();
+    bool pending = !pendingFlip_.empty();
     float x = kLeft, w = gfx::kLayoutWidth - 2 * kLeft;
     float top = kBannerBottom - 150;
     // Logo, number and name, LIVE and the show.
@@ -513,30 +570,143 @@ class PlayerScreen : public Screen {
     const Listing* next = nullptr;
     const Listing* l = g ? current(g->id, c.now, &next) : nullptr;
     std::string where = g ? (g->number ? std::to_string(*g->number) + " \xc2\xb7 " : std::string()) + g->name : std::string();
-    if (const EventTile* t = app_.store().eventTile(p.entry()); t && !g) where = t->leagueChip;
+    if (const EventTile* t = pending ? nullptr : app_.store().eventTile(p.entry()); t && !g) where = t->leagueChip;
+    // Later on this channel, on the right; the title stops short of it.
+    float stripX = x + w - kStripW;
+    bool strip = g && drawLater(c, g->id, stripX, top - 36);
+    float titleRight = strip ? stripX - 36 : x + w;
     float whereW = shadowed(c, where, tx, top + 2, Weight::Bold, 22, theme::white(0.9f), w - (tx - x));
     // Which version plays, for channels with both.
     if (g && !g->partner.empty()) ui::coastChip(c, g->west, tx + whereW + 14, top + 2, 14);
+    float y = top + 104;
+    if (failed) {
+      // Not playing: said in the banner, with why in one line.
+      std::string name = g ? g->name : std::string("This channel");
+      shadowed(c, name + " isn't playing right now", tx, top + 30, Weight::Bold, 44, theme::white(), titleRight - tx);
+      std::string why = p.feeds().size() > 1
+                            ? "Every feed was tried. The provider may be down for it, or busy on another screen."
+                            : (p.failMessage().empty() ? std::string("Its feed didn't answer.") : p.failMessage());
+      shadowed(c, why, x, y, Weight::Regular, 22, theme::white(0.82f), titleRight - x);
+      return;
+    }
     float lx = tx + ui::chip(c, "LIVE", tx, top + 42, 16, theme::hex(kRed), theme::white()) + 12;
     std::string title = l ? l->title : (g ? g->name : std::string());
-    if (const EventTile* t = app_.store().eventTile(p.entry()))
+    if (const EventTile* t = pending ? nullptr : app_.store().eventTile(p.entry()))
       title = t->heroTitle.empty() ? t->title : t->heroTitle;
-    shadowed(c, title, lx, top + 30, Weight::Bold, 44, theme::white(), x + w - lx);
-    // Times, progress and next (the feed is under Sources, not here).
-    float y = top + 104;
+    shadowed(c, title, lx, top + 30, Weight::Bold, 44, theme::white(), titleRight - lx);
+    // Times, progress and time left (the feed is under Sources, not here).
     float rx = x;
     if (l) {
       rx += shadowed(c, ui::range(c, l->start, l->end, true), rx, y, Weight::Medium, 22, theme::white(0.92f)) + 18;
       double frac = static_cast<double>(c.now - l->start) / static_cast<double>(std::max<time::Seconds>(1, l->end - l->start));
       ui::progress(c, {rx, y + 11, 420, 6}, frac, theme::white(0.28f), theme::white());
       rx += 420 + 22;
+      long left = static_cast<long>((l->end - c.now + 59) / 60);
+      if (left > 0) shadowed(c, std::to_string(left) + " min left", rx, y, Weight::Regular, 22, theme::white(0.82f));
+    } else if (next && !strip) {
+      shadowed(c, "Next: " + ui::clock(c, next->start) + " " + next->title, rx, y, Weight::Regular, 22,
+               theme::white(0.82f), titleRight - rx);
     }
-    if (next) shadowed(c, "Next: " + ui::clock(c, next->start) + " " + next->title, rx, y, Weight::Regular, 22,
-                       theme::white(0.82f), 520);
+  }
+
+  // "Later on this channel": the next show (when it's close, how soon) and
+  // the two after it. False when the guide has nothing later.
+  bool drawLater(ui::Ctx& c, const std::string& id, float x, float y) {
+    listings_ = app_.store().listings();
+    const std::vector<Listing>* list = listings_ ? listings_->forChannel(id) : nullptr;
+    if (!list) return false;
+    std::vector<const Listing*> later;
+    for (const Listing& l : *list) {
+      if (l.start > c.now) later.push_back(&l);
+      if (later.size() == 3) break;
+    }
+    if (later.empty()) return false;
+    shadowed(c, "LATER ON THIS CHANNEL", x, y, Weight::Bold, 15, theme::white(0.6f));
+    y += 28;
+    for (size_t i = 0; i < later.size(); ++i) {
+      const Listing& l = *later[i];
+      bool first = i == 0;
+      Rect r{x, y, kStripW, first ? 52.0f : 44.0f};
+      c.g.fill(r, theme::hex(0x14161B, first ? 0.82f : 0.62f), 10);
+      float tx = r.x + 16;
+      ui::label(c, ui::clock(c, l.start), tx, r.y + (first ? 14 : 10), first ? Weight::Bold : Weight::Medium, 20,
+                theme::white(first ? 0.95f : 0.7f));
+      tx += 118;
+      std::string soon;
+      if (first) {
+        long mins = static_cast<long>((l.start - c.now + 59) / 60);
+        if (mins <= 5) soon = "Starts in " + std::to_string(std::max(1L, mins)) + " min";
+        else if (mins <= 120) soon = "in " + std::to_string(mins) + " min";
+      }
+      float soonW = 0;
+      if (!soon.empty()) {
+        bool close = soon.rfind("Starts", 0) == 0;
+        if (close) {
+          soonW = ui::chipWidth(c, soon, 16) + 8;
+          ui::chip(c, soon, r.x + r.w - 14 - soonW, r.y + 13, 16, theme::hex(theme::kStar, 0.9f), theme::black());
+        } else {
+          soonW = ui::textWidth(c, soon, Weight::Regular, 18);
+          ui::label(c, soon, r.x + r.w - 14, r.y + 16, Weight::Regular, 18, theme::white(0.6f), 200, Align::Right);
+        }
+      }
+      ui::label(c, l.title, tx, r.y + (first ? 13 : 9), first ? Weight::Bold : Weight::Regular, first ? 22 : 20,
+                theme::white(first ? 1.0f : 0.78f), r.x + r.w - tx - soonW - 28);
+      y += r.h + 6;
+    }
+    return true;
+  }
+
+  // The banner's status line: what's loading, or the picture back after a
+  // backup took over. Empty once it plays.
+  struct Status {
+    std::string text;
+    bool busy = false, done = false;
+  };
+  Status status(const GuideChannel* g) const {
+    const Playback& p = app_.playback();
+    if (!pendingFlip_.empty()) return {"Tuning in", true, false};
+    if (p.failed()) return {};
+    std::string q;
+    if (!p.feeds().empty()) q = p.feeds()[std::min(p.feedIndex(), p.feeds().size() - 1)].quality;
+    std::string withQ = q.empty() ? std::string() : " \xc2\xb7 " + q;
+    if (!p.ready()) {
+      if (!p.hadPicture()) {
+        if (app_.ms() - p.tunedAt() < kStillTryingMs) return {"Tuning in", true, false};
+        return {q.empty() ? std::string("Still trying\xe2\x80\xa6") : "Still trying" + withQ, true, false};
+      }
+      if (p.feedIndex() != pictureFeed_) return {"Switching to another feed" + withQ, true, false};
+      return {"Reconnecting\xe2\x80\xa6", true, false};
+    }
+    if (p.backupNotice()) return {"Back on " + (g ? g->name : std::string("the channel")), false, true};
+    if (!p.note().empty()) return {p.note(), true, false};
+    return {};
+  }
+
+  // While it doesn't play: Try again, Pick a feed, the last channel; where
+  // the key guide goes.
+  void drawFailButtons(ui::Ctx& c) {
+    std::vector<std::string> buttons = failButtons();
+    failButton_ = std::clamp(failButton_, 0, static_cast<int>(buttons.size()) - 1);
+    float x = kLeft, y = kRowY;
+    c.g.fill({kLeft, kRowY - 8, gfx::kLayoutWidth - 2 * kLeft, 1}, theme::white(0.14f));
+    for (size_t i = 0; i < buttons.size(); ++i) {
+      float w = ui::textWidth(c, buttons[i], Weight::Bold, 24) + 60;
+      Rect r{x, y + 8, w, 64};
+      c.hit(r, kHitFail + static_cast<int>(i));
+      bool f = static_cast<int>(i) == failButton_;
+      if (f) {
+        c.g.fill(r, theme::white(), 32);
+      } else {
+        c.g.fill(r, theme::hex(0x14161B, 0.75f), 32);
+        c.g.stroke(r, theme::white(0.22f), 32, 1);
+      }
+      ui::labelIn(c, buttons[i], r, Weight::Bold, 24, f ? theme::black() : theme::white(), Align::Center);
+      x += w + 16;
+    }
   }
 
   // 1A: the keys, under the banner (fades with it).
-  void drawKeyGuide(ui::Ctx& c) {
+  void drawKeyGuide(ui::Ctx& c, const GuideChannel* g) {
     float x = kLeft, y = kRowY + 10;
     c.g.fill({kLeft, kRowY - 8, gfx::kLayoutWidth - 2 * kLeft, 1}, theme::white(0.14f));
     auto item = [&](float glyphW, const std::string& title, const std::string& extra) {
@@ -565,10 +735,21 @@ class PlayerScreen : public Screen {
     item(40, "Info", "");
     if (!sourcesInRow) item(hintKey(c, x, y, sources), sources.label, backupsLine);
     if (auto options = hints::playerOptions(keys)) item(hintKey(c, x, y, *options), options->label, "");
-    int left = static_cast<int>((bannerUntil_ > app_.ms() ? bannerUntil_ - app_.ms() : 0) / 1000) + 1;
-    if (zone_ == Zone::None && x < gfx::kLayoutWidth - kLeft - 360)
-      ui::label(c, "Hides in " + std::to_string(std::min(left, 6)) + " s", gfx::kLayoutWidth - kLeft, y + 10,
-                Weight::Regular, 18, theme::white(0.62f), 300, Align::Right);
+    if (zone_ != Zone::None || x > gfx::kLayoutWidth - kLeft - 360) return;
+    // The load states, quietly, where "Hides in" sits once it plays.
+    Status st = status(g);
+    float right = gfx::kLayoutWidth - kLeft;
+    if (st.text.empty()) {
+      int left = static_cast<int>((bannerUntil_ > app_.ms() ? bannerUntil_ - app_.ms() : 0) / 1000) + 1;
+      ui::label(c, "Hides in " + std::to_string(std::min(left, 6)) + " s", right, y + 10, Weight::Regular, 18,
+                theme::white(0.62f), 300, Align::Right);
+      return;
+    }
+    float tw = ui::textWidth(c, st.text, Weight::Medium, 19);
+    float tx = right - tw;
+    ui::label(c, st.text, tx, y + 9, Weight::Medium, 19, theme::white(0.8f));
+    if (st.busy) ui::spinner(c, tx - 20, y + 21, 9);
+    if (st.done) ui::labelIn(c, "\xe2\x9c\x93", {tx - 32, y + 8, 22, 26}, Weight::Bold, 19, theme::hex(kGreen), Align::Center);
   }
 
   // 2A / 3D: the action row.
@@ -627,134 +808,6 @@ class PlayerScreen : public Screen {
            nameOf(p.previousEntry()));
   }
 
-  // 3B: a backup took over by itself.
-  void drawBackupCard(ui::Ctx& c) {
-    Playback& p = app_.playback();
-    const auto& b = p.backupNotice();
-    if (!b || p.feeds().empty()) return;
-    Rect r{gfx::kLayoutWidth - 48 - 560, p.note().empty() ? 48.0f : 110.0f, 560, 190};
-    c.g.fill(r, theme::hex(0x14161B, 0.9f), 22);
-    Rect icon{r.x + 28, r.y + 26, 34, 34};
-    c.g.fill(icon, theme::hex(kGreen, 0.2f), 17);
-    ui::labelIn(c, "\xe2\x9c\x93", icon, Weight::Bold, 20, theme::hex(kGreen), Align::Center);
-    ui::label(c, "Switched to a backup", r.x + 76, r.y + 28, Weight::Bold, 24, theme::white());
-    size_t to = std::min(b->to, p.feeds().size() - 1);
-    std::string q = p.feeds()[to].quality;
-    std::string text = "Feed " + std::to_string(b->from + 1) + " stopped, so Feed " + std::to_string(to + 1) +
-                       (q.empty() ? "" : " (" + q + ")") + " took over.";
-    ui::paragraph(c, text, r.x + 28, r.y + 74, r.w - 56, Weight::Regular, 20, theme::white(0.72f), 2);
-    float dx = r.x + 28;
-    hints::Hint key = hints::playerSources(app_.remoteKeys());
-    if (key.colour != hints::Colour::None) {
-      c.g.fill({dx, r.y + 146, 18, 18}, theme::hex(kRed), 9);
-      dx += 28;
-    } else {
-      dx += ui::keyCap(c, dx, r.y + 140, 30, key.icons, key.cap, theme::white(0.16f), theme::white()) + 10;
-    }
-    ui::label(c, "Sources to pick another", dx, r.y + 142, Weight::Bold, 19, theme::white(0.8f));
-  }
-
-  // 3A, or the first tune: the dark card while a feed opens.
-  void drawTuning(ui::Ctx& c, const GuideChannel* g) {
-    Playback& p = app_.playback();
-    c.g.fill({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight}, theme::hex(0x0D1117));
-    if (p.hadPicture() && !p.feeds().empty()) {
-      // Switching feeds (picked or a backup): centred.
-      size_t i = std::min(p.feedIndex(), p.feeds().size() - 1);
-      float cy = 380;
-      ui::spinner(c, gfx::kLayoutWidth * 0.5f, cy + 32, 28);
-      ui::labelIn(c, "Switching to Feed " + std::to_string(i + 1), {0, cy + 90, gfx::kLayoutWidth, 50}, Weight::Bold,
-                  36, theme::white(), Align::Center);
-      ui::labelIn(c, p.feeds()[i].label, {0, cy + 150, gfx::kLayoutWidth, 34}, Weight::Regular, 22, theme::white(0.65f),
-                  Align::Center);
-      ui::labelIn(c, "If it doesn't start in 20 seconds, the next feed is tried", {0, cy + 196, gfx::kLayoutWidth, 30},
-                  Weight::Regular, 19, theme::white(0.45f), Align::Center);
-      std::string pill = "Feed " + std::to_string(i + 1) + " of " + std::to_string(p.feeds().size());
-      float pw = ui::textWidth(c, pill, Weight::Bold, 20) + 44;
-      Rect r{gfx::kLayoutWidth - 48 - pw, 48, pw, 48};
-      c.g.fill(r, theme::hex(0x14161B, 0.82f), 24);
-      ui::labelIn(c, pill, r, Weight::Bold, 20, theme::white(), Align::Center);
-      float x = kLeft;
-      if (auto pick = hints::pickAnotherSource(app_.remoteKeys())) {
-        if (pick->colour != hints::Colour::None) {
-          c.g.fill({x, gfx::kLayoutHeight - 92, 20, 20}, theme::hex(kRed), 10);
-          x += 30;
-        } else {
-          x += ui::keyCap(c, x, gfx::kLayoutHeight - 102, 36, pick->icons, pick->cap, theme::white(0.16f),
-                          theme::white()) + 12;
-        }
-        x += ui::label(c, pick->label, x, gfx::kLayoutHeight - 96, Weight::Bold, 21, theme::white(0.75f)) + 70;
-      }
-      Rect bk{x, gfx::kLayoutHeight - 102, 56, 36};
-      c.g.fill(bk, theme::white(0.16f), 9);
-      ui::labelIn(c, "Back", bk, Weight::Bold, 14, theme::white(), Align::Center);
-      ui::label(c, "Back to the guide", bk.x + bk.w + 12, gfx::kLayoutHeight - 96, Weight::Bold, 21, theme::white(0.75f));
-      return;
-    }
-    float x = 110, y = gfx::kLayoutHeight - 110 - 420;
-    if (g) ui::logo(c, g->logoUrl, "", {x, y, 300, 110});
-    y += 130;
-    if (g) ui::label(c, g->name, x, y, Weight::Bold, 34, theme::white());
-    y += 54;
-    ui::label(c, "TUNING IN", x, y, Weight::Bold, 22, theme::white(0.6f));
-    y += 40;
-    const Listing* l = g ? current(g->id, c.now, nullptr) : nullptr;
-    if (l) ui::label(c, l->title, x, y, Weight::Bold, 60, theme::white(), 1500);
-    y += 90;
-    ui::spinner(c, x + 20, y + 20, 18);
-  }
-
-  // 3C: every feed was tried.
-  void drawFailed(ui::Ctx& c, const GuideChannel* g) {
-    Playback& p = app_.playback();
-    c.g.fill({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight}, theme::hex(0x0D1117));
-    std::vector<std::string> lines;
-    for (size_t i = 0; i < p.feeds().size() && i < 5; ++i) {
-      const Feed& f = p.feeds()[i];
-      auto problem = p.feedProblem(f.channelId);
-      std::string q = f.quality.empty() ? "" : " \xc2\xb7 " + f.quality;
-      lines.push_back("Feed " + std::to_string(i + 1) + q + " \xe2\x80\x94 " +
-                      (problem ? problem->why : std::string("not tried")));
-    }
-    float h = 470 + 34 * static_cast<float>(lines.size());
-    Rect card{460, std::max(60.0f, (gfx::kLayoutHeight - h) * 0.5f), 1000, h};
-    c.g.fill(card, theme::hex(0x1C1F25, 0.97f), 34);
-    float x = card.x + 64, y = card.y + 56, w = card.w - 128;
-    Rect logo{x, y, 150, 64};
-    c.g.fill(logo, theme::white(0.12f), 12);
-    if (g && !g->logoUrl.empty()) ui::logo(c, g->logoUrl, g->name, {logo.x + 10, logo.y + 6, logo.w - 20, logo.h - 12});
-    else ui::labelIn(c, g ? g->name : std::string(), {logo.x + 8, logo.y, logo.w - 16, logo.h}, Weight::Bold, 22, theme::white(), Align::Center);
-    if (g)
-      ui::label(c, (g->number ? std::to_string(*g->number) + " \xc2\xb7 " : std::string()) + g->name, logo.x + logo.w + 20,
-                y + 18, Weight::Regular, 22, theme::white(0.6f), w - 170);
-    y += 92;
-    ui::label(c, "This channel isn't playing right now", x, y, Weight::Bold, 40, theme::white(), w);
-    y += 62;
-    std::string why = p.feeds().size() > 1
-                          ? "All " + std::to_string(p.feeds().size()) +
-                                " sources were tried. The provider may be down for this channel, or your connection "
-                                "limit may be in use on another screen."
-                          : (p.failMessage().empty() ? std::string("Its feed didn't answer.") : p.failMessage());
-    y += ui::paragraph(c, why, x, y, w, Weight::Regular, 22, theme::white(0.68f), 3) + 28;
-    std::vector<std::string> buttons = failButtons();
-    failButton_ = std::clamp(failButton_, 0, static_cast<int>(buttons.size()) - 1);
-    float bx = x;
-    for (size_t i = 0; i < buttons.size(); ++i) {
-      float bw = ui::chipWidth(c, buttons[i], 24) + 44;
-      Rect r{bx, y, bw, 68};
-      c.hit(r, kHitFail + static_cast<int>(i));
-      bool f = static_cast<int>(i) == failButton_;
-      c.g.fill(r, f ? theme::white() : theme::white(0.14f), 34);
-      ui::labelIn(c, buttons[i], r, Weight::Bold, 24, f ? theme::black() : theme::white(), Align::Center);
-      bx += bw + 16;
-    }
-    y += 100;
-    for (const std::string& line : lines) {
-      ui::label(c, line, x, y, Weight::Regular, 19, theme::white(0.55f), w);
-      y += 34;
-    }
-  }
-
   // 1C: once, the first time a channel plays.
   void drawTips(ui::Ctx& c) {
     ui::scrim(c, 0.55f);
@@ -790,6 +843,10 @@ class PlayerScreen : public Screen {
   }
 
   uint32_t bannerFrom_ = 0, bannerUntil_ = 0, rowTouched_ = 0;
+  std::string pendingFlip_;  // channel keys: the channel the banner shows, tuned once they stop
+  uint32_t flipAt_ = 0;
+  bool wasReady_ = false, pictureSeen_ = false;  // this tune's picture: now, and ever
+  size_t pictureFeed_ = 0;  // the feed the picture last came from
   Zone zone_ = Zone::None;
   std::vector<Pill> pills_;
   int pill_ = 0;

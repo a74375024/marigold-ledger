@@ -173,9 +173,9 @@ void Session::apply(const playback::Actions& actions) {
         if (hooks_.changed) hooks_.changed();
         break;
       case playback::Action::Kind::Toast:
-        // A backup's picture came up: the corner card says what happened.
+        // A backup's picture came up: the banner says "Back on" the channel
+        // (no toast; on a first tune the banner already said it was trying).
         if (full_ && hadPicture_) backup_ = BackupNotice{lastFailed_, rec_.feedIndex(), ms()};
-        else if (full_ && hooks_.toast) hooks_.toast(a.text);
         break;
       case playback::Action::Kind::RecordFeed:
         if (a.feed < feeds_.size()) {
@@ -247,14 +247,18 @@ void Session::watched() {
   store_.noteWatched(entry_);
 }
 
-std::string Session::flip(int step) {
+std::string Session::flipTarget(const std::string& from, int step) const {
   if (flip_.empty()) return {};
-  auto it = std::find(flip_.begin(), flip_.end(), entry_);
+  auto it = std::find(flip_.begin(), flip_.end(), from.empty() ? entry_ : from);
   long n = static_cast<long>(flip_.size());
   long i = it == flip_.end() ? 0 : (it - flip_.begin());
   i = ((i + step) % n + n) % n;
-  std::string next = flip_[static_cast<size_t>(i)];
-  tune(next);
+  return flip_[static_cast<size_t>(i)];
+}
+
+std::string Session::flip(int step) {
+  std::string next = flipTarget(entry_, step);
+  if (!next.empty()) tune(next);
   return next;
 }
 

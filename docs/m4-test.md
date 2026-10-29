@@ -57,13 +57,13 @@ Requests: race drivers and results only for race weekends you can watch
 | Area | How to check | Pass |
 |---|---|---|
 | First time | Play any channel full screen for the first time | "Getting around" card (Guide, Last channel, Channels, Info, Sources, Number keys); OK closes it, it never shows again |
-| Banner | Start a channel, or OK while watching | Logo on a dark plate, number and name, LIVE and the show, times and progress, Next; under it the keys: ◀ Guide, ▶ Last channel, ▼ More, OK Info, red Sources (backups), blue Options; hides after 6 s |
+| Banner | Start a channel, or OK while watching | Shows at once, also before the picture (black behind it, a small spinner where the picture goes, "Tuning in" bottom right). Logo, number and name, LIVE and the show, times, progress and "N min left"; on the right "Later on this channel": the next show ("Starts in 4 min" when it's close) and the two after; under it the keys. Hides 6 s after the picture comes up |
 | Banner on bright content | Start a channel showing snow, a pitch or a bright studio | Title, channel line, times and keys all readable; the top half of the picture isn't darkened |
 | Action row | Down while the banner is up | Pills: Sources (feed), Guide, Back to the last channel, Favorite, More (Cameras first on a race); Left/Right, OK, Up hides it |
 | Sources | Sources pill or the red key | Side panel over the picture: each feed playing / backup / why it failed lately; OK switches at once |
-| Switching | Pick another feed | "Switching to Feed 2" with the feed and the 20 s rule; then the picture |
-| Backup | A feed that stops while watching | Corner card "Switched to a backup: Feed 1 stopped, so Feed 2 (HD) took over" for 8 s |
-| Nothing works | A channel whose feeds all fail | Card with Try Again, Choose a Source, Back to the last channel, and why each feed failed |
+| Switching | Pick another feed | The banner stays, its status line reads "Switching to another feed · HD"; no full-screen card, no feed numbers; then the picture |
+| Backup | A feed that stops while watching | The banner with "Reconnecting…" or "Switching to another feed · HD"; when the picture's back, "✓ Back on CNN" for 2 s, then the banner hides. No corner card |
+| Nothing works | A channel whose feeds all fail | In the banner: "CNN isn't playing right now", one line why, and Try again / Pick a feed / Back to the last channel where the keys go |
 | Pointer | Move the Magic Remote | Guide and last-channel buttons at the edges, the action row clickable |
 | Leave from Live Events | Watch a game from Live Events (or a game's page, or search), then Back | The stream stops; nothing keeps playing behind the board |
 | Leave to the guide | Watch from the guide, then Back | The picture shrinks into the guide's corner (or stops with previews off) |
@@ -98,7 +98,8 @@ The guide's lists and the playback session now come from the shared engine. Each
 | Search | Type a channel name, a channel number and a local station ("nbc") | Exact name first, then the number, then names that start with it |
 | Mini guide | Down in the player | The list the channel was picked from, under its headers, the playing one focused |
 | Flip and LAST | CH+ / CH− past the end of the list, then ▶ Last channel | Wraps around; LAST goes back to the channel watched before |
-| Backup takes over | A channel whose first feed fails | Same retries, then the next feed; the corner card says which feed took over |
+| Flip quickly | CH+ three times fast | The banner changes to each channel at once; only the one stopped on starts (about half a second later) |
+| Backup takes over | A channel whose first feed fails | Same retries, then the next feed; the banner reads "Tuning in", then after about 7 s "Still trying · HD"; no "back on" on a first start |
 | HLS and Emby | A channel with an HLS feed, and an Emby channel | Both start as before (HLS through the local relay, Emby opened on the server) |
 | Playback log | Export Playback Log after the above | Tunes, retries and memory lines as before; no links |
 

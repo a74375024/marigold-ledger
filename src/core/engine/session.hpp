@@ -103,6 +103,9 @@ class Session {
 
   // Moves through the flip list: +1 next, -1 previous. Returns the entry.
   std::string flip(int step);
+  // The channel `step` away from `from` (empty: the one playing) in the flip
+  // list, without tuning it: the banner shows it while the viewer presses on.
+  std::string flipTarget(const std::string& from, int step) const;
   // Back to the previous channel (cable LAST).
   std::string previous();
 
@@ -133,15 +136,16 @@ class Session {
     std::string why;
   };
   std::optional<FeedProblem> feedProblem(const std::string& channelId) const;
-  // A backup took over by itself (the corner card): the feed that stopped
-  // and the one now playing, and when (ms).
+  // A backup took over by itself (the banner's "Back on …"): the feed that
+  // stopped and the one now playing, and when (ms).
   struct BackupNotice {
     size_t from = 0, to = 0;
     uint32_t at = 0;
   };
   const std::optional<BackupNotice>& backupNotice() const { return backup_; }
   void dismissBackupNotice() { backup_.reset(); }
-  // This tune has shown a picture (a feed switch then reads "Switching to…").
+  // This tune has shown a picture (a feed switch then reads "Switching to
+  // another feed").
   bool hadPicture() const { return hadPicture_; }
   // Options › Help › Export Playback Log.
   const report::PlaybackLog& log() const { return log_; }

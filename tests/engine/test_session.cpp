@@ -135,8 +135,9 @@ TEST_CASE("session: no picture in 20 seconds moves to the next feed and says why
   REQUIRE(problem);
   CHECK(problem->why == "no picture after 20 s");
 
-  // The backup's picture comes up full screen: the corner card says which
-  // feed stopped and which took over.
+  // The backup's picture comes up full screen: the notice says which feed
+  // stopped and which took over (the player drops it on a first start), and
+  // no toast.
   r.picture();
   REQUIRE(r.session->backupNotice());
   CHECK(r.session->backupNotice()->from == 0);
@@ -144,7 +145,7 @@ TEST_CASE("session: no picture in 20 seconds moves to the next feed and says why
   CHECK(r.toasts.empty());
 }
 
-TEST_CASE("session: a backup taking over after a picture shows the corner card") {
+TEST_CASE("session: a backup taking over after a picture is noticed (\"Back on\" in the banner)") {
   Rig r;
   auto ids = r.entries(2);
   REQUIRE(!ids.empty());
@@ -161,6 +162,24 @@ TEST_CASE("session: a backup taking over after a picture shows the corner card")
   REQUIRE(r.session->backupNotice());
   CHECK(r.session->backupNotice()->from == 0);
   CHECK(r.session->backupNotice()->to == r.session->feedIndex());
+}
+
+TEST_CASE("session: channel keys can look ahead without tuning") {
+  Rig r;
+  auto ids = r.entries(1);
+  REQUIRE(ids.size() >= 3);
+  REQUIRE(r.session->tune(ids[1], ids));
+  r.run(500);
+  size_t plays = r.player->plays.size();
+  CHECK(r.session->flipTarget("", 1) == ids[2]);
+  CHECK(r.session->flipTarget("", -1) == ids[0]);
+  CHECK(r.session->flipTarget(ids[2], -1) == ids[1]);
+  CHECK(r.session->flipTarget(ids[0], -1) == ids.back());  // round the list
+  r.run(1000);
+  CHECK(r.player->plays.size() == plays);
+  CHECK(r.session->entry() == ids[1]);
+  CHECK(r.session->flip(1) == ids[2]);
+  CHECK(r.session->entry() == ids[2]);
 }
 
 TEST_CASE("session: the platform's other way is tried before the next feed") {

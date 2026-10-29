@@ -388,7 +388,7 @@ void Recovery::startupFailed(Ms now, const std::string& reason, Actions& out) {
   if (isDirect(feed.kind) && retries < kXtreamStartRetries) {
     startupRetries_[feed.id] = retries + 1;
     if (!allowRecovery(now)) {
-      giveUp("This channel keeps failing to start. Try another version from Choose Feed, or try again later.", out);
+      giveUp("This channel keeps failing to start. Pick another feed, or try again later.", out);
       return;
     }
     setNote("Retrying…", out);
@@ -419,7 +419,7 @@ void Recovery::recover(Ms now, const std::string& reason, Actions& out) {
                   (manualFeedId_ && *manualFeedId_ == feed.id ? 2 : 0);
   if (reconnectsOnFeed_ < allowance) {
     if (!allowRecovery(now)) {
-      giveUp("This channel keeps dropping. Try another version from Choose Feed, or try again later.", out);
+      giveUp("This channel keeps dropping. Pick another feed, or try again later.", out);
       return;
     }
     ++reconnectsOnFeed_;
@@ -448,7 +448,7 @@ void Recovery::moveToNext(Ms now, const std::string& reason, Actions& out) {
     return;
   }
   if (!allowRecovery(now)) {
-    giveUp("This channel keeps failing. Try another version from Choose Feed, or try again later.", out);
+    giveUp("This channel keeps failing. Pick another feed, or try again later.", out);
     return;
   }
   size_t next = (index_ + 1) % count;
