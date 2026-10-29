@@ -203,6 +203,12 @@ struct Store::Impl {
 
   uint64_t publishVersion = 0;
   bool channelsDirty = false, listingsDirty = false;
+  // A first list is sorted but its rows aren't on screen yet (the lineup
+  // works them out on a worker): Ready only once they're published, so the
+  // guide never shows "No channels" in between. `rowsBuilt` once the latest
+  // lineup is in; `saveOnRows` saves the list then (its first-screen file is
+  // those rows).
+  bool readyOnPublish = false, rowsBuilt = false, saveOnRows = false;
   std::unordered_set<std::string> dirtyEntries;  // entry ids whose listings changed
   bool allListingsDirty = false;
 };

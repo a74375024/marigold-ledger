@@ -290,6 +290,8 @@ The app knows real US channels by their other names, language and closing. After
 | Couldn't update | Turn the provider off (or the network), then Options › refresh | The list stays; the header reads "Couldn't update the channel list · tries again later" for a few seconds |
 | Focus | Stay on a channel while it updates | The same channel stays focused (also when it was renamed); playback never stops |
 | No list at all | Add a provider in Options | "Building your lineup" with a bar that never jumps back or sits full |
+| Straight to the guide | Set up, or add the first provider, and watch the end of "Building your lineup" | The full bar goes straight to the guide: no "No channels" message in between (Build 96) |
+| Next launch | Close the app after the first sort, open it again | The guide opens on your rows; no "No channels" flash while the rest of the list loads (Build 96) |
 | Another provider | With channels already in the guide, add a second provider in Options | The guide keeps your list; the header reads "Adding channels from <name>…", then "✓ Channels added"; the new channels join the list without it emptying |
 | Placeholders | Open the guide before its listings are in | Rows show soft pulsing blocks where the shows and times go (no "Loading guide…"); they turn into listings as they arrive; scrolling stays smooth |
 | Live Events placeholders | Open Live Events on a fresh start | Two rows of pulsing tile shapes until the games are in; no "Loading this week's games…" |

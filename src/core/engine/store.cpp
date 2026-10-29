@@ -623,6 +623,7 @@ void Store::reset() {
   m.outsideMatches.clear();
   m.guideState.clear();
   m.channelsDirty = m.allListingsDirty = m.listingsDirty = true;
+  m.readyOnPublish = m.saveOnRows = false;
   status_ = StoreStatus{};
   status_.phase = m.accounts.empty() ? StoreStatus::Phase::NoAccounts : StoreStatus::Phase::Loading;
 }
@@ -701,7 +702,7 @@ void Store::installSaved(catalog::cache::Saved saved, bool partial) {
   if (!partial) m.listFingerprint = older ? 0 : saved.fingerprint;
   installCatalog(std::make_shared<std::vector<Channel>>(std::move(saved.channels)),
                  std::make_shared<CatalogResult>(std::move(saved.catalog)), partial);
-  status_.phase = StoreStatus::Phase::Ready;
+  readyWhenShown();
   startGuides(true);
 }
 
@@ -863,7 +864,9 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
     if (!m.channels->empty() && !problems.empty()) m.loadFailed = true;  // the list on screen stays
     m.accountChange.clear();
     m.accountsChanged = false;
-    if (m.channels->empty()) {
+    // Nothing to show: no list, or only an empty first-screen file.
+    if (m.channels->empty() || (m.readyOnPublish && m.catalog->entries.empty())) {
+      m.readyOnPublish = false;
       status_.phase = problems.empty() ? StoreStatus::Phase::Ready : StoreStatus::Phase::Failed;
       status_.problem = str::join(problems, "\n");
       status_.line.clear();
@@ -968,7 +971,7 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
         // A list was on screen and is now sorted again: the header says so.
         if (!wasEmpty && *renamedCount < 0) mm.loadUpdated = true;
         installCatalog(result->first, result->second, false);
-        status_.phase = StoreStatus::Phase::Ready;
+        readyWhenShown();
         status_.problem = str::join(problems, "\n");
         status_.line.clear();
         if (*renamedCount >= 0) MLOG_I("store", "refresh: only %ld event names changed", *renamedCount);
@@ -1101,6 +1104,12 @@ void Store::installCatalog(std::shared_ptr<const std::vector<Channel>> list, std
 void Store::saveCatalog() {
   Impl& m = *impl_;
   if (m.partial || m.channels->empty()) return;
+  // The first-screen file is the rows on screen: wait for them.
+  if (!m.rowsBuilt) {
+    m.saveOnRows = true;
+    return;
+  }
+  m.saveOnRows = false;
   // The live list and catalog are shared with the writer, not copied, and
   // written a piece at a time.
   struct Job {
@@ -1161,6 +1170,7 @@ void Store::saveCatalog() {
 void Store::rebuildEntries() {
   Impl& m = *impl_;
   uint64_t generation = ++m.rebuildGeneration;
+  m.rowsBuilt = false;
   auto input = std::make_shared<catalog::LineupInput>();
   input->infos = m.catalog->entries;
   input->channels = *m.channels;
@@ -1192,6 +1202,8 @@ void Store::rebuildEntries() {
                      impl_->lineup = std::move(*out);
                      ++impl_->lineupRevision;
                      impl_->channelsDirty = true;
+                     impl_->rowsBuilt = true;
+                     if (impl_->saveOnRows) saveCatalog();
                      // Entry guides from whatever member data is already here.
                      std::vector<std::string> ids;
                      ids.reserve(impl_->entryInfo.size());
@@ -1199,6 +1211,19 @@ void Store::rebuildEntries() {
                      applyEntryGuides(ids);
                    },
                    http::Priority::Visible);
+}
+
+void Store::readyWhenShown() {
+  Impl& m = *impl_;
+  // A first-screen file with nothing in it (older versions wrote it before
+  // the rows existed) waits for the full one.
+  if ((channels_ && !channels_->all.empty()) || (m.catalog->entries.empty() && !m.partial)) {
+    status_.phase = StoreStatus::Phase::Ready;
+    m.readyOnPublish = false;
+    return;
+  }
+  // Still the progress screen until the rows are published (tick).
+  m.readyOnPublish = true;
 }
 
 catalog::LineupPrefs Store::lineupPrefs() const { return impl_->prefs; }
@@ -2570,6 +2595,10 @@ bool Store::tick(uint32_t ms) {
     m.channelsDirty = false;
     publishChannels();
     changed = true;
+    if (m.readyOnPublish && m.rowsBuilt && (!m.partial || (channels_ && !channels_->all.empty()))) {
+      m.readyOnPublish = false;
+      status_.phase = StoreStatus::Phase::Ready;
+    }
   }
   if (m.listingsDirty || m.allListingsDirty) {
     m.listingsDirty = false;

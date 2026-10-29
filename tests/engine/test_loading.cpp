@@ -12,6 +12,7 @@
 #include "core/catalog/cache.hpp"
 #include "core/catalog/catalog.hpp"
 #include "core/engine/store.hpp"
+#include "core/util/json.hpp"
 #include "engine/loaded_store.hpp"
 #include "sources/mock_provider.hpp"
 
@@ -40,7 +41,72 @@ std::vector<std::string> savedLists(const fake::Tv& tv) {
   return names;
 }
 
+// One queued step at a time with a frame after each, as the TV draws: true
+// if any frame said "ready" with no channels (the guide's "No channels").
+bool saidNoChannels(Store& store, fake::Tv& tv) {
+  bool said = false;
+  for (int i = 0; i < 2000; ++i) {
+    size_t steps = tv.pool.drain(1);
+    tv.ms += 16;
+    store.tick(tv.ms);
+    auto shown = store.channels();
+    if (store.status().phase == StoreStatus::Phase::Ready && (!shown || shown->all.empty())) said = true;
+    if (steps == 0 && i > 400) break;
+  }
+  return said;
+}
+
 }  // namespace
+
+TEST_CASE("loading: the guide never says 'No channels' between the sort and the rows") {
+  fake::Tv tv;
+  mock::Provider provider(200);
+  tv.pool.answer(kPlaylist, provider.m3u());
+  {
+    Store store(tv.host());
+    store.addAccount(fake::m3uForm(), [](std::string) {});
+    CHECK_FALSE(saidNoChannels(store, tv));
+    CHECK(store.status().phase == StoreStatus::Phase::Ready);
+    REQUIRE(store.channels());
+    CHECK(store.channels()->all.size() > 50);
+  }
+  // The next launch, from the list saved on this TV.
+  Store again(tv.host());
+  CHECK_FALSE(saidNoChannels(again, tv));
+  CHECK(again.status().phase == StoreStatus::Phase::Ready);
+  REQUIRE(again.channels());
+  CHECK(again.channels()->all.size() > 50);
+}
+
+TEST_CASE("loading: the first-screen file holds the rows; an empty one (older versions) waits for the full") {
+  using marigold::catalog::cache::fromJson;
+  using marigold::catalog::cache::toJson;
+  fake::Tv tv;
+  mock::Provider provider(200);
+  tv.pool.answer(kPlaylist, provider.m3u());
+  {
+    Store store(tv.host());
+    REQUIRE(addPlaylist(store, tv).empty());
+  }
+  std::string firstName;
+  for (const std::string& name : savedLists(tv))
+    if (name.find("-first") != std::string::npos) firstName = name;
+  REQUIRE_FALSE(firstName.empty());
+  std::string text = tv.files.read(firstName).value_or("");
+  auto doc = marigold::json::parse(text);
+  REQUIRE(doc);
+  auto first = fromJson(text, (*doc)["signature"].asString());
+  REQUIRE(first);
+  CHECK(first->catalog.entries.size() > 20);
+  // As Build 95 and older wrote it: channels, no entries.
+  first->catalog.entries.clear();
+  tv.files.write(firstName, toJson(*first), false);
+  Store again(tv.host());
+  CHECK_FALSE(saidNoChannels(again, tv));
+  CHECK(again.status().phase == StoreStatus::Phase::Ready);
+  REQUIRE(again.channels());
+  CHECK(again.channels()->all.size() > 50);
+}
 
 TEST_CASE("loading: a changed list sorts in the background, then the header says it's updated") {
   fake::Tv tv;

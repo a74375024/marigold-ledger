@@ -322,6 +322,8 @@ class Store {
                       std::shared_ptr<const catalog::CatalogResult> cat, bool partial);
   void saveCatalog();
   void rebuildEntries();
+  // Ready now if rows are on screen; else when the new list's are.
+  void readyWhenShown();
   time::Seconds windowStart() const;
   bool entryHasGuide(const std::string& id) const;
   void startGuideFetches();
