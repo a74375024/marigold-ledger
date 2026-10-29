@@ -114,7 +114,7 @@ void GuideScreen::refresh(bool force) {
   tabs_ = {Tab::Lineup, Tab::Favorites, Tab::Recent, Tab::Events};
   if (s.settings().allChannelsTab) tabs_.push_back(Tab::All);
   if (std::find(tabs_.begin(), tabs_.end(), tab_) == tabs_.end()) tab_ = Tab::Lineup;
-  rebuildLines();
+  rebuildLines(!force);
 }
 
 const std::vector<int>& GuideScreen::tabRows() const {
@@ -122,7 +122,7 @@ const std::vector<int>& GuideScreen::tabRows() const {
   return ch_ ? engine::views::tabRows(*ch_, tab_, filter()) : kNone;
 }
 
-void GuideScreen::rebuildLines() {
+void GuideScreen::rebuildLines(bool samePlace) {
   namespace views = engine::views;
   lines_.clear();
   sections_.clear();
@@ -154,13 +154,26 @@ void GuideScreen::rebuildLines() {
   }
   for (const views::Section& sec : list.sections) sections_.push_back({sec.title, sec.firstLine, sec.count});
   contentH_ = y;
-  // Keep the focus on the same channel when it is still there.
-  int found = -1;
-  for (size_t i = 0; i < lines_.size(); ++i) {
-    if (lines_[i].kind == Line::Kind::Channel && ch_->all[static_cast<size_t>(lines_[i].channel)].id == focusId_) {
-      found = static_cast<int>(i);
-      break;
+  // Keep the focus on the same channel when it is still there, under its
+  // new id when the list was sorted again (renamed or merged), else on the
+  // row in the same place.
+  auto lineOf = [&](const std::string& id) {
+    for (size_t i = 0; i < lines_.size(); ++i) {
+      if (lines_[i].kind == Line::Kind::Channel && ch_->all[static_cast<size_t>(lines_[i].channel)].id == id) {
+        return static_cast<int>(i);
+      }
     }
+    return -1;
+  };
+  int was = focusLine_;
+  int found = lineOf(focusId_);
+  if (found < 0 && ch_) {
+    if (auto now = ch_->renamed.find(focusId_); now != ch_->renamed.end()) found = lineOf(now->second);
+  }
+  if (found < 0 && samePlace && was >= 0 && !lines_.empty()) {
+    found = std::min(was, static_cast<int>(lines_.size()) - 1);
+    while (found > 0 && lines_[static_cast<size_t>(found)].kind == Line::Kind::Header) --found;
+    if (lines_[static_cast<size_t>(found)].kind == Line::Kind::Header) found = -1;
   }
   if (found < 0) {
     for (size_t i = 0; i < lines_.size(); ++i) {
@@ -860,6 +873,11 @@ bool GuideScreen::tick(uint32_t ms) {
     app_.invalidate();
   }
   if (!digits_.empty()) animating = true;
+  // The progress screen, the header's spinner and a result fading out move.
+  const StoreStatus& status = s.status();
+  if (status.phase == StoreStatus::Phase::Loading || status.mark == StoreStatus::Mark::Busy ||
+      (!shownLine_.empty() && status.line.empty()))
+    animating = true;
   // Two idle minutes in a later window: back to now. A window left behind
   // as time passed (it never starts before now) moves on with it.
   if (later() && ms - lastKeyMs_ > kIdleBackToNowMs) returnToNow();
@@ -908,17 +926,15 @@ void GuideScreen::drawStatus(ui::Ctx& c) {
   const StoreStatus& st = app_.store().status();
   float cx = gfx::kLayoutWidth * 0.5f;
   std::string title, message;
-  bool spin = false;
   switch (st.phase) {
     case StoreStatus::Phase::NoAccounts:
       title = "Add your channels";
       message = "Press OK to add an Xtream, Emby or M3U provider.";
       break;
     case StoreStatus::Phase::Loading:
-      title = "Loading channels";
-      message = st.line;
-      spin = true;
-      break;
+      // No list on screen yet: how far the channel list has got.
+      setup_ui::building(c, {0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight}, app_.store().loadProgress(), building_);
+      return;
     case StoreStatus::Phase::Failed:
       title = "Couldn't load channels";
       message = st.problem.empty() ? "Check the provider in Options." : st.problem;
@@ -928,7 +944,6 @@ void GuideScreen::drawStatus(ui::Ctx& c) {
       message = "Your providers sent an empty channel list.";
       break;
   }
-  if (spin) ui::spinner(c, cx, 380, 34);
   ui::label(c, title, 0, 460, Weight::Bold, 44, theme::white(), gfx::kLayoutWidth, Align::Center);
   ui::paragraph(c, message, cx - 600, 530, 1200, Weight::Regular, 26, theme::white(0.7f), 3);
   if (st.phase != StoreStatus::Phase::Loading) {
@@ -940,24 +955,63 @@ void GuideScreen::drawStatus(ui::Ctx& c) {
   }
 }
 
+void GuideScreen::drawHeaderLine(ui::Ctx& c, float x, float y, float right) {
+  const StoreStatus& st = app_.store().status();
+  StoreStatus::Mark mark = st.phase == StoreStatus::Phase::Loading ? StoreStatus::Mark::Busy : st.mark;
+  std::string line = st.line;
+  float alpha = 1;
+  if (!line.empty()) {
+    shownLine_ = line;
+    shownMark_ = mark;
+    fadeFrom_ = 0;
+  } else if (!shownLine_.empty() &&
+             (shownMark_ == StoreStatus::Mark::Done || shownMark_ == StoreStatus::Mark::Failed)) {
+    // "Channel list updated": its few seconds are up, so it fades.
+    if (!fadeFrom_) fadeFrom_ = c.ms ? c.ms : 1;
+    float t = static_cast<float>(c.ms - fadeFrom_) / 400.0f;
+    if (t >= 1) {
+      shownLine_.clear();
+    } else {
+      line = shownLine_;
+      mark = shownMark_;
+      alpha = 1 - t;
+    }
+  } else {
+    shownLine_.clear();
+  }
+  if (line.empty()) return;
+  // The mark takes the spinner's place, so the words don't move.
+  switch (mark) {
+    case StoreStatus::Mark::Busy:
+      ui::spinner(c, x + 10, y + 14, 10, theme::white(0.8f * alpha));
+      x += 30;
+      break;
+    case StoreStatus::Mark::Done:
+      ui::labelIn(c, "\xe2\x9c\x93", {x, y + 2, 20, 24}, Weight::Bold, 20, theme::hex(theme::kToggleOn, 0.9f * alpha),
+                  Align::Center);
+      x += 30;
+      break;
+    case StoreStatus::Mark::Failed:
+      ui::labelIn(c, "!", {x, y + 2, 20, 24}, Weight::Bold, 20, theme::hex(theme::kWarning, 0.9f * alpha), Align::Center);
+      x += 30;
+      break;
+    case StoreStatus::Mark::None:
+      break;
+  }
+  ui::label(c, line, x, y + 3, Weight::Regular, 18, theme::white(0.45f * alpha), right - x);
+}
+
 void GuideScreen::drawHero(ui::Ctx& c) {
   const GuideChannel* g = focusedChannel();
   float x = kLeft, y = 48;
   float w = 1240;
-  const StoreStatus& st = app_.store().status();
   if (g) {
     ui::label(c, g->section, x, y, Weight::Bold, 22, theme::white(0.6f));
   } else if (focusLine_ >= 0 && lines_[static_cast<size_t>(focusLine_)].kind == Line::Kind::Prompt) {
     ui::label(c, "My Lineup", x, y, Weight::Bold, 22, theme::white(0.6f));
   }
-  if (!st.line.empty()) {
-    float sx = x + (g ? ui::textWidth(c, g->section, Weight::Bold, 22) + 24 : 0);
-    if (st.phase == StoreStatus::Phase::Loading) {
-      ui::spinner(c, sx + 10, y + 14, 10);
-      sx += 30;
-    }
-    ui::label(c, st.line, sx, y + 3, Weight::Regular, 18, theme::white(0.45f), x + w - sx);
-  }
+  float sx = x + (g ? ui::textWidth(c, g->section, Weight::Bold, 22) + 24 : 0);
+  drawHeaderLine(c, sx, y, x + w);
   y += 40;
   if (!g) {
     if (focusLine_ >= 0 && lines_[static_cast<size_t>(focusLine_)].kind == Line::Kind::Prompt) {

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "app/screen.hpp"
+#include "app/screens/setup_ui.hpp"
 #include "app/store/store.hpp"
 #include "core/engine/views.hpp"
 
@@ -50,7 +51,9 @@ class GuideScreen : public Screen {
   };
 
   void refresh(bool force = false);
-  void rebuildLines();
+  // `samePlace`: the list itself changed (sorted again), so a row that's
+  // gone leaves the focus where it was rather than at the top.
+  void rebuildLines(bool samePlace = false);
   const std::vector<int>& tabRows() const;
   engine::views::Filter filter() const { return {filter_, filterSection_}; }
   const GuideChannel* focusedChannel() const;
@@ -83,6 +86,9 @@ class GuideScreen : public Screen {
   void drawChannelCell(ui::Ctx& c, const GuideChannel& g, ui::Rect r, bool focused);
   void drawRail(ui::Ctx& c);
   void drawStatus(ui::Ctx& c);
+  // The header's status line (updating, updated, couldn't), fading out when
+  // a result's few seconds are up.
+  void drawHeaderLine(ui::Ctx& c, float x, float y, float right);
   void drawDigits(ui::Ctx& c);
 
   time::Seconds nowWindow() const;
@@ -105,6 +111,10 @@ class GuideScreen : public Screen {
   std::vector<std::string> flip_;  // the channel lines' entries, for CH+ / CH-
   float contentH_ = 0;
   int focusLine_ = -1;
+  setup_ui::Building building_;
+  std::string shownLine_;
+  StoreStatus::Mark shownMark_ = StoreStatus::Mark::None;
+  uint32_t fadeFrom_ = 0;
   float scroll_ = 0;
   std::string focusId_;  // keeps the focus across rebuilds
 

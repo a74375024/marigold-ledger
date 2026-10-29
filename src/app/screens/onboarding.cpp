@@ -132,13 +132,15 @@ class PhoneSignIn : public Screen {
       }
     }
     if (signedIn_) {
-      // Channels come in on the store's workers; carry on once they're in.
-      auto ch = app_.store().channels();
-      if (ch->rawChannels != channels_) {
-        channels_ = ch->rawChannels;
+      // Channels come in on the store's workers; carry on once they're
+      // downloaded (setup goes on while they're sorted).
+      const StoreStatus& status = app_.store().status();
+      size_t received = status.received ? status.received : app_.store().channels()->rawChannels;
+      if (received != channels_) {
+        channels_ = received;
         changed = true;
       }
-      bool loaded = app_.store().status().phase == StoreStatus::Phase::Ready && channels_ > 0;
+      bool loaded = channels_ > 0 && (status.received > 0 || status.phase == StoreStatus::Phase::Ready);
       if (loaded && !loaded_) {
         loaded_ = true;
         continueAt_ = ms + 1500;
@@ -366,9 +368,8 @@ class PhoneSignIn : public Screen {
     row(1, "Phone connected", "");
     row(signedIn_ ? 1 : 0, signedIn_ ? "Signed in to " + providerName_ : "Signing in to " + providerName_ + "\xe2\x80\xa6", "");
     if (signedIn_) {
-      std::string count = channels_ > 0 ? std::to_string(channels_) + " channels so far" : "Starting\xe2\x80\xa6";
-      row(loaded_ ? 1 : 0, loaded_ ? "Channels and the guide are in" : "Loading channels and the guide",
-          loaded_ ? std::to_string(channels_) + " channels" : count);
+      row(loaded_ ? 1 : 0, loaded_ ? setup_ui::grouped(channels_) + " channels received" : "Getting your channel list",
+          loaded_ ? "" : "From " + providerName_);
     }
     float rx = 1080, ry = 300;
     ui::label(c, "If it doesn't work", rx, ry, Weight::Bold, 24, theme::white());
@@ -381,7 +382,7 @@ class PhoneSignIn : public Screen {
     std::vector<std::string> titles = buttonTitles();
     if (!titles.empty()) {
       setup_ui::buttons(c, rx, ry, titles, button_, kHitButton);
-      ui::label(c, firstRun_ ? "Moves on to Area by itself when the channels are in." : "Closes by itself when the channels are in.",
+      ui::label(c, firstRun_ ? "Moves on to Area by itself when the channel list is in." : "Closes by itself when the channel list is in.",
                 rx, ry + 90, Weight::Regular, 20, theme::white(0.55f), 760);
     }
   }

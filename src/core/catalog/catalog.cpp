@@ -466,16 +466,25 @@ std::optional<std::string> markedCountry(const Channel& channel) {
 // MARK: Build
 
 CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
-                    const std::vector<guide::Station>& stations, const directory::Index* directory) {
+                    const std::vector<guide::Station>& stations, const directory::Index* directory,
+                    BuildProgress* progress) {
   CatalogResult result;
   result.traits.reserve(channels.size());
+  // A shared count, bumped now and then.
+  auto step = [progress](size_t done) {
+    if (progress && (done & 255) == 0) progress->done.store(done, std::memory_order_relaxed);
+  };
   // Pass 0: which call signs are real here, and each sign's usual network.
+  if (progress) progress->start(BuildProgress::callSigns, channels.size());
   CallsignContext context(channels, stations);
   context.directory = directory;
   // Pass 1: traits and candidate event families.
   std::unordered_map<std::string, int> familyCounts;
   std::unordered_map<std::string, int> familySeparators;
+  if (progress) progress->start(BuildProgress::traits, channels.size());
+  size_t seen = 0;
   for (const Channel& channel : channels) {
+    step(++seen);
     ChannelTraits traits = traitsFor(channel, context);
     if (traits.familyKey) {
       familyCounts[*traits.familyKey] += 1;
@@ -563,7 +572,10 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
     members.push_back(&channel);
   }
   result.entries.reserve(order.size());
+  if (progress) progress->start(BuildProgress::entries, order.size());
+  seen = 0;
   for (const std::string& key : order) {
+    step(++seen);
     std::vector<const Channel*>& members = clusters[key];
     if (members.empty()) continue;
     // A directory row is told by a copy the directory knows ("TV One", not
@@ -658,9 +670,11 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
   }
 
   // Pass 3: event families and events.
+  if (progress) progress->start(BuildProgress::events, 0);
   EventsResult events = buildEvents(channels, result.traits, now);
   result.families = std::move(events.families);
   result.events = std::move(events.events);
+  if (progress) progress->start(BuildProgress::finished, 0);
   return result;
 }
 

@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <chrono>
 #include <cstdio>
 #include <fstream>
 #include <functional>
@@ -54,6 +55,21 @@ using catalog::CatalogResult;
 // The built-in channel directory, when the build has one.
 const catalog::directory::Index* builtInDirectory() {
   return catalog::directory::builtIn().empty() ? nullptr : &catalog::directory::builtInIndex();
+}
+
+// The channel names the area suggestion reads: local-looking ones first
+// (tvOS).
+std::vector<std::string> suggestionNames(const std::vector<Channel>& list) {
+  std::vector<std::string> names;
+  for (const Channel& c : list) {
+    std::string group = str::lowerAscii(c.group.value_or(""));
+    if (group.find("local") != std::string::npos || guide::bareCallsign(c.name)) names.push_back(c.name);
+  }
+  if (names.empty()) {
+    for (const Channel& c : list) names.push_back(c.name);
+  }
+  if (names.size() > 6000) names.resize(6000);
+  return names;
 }
 
 // A lineup row's directory entry's iptv-org id ("" when none), for its
@@ -665,7 +681,11 @@ void Store::installSaved(catalog::cache::Saved saved, bool partial) {
   Impl& m = *impl_;
   for (const auto& [source, formats] : saved.xtreamFormats) m.runs[source].formats = formats;
   m.channelsLoadedAt = saved.savedAt;
-  if (!partial) m.listFingerprint = saved.fingerprint;
+  // An older version's list is shown until this one sorts it again (no
+  // fingerprint, so the download is sorted whatever it holds).
+  bool older = saved.version != catalog::cache::kVersion;
+  if (older && partial) MLOG_I("store", "showing the list version %d saved; sorting it again", saved.version);
+  if (!partial) m.listFingerprint = older ? 0 : saved.fingerprint;
   installCatalog(std::make_shared<std::vector<Channel>>(std::move(saved.channels)),
                  std::make_shared<CatalogResult>(std::move(saved.catalog)), partial);
   status_.phase = StoreStatus::Phase::Ready;
@@ -680,6 +700,7 @@ void Store::downloadChannels(uint64_t gen) {
   auto parts = std::make_shared<std::vector<Fetched>>(n);
   auto remaining = std::make_shared<size_t>(n);
   status_.line = "Loading channels from " + std::to_string(n) + (n == 1 ? " provider\xe2\x80\xa6" : " providers\xe2\x80\xa6");
+  status_.received = 0;
   auto finished = [this, gen, parts, remaining](size_t /*index*/) {
     if (gen != impl_->generation) return;
     if (--*remaining > 0) return;
@@ -826,6 +847,7 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
   if (total == 0) {
     m.loading = false;
     m.channelsLoadedAt = time::now();
+    if (!m.channels->empty() && !problems.empty()) m.loadFailed = true;  // the list on screen stays
     if (m.channels->empty()) {
       status_.phase = problems.empty() ? StoreStatus::Phase::Ready : StoreStatus::Phase::Failed;
       status_.problem = str::join(problems, "\n");
@@ -849,6 +871,12 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
   auto result = std::make_shared<std::pair<std::shared_ptr<std::vector<Channel>>, std::shared_ptr<CatalogResult>>>();
   auto renamedCount = std::make_shared<long>(-1);
   status_.line = "Sorting " + std::to_string(total) + " channels\xe2\x80\xa6";
+  status_.received = total;
+  // The names the area suggestion reads while the list sorts (first run:
+  // setup carries on meanwhile).
+  if (m.channels->empty()) m.receivedNames = std::make_shared<const std::vector<std::string>>(suggestionNames(*merged));
+  auto progress = std::make_shared<catalog::BuildProgress>();
+  m.sortProgress = progress;
   time::Seconds now = time::now();
   auto stations = m.stations;
   std::set<std::string> wanted = m.prefs.guideCountries();  // "US" for US English and US Spanish
@@ -857,9 +885,10 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
   auto print = std::make_shared<uint64_t>(0);
   auto unchanged = std::make_shared<bool>(false);
   host_.pool.post(
-      [merged, old, oldCatalog, result, renamedCount, now, stations, wanted, cut, lastPrint, print, unchanged,
+      [merged, old, oldCatalog, result, renamedCount, now, stations, wanted, cut, lastPrint, print, unchanged, progress,
        foreground = m.foregroundJobs] {
         Foreground busy(foreground);
+        auto started = std::chrono::steady_clock::now();
         std::vector<Channel> list = std::move(*merged);
         // The same download (and countries) as the list on screen, from
         // this run or saved by the last one: nothing to sort again.
@@ -894,12 +923,20 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
             return;
           }
         }
-        *result = {annotated, std::make_shared<CatalogResult>(catalog::build(*annotated, now, *stations, builtInDirectory()))};
+        *result = {annotated, std::make_shared<CatalogResult>(
+                                  catalog::build(*annotated, now, *stations, builtInDirectory(), progress.get()))};
+        // How long a full sort takes on this device (the log, for tuning).
+        long ms = static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        std::chrono::steady_clock::now() - started).count());
+        MLOG_I("store", "sorted %zu channels in %ld ms", annotated->size(), ms);
       },
       [this, gen, result, renamedCount, showing, problems, cut, print, unchanged] {
         if (gen != impl_->generation) return;
         Impl& mm = *impl_;
         mm.loading = false;
+        mm.sortProgress.reset();
+        mm.receivedNames.reset();
+        status_.received = 0;
         mm.channelsLoadedAt = time::now();
         mm.listFingerprint = *print;
         if (*unchanged) {
@@ -912,6 +949,8 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
         mm.admissionChanged = false;
         mm.admissionCut = *cut;
         bool wasEmpty = mm.channels->empty();
+        // A list was on screen and is now sorted again: the header says so.
+        if (!wasEmpty && *renamedCount < 0) mm.loadUpdated = true;
         installCatalog(result->first, result->second, false);
         status_.phase = StoreStatus::Phase::Ready;
         status_.problem = str::join(problems, "\n");
@@ -928,6 +967,46 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
         afterBigJob("channels sorted");
       },
       showing ? http::Priority::Background : http::Priority::Visible);
+}
+
+LoadProgress Store::loadProgress() const {
+  const Impl& m = *impl_;
+  LoadProgress p;
+  p.channels = status_.received;
+  if (!m.loading) {
+    p.stage = LoadProgress::Stage::Done;
+    p.within = 1;
+    return p;
+  }
+  if (!m.sortProgress) return p;  // downloading
+  int pass = m.sortProgress->pass.load(std::memory_order_relaxed);
+  size_t done = m.sortProgress->done.load(std::memory_order_relaxed);
+  size_t total = m.sortProgress->total.load(std::memory_order_relaxed);
+  float through = total ? std::min(1.0f, static_cast<float>(done) / static_cast<float>(total)) : 0.0f;
+  // Recognizing is the channels' traits, then their rows; then games.
+  switch (pass) {
+    case catalog::BuildProgress::traits:
+      p.stage = LoadProgress::Stage::Recognize;
+      p.within = 0.05f + 0.6f * through;
+      break;
+    case catalog::BuildProgress::entries:
+      p.stage = LoadProgress::Stage::Recognize;
+      p.within = 0.65f + 0.35f * through;
+      break;
+    case catalog::BuildProgress::events:
+      p.stage = LoadProgress::Stage::Games;
+      p.within = 0.2f;
+      break;
+    case catalog::BuildProgress::finished:
+      p.stage = LoadProgress::Stage::Games;
+      p.within = 0.9f;
+      break;
+    default:
+      p.stage = LoadProgress::Stage::Recognize;
+      p.within = 0.02f;
+      break;
+  }
+  return p;
 }
 
 // ------------------------------------------------------------ station directory
@@ -1111,16 +1190,10 @@ catalog::LineupPrefs Store::lineupPrefs() const { return impl_->prefs; }
 void Store::loadMarkets(std::function<void(TvMarkets)> done) {
   Impl& m = *impl_;
   std::string path = host_.files.path("markets-v2.json");  // v2: US markets only
-  // Names the market suggestion reads: local-looking channels first (tvOS).
-  auto names = std::make_shared<std::vector<std::string>>();
-  for (const Channel& c : *m.channels) {
-    std::string group = str::lowerAscii(c.group.value_or(""));
-    if (group.find("local") != std::string::npos || guide::bareCallsign(c.name)) names->push_back(c.name);
-  }
-  if (names->empty()) {
-    for (const Channel& c : *m.channels) names->push_back(c.name);
-  }
-  if (names->size() > 6000) names->resize(6000);
+  // Names the market suggestion reads: the sorted list's, or while the
+  // first one sorts, the downloaded list's.
+  auto names = std::make_shared<std::vector<std::string>>(
+      m.channels->empty() && m.receivedNames ? *m.receivedNames : suggestionNames(*m.channels));
   auto result = std::make_shared<TvMarkets>();
   auto list = std::make_shared<std::vector<catalog::markets::Market>>();
   // The list built into the app (read from Wikipedia by the build); else
@@ -2321,6 +2394,9 @@ void Store::publishChannels() {
   out->version = ++m.publishVersion;
   out->rawChannels = m.channels->size();
   out->lineupConfigured = m.prefs.configured;
+  for (const EntryInfo& e : m.catalog->entries) {
+    for (const std::string& former : e.formerIds) out->renamed.emplace(former, e.id);
+  }
   const catalog::LineupOutput& lo = m.lineup;
   out->all.reserve(lo.entries.size());
   std::map<catalog::LineupCategory, int> blockNext;
@@ -2483,13 +2559,40 @@ bool Store::tick(uint32_t ms) {
     publishListings();
     changed = true;
   }
-  // Status line while guides build.
+  // Status line while the list updates and guides build: updating, then
+  // updated (or couldn't) for a few seconds.
+  m.lastTick = ms;
+  if (m.loadUpdated) {
+    m.loadUpdated = false;
+    m.updatedUntil = ms + 3000;
+    m.failedUntil = 0;
+  }
+  if (m.loadFailed) {
+    m.loadFailed = false;
+    m.failedUntil = ms + 4000;
+    m.updatedUntil = 0;
+  }
   std::string line;
-  if (m.loading && !m.channels->empty()) line = "Updating channels\xe2\x80\xa6";
-  else if (m.providerRunning) line = "Updating the provider's guide\xe2\x80\xa6";
-  else if (m.outsideRunning) line = "Filling in missing listings\xe2\x80\xa6";
-  if (status_.phase == StoreStatus::Phase::Ready && status_.line != line) {
+  StoreStatus::Mark mark = StoreStatus::Mark::None;
+  if (m.loading && !m.channels->empty()) {
+    line = "Updating your channel list\xe2\x80\xa6";
+    mark = StoreStatus::Mark::Busy;
+  } else if (m.updatedUntil && ms < m.updatedUntil) {
+    line = "Channel list updated";
+    mark = StoreStatus::Mark::Done;
+  } else if (m.failedUntil && ms < m.failedUntil) {
+    line = "Couldn't update the channel list \xc2\xb7 tries again later";
+    mark = StoreStatus::Mark::Failed;
+  } else if (m.providerRunning) {
+    line = "Updating the provider's guide\xe2\x80\xa6";
+  } else if (m.outsideRunning) {
+    line = "Filling in missing listings\xe2\x80\xa6";
+  }
+  if (m.updatedUntil && ms >= m.updatedUntil) m.updatedUntil = 0;
+  if (m.failedUntil && ms >= m.failedUntil) m.failedUntil = 0;
+  if (status_.phase == StoreStatus::Phase::Ready && (status_.line != line || status_.mark != mark)) {
     status_.line = line;
+    status_.mark = mark;
     changed = true;
   }
   return changed;

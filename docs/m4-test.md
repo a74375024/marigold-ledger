@@ -276,6 +276,19 @@ The app knows real US channels by their other names, language and closing. After
 | Closed channels | El Rey, ThrillerMax | Not suggested; still found by Search and can be added |
 | Yours stay | Channels you added, removed or pinned a feed for before the update | Kept as you set them, even for a channel that has closed |
 
+## Loading without a wait screen
+
+| Area | How to check | Pass |
+|---|---|---|
+| First run | Sign in from the phone | Once "N channels received" ticks, setup moves on to Area; no wait screen |
+| Area | The area list right away | Areas listed at once; "Looking at your channels…" until "Suggested from your channels" fills in; the focus doesn't jump |
+| Languages | Continue from Area quickly on a slow TV | If the list is still sorting, "Building your lineup" with a bar and four steps where the list goes; the countries appear by themselves |
+| After an update | Install a new build over an old one, open the app | The guide opens on your list right away; the header reads "Updating your channel list…", then "✓ Channel list updated" for about 3 seconds, then fades |
+| Couldn't update | Turn the provider off (or the network), then Options › refresh | The list stays; the header reads "Couldn't update the channel list · tries again later" for a few seconds |
+| Focus | Stay on a channel while it updates | The same channel stays focused (also when it was renamed); playback never stops |
+| No list at all | Add a provider in Options | "Building your lineup" with a bar that never jumps back or sits full |
+| Timing | Help › playback log after a first run | A "sorted N channels in X ms" line: tell me the number |
+
 ## Built-in logos and the LG package
 
 | Area | How to check | Pass |

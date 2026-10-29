@@ -165,6 +165,18 @@ TEST_CASE("catalog cache: JSON round trip, version and signature checks") {
   CHECK(printed->fingerprint == 0xfedcba9876543210ull);
   CHECK_FALSE(cache::fromJson("{\"version\": 2}", saved.signature));
   CHECK_FALSE(cache::fromJson("[]", saved.signature));
+  // An older version's list is read, to show until it's sorted again (its
+  // version says so); one older still, or a newer one, isn't.
+  auto saying = [&](int version) {
+    cache::Saved v = saved;
+    v.version = version;
+    return cache::fromJson(cache::toJson(v), saved.signature);
+  };
+  REQUIRE(saying(cache::kOldestShown));
+  CHECK(saying(cache::kOldestShown)->version == cache::kOldestShown);
+  CHECK(saying(cache::kOldestShown)->channels.size() == list.size());
+  CHECK_FALSE(saying(cache::kOldestShown - 1));
+  CHECK_FALSE(saying(cache::kVersion + 1));
 
   // First-screen part: the chosen entries and families and their channels.
   std::string cnn = saved.catalog.entryOf.at("xt:1|1");

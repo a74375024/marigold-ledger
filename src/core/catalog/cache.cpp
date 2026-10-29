@@ -426,8 +426,8 @@ std::optional<Saved> readSavedWith(const Feed& feed, std::string_view signature)
         return !bad;
       });
   if (!feed(reader) || !reader.finish() || bad) return std::nullopt;
-  if (version != kVersion || savedSignature != signature) return std::nullopt;
-  s.version = kVersion;
+  if (version < kOldestShown || version > kVersion || savedSignature != signature) return std::nullopt;
+  s.version = version;
   s.signature = std::string(signature);
   return s;
 }

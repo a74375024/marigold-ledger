@@ -62,6 +62,9 @@ struct Channels {
   std::vector<int> favorites;
   std::vector<int> recent;            // most recent first
   std::unordered_map<std::string, int> byId;
+  // A row's earlier id (an older version's, or before the channel
+  // directory) -> its id now, so focus can follow a renamed row.
+  std::unordered_map<std::string, std::string> renamed;
   size_t rawChannels = 0;             // provider channels before grouping
   bool lineupConfigured = false;
 
@@ -88,9 +91,22 @@ struct Listings {
 // Loading progress for the guide's status line and the status screens.
 struct StoreStatus {
   enum class Phase : uint8_t { NoAccounts, Loading, Ready, Failed };
+  // What goes before the guide header's line: a spinner while the channel
+  // list updates, a tick when it's done, a mark when it couldn't.
+  enum class Mark : uint8_t { None, Busy, Done, Failed };
   Phase phase = Phase::NoAccounts;
   std::string line;     // "Loading channels from <name>…", "Building guide…"
   std::string problem;  // shown on the failure screen; never a link
+  Mark mark = Mark::None;
+  size_t received = 0;  // provider channels downloaded for the sort under way (0: none yet)
+};
+
+// How far a full sort of the channel list has got ("Building your lineup").
+struct LoadProgress {
+  enum class Stage : uint8_t { Download, Recognize, Games, Done };
+  Stage stage = Stage::Download;
+  float within = 0;     // 0..1 through the stage; 0 while it can't tell (downloading)
+  size_t channels = 0;  // provider channels received
 };
 
 // What the player needs to tune an entry: its feeds, best first. The URLs

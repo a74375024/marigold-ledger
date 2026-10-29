@@ -40,7 +40,11 @@ class LineupSetup : public Screen {
       if (alive.expired()) return;
       markets_ = std::move(markets);
       loading_ = false;
-      // First run: the area the channel names point to most, picked.
+      // First run: the area the channel names point to most, picked. With
+      // no names yet (the list still downloading), the suggestion's place
+      // is kept and it comes in later.
+      suggestionPending_ = markets_.suggested.empty() && app_.store().channels()->all.empty() &&
+                           app_.store().status().received == 0;
       if (onboarding_ && selected_.empty() && !markets_.suggested.empty()) selected_.push_back(markets_.suggested.front());
       build();
     });
@@ -116,6 +120,33 @@ class LineupSetup : public Screen {
   }
 
   bool tick(uint32_t) override {
+    const StoreStatus& status = app_.store().status();
+    // The area suggestion, once the downloaded names are in.
+    if (suggestionPending_ && !suggestionAsked_ &&
+        (status.received > 0 || !app_.store().channels()->all.empty())) {
+      suggestionAsked_ = true;
+      std::weak_ptr<bool> alive = alive_;
+      app_.store().loadMarkets([this, alive](TvMarkets markets) {
+        if (alive.expired()) return;
+        suggestionPending_ = false;
+        markets_.suggested = std::move(markets.suggested);
+        // Picked for the viewer only if they haven't picked or changed one.
+        if (onboarding_ && selected_.empty() && !touched_ && !markets_.suggested.empty())
+          selected_.push_back(markets_.suggested.front());
+        if (step_ == Step::Market) rebuildKeepingFocus();
+        app_.invalidate();
+      });
+    }
+    // Countries and channels need the sorted list: they fill in when it's in.
+    if (waitingForList_ && !waiting()) {
+      waitingForList_ = false;
+      rebuildKeepingFocus();
+      app_.invalidate();
+    }
+    if (waiting()) {
+      waitingForList_ = true;
+      return true;
+    }
     if (step_ == Step::Building) {
       // The lineup is worked out on a worker; the summary waits for it.
       auto ch = app_.store().channels();
@@ -157,7 +188,14 @@ class LineupSetup : public Screen {
     if (!problem_.empty())
       ui::label(c, problem_, kLeft, bottom() - 30, Weight::Medium, 20, theme::hex(theme::kWarning), kLeftW);
 
-    list_.draw(c, {kListX, 70, gfx::kLayoutWidth - kListX - 80, bottom() - 70}, ui::ListPanel::kHitBase, focusList_);
+    Rect listArea{kListX, 70, gfx::kLayoutWidth - kListX - 80, bottom() - 70};
+    if (waiting()) {
+      // Still sorting (a slow TV): its progress where the list goes.
+      c.g.fill(listArea, theme::white(0.04f), 24);
+      setup_ui::building(c, listArea, app_.store().loadProgress(), building_, false);
+    } else {
+      list_.draw(c, listArea, ui::ListPanel::kHitBase, focusList_);
+    }
     if (onboarding_) setup_ui::stepBar(c, stepOf());
     setup_ui::keys(c, app_.remoteKeys(), step_ == Step::Market && focusList_);
   }
@@ -238,6 +276,7 @@ class LineupSetup : public Screen {
       app_.nav().pop();
       return;
     }
+    if (waiting()) return;  // Back still goes back
     bool skip = onboarding_ && i == 1;
     if (!onboarding_ && i == 1) {
       // Not Now / Back.
@@ -304,6 +343,35 @@ class LineupSetup : public Screen {
     list_.focusIndex(setup_ui::nextLetter(names, from, dir));
   }
 
+  // Countries and channels while the first list still sorts.
+  bool waiting() const {
+    return (step_ == Step::Languages || step_ == Step::Channels) &&
+           app_.store().status().phase == StoreStatus::Phase::Loading;
+  }
+
+  // The list again, the focus staying on the same row (a suggestion coming
+  // in above doesn't move it).
+  void rebuildKeepingFocus() {
+    int was = list_.focused();
+    std::string title = was >= 0 && was < static_cast<int>(list_.items.size()) ? list_.items[static_cast<size_t>(was)].title
+                                                                              : std::string();
+    build();
+    if (title.empty()) return;
+    int n = static_cast<int>(list_.items.size());
+    for (int i = std::max(0, was); i < n; ++i) {
+      if (list_.items[static_cast<size_t>(i)].title == title) {
+        list_.focusIndex(i);
+        return;
+      }
+    }
+    for (int i = std::min(was, n - 1); i >= 0; --i) {
+      if (list_.items[static_cast<size_t>(i)].title == title) {
+        list_.focusIndex(i);
+        return;
+      }
+    }
+  }
+
   void build() {
     list_.items.clear();
     list_.title.clear();
@@ -326,6 +394,7 @@ class LineupSetup : public Screen {
         it.on = std::find(selected_.begin(), selected_.end(), name) != selected_.end();
         it.select = [self, name] {
           auto& sel = self->selected_;
+          self->touched_ = true;
           auto f = std::find(sel.begin(), sel.end(), name);
           if (f != sel.end()) sel.erase(f);
           else sel.push_back(name);
@@ -336,6 +405,9 @@ class LineupSetup : public Screen {
       if (q.empty() && !markets_.suggested.empty()) {
         list_.items.push_back(ui::PanelItem::header("SUGGESTED FROM YOUR CHANNELS"));
         for (const std::string& name : markets_.suggested) row(name);
+      } else if (q.empty() && suggestionPending_) {
+        list_.items.push_back(ui::PanelItem::header("SUGGESTED FROM YOUR CHANNELS"));
+        list_.items.push_back(ui::PanelItem::note("Looking at your channels\xe2\x80\xa6"));
       }
       std::vector<std::string> shown;
       for (const std::string& name : markets_.all)
@@ -427,6 +499,10 @@ class LineupSetup : public Screen {
   Step step_ = Step::Market;
   TvMarkets markets_;
   bool loading_ = true;
+  bool suggestionPending_ = false, suggestionAsked_ = false;
+  bool touched_ = false;         // the viewer picked or unpicked an area
+  bool waitingForList_ = false;  // countries or channels wait for the sorted list
+  setup_ui::Building building_;
   bool busy_ = false;
   bool searching_ = false;
   std::string query_;

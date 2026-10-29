@@ -3,6 +3,7 @@
 // lineups rather than any one provider's exact format.
 #pragma once
 
+#include <atomic>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -50,13 +51,27 @@ std::string groupOf(const Channel& channel);
 // prefix), nullopt when it isn't marked.
 std::optional<std::string> markedCountry(const Channel& channel);
 
+// How far a build has got, read from another thread ("Building your
+// lineup"): the pass, and how many of its items are done.
+struct BuildProgress {
+  enum Pass : int { notStarted = 0, callSigns, traits, entries, events, finished };
+  std::atomic<int> pass{notStarted};
+  std::atomic<size_t> done{0};
+  std::atomic<size_t> total{0};
+  void start(int p, size_t n) {
+    done.store(0);
+    total.store(n);
+    pass.store(p);
+  }
+};
+
 // Pass 0: call-sign context; pass 1: traits and event families; pass 2:
 // entries (clusters of variants); pass 3: event families and events.
 // With a channel directory, a channel it knows is told by it
 // (catalog/directory.hpp): its row, language, area and whether it shut down.
 CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
                     const std::vector<guide::Station>& stations = {},
-                    const directory::Index* directory = nullptr);
+                    const directory::Index* directory = nullptr, BuildProgress* progress = nullptr);
 
 struct EventsResult {
   std::vector<EventFamily> families;

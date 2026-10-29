@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "core/engine/store.hpp"
+#include "core/catalog/catalog.hpp"
 #include "core/catalog/lineup.hpp"
 #include "core/catalog/markets.hpp"
 #include "core/catalog/types.hpp"
@@ -141,6 +142,14 @@ struct Store::Impl {
   bool admissionChanged = false;  // the last list was over the cap: groups were left out
   time::Seconds channelsLoadedAt = 0;
   bool loading = false;
+  // A full sort under way: how far it has got, and the downloaded names
+  // the area suggestion reads before the sorted list is in.
+  std::shared_ptr<catalog::BuildProgress> sortProgress;
+  std::shared_ptr<const std::vector<std::string>> receivedNames;
+  // The guide header's "Channel list updated" / "Couldn't update" line, until
+  // this tick time (ms).
+  uint32_t updatedUntil = 0, failedUntil = 0, lastTick = 0;
+  bool loadUpdated = false, loadFailed = false;  // set off the tick; timed at the next
   uint64_t generation = 1;   // bumps when accounts change
   uint64_t rebuildGeneration = 0;
   std::string signature;

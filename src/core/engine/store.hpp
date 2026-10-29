@@ -155,6 +155,8 @@ class Store {
   std::shared_ptr<const Channels> channels() const { return channels_; }
   std::shared_ptr<const Listings> listings() const { return listings_; }
   const StoreStatus& status() const { return status_; }
+  // How far the full sort under way has got (Stage::Done when none is).
+  LoadProgress loadProgress() const;
 
   // Accounts.
   std::vector<AccountSummary> accounts() const;

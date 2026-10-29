@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "app/ui/ui.hpp"
+#include "core/engine/model.hpp"
 #include "core/input/keys.hpp"
 #include "core/report/qr.hpp"
 
@@ -48,5 +49,19 @@ int letterStep(Key k);
 // with a different letter; `from` itself when there is none. -1 entries
 // (headers) are skipped.
 int nextLetter(const std::vector<std::string>& names, int from, int step);
+
+// "Building your lineup": an amber petal ring, what's being done, a bar that
+// follows the sort's real steps (eased inside a step, never backwards, never
+// full before it's done) and the four steps, centred in `area`. Keep one
+// state per screen; redraw every frame while it shows.
+struct Building {
+  float shown = 0;       // the bar, 0..1
+  uint32_t lastMs = 0;   // last frame
+  uint32_t downloadFrom = 0;
+};
+void building(ui::Ctx& c, ui::Rect area, const engine::LoadProgress& p, Building& state, bool large = true);
+
+// 48213 -> "48,213"
+std::string grouped(size_t n);
 
 }  // namespace marigold::app::setup_ui
