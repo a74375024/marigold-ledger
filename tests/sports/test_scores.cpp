@@ -527,6 +527,32 @@ TEST_CASE("cricket: scores as the tile shows them, the batting side, the chase")
   CHECK(t.homeScore == "402 & 5/0");
 }
 
+TEST_CASE("cricket: stumps ends the day's play, a break pauses it") {
+  using namespace marigold::sports::cricket;
+  std::string body = R"JSON({"sports":[{"leagues":[{"name":"Tour","events":[
+    {"id":"80","date":"2026-10-27T08:30Z","endDate":"2026-10-31T16:30Z","status":"in","period":3,"summary":"Stumps",
+     "description":"3rd Test, Tour at Valley","class":{"eventType":"Test"},
+     "fullStatus":{"dayNumber":3,"session":"Day 3","type":{"id":"112","description":"Stumps","state":"in"}},
+     "competitors":[{"id":"1","displayName":"Harbor","homeAway":"home","score":"329 & 129/3 (45 ov)"},
+                    {"id":"2","displayName":"Valley","homeAway":"away","score":"429"}]},
+    {"id":"81","date":"2026-10-29T13:00Z","status":"in","period":1,"summary":"Innings break",
+     "description":"2nd T20I, Tour at Hill","class":{"eventType":"T20"},
+     "fullStatus":{"dayNumber":1,"type":{"id":"0","description":"Live","state":"in"}},
+     "competitors":[{"id":"1","displayName":"Harbor","homeAway":"home","score":"164/5"},
+                    {"id":"2","displayName":"Valley","homeAway":"away","score":""}]}]}]}]})JSON";
+  auto st = cricket::statuses(body, cricketLeague());
+  const LiveStatus& stumps = st.at("CRIC|80");
+  CHECK(stumps.phase == LivePhase::live);
+  CHECK(stumps.dayOver);
+  CHECK(stumps.pause == std::optional<std::string>("Stumps"));
+  CHECK(stumps.detail == "Stumps \xC2\xB7 Day 3");
+  const LiveStatus& brk = st.at("CRIC|81");
+  CHECK(brk.phase == LivePhase::live);
+  CHECK_FALSE(brk.dayOver);
+  CHECK(brk.pause == std::optional<std::string>("Innings break"));
+  CHECK(brk.detail == "Innings break");
+}
+
 TEST_CASE("polling: no schedule yet looks again soon, not in 5 minutes") {
   LiveScores scores;
   CHECK(scores.start(Holder::board, true));

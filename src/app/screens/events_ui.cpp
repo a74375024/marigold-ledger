@@ -194,11 +194,12 @@ float pill(ui::Ctx& c, const EventTile& t, float x, float y, bool focused) {
       return smallPill(c, t.pillText.empty() ? "Ended" : t.pillText, x, y, outline, ink, true);
     case EventTile::Pill::NoTime: return smallPill(c, "Time not listed", x, y, outline, ink, true);
     case EventTile::Pill::NotStarted: return smallPill(c, "Not started", x, y, outline, ink, true);
+    case EventTile::Pill::NotLive: return smallPill(c, "Not live", x, y, outline, ink, true);
   }
   return 0;
 }
 
-void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool showLeague) {
+void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool mixed) {
   if (focused) {
     // Scale 1.04 with a shadow.
     float dw = r.w * 0.02f, dh = r.h * 0.02f;
@@ -211,36 +212,76 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool showLeague)
   Color ink = focused ? theme::black(alpha) : theme::white(alpha);
   float x = r.x + 16, w = r.w - 32;
 
-  // Status row.
-  float sy = r.y + 14;
-  float px = x + pill(c, t, x, sy + 1, focused);
-  if (px > x) px += 10;
+  // Top line: the sport's icon and name, then the competition ("CRICKET ·
+  // 3rd Test"); in a sport's own row, the competition alone. A sport the
+  // app doesn't know is "LIVE EVENT" by a dashed ring, never a guess.
+  float ey = r.y + 14;
   float right = x + w;
-  if (!t.tag.empty()) {
-    float tw = std::min(ui::textWidth(c, t.tag, Weight::Bold, 15) + 14, w * 0.45f);
-    Rect tr{right - tw, sy + 2, tw, 24};
-    c.g.fill(tr, t.tagAlert ? theme::hex(0xC62828) : (focused ? theme::hex(0x1A1A1A) : theme::white(0.9f)), 6);
-    ui::labelIn(c, t.tag, {tr.x + 7, tr.y, tr.w - 14, tr.h}, Weight::Bold, 15,
-                t.tagAlert || focused ? theme::white() : theme::black(), Align::Center);
-    right -= tw + 8;
-  } else if (showLeague && !t.league.empty()) {
-    float lw = ui::textWidth(c, t.league, Weight::Bold, 18);
-    ui::label(c, t.league, right - lw, sy + 2, Weight::Bold, 18, ink.withAlpha(0.55f * alpha));
-    right -= lw + 8;
-  }
   if (t.favorite) {
-    ui::label(c, "\xe2\x98\x85", right - 20, sy, Weight::Bold, 19, theme::hex(theme::kStar));
+    ui::label(c, "\xe2\x98\x85", right - 18, ey - 2, Weight::Bold, 18, theme::hex(theme::kStar));
     right -= 26;
   }
+  if (t.tagAlert && !t.tag.empty()) {
+    // "RED ZONE", "WHIP-AROUND": an alert, at the right.
+    float tw = std::min(ui::textWidth(c, t.tag, Weight::Bold, 14) + 12, w * 0.45f);
+    Rect tr{right - tw, ey - 2, tw, 22};
+    c.g.fill(tr, theme::hex(0xC62828), 5);
+    ui::labelIn(c, t.tag, {tr.x + 6, tr.y, tr.w - 12, tr.h}, Weight::Bold, 14, theme::white(), Align::Center);
+    right -= tw + 8;
+  }
+  float ex = x;
+  std::string comp = t.competition;
+  if (mixed) {
+    Rect ib{ex, ey - 1, 20, 20};
+    if (t.sport.empty()) {
+      // A dashed ring: eight dots round a circle.
+      for (int i = 0; i < 8; ++i) {
+        float a = static_cast<float>(i) * 0.785398f;
+        c.g.fill({ib.x + 10 + 8 * std::cos(a) - 1.5f, ib.y + 10 + 8 * std::sin(a) - 1.5f, 3, 3}, ink.withAlpha(0.7f), 1.5f);
+      }
+    } else if (unsigned icon = c.icons ? c.icons->get(t.icon) : 0) {
+      c.g.textureAlpha(icon, ib, ink);
+    } else {
+      ui::labelIn(c, t.symbol.empty() ? "\xe2\x97\x8f" : t.symbol, ib, Weight::Bold, 14, ink, Align::Center);
+    }
+    ex += 28;
+    std::string word = !t.sport.empty() ? t.sport : t.highSchool ? "HIGH SCHOOL" : "LIVE EVENT";
+    if (t.highSchool && !t.sport.empty()) comp = comp.empty() ? "HIGH SCHOOL" : "HIGH SCHOOL \xc2\xb7 " + comp;
+    ex += ui::label(c, word, ex, ey, Weight::Bold, 16, ink, right - ex);
+    if (!comp.empty()) comp = " \xc2\xb7 " + comp;
+  } else if (t.highSchool) {
+    comp = comp.empty() ? "HIGH SCHOOL" : "HIGH SCHOOL \xc2\xb7 " + comp;
+  }
+  if (!comp.empty() && ex < right) ui::label(c, comp, ex, ey, Weight::Medium, 16, ink.withAlpha(0.6f), right - ex);
+
+  // Status line: a red dot and LIVE, then the clock; other states keep
+  // their pill (Final, DELAYED, BREAK, Not live...).
+  float sy = r.y + 42;
+  float px = x;
+  if (t.pill == EventTile::Pill::Live || t.pill == EventTile::Pill::LiveOutline) {
+    // Not in your channels: the same, dimmer.
+    Color red = t.pill == EventTile::Pill::Live ? (focused ? theme::hex(0xD32F2F) : theme::hex(theme::kWatching))
+                                               : theme::hex(theme::kWatching, 0.6f);
+    c.g.fill({px, sy + 8, 11, 11}, red, 5.5f);
+    px += 17;
+    px += ui::label(c, "LIVE", px, sy + 2, Weight::Bold, 19, red) + 10;
+  } else {
+    float pw = pill(c, t, px, sy + 1, focused);
+    if (pw > 0) px += pw + 10;
+  }
   if (!t.status.empty()) {
-    float tw = ui::label(c, t.status, px, sy + 2, t.statusBold ? Weight::Bold : Weight::Medium, 19,
-                         ink.withAlpha((t.statusBold ? 1.0f : 0.8f) * alpha), right - px);
-    if (!t.statusExtra.empty() && px + tw + 8 < right)
-      ui::label(c, t.statusExtra, px + tw + 8, sy + 2, Weight::Regular, 19, ink.withAlpha(0.7f * alpha), right - px - tw - 8);
+    bool bold = t.statusBold || t.pill == EventTile::Pill::Live || t.pill == EventTile::Pill::LiveOutline;
+    float tw = ui::label(c, t.status, px, sy + 2, bold ? Weight::Bold : Weight::Medium, 19,
+                         ink.withAlpha((bold ? 1.0f : 0.8f) * alpha), x + w - px);
+    if (!t.statusExtra.empty() && px + tw + 8 < x + w) {
+      Color extra = t.soon ? (focused ? theme::hex(0x9A5B00) : theme::hex(kDelayed)) : ink.withAlpha(0.7f * alpha);
+      ui::label(c, t.statusExtra, px + tw + 8, sy + 2, t.soon ? Weight::Bold : Weight::Regular, 19, extra,
+                x + w - px - tw - 8);
+    }
   }
 
   // Middle.
-  float my = r.y + 52;
+  float my = r.y + 72;
   if (!t.parts.empty()) {
     ui::label(c, t.title, x, my, Weight::Bold, 24, ink, w);
     if (!t.subtitle.empty()) ui::label(c, t.subtitle, x, my + 34, Weight::Regular, 18, ink.withAlpha(0.7f * alpha), w);
@@ -290,22 +331,10 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool showLeague)
     }
   }
 
-  // Footer.
+  // Bottom line: the game's own detail (runners, the chase, down and
+  // distance, the court, "5 boards"); nothing about where it plays.
   float fy = r.y + r.h - 15 - 28;
   float fx = x;
-  if (!t.channelName.empty() || !t.channelLogo.empty()) {
-    logos::Texture tex;
-    if (c.logos && !t.channelLogo.empty()) tex = c.logos->get(t.channelLogo);
-    if (tex.id) {
-      ui::logo(c, t.channelLogo, "", {fx, fy + 1, 72, 26}, focused);
-      fx += 82;
-    } else {
-      fx += smallPill(c, t.channelName, fx, fy + 1, focused ? theme::hex(0x222222) : theme::white(0.18f), theme::white(), false) + 10;
-    }
-  } else if (!t.pill2.empty()) {
-    fx += smallPill(c, t.pill2, fx, fy + 1, t.pill2Outlined ? ink.withAlpha(0.6f) : theme::white(0.18f),
-                    t.pill2Outlined ? ink : theme::white(), t.pill2Outlined) + 10;
-  }
   if (t.bases.size() == 3) {
     bases(c, t.bases, fx, fy + 2, ink.withAlpha(0.95f * alpha));
     fx += 30 + 10;
@@ -313,8 +342,8 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool showLeague)
   if (!t.situation.empty()) {
     Color sc = t.redZone ? (focused ? theme::hex(0xBF1A26) : theme::hex(theme::kWatching)) : ink.withAlpha(0.85f * alpha);
     ui::label(c, t.situation, fx, fy + 3, Weight::Bold, 18, sc, x + w - fx);
-  } else if (!t.footer.empty()) {
-    ui::label(c, t.footer, fx, fy + 3, Weight::Regular, 18, ink.withAlpha(0.75f * alpha), x + w - fx);
+  } else if (!t.detail.empty()) {
+    ui::label(c, t.detail, fx, fy + 3, Weight::Regular, 18, ink.withAlpha(0.75f * alpha), x + w - fx);
   }
 
   // Live progress along the bottom edge.

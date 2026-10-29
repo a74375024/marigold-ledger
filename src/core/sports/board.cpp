@@ -441,6 +441,7 @@ struct Place {
   std::optional<std::string> pill;
   bool pillOutlined = false;
   std::string footer;
+  std::string detail;
   std::optional<SportsTeam> top, bottom;
   std::optional<bool> homeIsTop;
   std::string title;
@@ -713,9 +714,10 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
   }
   // Tennis: the court where the match is, and the players' flags.
   if (event.game && profile(event.game->league).tile == Profile::Tile::Players) {
-    if (event.game->venue) place.footer = *event.game->venue;
+    if (event.game->venue) place.footer = place.detail = *event.game->venue;
     place.flags = true;
   }
+  if (event.boards >= 2) place.detail = std::to_string(event.boards) + " boards";
   // A whip-around: what it's showing across the sport.
   if (whip) {
     place.tag = std::string("WHIP-AROUND");
@@ -725,7 +727,7 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
     } else {
       place.subtitle = whip->subtitle;
     }
-    place.footer = countText(whip->live, "1 game live", "games live");
+    place.footer = place.detail = countText(whip->live, "1 game live", "games live");
   }
   return place;
 }
@@ -805,6 +807,12 @@ Tile makeTile(const SportsEvent& event, const Place& place, const std::string& r
       if (place.studio) {
         tile.pill = Pill::onNow;
         tile.pillText = "ON NOW";
+      } else if (event.dayOver) {
+        tile.pill = Pill::notLive;
+        tile.pillText = "Not live";
+      } else if (event.pause) {
+        tile.pill = Pill::delayed;
+        tile.pillText = "BREAK";
       } else if (event.live == LivePhase::delayed) {
         tile.pill = Pill::delayed;
         tile.pillText = event.suspended ? "SUSPENDED" : "DELAYED";
@@ -933,6 +941,7 @@ Tile makeTile(const SportsEvent& event, const Place& place, const std::string& r
   tile.footerPill = place.pill;
   tile.footerPillOutlined = place.pillOutlined;
   tile.footer = place.footer;
+  tile.detail = place.detail;
   tile.situation = place.situation;
   tile.redZone = place.redZone;
   tile.lastPlay = place.lastPlay;
@@ -1116,6 +1125,8 @@ Board build(const Input& in) {
       if (status != in.statuses.end()) {
         copy.live = status->second.phase;
         copy.suspended = status->second.suspended;
+        copy.pause = status->second.pause;
+        copy.dayOver = status->second.dayOver;
       }
     }
     withLive.push_back(std::move(copy));
@@ -1137,7 +1148,10 @@ Board build(const Input& in) {
     return it == states.end() ? State::unknownTime : it->second;
   };
   // Live now is only what's surely on; "likely over" stays in its sport's row.
-  auto isLive = [&](const SportsEvent& e) { return stateOf(e) == State::live && !board.studio.count(e.id); };
+  // A cricket match between days isn't on.
+  auto isLive = [&](const SportsEvent& e) {
+    return stateOf(e) == State::live && !e.dayOver && !board.studio.count(e.id);
+  };
   const Seconds horizon = now + 8 * 24 * 3600;
   // When a game the scoreboard says is over ended: as seen, else (over
   // when first looked at) its start plus the sport's usual length.
@@ -1182,6 +1196,10 @@ Board build(const Input& in) {
   auto bucket = [&](const SportsEvent& e) -> Bucket {
     if (str::startsWith(e.id, "whip|")) return {-1, "Whip-around"};
     if (e.sources.empty()) return {90, "Not in your channels"};
+    if (e.dayOver && stateOf(e) == State::live) return {1, "Between days"};
+    // Divisions II and III after the rest of a sport's day, not among it.
+    bool small = e.game && (str::startsWith(e.game->leagueShort, "D2") || str::startsWith(e.game->leagueShort, "D3"));
+    if (small && stateOf(e) != State::live && stateOf(e) != State::mayHaveEnded) return {50, "Division II & III"};
     switch (stateOf(e)) {
       case State::live: return {0, "Live"};
       case State::mayHaveEnded: return {1, "Earlier"};
@@ -1250,9 +1268,12 @@ Board build(const Input& in) {
       drafts.push_back({"teams", "Your teams", g.events, g.buckets, liveWatchable(mine), true});
     }
   }
+  // High-school games are in Live now only when My Sports has them.
+  const bool highSchoolLive = highSchoolOn(in.prefs);
   std::vector<SportsEvent> live;
   for (const SportsEvent& e : all) {
-    if (isLive(e) && !e.sources.empty() && (!picked || picked->count(e.league))) live.push_back(e);
+    if (e.highSchool && !highSchoolLive) continue;
+    if (isLive(e) && !e.sources.empty() && (!picked || picked->count(e.league) || e.highSchool)) live.push_back(e);
   }
   std::stable_sort(live.begin(), live.end(), [](const SportsEvent& a, const SportsEvent& b) {
     bool wa = str::startsWith(a.id, "whip|"), wb = str::startsWith(b.id, "whip|");
@@ -1268,7 +1289,9 @@ Board build(const Input& in) {
   for (const SportsEvent& e : all) {
     if (!shown(e)) continue;
     std::string group = e.league.empty() ? "Other" : e.league;
-    if (picked && !picked->count(group)) {
+    // High-school games are a row of their own, whatever the sport.
+    if (e.highSchool) group = kHighSchoolRow;
+    if (picked && !picked->count(group) && group != kHighSchoolRow) {
       // Other sports fold into "More events" (only what you can watch).
       if (!e.sources.empty()) more.push_back(e);
       continue;
@@ -1280,6 +1303,8 @@ Board build(const Input& in) {
     for (const std::string& g : pickedOrder) {
       if (bySport.count(g)) sports.push_back(g);
     }
+    if (bySport.count(kHighSchoolRow) && std::find(sports.begin(), sports.end(), kHighSchoolRow) == sports.end())
+      sports.push_back(kHighSchoolRow);
   } else {
     for (const auto& [g, list] : bySport) sports.push_back(g);
     std::stable_sort(sports.begin(), sports.end(), [](const std::string& a, const std::string& b) {
@@ -1439,8 +1464,16 @@ Board build(const Input& in) {
     State state = stateOf(*hero);
     switch (state) {
       case State::live:
-        h.chip = hero->live == LivePhase::delayed ? HeroChip::delayed : HeroChip::live;
-        h.chipText = hero->live != LivePhase::delayed ? "LIVE" : hero->suspended ? "SUSPENDED" : "DELAYED";
+        if (hero->dayOver) {
+          h.chip = HeroChip::later;
+          h.chipText = "NOT LIVE";
+        } else if (hero->pause) {
+          h.chip = HeroChip::delayed;
+          h.chipText = "BREAK";
+        } else {
+          h.chip = hero->live == LivePhase::delayed ? HeroChip::delayed : HeroChip::live;
+          h.chipText = hero->live != LivePhase::delayed ? "LIVE" : hero->suspended ? "SUSPENDED" : "DELAYED";
+        }
         break;
       case State::upcoming:
         h.chip = HeroChip::later;

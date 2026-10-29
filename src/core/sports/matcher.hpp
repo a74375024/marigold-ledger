@@ -67,6 +67,10 @@ struct ProviderEvent {
   bool spanish = false;
   // Only a clock time was given; the day is a guess.
   bool guessed = false;
+  // Darts: the event's boards, each one of its feeds ("Board 1".."Board 5").
+  int boards = 0;
+  // From a high-school sports feed.
+  bool highSchool = false;
 };
 
 // Teams of one league (from the schedule), for naming teams in titles no

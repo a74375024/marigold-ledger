@@ -100,6 +100,10 @@ struct LiveStatus {
   LivePhase phase = LivePhase::pre;
   // Delayed because play was suspended (rain): it resumes later.
   bool suspended = false;
+  // Cricket: under way but play stopped for now ("Lunch", "Tea", "Innings
+  // break", "Stumps"); `dayOver` when it resumes another day (stumps).
+  std::optional<std::string> pause;
+  bool dayOver = false;
   // "Q3 4:12", "Halftime", "Bot 8th", "67'", "2nd 11:02", "Final/OT".
   std::string detail;
   std::optional<std::string> homeScore;
@@ -194,6 +198,14 @@ struct SportsEvent {
   // Overrides the guesswork in state().
   std::optional<LivePhase> live;
   bool suspended = false;  // with live delayed: play suspended, to resume
+  // Darts: the event's boards, each one of its feeds.
+  int boards = 0;
+  // From a high-school sports feed (its own row, off in Live now by default).
+  bool highSchool = false;
+  // From the scoreboard too: play stopped for now (cricket's lunch, tea,
+  // innings break), or for the day (stumps: not live until it resumes).
+  std::optional<std::string> pause;
+  bool dayOver = false;
 
   enum class State : uint8_t { upcoming, live, mayHaveEnded, finished, postponed, unknownTime };
 

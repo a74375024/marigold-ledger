@@ -157,7 +157,12 @@ bool SportsEvent::hasFeeds() const {
                      [](const EventSource& s) { return s.kind == EventSource::Kind::provider; });
 }
 
-Seconds SportsEvent::expectedLength() const { return lengthOf(league, game ? &*game : nullptr); }
+Seconds SportsEvent::expectedLength() const {
+  Seconds length = lengthOf(league, game ? &*game : nullptr);
+  // A darts floor event plays all day on several boards (noon to evening).
+  if (boards >= 2) length = std::max<Seconds>(length, 10 * 3600);
+  return length;
+}
 
 SportsEvent::State SportsEvent::state(Seconds now) const {
   if (game && game->postponed) return State::postponed;

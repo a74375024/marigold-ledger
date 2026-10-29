@@ -140,12 +140,28 @@ scores::Statuses statuses(std::string_view body, const League& league) {
       live.phase = LivePhase::delayed;
     }
     live.suspended = suspended;
+    // A break in play, or the end of a day's play: under way all the same.
+    std::string described = text::text(type["description"]).value_or("");
+    for (const std::string& word : {described, summary}) {
+      std::string w = str::lower(word);
+      if (live.phase != LivePhase::live || live.pause) break;
+      if (w == "stumps" || w == "lunch" || w == "tea" || w == "dinner" || w == "drinks" || w == "innings break")
+        live.pause = word;
+    }
+    live.dayOver = live.pause && str::lower(*live.pause) == "stumps";
     if (live.phase == LivePhase::final) {
       live.detail = "Final";
     } else if (live.phase == LivePhase::live || live.phase == LivePhase::delayed) {
       int period = static_cast<int>(match["period"].isNumber() ? std::lround(match["period"].asNumber()) : 0);
       static const char* const kInnings[] = {"1st innings", "2nd innings", "3rd innings", "4th innings"};
       live.detail = !summary.empty() && summary != "Live" ? summary : kInnings[std::clamp(period, 1, 4) - 1];
+      if (live.pause) {
+        // "Stumps · Day 3"; "Tea"; "Innings break".
+        int day = static_cast<int>(match["fullStatus"]["dayNumber"].isNumber()
+                                       ? std::lround(match["fullStatus"]["dayNumber"].asNumber())
+                                       : 0);
+        live.detail = live.dayOver && day > 0 ? *live.pause + " \xc2\xb7 Day " + std::to_string(day) : *live.pause;
+      }
     }
     if (live.phase != LivePhase::pre) {
       for (const json::Value& c : match["competitors"].items()) {

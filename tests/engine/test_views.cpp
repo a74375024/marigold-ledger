@@ -7,7 +7,9 @@
 #include <string>
 #include <vector>
 
+#include "core/engine/events_model.hpp"
 #include "core/engine/views.hpp"
+#include "core/sports/types.hpp"
 #include "core/model/channel.hpp"
 
 using namespace marigold;
@@ -234,4 +236,26 @@ TEST_CASE("views: a row out of its section's block still counts with it") {
   CHECK(sections[0].title == "Entertainment");
   CHECK(sections[0].count == 2);
   CHECK(sections[1].title == "News");
+}
+
+TEST_CASE("events: the tile's top line names the sport and the competition") {
+  CHECK(tileSport("cricket") == "CRICKET");
+  CHECK(tileSport("fieldHockey") == "FIELD HOCKEY");
+  CHECK(tileSport("other").empty());  // not known: "LIVE EVENT", never a guess
+  sports::SportsEvent atp;
+  atp.league = "Tennis";
+  atp.leagueShort = "ATP";
+  CHECK(tileCompetition(&atp, "TENNIS", "Swiss Indoors Basel \xc2\xb7 R2") == "ATP \xc2\xb7 Swiss Indoors Basel \xc2\xb7 R2");
+  sports::SportsEvent cricket;
+  cricket.league = "Cricket";
+  cricket.leagueShort = "CRIC";
+  CHECK(tileCompetition(&cricket, "CRICKET", "3rd Test") == "3rd Test");  // "Cricket" says no more than the sport
+  sports::SportsEvent soccer;
+  soccer.league = "Soccer";
+  soccer.leagueShort = "SOCCER";
+  CHECK(tileCompetition(&soccer, "SOCCER", "SOCCER \xc2\xb7 WOMEN'S") == "WOMEN'S");
+  sports::SportsEvent d2;
+  d2.league = "Volleyball";
+  d2.leagueShort = "D2WVB";
+  CHECK(tileCompetition(&d2, "VOLLEYBALL", "") == "Women's Division II");
 }

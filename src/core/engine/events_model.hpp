@@ -12,6 +12,10 @@
 
 #include "core/util/time.hpp"
 
+namespace marigold::sports {
+struct SportsEvent;
+}
+
 namespace marigold::engine {
 
 struct EventSide {
@@ -52,7 +56,7 @@ struct EventPart {  // fight card or race weekend timeline
 };
 
 struct EventTile {
-  enum class Pill : uint8_t { None, Live, LiveOutline, OnNow, Delayed, LikelyOver, Postponed, Final, NoTime, NotStarted };
+  enum class Pill : uint8_t { None, Live, LiveOutline, OnNow, Delayed, LikelyOver, Postponed, Final, NoTime, NotStarted, NotLive };
   std::string id;         // event id (what Watch / detail use)
   Pill pill = Pill::None;
   std::string pillText;   // Final pill: "Final", "Ended", "F/OT"
@@ -62,7 +66,13 @@ struct EventTile {
   bool favorite = false;
   std::string tag;        // "Monday Night", "RED ZONE", "WHIP-AROUND"
   bool tagAlert = false;
-  std::string league;     // shown in mixed rows when there is no tag
+  std::string league;     // the league's short name ("NFL", "CRIC"): hero and search
+  // The tile's top line: the sport spelled out ("CRICKET"; empty when it
+  // isn't known), the competition ("3rd Test", "ATP · Swiss Indoors Basel
+  // · R2"), and a high-school event's marker.
+  std::string sport, competition;
+  bool highSchool = false;
+  bool soon = false;       // starts within the hour: its "in 6 m" stands out
   std::vector<EventSide> sides;  // two, or none
   std::string title, subtitle;   // tiles with no sides, fight cards
   std::vector<EventPart> parts;
@@ -73,7 +83,8 @@ struct EventTile {
   std::string channelName, channelLogo;  // footer channel
   std::string pill2;      // footer pill when no channel ("Event feed")
   bool pill2Outlined = false;
-  std::string footer;     // "In your lineup", "+ 3 backup feeds"
+  std::string footer;     // "In your lineup", "+ 3 backup feeds" (the hero's where line)
+  std::string detail;     // the tile's bottom line: "Centre Court", "5 boards", "Onboard cameras"
   std::string situation;  // "2nd & 6 at LAC 41"
   std::vector<bool> bases;  // baseball: runners on first, second, third; empty = none
   bool redZone = false;
@@ -89,6 +100,13 @@ struct EventTile {
   std::string venue;
   time::Seconds start = 0;
 };
+
+// The tile's top line: a sport icon's name ("CRICKET"; empty for "other",
+// a sport not known), and the competition after it: the league's name where
+// it says more than the sport ("ATP", "Women's Division II"), then the tag
+// ("3rd Test"), without repeating the sport.
+std::string tileSport(const std::string& icon);
+std::string tileCompetition(const sports::SportsEvent* event, const std::string& sport, const std::string& tag);
 
 struct EventGroup {
   std::string title;  // "Live", "Later Today", "Sat"; empty for none

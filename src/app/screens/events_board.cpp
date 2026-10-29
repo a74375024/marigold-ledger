@@ -1,6 +1,6 @@
 // The Live Events board (LiveEventsBoard in tvOS): the focused game in the
 // hero with its two badges large and faded behind, the guide's tab bar and
-// round buttons (search, filter, options), then one row per sport of 360x210
+// round buttons (search, filter, options), then one row per sport of 360x230
 // tiles under group labels. Left from a row's first tile opens the sports
 // column. A live game in your channels plays in the guide's preview corner
 // once focus rests on it. Scores refresh only while this board (or the
@@ -724,14 +724,15 @@ class EventsBoardScreen : public Screen {
   }
 
   // A row with more than one league names the league on each tile.
+  // A row of more than one sport: its tiles name theirs.
   static bool mixed(const EventRow& row) {
-    std::string first;
+    const EventTile* first = nullptr;
     for (const EventGroup& g : row.groups)
       for (const EventTile& t : g.tiles) {
-        if (first.empty()) first = t.league;
-        else if (t.league != first) return true;
+        if (!first) first = &t;
+        else if (t.sport != first->sport || t.sport.empty()) return true;
       }
-    return false;
+    return first && first->sport.empty();
   }
 
   void drawColumn(ui::Ctx& c) {

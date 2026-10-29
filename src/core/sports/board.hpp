@@ -136,6 +136,7 @@ enum class Pill {
   ended,         // the final clock ("Final", "Final/OT") or "Ended"
   timeNotListed, // "Time not listed"
   notStarted,    // "Not started" (past its start, not underway)
+  notLive,       // "Not live" (under way, play over for the day: cricket's stumps)
 };
 
 struct SideLine {
@@ -212,6 +213,10 @@ struct Tile {
   std::optional<std::string> footerPill;  // event channel family, "Event feed", or the network
   bool footerPillOutlined = false;
   std::string footer;                      // "In your lineup", "+ 3 backup feeds"...
+  // The tile's bottom line besides the situation: what there is to choose
+  // within the event, not where it plays ("Centre Court", "5 boards",
+  // "3 games live").
+  std::string detail;
   std::optional<std::string> situation;    // shown instead of the footer
   bool redZone = false;
   std::optional<std::string> lastPlay;

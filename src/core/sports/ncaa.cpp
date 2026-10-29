@@ -81,7 +81,7 @@ std::string writtenOut(std::string_view name) {
       {"Mich.", "Michigan"},     {"Miss.", "Mississippi"}, {"Mo.", "Missouri"},   {"Neb.", "Nebraska"},
       {"Okla.", "Oklahoma"},     {"Ore.", "Oregon"},      {"Pa.", "Pennsylvania"}, {"Tenn.", "Tennessee"},
       {"Tex.", "Texas"},         {"Va.", "Virginia"},     {"Vt.", "Vermont"},     {"Colo.", "Colorado"},
-      {"Calif.", "California"},  {"Cal.", "California"},  {"Ariz.", "Arizona"},   {"Kan.", "Kansas"},
+      {"Calif.", "California"},  {"Cal.", "California"},  {"Dom.", "Dominguez"},  {"Ariz.", "Arizona"},   {"Kan.", "Kansas"},
       {"Ia.", "Iowa"},           {"Del.", "Delaware"},
   };
   std::string out;
@@ -92,7 +92,9 @@ std::string writtenOut(std::string_view name) {
     if (word.empty()) return;
     if (word == "St.") {
       // At the end (or before a hyphen or bracket) a state; else a saint.
-      out += next == '\0' || next == '-' || next == ')' ? "State" : "Saint";
+      // "Cal St. Dom. Hills" is Cal State Dominguez Hills.
+      bool cal = str::endsWith(out, "Cal ");
+      out += cal || next == '\0' || next == '-' || next == ')' ? "State" : "Saint";
     } else if (auto found = kWords.find(word); found != kWords.end()) {
       out += found->second;
     } else {

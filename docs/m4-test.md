@@ -319,3 +319,20 @@ The app knows real US channels by their other names, language and closing. After
 | Movie loops | CINEBOX: Family, Horror, Action | Treated like 24/7 loops: not in My Lineup |
 | Overflow feeds | NBC Sports Network 2 / 3 (Feed) | Not in My Lineup |
 | Logos | Stingray music channels, BabyTV, ShortsTV, France 24, Arirang TV, Travelxp, Curiosity Now, EarthX, FlixFling Now, The Victory Channel | A clean logo instead of the provider's |
+
+## Live Events tiles (Build 95)
+
+| Area | How to check | Pass |
+|---|---|---|
+| Sport at a glance | Live Events › Live now | Every tile's top line names the sport with its icon, then the competition ("CRICKET · 3rd Test", "TENNIS · ATP · Swiss Indoors Basel · R2"); one the app can't place reads "LIVE EVENT" by a dotted ring |
+| Own row | Open a sport's row (Soccer, Tennis) | The top line gives only the competition; no repeated sport |
+| Live marker | Any live game | A red dot and LIVE, then the clock in bold; no filled LIVE pill |
+| Starting soon | A game within the hour | "in 12 m" in amber beside the time |
+| No feed marker | Any tile | No "Event feed" chip, no "1 feed" / "3 feeds", no channel logo on the tile; the bottom line is only the game's detail (the chase, down and distance, runners, the court, "5 boards", "Onboard cameras") |
+| Cricket at stumps | A Test match between days | "Not live" and "Stumps · Day 3", under "Between days" in Cricket; not in Live now |
+| Cricket break | A match at lunch, tea or the innings break | A BREAK pill; still in Live now |
+| Darts | A PDC Players Championship day | One tile, "Players Championship 32 · Maasport", "5 boards" on the bottom line, LIVE from noon UK time; Sources lists the boards |
+| High School | Live Events | A High School row; high-school games not in Live now until My Sports › High School is picked |
+| High-school titles | High School row | "KSHSAA 4A Girls Volleyball Championship" with "Seeds #3 and #6" under it; no year in front |
+| Divisions II & III | Volleyball (or Soccer) row | Division I games by day first; Division II and III after them in their own group |
+| Cal State | Volleyball row | "Cal State Dominguez Hills", "Cal State San Marcos" (not "Cal Saint") |

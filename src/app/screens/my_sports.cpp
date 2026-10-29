@@ -147,7 +147,7 @@ class MySportsSetup : public Screen {
     for (size_t i = 0; i < picks_.size(); ++i) {
       auto n = counts_.find(picks_[i].id);
       // Never picked for you: pro wrestling is opt-in.
-      if (picks_[i].id == sports::kProWrestlingPick) continue;
+      if (picks_[i].id == sports::kProWrestlingPick || picks_[i].id == sports::kHighSchoolPick) continue;
       if (n != counts_.end() && n->second > 0) busy.push_back({n->second, i});
     }
     std::stable_sort(busy.begin(), busy.end(), [](const auto& a, const auto& b) { return a.first > b.first; });

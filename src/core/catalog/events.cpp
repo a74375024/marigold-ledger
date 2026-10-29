@@ -156,6 +156,7 @@ ParsedEvent parseEventDetailed(std::string_view input, Seconds now,
   title = rx::replace(title, "^\\W*(next|live|now|upcoming)\\s*\\|\\s*", "", true);
   title = rx::replace(title, "\\|\\s*8K EXCLUSIV.*$", "", true);
   title = rx::replace(title, "^\\s*live event\\s*\\d{1,3}\\s*-?\\s*", "", true);
+  title = rx::replace(title, "^\\s*[A-Za-z+]{2,10}\\s+(?:event|board)\\s*\\d{1,3}\\s*:\\s+", "", true);  // "PDC event 01 : "
   title = rx::replace(title, "^\\s*[A-Za-z+]{2,10}\\s*\\|\\s*\\d{1,3}\\s*-?\\s*", "");
   title = rx::replace(title, "\\s:\\s?[A-Za-z][\\w+ ]{0,24}?\\s+\\d{1,3}\\s*$", "");
 
@@ -287,16 +288,18 @@ ParsedEvent parseEventDetailed(std::string_view input, Seconds now,
       removeRange(title, *f);
     }
   }
-  // Wed 21st Oct 8:00PM ET
+  // Wed 21st Oct 8:00PM ET. Without the ET it's a UK listing (the same
+  // provider's darts: "Thu 29th Oct 12:00PM" is noon in the UK).
   if (!start) {
     if (auto f =
             groups("(?:[A-Za-z]{3}\\s+)?(\\d{1,2})(?:st|nd|rd|th)\\s+([A-Za-z]{3})[a-z]*\\s+(\\d{1,"
-                   "2}):(\\d{2})\\s*(AM|PM)(?:\\s*ET)?",
+                   "2}):(\\d{2})\\s*(AM|PM)(\\s*ET)?",
                    title)) {
       auto d = num(f->p[0]);
       int mo = monthOf(f->p[1]);
       auto h = num(f->p[2]), mi = num(f->p[3]);
-      if (d && mo && h && mi) start = nearestYear(mo, *d, hour24(*h, f->p[4]), *mi, amPmZone);
+      const Zone& zone = f->p[5].empty() ? london : amPmZone;
+      if (d && mo && h && mi) start = nearestYear(mo, *d, hour24(*h, f->p[4]), *mi, zone);
       removeRange(title, *f);
     }
   }
@@ -407,6 +410,12 @@ ParsedEvent parseEventDetailed(std::string_view input, Seconds now,
       }
     }
   }
+
+  // Darts' boards are feeds of one event ("... Maasport Board 3"), and a
+  // description after the venue isn't its name ("Maasport The Players
+  // Championship continues in Maaspoort, ...").
+  title = rx::replace(title, "\\s+board\\s+\\d{1,2}\\b(?=[\\s|]*$)", "", true);
+  title = rx::replace(title, "\\s+The\\s[^|]{6,}?\\s(continues|takes place|returns|heads)\\b[^|]*$", "");
 
   // Tidy: drop a trailing "(X)" that repeats the title, leading "ESPN+:"
   // style tags, separators and doubled spaces.

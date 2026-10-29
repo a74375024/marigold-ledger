@@ -921,3 +921,74 @@ TEST_CASE("cricket on the board: only matches you can watch, the batting side ma
   CHECK(t.tag == std::string("3rd ODI"));
   CHECK(t.state == State::live);  // an ODI runs most of the day
 }
+
+TEST_CASE("cricket on the board: a match at stumps isn't live, a break is") {
+  SportsGame test = game("CRIC", "Cricket", "80", team("1", "Harbor", std::string("HAR")), team("2", "Valley", std::string("VAL")),
+                         kNow - 9 * 3600, {}, std::nullopt, true);
+  test.matchFormat = std::string("Test");
+  test.end = kNow + 2 * 86'400;
+  SportsGame t20 = test;
+  t20.id = "CRIC|81";
+  t20.end.reset();
+  t20.start = kNow - 3600;
+  Input in = baseInput({eventOf(test, {lineup("e|1")}), eventOf(t20, {lineup("e|2")})});
+  LiveStatus stumps = status(LivePhase::live, "Stumps \xC2\xB7 Day 3");
+  stumps.pause = std::string("Stumps");
+  stumps.dayOver = true;
+  in.statuses["CRIC|80"] = stumps;
+  LiveStatus brk = status(LivePhase::live, "Innings break");
+  brk.pause = std::string("Innings break");
+  in.statuses["CRIC|81"] = brk;
+  Board b = build(in);
+  const Tile& day = tile(b, "sev|CRIC|80");
+  CHECK(day.pill == Pill::notLive);
+  CHECK(day.pillText == "Not live");
+  const Tile& tea = tile(b, "sev|CRIC|81");
+  CHECK(tea.pill == Pill::delayed);
+  CHECK(tea.pillText == "BREAK");
+  // Live now has the break, not the match between days; its row says so.
+  const Row* live = nullptr;
+  const Row* cricket = nullptr;
+  for (const Row& r : b.rows) {
+    if (r.id == "live") live = &r;
+    if (r.title == "Cricket") cricket = &r;
+  }
+  REQUIRE(live);
+  REQUIRE(cricket);
+  std::vector<std::string> ids;
+  for (const Group& g : live->groups)
+    for (const Tile& t : g.tiles) ids.push_back(t.id);
+  CHECK(std::find(ids.begin(), ids.end(), "sev|CRIC|81") != ids.end());
+  CHECK(std::find(ids.begin(), ids.end(), "sev|CRIC|80") == ids.end());
+  CHECK(cricket->live == 1);
+  bool between = false;
+  for (const Group& g : cricket->groups) between = between || g.label == "Between days";
+  CHECK(between);
+}
+
+TEST_CASE("high school: a row of its own, in Live now only when picked; darts boards on the tile") {
+  SportsEvent hs = plainEvent("hs", "KSHSAA 4A Girls Volleyball Championship _ Seeds #3 and #6", "Volleyball", kNow - 1800,
+                              {feed("xt|1")});
+  hs.highSchool = true;
+  SportsEvent darts = plainEvent("darts", "Players Championship 32 \xc2\xb7 Maasport", "Darts", kNow - 3 * 3600,
+                                 {feed("xt|2"), feed("xt|3"), feed("xt|4"), feed("xt|5"), feed("xt|6")});
+  darts.boards = 5;
+  Input in = baseInput({hs, darts});
+  Board b = build(in);
+  const Row& live = row(b, "live");
+  std::vector<std::string> ids;
+  for (const Group& g : live.groups)
+    for (const Tile& t : g.tiles) ids.push_back(t.id);
+  CHECK(std::find(ids.begin(), ids.end(), "hs") == ids.end());
+  CHECK(std::find(ids.begin(), ids.end(), "darts") != ids.end());  // a floor event runs all afternoon
+  CHECK(row(b, "sport|High School").title == "High School");
+  CHECK(tile(b, "darts").detail == "5 boards");
+  // Picked in My Sports: in Live now too.
+  in.prefs.leagues = {kHighSchoolPick};
+  in.prefs.configured = true;
+  Board picked = build(in);
+  ids.clear();
+  for (const Group& g : row(picked, "live").groups)
+    for (const Tile& t : g.tiles) ids.push_back(t.id);
+  CHECK(std::find(ids.begin(), ids.end(), "hs") != ids.end());
+}

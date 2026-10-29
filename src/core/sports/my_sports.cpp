@@ -78,6 +78,8 @@ const std::vector<OtherSport>& otherSports() {
       {"S:Fighting", "Fighting", "UFC, PFL & boxing"},
       // Off unless picked: shown in Live Events only then (proWrestlingOn).
       {kProWrestlingPick, "Pro Wrestling", "WWE, AEW, NXT, TNA & ROH"},
+      // Its row is always there; picked, its games join Live now (highSchoolOn).
+      {kHighSchoolPick, kHighSchoolRow, "High-school games in Live now"},
       {"S:Motorsport", "Motorsport", "Racing"},
       {"S:Tennis", "Tennis", "Tennis"},
       {"S:Golf", "Golf", "Golf"},
@@ -94,6 +96,10 @@ const std::vector<OtherSport>& otherSports() {
 
 bool proWrestlingOn(const MySportsPrefs& prefs) {
   return std::find(prefs.leagues.begin(), prefs.leagues.end(), kProWrestlingPick) != prefs.leagues.end();
+}
+
+bool highSchoolOn(const MySportsPrefs& prefs) {
+  return std::find(prefs.leagues.begin(), prefs.leagues.end(), kHighSchoolPick) != prefs.leagues.end();
 }
 
 std::optional<std::string> nameOf(std::string_view id) {

@@ -33,7 +33,8 @@ namespace marigold::catalog::cache {
 // 11: a directory row is named by a copy the directory knows; FETV is one row.
 // 12: premium and free streaming by name, renamed Cinemax channels, movie
 //     loops, overflow feeds, multi-language news beside an English copy.
-constexpr int kVersion = 12;
+// 13: a darts event's boards are one event; feeds' times in their own country.
+constexpr int kVersion = 13;
 // The oldest version still read, to show until this version sorts the list
 // again (after an app update the guide opens on the old list).
 constexpr int kOldestShown = 9;

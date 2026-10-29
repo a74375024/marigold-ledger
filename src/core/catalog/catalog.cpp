@@ -752,7 +752,8 @@ EventsResult buildEvents(const std::vector<Channel>& channels,
         continue;
       }
       named += 1;
-      ParsedEvent parsed = parseEventDetailed(*t->eventText, now, market);
+      // A feed's own country says how to read its times; else its family's.
+      ParsedEvent parsed = parseEventDetailed(*t->eventText, now, t->market ? t->market : market);
       if (parsed.title.empty()) continue;
       if (parsed.start && now - *parsed.start > 8 * 3600) continue;       // long over
       if (parsed.start && *parsed.start - now > 6 * 24 * 3600) continue;  // stale or far off

@@ -17,6 +17,40 @@
 #include "core/util/strings.hpp"
 
 namespace marigold::engine {
+
+// A sport icon's name on the tile's top line; empty for "other" (not known).
+std::string tileSport(const std::string& icon) {
+  static const std::unordered_map<std::string, std::string> kWords = {
+      {"athletics", "ATHLETICS"}, {"baseball", "BASEBALL"},     {"basketball", "BASKETBALL"},
+      {"cricket", "CRICKET"},     {"cycling", "CYCLING"},       {"darts", "DARTS"},
+      {"fieldHockey", "FIELD HOCKEY"}, {"fighting", "FIGHTING"}, {"football", "FOOTBALL"},
+      {"golf", "GOLF"},           {"hockey", "HOCKEY"},         {"horseRacing", "HORSE RACING"},
+      {"lacrosse", "LACROSSE"},   {"motorsport", "MOTORSPORT"}, {"rugby", "RUGBY"},
+      {"soccer", "SOCCER"},       {"softball", "SOFTBALL"},     {"tennis", "TENNIS"},
+      {"volleyball", "VOLLEYBALL"}, {"wrestling", "WRESTLING"}};
+  auto it = kWords.find(icon);
+  return it == kWords.end() ? std::string() : it->second;
+}
+
+// The competition after the sport: the league's name where it says more
+// than the sport ("ATP", "Premier League", "Women's Division II"), then the
+// tile's tag ("3rd Test", "Swiss Indoors Basel · R2").
+std::string tileCompetition(const sports::SportsEvent* event, const std::string& sport, const std::string& tag) {
+  std::string name;
+  if (event) {
+    if (const sports::League* league = sports::leagueByShort(event->leagueShort)) name = league->name;
+    std::string lower = str::lower(name);
+    if (lower == str::lower(sport) || lower == str::lower(event->league) || lower == "other") name.clear();
+  }
+  // A tag that starts with the sport ("SOCCER · WOMEN'S") doesn't repeat it.
+  std::string rest = tag;
+  std::string lead = str::lower(sport) + " \xc2\xb7 ";
+  if (!sport.empty() && str::startsWith(str::lower(rest), lead)) rest = rest.substr(lead.size());
+  if (!sport.empty() && str::lower(rest) == str::lower(sport)) rest.clear();
+  if (rest.empty() || str::lower(rest) == str::lower(name)) return name;
+  return name.empty() ? rest : name + " \xc2\xb7 " + rest;
+}
+
 namespace {
 
 namespace sb = sports::board;
@@ -86,6 +120,7 @@ EventTile::Pill toPill(sb::Pill p) {
     case sb::Pill::ended: return EventTile::Pill::Final;
     case sb::Pill::timeNotListed: return EventTile::Pill::NoTime;
     case sb::Pill::notStarted: return EventTile::Pill::NotStarted;
+    case sb::Pill::notLive: return EventTile::Pill::NotLive;
   }
   return EventTile::Pill::None;
 }
@@ -120,6 +155,10 @@ EventTile toTile(const sb::Tile& t, const sports::SportsEvent* event, const time
   for (const auto& l : t.leaders) o.leaders.push_back({l.pos, l.name, l.flag, l.score, l.thru});
   o.icon = t.icon;
   o.symbol = glyphFor(t.icon);
+  o.sport = tileSport(t.icon);
+  o.competition = tileCompetition(event, o.sport, o.tagAlert ? std::string() : o.tag);
+  o.highSchool = event && event->highSchool;
+  o.detail = t.detail;
   o.channelName = t.channelDisplay.value_or(t.channelName.value_or(""));
   o.channelLogo = t.channelLogos.empty() ? std::string() : t.channelLogos.front();
   o.pill2 = t.footerPill.value_or("");
@@ -148,6 +187,10 @@ EventTile toTile(const sb::Tile& t, const sports::SportsEvent* event, const time
   if (!o.situation.empty()) o.heroStatus += " \xc2\xb7 " + o.situation;
   o.whereLine = o.channelName.empty() ? o.footer : "On " + o.channelName + (o.footer.empty() ? "" : " \xc2\xb7 " + o.footer);
   if (event && event->start) o.start = *event->start;
+  if (t.state == sports::SportsEvent::State::upcoming && !t.notStarted && o.start) {
+    time::Seconds until = o.start - time::now();
+    o.soon = until > 0 && until <= 3600;
+  }
   (void)zone;
   return o;
 }
@@ -504,7 +547,12 @@ void Store::buildBoard() {
       group.title = g.label;
       for (const sb::Tile& t : g.tiles) {
         auto ev = e.board.events.find(t.id);
-        group.tiles.push_back(toTile(t, ev == e.board.events.end() ? nullptr : &ev->second, host_.zone()));
+        EventTile tile = toTile(t, ev == e.board.events.end() ? nullptr : &ev->second, host_.zone());
+        // A race with onboard feeds says so where the game detail goes.
+        if (tile.detail.empty() && ev != e.board.events.end() && ev->second.game && ev->second.game->isRacing() &&
+            hasCameras(t.id))
+          tile.detail = "Onboard cameras";
+        group.tiles.push_back(std::move(tile));
       }
       if (!group.tiles.empty()) row.groups.push_back(std::move(group));
     }
@@ -517,7 +565,7 @@ void Store::buildBoard() {
         t.title = f.name;
         t.subtitle = f.countText;
         t.league = f.leagueChip;
-        t.footer = f.hint;
+        t.footer = t.detail = f.hint;
         t.watchable = true;
         t.symbol = "\xe2\x96\xa0";
         t.leagueChip = f.leagueChip;

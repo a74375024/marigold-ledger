@@ -195,3 +195,12 @@ TEST_CASE("titles: the provider's stand-ins, shouting, tags and odd sides") {
   // A race "at" a track has no sides.
   CHECK_FALSE(titles::read("Harbor Series at Valley Speedway", "Motorsport").sides);
 }
+
+TEST_CASE("titles: high-school associations and classes keep their capitals; seeds go under") {
+  titles::Title t = titles::read("KSHSAA 4A GIRLS VOLLEYBALL CHAMPIONSHIP _ Seeds #3 and #6", "Volleyball");
+  CHECK(t.name == "KSHSAA 4A Girls Volleyball Championship");
+  CHECK_FALSE(t.sides);
+  CHECK(t.subtitle == std::optional<std::string>("Seeds #3 and #6"));
+  CHECK(titles::read("2026 DISTRICT 6C TOURNAMENT", "Other").name == "2026 District 6C Tournament");
+  CHECK(titles::read("AHSAA 5A VOLLEYBALL CHAMPIONSHIP FINALS", "Volleyball").name.find("AHSAA 5A") == 0);
+}

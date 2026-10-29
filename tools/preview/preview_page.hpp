@@ -69,6 +69,11 @@ section.row h2 small{color:var(--sub);font-weight:500;font-size:13px}
 .foot .st.bold{font-weight:800}
 .pill{font-size:11px;font-weight:800;padding:2px 6px;border-radius:5px;letter-spacing:.3px;flex:none}
 .pill.live{background:var(--live);color:#fff}
+.dot{font-size:12px;font-weight:800;color:var(--live);flex:none}
+.dot::before{content:'';display:inline-block;width:8px;height:8px;border-radius:50%;background:currentColor;margin-right:5px;vertical-align:1px}
+.dot.liveOutline{opacity:.6}
+.soon{color:#e0a100;font-weight:700}
+.tile .top .comp{font-weight:500;text-transform:none;letter-spacing:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pill.liveOutline{box-shadow:inset 0 0 0 1.5px var(--live);color:#ff8a80}
 .pill.final,.pill.notStarted,.pill.noTime{box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.45);color:var(--sub)}
 .pill.likelyOver,.pill.delayed,.pill.postponed,.pill.onNow{background:rgba(255,255,255,.16);color:#fff}
@@ -111,7 +116,7 @@ const ICONS = __ICONS__;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const PILL = {live:'LIVE', liveOutline:'LIVE', onNow:'ON NOW', delayed:'DELAYED', likelyOver:'LIKELY OVER',
-              postponed:'POSTPONED', final:'FINAL', noTime:'NO TIME', notStarted:'NOT STARTED'};
+              postponed:'POSTPONED', final:'FINAL', noTime:'NO TIME', notStarted:'NOT STARTED', notLive:'NOT LIVE'};
 let only = null, picked = null;
 $('#meta').textContent = `Made ${DATA.made} from ${DATA.report}` + (DATA.scores ? '' : ' · scores hidden in Options');
 
@@ -124,6 +129,14 @@ function badge(s) {
 function sideLine(s) {
   const score = DATA.scores && s.score ? `<span class="sc">${esc(s.score)}${s.pens ? ` <small>(${esc(s.pens)})</small>` : ''}</span>` : '';
   return `<div class="side${s.trails ? ' trails' : ''}">${badge(s)}${s.rank ? `<span class="rk">${esc(s.rank)}</span>` : ''}<span class="nm">${esc(s.name)}</span>${s.ball ? '<span class="ball"></span>' : ''}${score}</div>`;
+}
+// A row of more than one sport: its tiles name theirs (as on the TV).
+function isMixed(row) {
+  if (row.mixedSeen !== undefined) return row.mixedSeen;
+  const sports = new Set();
+  let unknown = false;
+  for (const g of row.groups || []) for (const t of g.tiles || []) { sports.add(t.sport); unknown = unknown || !t.sport; }
+  return (row.mixedSeen = sports.size > 1 || unknown);
 }
 function tileHtml(t, row) {
   const key = `${row.id}|${t.n}`;
@@ -139,13 +152,19 @@ function tileHtml(t, row) {
     if (t.podium.length) body += `<div class="podium">${t.podium.map(p => `<span style="background:${p.color}">${esc(p.code)}</span>`).join('')}</div>`;
   }
   if (t.situation) body += `<div class="situ">${esc(t.situation)}</div>`;
-  const pill = t.pill ? `<span class="pill ${t.pill}">${esc(t.pillText || PILL[t.pill] || '')}</span>` : '';
+  const live = t.pill === 'live' || t.pill === 'liveOutline';
+  const pill = live ? `<span class="dot ${t.pill}">LIVE</span>`
+                    : t.pill ? `<span class="pill ${t.pill}">${esc(t.pillText || PILL[t.pill] || '')}</span>` : '';
   const bases = t.bases.length === 3 ? `<span class="bases">${[1, 2, 0].map(i => `<i class="${t.bases[i] ? 'on' : ''}"></i>`).join('')}</span>` : '';
-  const status = `<span class="st${t.statusBold ? ' bold' : ''}">${esc(t.status)}</span>${t.statusExtra ? `<span>${esc(t.statusExtra)}</span>` : ''}`;
-  const where = t.channel || t.pill2 || '';
-  const foot = `<div class="foot">${pill}${bases}${status}${where ? `<span class="chan">· ${esc(where)}</span>` : ''}</div>`;
-  const under = t.footer ? `<div class="subt" style="font-size:12px">${esc(t.footer)}</div>` : '';
-  const tag = t.tag ? `<span class="tag${t.tagAlert ? ' alert' : ''}">${esc(t.tag)}</span>` : `<span>${esc(t.league)}</span>`;
+  const status = `<span class="st${t.statusBold || live ? ' bold' : ''}">${esc(t.status)}</span>${t.statusExtra ? `<span class="${t.soon ? 'soon' : ''}">${esc(t.statusExtra)}</span>` : ''}`;
+  const foot = `<div class="foot">${pill}${bases}${status}</div>`;
+  const under = t.detail ? `<div class="subt" style="font-size:12px">${esc(t.detail)}</div>` : '';
+  // The top line: the sport (in a mixed row), then the competition.
+  let comp = t.competition || '';
+  if (t.highSchool) comp = t.sport ? (comp ? `HIGH SCHOOL · ${comp}` : 'HIGH SCHOOL') : comp;
+  const word = t.sport || (t.highSchool ? 'HIGH SCHOOL' : 'LIVE EVENT');
+  const mark = isMixed(row) ? `<b>${esc(word)}</b>${comp ? `<span class="comp">· ${esc(comp)}</span>` : ''}` : `<span class="comp">${esc(comp)}</span>`;
+  const tag = (t.tagAlert && t.tag ? `<span class="tag alert">${esc(t.tag)}</span>` : '') + mark;
   const prog = t.progress >= 0 ? `<div class="prog"><i style="width:${Math.round(t.progress * 100)}%"></i></div>` : '';
   return `<div class="tile${t.watchable ? '' : ' dim'}${picked === key ? ' sel' : ''}" data-key="${esc(key)}"><div class="top">${t.favorite ? '★ ' : ''}${tag}<span class="num">#${t.n}</span></div>${body}${foot}${under}${prog}</div>`;
 }

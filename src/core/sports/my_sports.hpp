@@ -63,6 +63,10 @@ const std::vector<OtherSport>& otherSports();
 // Events leaves it out (WWE, AEW...) unless My Sports has it.
 constexpr const char* kProWrestlingPick = "S:ProWrestling";
 bool proWrestlingOn(const MySportsPrefs& prefs);
+// High-school games have a row of their own; in Live now only when picked.
+constexpr const char* kHighSchoolPick = "S:HighSchool";
+constexpr const char* kHighSchoolRow = "High School";
+bool highSchoolOn(const MySportsPrefs& prefs);
 
 // Display name of a picked id (league or other sport).
 std::optional<std::string> nameOf(std::string_view id);

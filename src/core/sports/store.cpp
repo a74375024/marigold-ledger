@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <set>
 #include <unordered_set>
 
 #include "core/catalog/catalog.hpp"
@@ -153,6 +154,27 @@ std::vector<matcher::ProviderEvent> providerEvents(
     p.feeds = event.feeds;
     p.family = event.family;
     p.spanish = event.market == std::string("US-ES") || rx::test(kSpanishWords, event.title, true);
+    // Feeds that are boards of one darts event.
+    std::set<std::string> boards;
+    for (const std::string& feed : event.feeds) {
+      auto t = traits.find(feed);
+      if (t == traits.end() || !t->second.eventText) continue;
+      if (auto b = rx::first("\\bboard\\s+(\\d{1,2})\\b", *t->second.eventText, true)) boards.insert(std::string(b->group(1)));
+    }
+    if (boards.size() >= 2) p.boards = static_cast<int>(boards.size());
+    // High-school feeds: by the provider's group, else the title's words.
+    p.highSchool = rx::test("\\bnfhs\\b|high ?school", event.family, true) ||
+                   rx::test("\\bhigh school\\b|\\bvarsity\\b|\\b[a-z]{1,5}(hsaa|hsa|hsl)\\b", event.title, true);
+    if (p.highSchool) {
+      // "2026 KSHSAA 4A Girls Volleyball Championship 3 vs 6": the year goes,
+      // and the numbers are seeds, not sides.
+      p.title = rx::replace(p.title, "^\\s*20\\d\\d\\s+", "");
+      if (auto m = rx::first("^(.*\\b(?:championships?|tournament|playoffs?|finals?|semifinals?|quarterfinals?))\\s+"
+                             "(\\d{1,2})\\s+vs\\.?\\s+(\\d{1,2})$",
+                             p.title, true)) {
+        p.title = std::string(m->group(1)) + " _ Seeds #" + std::string(m->group(2)) + " and #" + std::string(m->group(3));
+      }
+    }
     if (event.startGuessed) {
       p.guessed = *event.startGuessed;
     } else if (event.start && !event.feeds.empty()) {

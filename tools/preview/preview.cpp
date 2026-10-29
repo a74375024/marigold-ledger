@@ -220,6 +220,7 @@ const char* pillName(engine::EventTile::Pill p) {
     case P::Final: return "final";
     case P::NoTime: return "noTime";
     case P::NotStarted: return "notStarted";
+    case P::NotLive: return "notLive";
     case P::None: break;
   }
   return "";
@@ -237,6 +238,11 @@ json::Value tileJson(engine::Store& store, const engine::EventTile& t, int numbe
   v.set("tag", t.tag);
   v.set("tagAlert", t.tagAlert);
   v.set("league", t.league);
+  v.set("sport", t.sport);
+  v.set("competition", t.competition);
+  v.set("highSchool", t.highSchool);
+  v.set("soon", t.soon);
+  v.set("detail", t.detail);
   v.set("favorite", t.favorite);
   json::Value sides = json::Value::array();
   for (const engine::EventSide& s : t.sides) {

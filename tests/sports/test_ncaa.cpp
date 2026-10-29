@@ -44,6 +44,8 @@ TEST_CASE("ncaa: school names written out, and the names channels use") {
   CHECK(ncaa::writtenOut("Harbor St.") == "Harbor State");
   CHECK(ncaa::writtenOut("Southern Me.") == "Southern Maine");
   CHECK(ncaa::writtenOut("Mt. St. Harbor") == "Mount Saint Harbor");
+  CHECK(ncaa::writtenOut("Cal St. Dom. Hills") == "Cal State Dominguez Hills");
+  CHECK(ncaa::writtenOut("Cal St. San Marcos") == "Cal State San Marcos");
   CHECK(ncaa::writtenOut("Eastern Conn. St.") == "Eastern Connecticut State");
   CHECK(ncaa::writtenOut("Wis.-Harbor") == "Wisconsin-Harbor");
   CHECK(ncaa::writtenOut("Harbor Col.") == "Harbor College");

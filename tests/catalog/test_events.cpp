@@ -92,6 +92,17 @@ TEST_CASE("European day.month in brackets and long dates are UK time") {
   auto longDate = parse("Team A vs Team B Thursday, 22 October 2026 17:45");
   CHECK(longDate.title == "Team A vs Team B");
   CHECK(longDate.start == utc(2026, 10, 22, 16, 45));
+  // "29th Oct" with no ET: a UK listing (noon there, after the clocks went back).
+  auto darts = parse("Players Championship 32 | Maasport   Board 1 | Thu 29th Oct 12:00PM");
+  CHECK(darts.start == utc(2026, 10, 29, 12, 0));
+  // Each board is a feed of the one event; a slot head and a description go.
+  CHECK(darts.title == "Players Championship 32 \xc2\xb7 Maasport");
+  auto described = parse("PDC event 01 : Players Championship 32 | Maasport The Players Championship continues in "
+                         "Maaspoort, Den Bosch, Netherlands start:2026-10-29 12:00:00 stop:2026-10-29 19:00:00",
+                         std::string("UK"));
+  CHECK(described.title == darts.title);
+  CHECK(described.start == darts.start);
+  CHECK(parse("UFC 300: Pereira vs Hill").title.find("UFC 300") != std::string::npos);
 }
 
 TEST_CASE("a clock time alone: today in Eastern, guessed") {
@@ -266,4 +277,23 @@ TEST_CASE("whole words") {
   CHECK_FALSE(text::hasWord("ufc 300", "fc "));
   CHECK_FALSE(text::hasWord("f\xc3\xbatbol", "tbol"));  // accented letters join words
   CHECK_FALSE(text::hasWord("anything", " "));
+}
+
+TEST_CASE("a darts event's boards and its UK listing are one event") {
+  std::string ppv = "PPV Live Events", uk = "UK| PDC BOARD PPV";
+  std::vector<Channel> list;
+  for (int b = 1; b <= 5; ++b) {
+    std::string n = std::to_string(b);
+    list.push_back(testdata::channel(n, "PDC 0" + n + " | Players Championship 32 | Maasport   Board " + n + " | Thu 29th Oct 12:00PM", ppv));
+  }
+  list.push_back(testdata::channel("6", "PDC event 01 : Players Championship 32 | Maasport The Players Championship continues in Maaspoort, "
+                                        "Den Bosch, Netherlands start:2026-10-29 12:00:00 stop:2026-10-29 19:00:00", uk));
+  CatalogResult r = build(list, utc(2026, 10, 29, 15, 0));
+  std::vector<const LiveEvent*> darts;
+  for (const LiveEvent& e : r.events)
+    if (e.title.find("Players Championship") != std::string::npos) darts.push_back(&e);
+  REQUIRE(darts.size() == 1);
+  CHECK(darts[0]->title == "Players Championship 32 \xc2\xb7 Maasport");
+  CHECK(darts[0]->start == utc(2026, 10, 29, 12, 0));
+  CHECK(darts[0]->feeds.size() == 6);
 }

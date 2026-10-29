@@ -74,6 +74,8 @@ SportsEvent plainEvent(const ProviderEvent& event) {
   e.start = event.start;
   for (const std::string& feed : event.feeds) e.sources.push_back(providerSource(feed, event.spanish));
   e.family = event.family;
+  e.boards = event.boards;
+  e.highSchool = event.highSchool;
   return e;
 }
 

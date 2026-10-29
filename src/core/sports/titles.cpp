@@ -136,6 +136,12 @@ bool keepsCapitals(const std::string& upperWord) {
       "MIT", "WPI", "CWRU", "RIT", "UAB", "UNC", "NC", "DC", "OT", "PPV", "WTA", "ATP", "ITF", "LPGA", "PGA", "LIV",
       "PSG", "CA", "CO", "NY", "TX", "FL", "OH", "PA", "MA", "VA", "MI", "MN", "WI", "IL", "IN", "GA", "SC", "AL"};
   if (kKeep.count(upperWord)) return true;
+  // High-school associations ("KSHSAA", "MHSA", "WIAA", "UIL") and classes
+  // ("4A", "6C").
+  if (upperWord == "UIL" || upperWord == "CIF" || upperWord == "NFHS" ||
+      rx::test("^[A-Z]{1,5}(HSAA|HSA|HSL|IAA)$", upperWord))
+    return true;
+  if (rx::test("^\\d{1,2}[A-Z]{1,2}$", upperWord) && !rx::test("^\\d+(ST|ND|RD|TH)$", upperWord)) return true;
   // "U21", "67'S", "3RD": numbers aside.
   if (rx::test("\\d", upperWord)) return rx::test("^[A-Z]+\\d+$", upperWord);
   // No vowels: an abbreviation ("KSV", "BSC").
