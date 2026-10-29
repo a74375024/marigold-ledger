@@ -206,3 +206,27 @@ TEST_CASE("logos: another country's channel with an English feed, US names first
   REQUIRE(usOnly);
   CHECK_FALSE(IptvOrgIndex(*usOnly).url(std::nullopt, "Stingray Hit List"));
 }
+
+TEST_CASE("logos: hand-picked logos for free streaming channels no database has") {
+  // As the lineup spells them.
+  for (const char* name : {"MAYDAY: AIR DISASTER", "BIG A ANIME", "TORQUE BY HISTORY", "Torque", "BOWLING TV",
+                           "Reelz Famous and Infamous", "REELZ FAMOUS & INFAMOUS", "NBC Sports California Plus",
+                           "NBC Sports California Plus 2"}) {
+    INFO(name);
+    CHECK(handPicked(name));
+  }
+  CHECK(handPicked("NBC Sports California Plus") == std::string(kLogoBase) + "nbcsn-california-us.png");
+  CHECK_FALSE(handPicked("Mayday"));
+  CHECK_FALSE(handPicked("Reelz"));
+  CHECK_FALSE(handPicked("NBC Sports California"));
+  CHECK_FALSE(handPicked(""));
+
+  const std::string provider = "https://example.invalid/p.png";
+  LogoSpec bowling = spec("BOWLING TV", std::nullopt, false, false, std::nullopt, std::nullopt, provider, std::nullopt,
+                          LineupCategory::sports, nullptr);
+  CHECK(bowling.style == LogoSpec::Style::logoOnly);
+  REQUIRE(bowling.urls.size() == 2);
+  CHECK(bowling.urls[0] == *handPicked("Bowling TV"));
+  CHECK(bowling.urls[1] == provider);
+  CHECK(bowling.sources == std::vector<std::string>{"hand-picked", "provider"});
+}

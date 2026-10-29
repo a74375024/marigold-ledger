@@ -321,6 +321,7 @@ The app knows real US channels by their other names, language and closing. After
 | Movie loops | CINEBOX: Family, Horror, Action | Treated like 24/7 loops: not in My Lineup |
 | Overflow feeds | NBC Sports Network 2 / 3 (Feed) | Not in My Lineup |
 | Logos | Stingray music channels, BabyTV, ShortsTV, France 24, Arirang TV, Travelxp, Curiosity Now, EarthX, FlixFling Now, The Victory Channel | A clean logo instead of the provider's |
+| Hand-picked logos | Mayday: Air Disaster, Big A Anime, Torque by History, Bowling TV, Reelz Famous & Infamous, NBC Sports California Plus | The channel's own logo shown alone, no name beside it; NBC Sports California Plus shows the NBC Sports California logo (Build 97) |
 
 ## Live Events tiles (Build 95)
 

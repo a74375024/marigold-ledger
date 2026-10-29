@@ -88,6 +88,42 @@ std::optional<std::string> logoSetFile(std::string_view name) {
   return std::nullopt;
 }
 
+std::optional<std::string> handPicked(std::string_view name) {
+  // Free streaming channels no logo database has: each one's own logo as
+  // the streaming services show it (made for dark backgrounds). A channel
+  // with a parent network's look borrows the parent's from the library.
+  static const std::unordered_map<std::string, std::string> kPicked = [] {
+    const std::string pluto = "https://images.pluto.tv/channels/";
+    const std::string xumo = "https://image.xumo.com/v1/channels/channel/";
+    const std::string onBlack = "/600x450.png?type=color_onBlack";
+    std::unordered_map<std::string, std::string> m;
+    for (auto [channel, link] : {
+             std::pair<const char*, std::string>{"Mayday: Air Disaster",
+                                                 pluto + "64d2b6bf9b414d0008187d83/colorLogoPNG_1780955414910.png"},
+             std::pair<const char*, std::string>{"Big A Anime",
+                                                 pluto + "6a3c5fa46276c42ac6726b27/colorLogoPNG_1785178474278.png"},
+             std::pair<const char*, std::string>{"Torque by History",
+                                                 pluto + "6aab1ef220ec28a21adca712/colorLogoPNG_1791210850118.png"},
+             std::pair<const char*, std::string>{"Torque",
+                                                 pluto + "6aab1ef220ec28a21adca712/colorLogoPNG_1791210850118.png"},
+             std::pair<const char*, std::string>{"Bowling TV", xumo + "99951510" + onBlack},
+             std::pair<const char*, std::string>{"Reelz Famous and Infamous", xumo + "99991368" + onBlack},
+             std::pair<const char*, std::string>{"NBC Sports California Plus",
+                                                 std::string(kLogoBase) + "nbcsn-california-us.png"},
+             std::pair<const char*, std::string>{"NBC Sports California Plus 2",
+                                                 std::string(kLogoBase) + "nbcsn-california-us.png"},
+         }) {
+      m.emplace(catalog::coreKey(channel).key, std::move(link));
+    }
+    return m;
+  }();
+  std::string key = catalog::coreKey(name).key;
+  if (key.empty()) return std::nullopt;
+  auto hit = kPicked.find(key);
+  if (hit == kPicked.end()) return std::nullopt;
+  return hit->second;
+}
+
 LogoSpec spec(std::string_view name, const std::optional<std::string>& core, bool isWest,
               bool isLocal, const std::optional<std::string>& callsign,
               std::optional<int> virtualNumber, const std::string& provider,
@@ -157,6 +193,15 @@ LogoSpec spec(std::string_view name, const std::optional<std::string>& core, boo
   if (category != catalog::LineupCategory::local && category != catalog::LineupCategory::international) {
     if (auto file = logoSetFile(name)) {
       add(url(*file), "logo set");
+      if (!provider.empty()) add(provider, "provider");
+      out.style = LogoSpec::Style::logoOnly;
+      out.isWest = isWest;
+      return out;
+    }
+  }
+  if (category != catalog::LineupCategory::local && category != catalog::LineupCategory::international) {
+    if (auto picked = handPicked(name)) {
+      add(*picked, "hand-picked");
       if (!provider.empty()) add(provider, "provider");
       out.style = LogoSpec::Style::logoOnly;
       out.isWest = isWest;
