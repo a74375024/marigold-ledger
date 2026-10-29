@@ -31,7 +31,9 @@ namespace marigold::catalog::cache {
 //    channels, out-of-town stations and event-only feeds.
 // 10: the channel directory decides rows, language, area and closings.
 // 11: a directory row is named by a copy the directory knows; FETV is one row.
-constexpr int kVersion = 11;
+// 12: premium and free streaming by name, renamed Cinemax channels, movie
+//     loops, overflow feeds, multi-language news beside an English copy.
+constexpr int kVersion = 12;
 // The oldest version still read, to show until this version sorts the list
 // again (after an app update the guide opens on the old list).
 constexpr int kOldestShown = 9;

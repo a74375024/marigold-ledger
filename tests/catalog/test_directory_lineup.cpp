@@ -50,6 +50,7 @@ directory::Data sampleDirectory() {
       listed("Starz Encore Family", "Starz Encore Family"),
       listed("FETV", "FETV"),
       listed("Get After It Media", "Get After It Media", {"The Action Channel"}, "broadcast"),
+      listed("Cinemax Classics", "Cinemax Classics"),
   };
   data.entries[6].closed = "2020-12-31";
   data.entries[7].language = "es";
@@ -199,4 +200,15 @@ TEST_CASE("directory lineup: choices made under a row's old id still count") {
   // Added by hand before it closed (or before the directory knew): stays.
   input.prefs.added = {"e|n:US:elrey"};
   CHECK(lineup(input).lineupIDs == std::set<std::string>{"e|d:El Rey Network"});
+}
+
+TEST_CASE("directory lineup: a channel under its name before a rename joins the renamed one") {
+  Built b({channel("1", "US: Cinemax Classics", "US Movies"), channel("2", "US: 5 STARMAX", "US Movies"),
+           channel("3", "USA: 5StarMax", "United States"), channel("4", "PRIME: 5STARMAX EAST ᴿᴬᵂ", "US| PRIME")});
+  REQUIRE(b.entryOf("1"));
+  CHECK(b.entryOf("2") == b.entryOf("1"));
+  CHECK(b.entryOf("3") == b.entryOf("1"));
+  CHECK(b.entryOf("4") == b.entryOf("1"));
+  CHECK(b.entryOf("1")->name == "Cinemax Classics");
+  CHECK(b.entryOf("1")->category == LineupCategory::movies);
 }

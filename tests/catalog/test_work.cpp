@@ -288,3 +288,29 @@ TEST_CASE("lineup: a channel's West version comes right after its East one") {
   CHECK(isWestId("e|core:HBO~west"));
   CHECK_FALSE(isWestId("e|core:HBO"));
 }
+
+TEST_CASE("lineup: a West version filed apart from its East one stays in its own section") {
+  // Syfy's East copies were filed under Movies, its West one under
+  // Entertainment: next to East it would split Entertainment in two.
+  std::vector<Channel> channels = {channel("1", "US: SYFY"), channel("2", "US: SYFY WEST"), channel("3", "US: TBS"),
+                                   channel("4", "US: HBO")};
+  auto info = [](const std::string& id, const std::string& name, const std::string& member, LineupCategory c) {
+    EntryInfo e;
+    e.id = id;
+    e.name = name;
+    e.category = c;
+    e.members = {member};
+    e.market = "US";
+    return e;
+  };
+  LineupInput input;
+  input.infos = {info("e|n:US:syfy", "Syfy", "xt:1|1", LineupCategory::movies),
+                 info("e|n:US:syfy~west", "Syfy West", "xt:1|2", LineupCategory::entertainment),
+                 info("e|n:US:tbs", "TBS", "xt:1|3", LineupCategory::entertainment),
+                 info("e|n:US:hbo", "HBO", "xt:1|4", LineupCategory::movies)};
+  input.channels = channels;
+  for (size_t i = 0; i < channels.size(); ++i) input.indexByID[channels[i].id] = i;
+  std::vector<std::string> order;
+  for (const Channel& e : lineup(input).entries) order.push_back(e.id);
+  CHECK(order == std::vector<std::string>{"e|n:US:syfy~west", "e|n:US:tbs", "e|n:US:hbo", "e|n:US:syfy"});
+}

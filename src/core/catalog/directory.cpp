@@ -169,6 +169,11 @@ const std::vector<Correction>& corrections() {
       {"Hallmark Movies/Mysteries", "Hallmark Mystery"},
       {"Hallmark M & M", "Hallmark Mystery"},
       {"Cinemax ThrillerMax", "ThrillerMax"},
+      // Renamed in 2025; providers still list the old names.
+      {"5StarMax", "Cinemax Classics"},
+      {"ActionMax", "Cinemax Action"},
+      {"MoreMax", "Cinemax Hits"},
+      {"Cinemax MoreMax", "Cinemax Hits"},
       // Providers' spellings.
       {"Willow Cricket", "Willow"},
       {"Willow Cricket Extra", "Willow Xtra"},

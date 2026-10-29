@@ -32,9 +32,11 @@ class IptvOrgIndex {
   IptvOrgIndex() = default;
   explicit IptvOrgIndex(Saved saved) : saved_(std::move(saved)) {}
 
-  // Builds the index from iptv-org's channels.csv and logos.csv. nullopt
+  // Builds the index from iptv-org's channels.csv and logos.csv (and with
+  // feeds.csv, other countries' channels with an English feed). nullopt
   // when the columns are missing or no US channel has a usable logo.
-  static std::optional<Saved> build(std::string_view channelsCsv, std::string_view logosCsv);
+  static std::optional<Saved> build(std::string_view channelsCsv, std::string_view logosCsv,
+                                    std::string_view feedsCsv = {});
 
   // By the channel's guide id, then its directory entry's iptv-org id
   // ("RacerNetwork.us"; empty when it has none), then its name.

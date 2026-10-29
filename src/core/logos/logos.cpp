@@ -174,7 +174,7 @@ LogoSpec spec(std::string_view name, const std::optional<std::string>& core, boo
 }
 
 std::optional<IptvOrgIndex::Saved> IptvOrgIndex::build(std::string_view channelsCsv,
-                                                       std::string_view logosCsv) {
+                                                       std::string_view logosCsv, std::string_view feedsCsv) {
   std::vector<std::vector<std::string>> channelRows = csvRows(channelsCsv);
   std::vector<std::vector<std::string>> logoRows = csvRows(logosCsv);
   if (channelRows.empty() || logoRows.empty()) return std::nullopt;
@@ -215,27 +215,47 @@ std::optional<IptvOrgIndex::Saved> IptvOrgIndex::build(std::string_view channels
     logoOf[id] = {link, main};
   }
 
-  Saved saved;
-  size_t need = std::max({*idCol, *nameCol, *countryCol});
-  for (size_t r = 1; r < channelRows.size(); ++r) {
-    const std::vector<std::string>& row = channelRows[r];
-    if (row.size() <= need) continue;
-    if (row[*countryCol] != "US") continue;
-    if (closedCol && *closedCol < row.size() && !row[*closedCol].empty()) continue;
-    const std::string& id = row[*idCol];
-    auto logo = logoOf.find(id);
-    if (logo == logoOf.end()) continue;
-    saved.byID[str::lower(id)] = logo->second.url;
-    std::vector<std::string> names{row[*nameCol]};
-    if (altCol && *altCol < row.size() && !row[*altCol].empty()) {
-      for (std::string_view alt : str::split(row[*altCol], ';')) names.emplace_back(alt);
-    }
-    for (const std::string& n : names) {
-      std::string key = catalog::coreKey(n).key;
-      if (!key.empty()) saved.byName.try_emplace(key, logo->second.url);
+  // Other countries' channels with an English feed, which US providers
+  // carry too ("Stingray Hit List", "France 24", "BabyTV").
+  std::unordered_set<std::string> english;
+  if (!feedsCsv.empty()) {
+    std::vector<std::vector<std::string>> feedRows = csvRows(feedsCsv);
+    if (!feedRows.empty()) {
+      auto feedChannel = column(feedRows.front(), "channel"), languages = column(feedRows.front(), "languages");
+      for (size_t r = 1; feedChannel && languages && r < feedRows.size(); ++r) {
+        const std::vector<std::string>& row = feedRows[r];
+        if (row.size() <= std::max(*feedChannel, *languages)) continue;
+        for (std::string_view l : str::split(row[*languages], ';')) {
+          if (l == "eng") english.insert(row[*feedChannel]);
+        }
+      }
     }
   }
-  if (saved.byID.empty()) return std::nullopt;
+
+  Saved saved;
+  size_t need = std::max({*idCol, *nameCol, *countryCol});
+  // US channels first: a name another country's channel shares is the US one's.
+  for (bool us : {true, false}) {
+    for (size_t r = 1; r < channelRows.size(); ++r) {
+      const std::vector<std::string>& row = channelRows[r];
+      if (row.size() <= need) continue;
+      const std::string& id = row[*idCol];
+      if ((row[*countryCol] == "US") != us || (!us && !english.count(id))) continue;
+      if (closedCol && *closedCol < row.size() && !row[*closedCol].empty()) continue;
+      auto logo = logoOf.find(id);
+      if (logo == logoOf.end()) continue;
+      saved.byID[str::lower(id)] = logo->second.url;
+      std::vector<std::string> names{row[*nameCol]};
+      if (altCol && *altCol < row.size() && !row[*altCol].empty()) {
+        for (std::string_view alt : str::split(row[*altCol], ';')) names.emplace_back(alt);
+      }
+      for (const std::string& n : names) {
+        std::string key = catalog::coreKey(n).key;
+        if (!key.empty()) saved.byName.try_emplace(key, logo->second.url);
+      }
+    }
+    if (us && saved.byID.empty()) return std::nullopt;
+  }
   return saved;
 }
 
@@ -249,8 +269,22 @@ std::optional<std::string> IptvOrgIndex::url(const std::optional<std::string>& e
   std::string key = catalog::coreKey(name).key;
   if (key.empty()) return std::nullopt;
   auto hit = saved_.byName.find(key);
-  if (hit == saved_.byName.end()) return std::nullopt;
-  return hit->second;
+  if (hit != saved_.byName.end()) return hit->second;
+  // Providers' names for channels the database spells otherwise.
+  static const std::unordered_map<std::string, std::string> kSpelledOtherwise = [] {
+    std::unordered_map<std::string, std::string> m;
+    for (auto [provider, id] : {std::pair{"EarthX", "earthxtv.us"}, std::pair{"FlixFling Now", "flixfling.us"},
+                                std::pair{"The Victory Channel", "victorychannel.us"},
+                                std::pair{"Fox Sports Racing", "foxsportsracing.us"},
+                                std::pair{"Al Jazeera English", "aljazeera.qa"}}) {
+      m.emplace(catalog::coreKey(provider).key, id);
+    }
+    return m;
+  }();
+  if (auto other = kSpelledOtherwise.find(key); other != kSpelledOtherwise.end()) {
+    if (auto byId = saved_.byID.find(other->second); byId != saved_.byID.end()) return byId->second;
+  }
+  return std::nullopt;
 }
 
 std::vector<std::vector<std::string>> csvRows(std::string_view text) {

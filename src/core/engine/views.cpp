@@ -1,6 +1,8 @@
 #include "core/engine/views.hpp"
 
 #include <algorithm>
+#include <string>
+#include <unordered_map>
 #include <utility>
 
 #include "core/model/channel.hpp"
@@ -120,13 +122,16 @@ std::vector<Count> onNowCounts(const Channels& ch, const std::vector<int>& rows,
 }
 
 std::vector<Count> sectionCounts(const Channels& ch, const std::vector<int>& rows) {
+  // One count per section name, in the order they first come (a row out of
+  // its section's block still counts with it).
   std::vector<Count> out;
+  std::unordered_map<std::string, size_t> placeOf;
   for (int i : rows) {
     const GuideChannel* g = at(ch, i);
     if (!g) continue;
-    if (out.empty() || out.back().title != g->section)
-      out.push_back({g->section, Filter{Filter::Kind::Section, g->section}, 0});
-    ++out.back().count;
+    auto [it, added] = placeOf.emplace(g->section, out.size());
+    if (added) out.push_back({g->section, Filter{Filter::Kind::Section, g->section}, 0});
+    ++out[it->second].count;
   }
   return out;
 }

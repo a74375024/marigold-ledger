@@ -225,3 +225,13 @@ TEST_CASE("views: the event guide lists games you can watch under their groups")
   CHECK(lines[2].tile->id == "d");
   CHECK(views::eventGuide(board, 3).empty());
 }
+
+TEST_CASE("views: a row out of its section's block still counts with it") {
+  Channels ch = sample();
+  // Entertainment, News, Entertainment: one Entertainment of 2, not two.
+  auto sections = views::sectionCounts(ch, {3, 2, 5});
+  REQUIRE(sections.size() == 2);
+  CHECK(sections[0].title == "Entertainment");
+  CHECK(sections[0].count == 2);
+  CHECK(sections[1].title == "News");
+}

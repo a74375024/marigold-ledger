@@ -176,7 +176,7 @@ int main(int argc, char** argv) {
   Data data = sources::assemble(src, today());
   // Fallback logos for the app (it never fetches them).
   if (auto logoList = fetch(std::string(sources::kIptvOrgBase) + "logos.csv", false); logoList && channels) {
-    if (auto index = logos::IptvOrgIndex::build(*channels, *logoList)) {
+    if (auto index = logos::IptvOrgIndex::build(*channels, *logoList, feeds ? *feeds : std::string())) {
       data.logos.insert(index->byID.begin(), index->byID.end());
       data.logosByName.insert(index->byName.begin(), index->byName.end());
     }

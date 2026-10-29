@@ -178,6 +178,27 @@ std::optional<std::string> otherLanguageMarket(std::string_view name) {
   return std::nullopt;
 }
 
+// International news channels with feeds in several languages, by home
+// market. Carried in the US under the plain name they're usually the
+// English feed; beside a copy marked English, the plain one is the home
+// language's ("FRANCE 24" next to "FRANCE 24 (ENGLISH)").
+std::optional<std::string> multiLanguageHome(std::string_view name) {
+  struct Home {
+    const char* market;
+    const char* pattern;
+  };
+  static const Home kHomes[] = {
+      {"FR", "\\bfrance ?24\\b"},    {"DE", "\\b(dw|deutsche welle)\\b"}, {"AE", "\\bal ?jazeera\\b"},
+      {"JP", "\\bnhk world\\b"},     {"CN", "\\bcgtn\\b"},
+  };
+  for (const Home& h : kHomes) {
+    if (rx::test(h.pattern, name, true)) return std::string(h.market);
+  }
+  return std::nullopt;
+}
+
+bool marksEnglish(std::string_view name) { return rx::test("\\b(english|eng)\\b", name, true); }
+
 // The market a directory language belongs to ("es" -> US Spanish, "ur" ->
 // Pakistan); nullopt for English or a language this doesn't place.
 std::optional<std::string> marketOfLanguage(std::string_view language) {
@@ -199,6 +220,9 @@ std::optional<std::string> eventFeedBrand(std::string_view display) {
     return std::string(str::trimUnicode(m->group(1)));
   if (auto m = rx::first("^(nbc sports|tennis channel plus)\\s*\\d{1,3}$", display, true))
     return std::string(m->group(1));
+  // "NBC Sports Network 2 (Feed)": a network's overflow game feeds.
+  if (auto m = rx::first("^(.{2,40}?)\\s*\\d{1,2}\\s*\\(feed\\)", display, true))
+    return std::string(str::trimUnicode(m->group(1)));
   return std::nullopt;
 }
 
@@ -413,6 +437,8 @@ CallsignContext::CallsignContext(const std::vector<Channel>& channels,
   }
   stationsByNetwork = guide::groupByNetwork(stations);
   for (const Channel& channel : channels) {
+    if (auto home = multiLanguageHome(channel.name); home && marksEnglish(channel.name))
+      englishFeeds.insert(channel.serverId + "|" + *home);
     std::string group = groupOf(channel);
     bool strong = contains(str::lower(group), "local") ||
                   rx::test("^\\s*USA?\\s*\\|\\s*(NBC|FOX|CBS|ABC|CW|PBS)\\b", group);
@@ -646,8 +672,11 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
                                       [](const Ranked& r) { return r.traits->kind != ChannelKind::fast; });
           entry.category = regular != ranked.end() ? regular->traits->category : LineupCategory::movies;
         }
+        // Filed by its words as entertainment ("5StarMax"): it's premium.
+        if (entry.category == LineupCategory::entertainment) entry.category = LineupCategory::movies;
       } else if (entry.kind == ChannelKind::channel &&
-                 std::any_of(ranked.begin(), ranked.end(), [](const Ranked& r) { return freeStreamingCopy(*r.channel); })) {
+                 (freeStreamingName(entry.name) ||
+                  std::any_of(ranked.begin(), ranked.end(), [](const Ranked& r) { return freeStreamingCopy(*r.channel); }))) {
         entry.kind = ChannelKind::fast;
         entry.category = LineupCategory::free;
       }
@@ -846,6 +875,9 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
   if (country == std::string("US")) {
     if (auto other = otherLanguageMarket(name)) {
       market = *other;
+    } else if (auto home = multiLanguageHome(name);
+               home && !marksEnglish(name) && context.englishFeeds.count(channel.serverId + "|" + *home)) {
+      market = *home;
     } else if (isSpanishUS(name, group)) {
       market = "US-ES";
     }
@@ -1074,8 +1106,23 @@ bool freeStreamingCopy(const Channel& channel) {
 }
 
 bool premiumName(std::string_view name) {
-  return rx::test("\\b(hbo|cinemax|showtime|starz|epix)\\b|\\bmgm ?(\\+|plus)|\\bamc ?(\\+|plus)|\\bparamount ?(\\+|plus)",
+  // Also the Cinemax and Starz Encore channels that don't say so
+  // ("5StarMax", "ActionMax", "MoviePlex") and Showtime's "Sho x BET".
+  return rx::test("\\b(hbo|cinemax|showtime|starz|epix)\\b|\\bmgm ?(\\+|plus)|\\bamc ?(\\+|plus)|\\bparamount ?(\\+|plus)|"
+                  "\\b(5 ?star|action|more|thriller|movie|outer) ?max\\b|\\b(movie|indie|retro)plex\\b|\\bsho ?x ?bet\\b",
                   name, true);
+}
+
+// Free streaming channels the lists and groups don't tell: ones the
+// provider files beside its cable channels ("US| AT&T"), and its own
+// movie loops ("CINEBOX: HORROR").
+bool freeStreamingName(std::string_view name) {
+  return rx::test(
+      "^(awe plus|horror machine|horror plus|westerns plus|big a anime|bowling tv|mayday:? air disaster|air (&|and) space channel|"
+      "torque( by history)?|reelz famo?us( & infamous)?|tribeca festival\\+?|flixfling( now)?|earthx(tv)?|curiosity now|"
+      "infast|travelxp|grjngo( - western movies)?|great american romcoms|moviesphere gold|frasier|the film detective|"
+      "family movie classics)( hd)?$",
+      name, true);
 }
 
 bool isEventGroup(std::string_view group) {
@@ -1138,7 +1185,8 @@ ChannelKind kindFor(std::string_view name, std::string_view lower, std::string_v
       isEventish(name)) {
     return ChannelKind::event;
   }
-  if (contains(name, "24/7") || contains(group, "24/7") ||
+  // The provider's own movie loops ("CINEBOX: HORROR") are loops too.
+  if (contains(name, "24/7") || contains(group, "24/7") || str::startsWith(lower, "cinebox:") ||
       (contains(lower, "247") && rx::test("\\b247\\b", lower))) {
     return ChannelKind::loop247;
   }

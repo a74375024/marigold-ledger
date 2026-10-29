@@ -218,12 +218,14 @@ LineupOutput lineup(const LineupInput& input) {
     }
   }
   // No channel numbers: channels come and go, and the remote can't dial.
-  // A channel's West version sorts right after its East one.
+  // A channel's West version sorts right after its East one (when they're
+  // filed alike: else it would sit in another section's block).
   std::unordered_map<std::string, const EntryInfo*> byId;
   for (const EntryInfo& info : input.infos) byId.emplace(info.id, &info);
   auto sortAs = [&](const EntryInfo* e) {
     if (!isWestId(e->id) || !coasts.paired.count(eastIdOf(e->id))) return e;
-    return byId.at(eastIdOf(e->id));
+    const EntryInfo* east = byId.at(eastIdOf(e->id));
+    return east->category == e->category ? east : e;
   };
   std::vector<const EntryInfo*> ordered;
   ordered.reserve(input.infos.size());

@@ -116,6 +116,25 @@ TEST_CASE("event-only feeds are events, one family per brand") {
   CHECK(r.entryOf.count("jf:1|1") == 0);  // not a My Lineup channel
 }
 
+TEST_CASE("a news channel's plain copy beside one marked English is the home language's") {
+  CatalogResult r = built({channel("1", "AT&T: FRANCE 24 ᴿᴬᵂ", std::string("US| AT&T")),
+                           channel("2", "AT&T: FRANCE 24 (ENGLISH) ᴿᴬᵂ", std::string("US| AT&T")),
+                           channel("3", "US: AL JAZEERA", std::string("US| NEWS")),
+                           channel("4", "US: AL JAZEERA ENGLISH", std::string("US| NEWS")),
+                           channel("5", "US: DW", std::string("US| NEWS"))});
+  CHECK(r.traits["xt:1|1"].market.value_or("none") == "FR");
+  CHECK(r.traits["xt:1|1"].country.value_or("none") == "US");
+  CHECK(r.traits["xt:1|2"].market == std::optional<std::string>("US"));
+  CHECK(r.traits["xt:1|3"].market == std::optional<std::string>("AE"));
+  CHECK(r.traits["xt:1|4"].market == std::optional<std::string>("US"));
+  // No English copy listed: the plain one is the English feed, as usual.
+  CHECK(r.traits["xt:1|5"].market == std::optional<std::string>("US"));
+  // Another server's English copy says nothing about this one's.
+  CatalogResult other = built({channel("1", "US: FRANCE 24", std::string("US| NEWS")),
+                               channel("2", "US: FRANCE 24 (ENGLISH)", std::string("US| NEWS"), "xt:2")});
+  CHECK(other.traits["xt:1|1"].market == std::optional<std::string>("US"));
+}
+
 TEST_CASE("channels in another language belong to its market") {
   auto marketOf = [](const char* name, const char* group, const char* server = "xt:1") {
     return traitsFor(channel("1", name, std::string(group), server)).market.value_or("");
@@ -224,4 +243,36 @@ TEST_CASE("regional channels and regional sports networks by their area") {
   CHECK(suggests(closed, sf, true, closed.name));
   EntryInfo north = entry("FOX SPORTS NORTH HD", "regional:minneapolis|paul");
   CHECK_FALSE(suggests(north, sf, true, north.name));
+}
+
+TEST_CASE("premium channels that don't say so, free streaming ones in a cable group, loops and overflow feeds") {
+  CatalogResult r = built({channel("1", "US: 5 STARMAX", std::string("US Movies")),
+                           channel("2", "US: ACTIONMAX", std::string("US Movies")),
+                           channel("3", "US: MOVIEPLEX", std::string("US| ENTERTAINMENT")),
+                           channel("4", "US SHO x BET (S)", std::string("US Movies"), "jf:1"),
+                           channel("5", "AT&T: HORROR MACHINE ᴿᴬᵂ", std::string("US| AT&T")),
+                           channel("6", "AT&T: TRAVELXP HD ᴿᴬᵂ", std::string("US| AT&T")),
+                           channel("7", "CINEBOX: FAMILY", std::string("US Movies")),
+                           channel("8", "(US) NBC Sports Network 2 (Feed) (NBCSN)", std::string("United States"), "jf:1"),
+                           channel("9", "AT&T: TBN ᴿᴬᵂ", std::string("US| AT&T"))});
+  auto entryOf = [&](const std::string& id) -> const EntryInfo* {
+    auto it = r.entryOf.find(id);
+    if (it == r.entryOf.end()) return nullptr;
+    for (const EntryInfo& e : r.entries)
+      if (e.id == it->second) return &e;
+    return nullptr;
+  };
+  for (const char* id : {"xt:1|1", "xt:1|2", "xt:1|3", "jf:1|4"}) {
+    REQUIRE(entryOf(id));
+    CHECK(entryOf(id)->category == LineupCategory::movies);
+  }
+  for (const char* id : {"xt:1|5", "xt:1|6", "xt:1|7"}) {
+    REQUIRE(entryOf(id));
+    CHECK(entryOf(id)->category == LineupCategory::free);
+  }
+  CHECK(r.traits["jf:1|8"].kind == ChannelKind::event);
+  CHECK(r.entryOf.count("jf:1|8") == 0);
+  // A channel on the air and on cable isn't free streaming for being free.
+  REQUIRE(entryOf("xt:1|9"));
+  CHECK(entryOf("xt:1|9")->category == LineupCategory::entertainment);
 }

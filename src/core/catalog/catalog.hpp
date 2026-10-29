@@ -36,6 +36,9 @@ struct CallsignContext {
   bool unknownIsUS = false;
   // The channel directory to tell channels by (none: the rules alone).
   const directory::Index* directory = nullptr;
+  // Multi-language news channels a server also lists marked English, as
+  // "server|home market" ("xt:1|FR" for "FRANCE 24 (ENGLISH)").
+  std::unordered_set<std::string> englishFeeds;
 
   CallsignContext() = default;
   // The station directory, plus signs seen in local groups or next to a
@@ -104,6 +107,8 @@ bool isEventGroup(std::string_view group);
 bool freeStreamingCopy(const Channel& channel);
 // HBO, Cinemax, Showtime, Starz, Epix, MGM+, AMC+, Paramount+.
 bool premiumName(std::string_view name);
+// Free streaming channels known by name, wherever the provider files them.
+bool freeStreamingName(std::string_view name);
 // Provider groups (any case) for sports: event slots, pay-per-view, sports
 // channels ("UK| SKY SPORTS", "DE| SOCCER PPV", "CA| TSN+", "SE| HOCKEY").
 bool sportsGroup(std::string_view group);

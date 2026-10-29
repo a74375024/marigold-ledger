@@ -305,3 +305,17 @@ The app knows real US channels by their other names, language and closing. After
 | Same logos | Channels that had a logo before | The same logo |
 | One FETV | Edit My Lineup: FETV | One row, every spelling under Sources |
 | Names | Cozi TV, FYI, Great, Comedy.TV, The Movie Channel Xtra | Shown with these names |
+
+## My Lineup and guide fixes (Build 94)
+
+| Area | How to check | Pass |
+|---|---|---|
+| France 24 | My Lineup › News: France 24, then play it | English; the French feed isn't in your lineup |
+| One Entertainment | Guide › Filter › Neighborhoods | Entertainment once, with all its channels; Syfy West sits in its own section's block |
+| Cinemax | Edit My Lineup: Cinemax Classics, Cinemax Action | One row each, with the 5StarMax / ActionMax copies under Sources; no "5StarMax" or "ActionMax" row; both under Movies & premium |
+| Premium names | MoviePlex, IndiePlex, RetroPlex, Sho x BET | Under Movies & premium, not Entertainment |
+| Free streaming | Free channels off, then look for Horror Machine, Westerns Plus, Bowling TV, Mayday: Air Disaster, Travelxp, AWE Plus | Not in My Lineup; with free channels on, under Free streaming |
+| Stays put | 365BLK, TBN, MeTV | Still in Entertainment (they're on the air and on cable) |
+| Movie loops | CINEBOX: Family, Horror, Action | Treated like 24/7 loops: not in My Lineup |
+| Overflow feeds | NBC Sports Network 2 / 3 (Feed) | Not in My Lineup |
+| Logos | Stingray music channels, BabyTV, ShortsTV, France 24, Arirang TV, Travelxp, Curiosity Now, EarthX, FlixFling Now, The Victory Channel | A clean logo instead of the provider's |

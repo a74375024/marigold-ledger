@@ -173,3 +173,36 @@ TEST_CASE("spec: national channels the tables miss, by name in the same library"
              LineupCategory::news, nullptr)
             .urls.front() == base(coreLogos().at("CNN")));
 }
+
+TEST_CASE("logos: another country's channel with an English feed, US names first, other spellings") {
+  std::string channels =
+      "id,name,alt_names,network,country,closed\n"
+      "HitList.ca,Stingray Hit List,,,CA,\n"
+      "Kanal.de,Kanal Eins,,,DE,\n"
+      "Shared.us,Shared Name,,,US,\n"
+      "Shared.uk,Shared Name,,,UK,\n"
+      "EarthxTV.us,EarthxTV,,,US,\n";
+  std::string logos =
+      "channel,feed,in_use,tags,width,height,format,url\n"
+      "HitList.ca,,TRUE,,1,1,PNG,https://example.invalid/hits.png\n"
+      "Kanal.de,,TRUE,,1,1,PNG,https://example.invalid/kanal.png\n"
+      "Shared.us,,TRUE,,1,1,PNG,https://example.invalid/us.png\n"
+      "Shared.uk,,TRUE,,1,1,PNG,https://example.invalid/uk.png\n"
+      "EarthxTV.us,,TRUE,,1,1,PNG,https://example.invalid/earthx.png\n";
+  std::string feeds =
+      "channel,id,name,alt_names,is_main,broadcast_area,timezones,languages,format\n"
+      "HitList.ca,SD,SD,,TRUE,c/CA,,eng,576i\n"
+      "Kanal.de,SD,SD,,TRUE,c/DE,,deu,576i\n"
+      "Shared.uk,SD,SD,,TRUE,c/UK,,eng,576i\n";
+  auto saved = IptvOrgIndex::build(channels, logos, feeds);
+  REQUIRE(saved);
+  IptvOrgIndex index(*saved);
+  CHECK(index.url(std::nullopt, "STINGRAY HIT LIST") == std::string("https://example.invalid/hits.png"));
+  CHECK_FALSE(index.url(std::nullopt, "Kanal Eins"));  // no English feed
+  CHECK(index.url(std::nullopt, "Shared Name") == std::string("https://example.invalid/us.png"));
+  CHECK(index.url(std::nullopt, "EARTHX") == std::string("https://example.invalid/earthx.png"));
+  // Without feeds, the US channels only (as before).
+  auto usOnly = IptvOrgIndex::build(channels, logos);
+  REQUIRE(usOnly);
+  CHECK_FALSE(IptvOrgIndex(*usOnly).url(std::nullopt, "Stingray Hit List"));
+}
