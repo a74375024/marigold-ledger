@@ -140,6 +140,18 @@ void keyBar(Ctx& c, const hints::Bar& bar) {
   }
 }
 
+Color skeleton(const Ctx& c) {
+  float phase = static_cast<float>((c.ms / 100) % 12) / 12.0f;
+  return theme::white(0.07f + 0.06f * (0.5f - 0.5f * std::cos(phase * 6.2831853f)));
+}
+
+bool skeletonMoved(uint32_t ms, uint32_t& step) {
+  uint32_t now = ms / 100;
+  if (now == step) return false;
+  step = now;
+  return true;
+}
+
 void spinner(Ctx& c, float x, float y, float radius, Color col) {
   // Eight dots, the brightest one turning once a second.
   int lead = static_cast<int>((c.ms / 125) % 8);

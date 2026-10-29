@@ -64,6 +64,8 @@ Requests: race drivers and results only for race weekends you can watch
 | Switching | Pick another feed | The banner stays, its status line reads "Switching to another feed · HD"; no full-screen card, no feed numbers; then the picture |
 | Backup | A feed that stops while watching | The banner with "Reconnecting…" or "Switching to another feed · HD"; when the picture's back, "✓ Back on CNN" for 2 s, then the banner hides. No corner card |
 | Nothing works | A channel whose feeds all fail | In the banner: "CNN isn't playing right now", one line why, and Try again / Pick a feed / Back to the last channel where the keys go |
+| Messages | Favorite a channel, or flip games with Up/Down on a game | The banner comes up and its status line reads "Added to Favorites" (or "N / M · the game"); no toast box |
+| Wrong number | Type a channel number that doesn't exist | The number box top right shows the number struck through and "No channel 123" under it for about 2 s; what's playing doesn't change |
 | Pointer | Move the Magic Remote | Guide and last-channel buttons at the edges, the action row clickable |
 | Leave from Live Events | Watch a game from Live Events (or a game's page, or search), then Back | The stream stops; nothing keeps playing behind the board |
 | Leave to the guide | Watch from the guide, then Back | The picture shrinks into the guide's corner (or stops with previews off) |
@@ -288,6 +290,10 @@ The app knows real US channels by their other names, language and closing. After
 | Couldn't update | Turn the provider off (or the network), then Options › refresh | The list stays; the header reads "Couldn't update the channel list · tries again later" for a few seconds |
 | Focus | Stay on a channel while it updates | The same channel stays focused (also when it was renamed); playback never stops |
 | No list at all | Add a provider in Options | "Building your lineup" with a bar that never jumps back or sits full |
+| Another provider | With channels already in the guide, add a second provider in Options | The guide keeps your list; the header reads "Adding channels from <name>…", then "✓ Channels added"; the new channels join the list without it emptying |
+| Placeholders | Open the guide before its listings are in | Rows show soft pulsing blocks where the shows and times go (no "Loading guide…"); they turn into listings as they arrive; scrolling stays smooth |
+| Live Events placeholders | Open Live Events on a fresh start | Two rows of pulsing tile shapes until the games are in; no "Loading this week's games…" |
+| Edit My Lineup | Options › Edit My Lineup, change something, Continue | The summary shows pulsing blocks and a dimmed "Start Watching" with "Working out your channels…"; Start Watching works once the counts are in |
 | Timing | Help › playback log after a first run | A "sorted N channels in X ms" line: tell me the number |
 
 ## Built-in logos and the LG package

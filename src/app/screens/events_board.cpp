@@ -79,7 +79,8 @@ class EventsBoardScreen : public Screen {
       refresh();
       app_.invalidate();
     }
-    return previewTick(ms) || board_->loading || promptAt_ != 0;
+    bool pulse = skeletonShown_ && ui::skeletonMoved(ms, pulseStep_);
+    return previewTick(ms) || pulse || promptAt_ != 0;
   }
 
   bool key(const KeyEvent& e) override {
@@ -159,6 +160,7 @@ class EventsBoardScreen : public Screen {
   }
 
   void draw(ui::Ctx& c) override {
+    skeletonShown_ = false;
     const EventTile* f = focused();
     bool corner = f && previewable(*f);
     // The corner takes the place of the big faded badges.
@@ -571,9 +573,15 @@ class EventsBoardScreen : public Screen {
     float x = kLeft, y = 44;
     if (!t) {
       ui::label(c, "Live Events", x, y + 40, Weight::Bold, 44, theme::white());
-      ui::label(c, board_->loading ? "Loading this week's games\xe2\x80\xa6" : "This week's games, and where you can watch them.",
-                x, y + 110, Weight::Regular, 26, theme::white(0.7f));
-      if (board_->loading) ui::spinner(c, x + 20, y + 190, 16);
+      if (board_->loading) {
+        // Still loading: placeholders where the game's title and status go.
+        skeletonShown_ = true;
+        ui::Color block = ui::skeleton(c);
+        c.g.fill({x, y + 116, 560, 26}, block, 13);
+        c.g.fill({x, y + 160, 320, 18}, block, 9);
+        return;
+      }
+      ui::label(c, "This week's games, and where you can watch them.", x, y + 110, Weight::Regular, 26, theme::white(0.7f));
       return;
     }
     if (!t->leagueChip.empty()) ui::chip(c, t->leagueChip, x, y, 20, theme::white(0.14f), theme::white());
@@ -629,9 +637,12 @@ class EventsBoardScreen : public Screen {
   }
 
   void drawRows(ui::Ctx& c) {
+    if (rows_.empty() && board_->loading) {
+      drawLoadingRows(c);
+      return;
+    }
     if (rows_.empty()) {
-      const char* empty = board_->loading       ? "Loading this week's games\xe2\x80\xa6"
-                          : !filtered()         ? "No games this week in your sports."
+      const char* empty = !filtered()           ? "No games this week in your sports."
                           : show_ == Show::Live ? "No games on right now. Back shows them all."
                                                 : "None this week. Back shows every game.";
       ui::label(c, empty, kLeft, kBoardTop + 30, Weight::Medium, 26, theme::white(0.6f));
@@ -651,6 +662,20 @@ class EventsBoardScreen : public Screen {
       y += h;
     }
     c.g.popClip();
+  }
+
+  // Two rows of tile-shaped placeholders while the week's games load.
+  void drawLoadingRows(ui::Ctx& c) {
+    skeletonShown_ = true;
+    ui::Color block = ui::skeleton(c);
+    float y = kBoardTop;
+    for (int r = 0; r < 2; ++r) {
+      c.g.fill({kLeft, y + 4, 220, 22}, block, 11);
+      float tileY = y + kRowHeader;
+      for (float x = kLeft; x < gfx::kLayoutWidth; x += events_ui::kTileW + kTileGap)
+        c.g.fill({x, tileY, events_ui::kTileW, events_ui::kTileH}, block, 12);
+      y += kRowHeader + events_ui::kTileH + kRowGap;
+    }
   }
 
   void drawRow(ui::Ctx& c, const EventRow& row, int r, float y) {
@@ -736,6 +761,8 @@ class EventsBoardScreen : public Screen {
   }
 
   uint32_t promptAt_ = 0;
+  bool skeletonShown_ = false;  // placeholders on screen: the pulse redraws
+  uint32_t pulseStep_ = 0;
   std::function<void(int)> pickTab_;
   std::shared_ptr<const EventsBoard> board_;
   std::vector<EventRow> rows_;  // the board's rows, filtered

@@ -72,7 +72,8 @@ void versionRows(App& app, ui::ListPanel& p, std::shared_ptr<std::string> curren
       // playing) the rows only say what's on.
       if (play.entry() == vid || play.entry() != catalog::coastPartnerId(vid)) return;
       if (!play.tune(vid)) {
-        app.toast("This version has no working feed right now");
+        const GuideChannel* version = app.store().channels()->find(vid);
+        app.toast((version ? version->name : std::string("That version")) + " has no working feed right now");
         return;
       }
       *current = vid;

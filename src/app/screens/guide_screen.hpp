@@ -112,6 +112,8 @@ class GuideScreen : public Screen {
   float contentH_ = 0;
   int focusLine_ = -1;
   setup_ui::Building building_;
+  bool skeletonShown_ = false;  // placeholders were drawn last frame
+  uint32_t pulseStep_ = 0;
   std::string shownLine_;
   StoreStatus::Mark shownMark_ = StoreStatus::Mark::None;
   uint32_t fadeFrom_ = 0;

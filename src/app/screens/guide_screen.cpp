@@ -873,6 +873,8 @@ bool GuideScreen::tick(uint32_t ms) {
     app_.invalidate();
   }
   if (!digits_.empty()) animating = true;
+  // Placeholders pulse (a few redraws a second) while rows load.
+  if (skeletonShown_ && ui::skeletonMoved(ms, pulseStep_)) animating = true;
   // The progress screen, the header's spinner and a result fading out move.
   const StoreStatus& status = s.status();
   if (status.phase == StoreStatus::Phase::Loading || status.mark == StoreStatus::Mark::Busy ||
@@ -906,6 +908,7 @@ bool GuideScreen::tick(uint32_t ms) {
 // ---------------------------------------------------------------- drawing
 
 void GuideScreen::draw(ui::Ctx& c) {
+  skeletonShown_ = false;
   if (!ch_ || ch_->all.empty()) {
     drawStatus(c);
     drawPreview(c);
@@ -1080,8 +1083,15 @@ void GuideScreen::drawHero(ui::Ctx& c) {
     const std::vector<Listing>* v = li_ ? li_->forChannel(g->id) : nullptr;
     bool askedEmpty = li_ && li_->empty.count(g->id);
     ui::chip(c, "LIVE", bx, y + 2, 18, theme::hex(theme::kLive), theme::white());
-    ui::label(c, v || askedEmpty ? "No guide info" : "Loading guide\xe2\x80\xa6", bx + 80, y, Weight::Medium, 24,
-              theme::white(0.7f));
+    if (v || askedEmpty) {
+      ui::label(c, "No guide info", bx + 80, y, Weight::Medium, 24, theme::white(0.7f));
+    } else {
+      // Still loading: placeholders where the show and its times go.
+      skeletonShown_ = true;
+      ui::Color block = ui::skeleton(c);
+      c.g.fill({bx + 80, y + 4, 420, 24}, block, 12);
+      c.g.fill({bx + 80, y + 44, 260, 16}, block, 8);
+    }
   }
 }
 
@@ -1240,11 +1250,26 @@ void GuideScreen::drawRow(ui::Ctx& c, int lineIndex, float y) {
     c.hit(r, kHitProgram + lineIndex * 64);
     c.g.fill(r, focused ? theme::white() : theme::white(0.07f), 12);
     bool askedEmpty = li_ && li_->empty.count(g.id);
-    std::string text = later() ? "No listings for this time"
-                       : v || askedEmpty ? "Live \xc2\xb7 No guide info"
-                                         : "Live \xc2\xb7 Loading guide\xe2\x80\xa6";
-    c.g.fill({r.x + 18, r.y + kRowH * 0.5f - 6, 12, 12}, theme::hex(theme::kNowLine), 6);
-    ui::labelIn(c, text, {r.x + 40, r.y, r.w - 60, r.h}, Weight::Bold, 21, focused ? theme::black() : theme::white(0.8f));
+    if (!later() && !v && !askedEmpty) {
+      // Still loading: cell-shaped placeholders (a title and a time bar
+      // each) in a slow pulse; "No guide info" only when there's none.
+      skeletonShown_ = true;
+      ui::Color block = ui::skeleton(c);
+      if (focused) block = theme::black(block.a * 1.6f);
+      static const float kShare[] = {0.42f, 0.33f, 0.25f};
+      float cx = r.x;
+      for (float share : kShare) {
+        float cw = r.w * share;
+        c.g.fill({cx + 18, r.y + kRowH * 0.5f - 18, std::min(cw - 36, 260.0f), 16}, block, 8);
+        c.g.fill({cx + 18, r.y + kRowH * 0.5f + 8, std::min(cw * 0.4f, 110.0f), 12}, block, 6);
+        cx += cw;
+        if (cx < r.x + r.w - 4) c.g.fill({cx - 1, r.y + 10, 2, kRowH - 20}, theme::black(0.25f));
+      }
+    } else {
+      std::string text = later() ? "No listings for this time" : "Live \xc2\xb7 No guide info";
+      c.g.fill({r.x + 18, r.y + kRowH * 0.5f - 6, 12, 12}, theme::hex(theme::kNowLine), 6);
+      ui::labelIn(c, text, {r.x + 40, r.y, r.w - 60, r.h}, Weight::Bold, 21, focused ? theme::black() : theme::white(0.8f));
+    }
   }
 }
 

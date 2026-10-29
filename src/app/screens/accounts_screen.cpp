@@ -230,7 +230,7 @@ class AccountsScreen : public Screen {
         self->form_ = false;
         self->list_ = app.store().accounts();
         self->focus_ = 0;
-        app.toast("Provider added. Loading channels\xe2\x80\xa6");
+        app.toast("Provider added");  // the guide header says when its channels are in
       }
     });
   }

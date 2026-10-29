@@ -53,7 +53,7 @@ class LineupSetup : public Screen {
   }
 
   bool key(const KeyEvent& e) override {
-    if (busy_ || step_ == Step::Building) return true;
+    if (busy_) return true;
     int n = static_cast<int>(buttonTitles().size());
     if (int dir = setup_ui::letterStep(e.key); dir != 0 && step_ == Step::Market) {
       jumpLetter(dir);
@@ -147,28 +147,22 @@ class LineupSetup : public Screen {
       waitingForList_ = true;
       return true;
     }
-    if (step_ == Step::Building) {
-      // The lineup is worked out on a worker; the summary waits for it.
+    if (step_ == Step::Summary && !summaryReady_) {
+      // The lineup is worked out on a worker; the summary shows meanwhile,
+      // its counts as placeholders, and waits for it to start watching.
       auto ch = app_.store().channels();
       if (ch->version != builtFrom_ && ch->lineupConfigured) {
-        step_ = Step::Summary;
-        focusList_ = false;
-        button_ = 0;
+        summaryReady_ = true;
         app_.invalidate();
+        return true;
       }
-      return true;
+      return ui::skeletonMoved(app_.ms(), pulseStep_);
     }
     return busy_ || loading_;
   }
 
   void draw(ui::Ctx& c) override {
     c.g.fill({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight}, theme::hex(theme::kBackground));
-    if (step_ == Step::Building) {
-      ui::spinner(c, gfx::kLayoutWidth * 0.5f, 430, 30);
-      ui::label(c, "Building My Lineup\xe2\x80\xa6", 0, 500, Weight::Bold, 44, theme::white(), gfx::kLayoutWidth,
-                Align::Center);
-      return;
-    }
     if (step_ == Step::Summary) {
       drawSummary(c);
       return;
@@ -201,7 +195,7 @@ class LineupSetup : public Screen {
   }
 
  private:
-  enum class Step { Market, Languages, Channels, Building, Summary };
+  enum class Step { Market, Languages, Channels, Summary };
 
   float bottom() const { return onboarding_ ? setup_ui::kContentBottom : 990; }
 
@@ -273,7 +267,7 @@ class LineupSetup : public Screen {
 
   void press(int i) {
     if (step_ == Step::Summary) {
-      app_.nav().pop();
+      if (summaryReady_) app_.nav().pop();  // Start Watching waits for the counts
       return;
     }
     if (waiting()) return;  // Back still goes back
@@ -316,7 +310,10 @@ class LineupSetup : public Screen {
           app_.nav().push(makeMySports(app_, true));
           return;
         }
-        step_ = Step::Building;
+        step_ = Step::Summary;
+        summaryReady_ = false;
+        focusList_ = false;
+        button_ = 0;
         return;
       default:
         return;
@@ -466,6 +463,10 @@ class LineupSetup : public Screen {
   }
 
   void drawSummary(ui::Ctx& c) {
+    if (!summaryReady_) {
+      drawSummaryLoading(c);
+      return;
+    }
     auto ch = app_.store().channels();
     float x = 110, y = 140;
     ui::label(c, "My Lineup is ready", x, y, Weight::Bold, 56, theme::white());
@@ -494,6 +495,32 @@ class LineupSetup : public Screen {
     setup_ui::buttons(c, x, y + 210, buttonTitles(), 0, kHitButton);
   }
 
+  // The summary while the lineup is worked out: the same layout, the counts
+  // as pulsing placeholders, a quiet line, Start Watching dimmed.
+  void drawSummaryLoading(ui::Ctx& c) {
+    float x = 110, y = 140;
+    ui::label(c, "Building My Lineup", x, y, Weight::Bold, 56, theme::white());
+    y += 90;
+    ui::Color block = ui::skeleton(c);
+    c.g.fill({x, y + 6, 900, 24}, block, 12);
+    c.g.fill({x, y + 46, 620, 24}, block, 12);
+    y += 120;
+    float tx = x;
+    for (int i = 0; i < 6; ++i) {
+      Rect r{tx, y, 150, 150};
+      c.g.fill(r, theme::white(0.06f), 18);
+      c.g.fill({r.x + 45, r.y + 38, 60, 34}, block, 10);
+      c.g.fill({r.x + 25, r.y + 96, 100, 16}, block, 8);
+      tx += 168;
+    }
+    float by = y + 210;
+    float bw = ui::chipWidth(c, "Start Watching", 24) + 60;
+    c.g.fill({x, by, bw, 70}, theme::white(0.12f), 35);
+    ui::labelIn(c, "Start Watching", {x, by, bw, 70}, Weight::Bold, 24, theme::white(0.4f), Align::Center);
+    ui::spinner(c, x + bw + 40, by + 35, 10);
+    ui::label(c, "Working out your channels\xe2\x80\xa6", x + bw + 62, by + 23, Weight::Regular, 20, theme::white(0.6f));
+  }
+
   bool onboarding_;
   catalog::LineupPrefs draft_, initial_;
   Step step_ = Step::Market;
@@ -503,6 +530,8 @@ class LineupSetup : public Screen {
   bool touched_ = false;         // the viewer picked or unpicked an area
   bool waitingForList_ = false;  // countries or channels wait for the sorted list
   setup_ui::Building building_;
+  bool summaryReady_ = true;  // the summary's counts are in
+  uint32_t pulseStep_ = 0;
   bool busy_ = false;
   bool searching_ = false;
   std::string query_;

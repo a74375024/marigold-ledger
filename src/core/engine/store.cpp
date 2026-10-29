@@ -462,6 +462,10 @@ void Store::addAccount(const AccountForm& form, std::function<void(std::string)>
       return;
     }
     (void)gen;
+    // A provider added to a list on screen: the list stays while the new
+    // channels are merged in ("Adding channels from <name>…").
+    impl_->accountChange = "Adding channels from " + redact(account.displayName) + "\xe2\x80\xa6";
+    impl_->accountChangeDone = "Channels added";
     impl_->accounts.push_back(std::move(account));
     impl_->runs[impl_->accounts.back().sourceId()];
     saveAccounts();
@@ -566,6 +570,8 @@ void Store::removeAccount(const std::string& id) {
   std::string source = it->sourceId();
   m.accounts.erase(it);
   m.runs.erase(source);
+  m.accountChange = "Updating your channel list\xe2\x80\xa6";
+  m.accountChangeDone = "Channel list updated";
   for (auto s = m.m3uStreams.begin(); s != m.m3uStreams.end();) {
     if (str::startsWith(s->first, source + "|")) s = m.m3uStreams.erase(s);
     else ++s;
@@ -625,7 +631,14 @@ void Store::load(bool force) {
   Impl& m = *impl_;
   std::string signature = currentSignature();
   if (signature != m.signature) {
-    reset();
+    // Providers added or removed: a list on screen stays until the new one
+    // is sorted (it replaces it in place); with none, from scratch.
+    if (m.channels->empty() || m.partial || m.signature.empty()) {
+      reset();
+      m.accountChange.clear();
+    } else {
+      m.accountsChanged = true;
+    }
     m.signature = signature;
     m.savedListingsRead = false;
     m.providerSaved.clear();
@@ -848,6 +861,8 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
     m.loading = false;
     m.channelsLoadedAt = time::now();
     if (!m.channels->empty() && !problems.empty()) m.loadFailed = true;  // the list on screen stays
+    m.accountChange.clear();
+    m.accountsChanged = false;
     if (m.channels->empty()) {
       status_.phase = problems.empty() ? StoreStatus::Phase::Ready : StoreStatus::Phase::Failed;
       status_.problem = str::join(problems, "\n");
@@ -940,6 +955,7 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
         mm.channelsLoadedAt = time::now();
         mm.listFingerprint = *print;
         if (*unchanged) {
+          mm.accountChange.clear();
           MLOG_I("store", "refresh: the channel list is unchanged");
           status_.problem = str::join(problems, "\n");
           status_.line.clear();
@@ -957,12 +973,13 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
         status_.line.clear();
         if (*renamedCount >= 0) MLOG_I("store", "refresh: only %ld event names changed", *renamedCount);
         else MLOG_I("store", "built the channel list: %zu channels, %zu entries", mm.channels->size(), mm.catalog->entries.size());
-        if (showing) {
+        if (showing && !mm.accountsChanged) {
           scheduleProvider(false);
           rebuildOutsidePrograms();
         } else {
           startGuides(wasEmpty);
         }
+        mm.accountsChanged = false;
         saveCatalog();
         afterBigJob("channels sorted");
       },
@@ -2566,6 +2583,8 @@ bool Store::tick(uint32_t ms) {
     m.loadUpdated = false;
     m.updatedUntil = ms + 3000;
     m.failedUntil = 0;
+    m.updatedLine = m.accountChange.empty() ? "Channel list updated" : m.accountChangeDone;
+    m.accountChange.clear();
   }
   if (m.loadFailed) {
     m.loadFailed = false;
@@ -2575,10 +2594,10 @@ bool Store::tick(uint32_t ms) {
   std::string line;
   StoreStatus::Mark mark = StoreStatus::Mark::None;
   if (m.loading && !m.channels->empty()) {
-    line = "Updating your channel list\xe2\x80\xa6";
+    line = m.accountChange.empty() ? "Updating your channel list\xe2\x80\xa6" : m.accountChange;
     mark = StoreStatus::Mark::Busy;
   } else if (m.updatedUntil && ms < m.updatedUntil) {
-    line = "Channel list updated";
+    line = m.updatedLine.empty() ? "Channel list updated" : m.updatedLine;
     mark = StoreStatus::Mark::Done;
   } else if (m.failedUntil && ms < m.failedUntil) {
     line = "Couldn't update the channel list \xc2\xb7 tries again later";

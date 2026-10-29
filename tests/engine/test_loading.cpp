@@ -143,3 +143,43 @@ TEST_CASE("loading: the sort says how far it has got") {
   catalog::build(list, testdata::utc(2026, 10, 29, 12, 0), {}, nullptr, &progress);
   CHECK(progress.pass.load() == catalog::BuildProgress::finished);
 }
+
+TEST_CASE("loading: a provider added later merges into the list on screen") {
+  fake::Tv tv;
+  mock::Provider first(200), second(120);
+  tv.pool.answer(kPlaylist, first.m3u());
+  const char* kSecond = "http://mock2.example.invalid:8080/playlist.m3u";
+  tv.pool.answer(kSecond, second.m3u());
+  Store store(tv.host());
+  REQUIRE(addPlaylist(store, tv).empty());
+  auto before = store.channels();
+  REQUIRE(before);
+  size_t rows = before->all.size(), copies = before->rawChannels;
+
+  marigold::engine::AccountForm f = fake::m3uForm();
+  f.name = "Second playlist";
+  f.server = kSecond;
+  std::string problem = "(not answered)";
+  store.addAccount(f, [&](std::string p) { problem = std::move(p); });
+  // The account is checked, then the lists load: the old one stays meanwhile.
+  for (int i = 0; i < 3 && store.status().mark != StoreStatus::Mark::Busy; ++i) {
+    tv.ms += 100;
+    store.tick(tv.ms);
+    CHECK(store.channels()->all.size() == rows);
+    tv.pool.drain();
+  }
+  CHECK(problem.empty());
+  // (One drain may already have sorted it; either way the list was never empty.)
+  for (int i = 0; i < 20 && store.status().line != "Channels added"; ++i) {
+    CHECK(store.status().phase == StoreStatus::Phase::Ready);
+    CHECK_FALSE(store.channels()->all.empty());
+    if (store.status().mark == StoreStatus::Mark::Busy)
+      CHECK(store.status().line == "Adding channels from Second playlist\xe2\x80\xa6");
+    frame(store, tv);
+  }
+  CHECK(store.status().line == "Channels added");
+  CHECK(store.status().mark == StoreStatus::Mark::Done);
+  // The second provider's copies joined the rows (the same channels here).
+  CHECK(store.channels()->rawChannels > copies);
+  CHECK(store.channels()->all.size() >= rows);
+}

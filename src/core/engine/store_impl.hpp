@@ -150,6 +150,11 @@ struct Store::Impl {
   // this tick time (ms).
   uint32_t updatedUntil = 0, failedUntil = 0, lastTick = 0;
   bool loadUpdated = false, loadFailed = false;  // set off the tick; timed at the next
+  std::string updatedLine;  // "Channel list updated", "Channels added"
+  // Providers added or removed while a list is on screen: it stays until
+  // the new one is sorted; the header line says what's going on.
+  bool accountsChanged = false;
+  std::string accountChange, accountChangeDone;
   uint64_t generation = 1;   // bumps when accounts change
   uint64_t rebuildGeneration = 0;
   std::string signature;

@@ -122,6 +122,14 @@ void keyBar(Ctx& c, const hints::Bar& bar);
 // A small spinner centred at (x, y).
 void spinner(Ctx& c, float x, float y, float radius, Color col = theme::white(0.8f));
 
+// Placeholder ("skeleton") blocks for what is still loading: a slow pulse
+// (1.2 s round) of plain fills, stepped ten times a second so screens
+// redraw little while it shows.
+Color skeleton(const Ctx& c);
+// True when the pulse has moved on since `step` (which it updates): a
+// screen's tick returns it while placeholders are on screen.
+bool skeletonMoved(uint32_t ms, uint32_t& step);
+
 // The frosted side panel background (55% black over the UI, fading on the
 // open edge). `leading` panels open from the left.
 void sidePanel(Ctx& c, Rect r, bool leading);

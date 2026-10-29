@@ -171,7 +171,7 @@ class PlayerScreen : public Screen {
       zone_ = Zone::None;
       prefetch(shownEntry_);
       cameras_ = app_.store().isEvent(shownEntry_) && app_.store().hasCameras(shownEntry_);
-      if (cameras_) app_.toast("Press Down for onboard cameras", true);
+      if (cameras_) say("Press Down for onboard cameras", 5000);
     }
     // The first picture ever: the one-time "Getting around" card.
     if (p.ready() && !p.failed() && !tips_ && !app_.store().settings().playerTipsShown) {
@@ -213,13 +213,18 @@ class PlayerScreen : public Screen {
           break;
         }
       }
-      if (target.empty()) app_.toast("No channel " + std::to_string(n), true);
+      // A number with no channel: said where the number was typed.
+      if (target.empty()) {
+        missed_ = std::to_string(n);
+        missedUntil_ = ms + 2500;
+      }
       else flipped(p.tune(target) ? target : std::string());
     }
     bool bannerAnim = ms < bannerUntil_ + 50;
     bool note = !p.note().empty();
-    return opening || bannerAnim || note || !digits_.empty() || p.backupNotice().has_value() || zone_ == Zone::Row ||
-           !pendingFlip_.empty();
+    if (!missed_.empty() && ms >= missedUntil_) missed_.clear();
+    return opening || bannerAnim || note || !digits_.empty() || !missed_.empty() || p.backupNotice().has_value() ||
+           zone_ == Zone::Row || !pendingFlip_.empty();
   }
 
   void draw(ui::Ctx& c) override {
@@ -258,6 +263,16 @@ class PlayerScreen : public Screen {
       Rect r{gfx::kLayoutWidth - 80 - 220, 60, 220, 90};
       c.g.fill(r, theme::black(0.75f), 20);
       ui::labelIn(c, digits_, r, Weight::Bold, 54, theme::white(), Align::Center);
+    } else if (!missed_.empty() && app_.ms() < missedUntil_) {
+      // The number typed, struck through, and that there's no such channel.
+      std::string line = "No channel " + missed_;
+      float w = std::max(220.0f, ui::textWidth(c, line, Weight::Medium, 22) + 60);
+      Rect r{gfx::kLayoutWidth - 80 - w, 60, w, 128};
+      c.g.fill(r, theme::black(0.8f), 20);
+      ui::labelIn(c, missed_, {r.x, r.y + 8, r.w, 70}, Weight::Bold, 54, theme::white(0.45f), Align::Center);
+      float sw = ui::textWidth(c, missed_, Weight::Bold, 54);
+      c.g.fill({r.x + (r.w - sw) * 0.5f - 6, r.y + 44, sw + 12, 4}, theme::hex(kRed, 0.9f), 2);
+      ui::labelIn(c, line, {r.x, r.y + 80, r.w, 34}, Weight::Medium, 22, theme::white(0.85f), Align::Center);
     }
     if (tips_) drawTips(c);
   }
@@ -267,6 +282,15 @@ class PlayerScreen : public Screen {
   enum class Pill { Cameras, Sources, Coast, Guide, Last, Favorite, More };
 
   // ---------------------------------------------------------- actions
+  // A message while watching: in the banner's status line (brought up for
+  // it), not a toast over the picture. `done` puts a tick before it.
+  void say(std::string text, uint32_t forMs, bool done = false) {
+    message_ = std::move(text);
+    messageDone_ = done;
+    messageUntil_ = app_.ms() + forMs;
+    if (!bannerVisible()) bannerFrom_ = app_.ms();
+    bannerUntil_ = std::max(bannerUntil_, messageUntil_);
+  }
   // While it loads (or a channel key is pending) the banner stays up.
   bool loading() const {
     const Playback& p = app_.playback();
@@ -367,7 +391,7 @@ class PlayerScreen : public Screen {
         std::string other = otherCoast();
         if (other.empty()) break;
         if (!p.tune(other)) {
-          app_.toast("This version has no working feed right now");
+          say(nameOf(other) + " has no working feed right now", 3500);
           break;
         }
         flipped(other);
@@ -379,7 +403,7 @@ class PlayerScreen : public Screen {
         bool was = false;
         if (const GuideChannel* g = app_.store().channels()->find(p.entry())) was = g->favorite;
         app_.store().toggleFavorite(p.entry());
-        app_.toast(was ? "Removed from Favorites" : "Added to Favorites", true);
+        say(was ? "Removed from Favorites" : "Added to Favorites", 2500, !was);
         break;
       }
       case Pill::More: app_.nav().push(makeOptions(app_)); break;
@@ -409,9 +433,7 @@ class PlayerScreen : public Screen {
       showBanner();
       return;
     }
-    std::string name = nameOf(prev);
-    p.previous();
-    app_.toast("Back to " + name, true);
+    p.previous();  // the banner shows where to
     showBanner();
   }
   void closeTips() {
@@ -474,9 +496,9 @@ class PlayerScreen : public Screen {
       auto it = std::find(list.begin(), list.end(), id);
       const EventTile* t = app_.store().eventTile(id);
       if (it != list.end() && t)
-        app_.toast(std::to_string(it - list.begin() + 1) + " / " + std::to_string(list.size()) + " \xc2\xb7 " +
-                       (t->heroTitle.empty() ? t->title : t->heroTitle),
-                   true);
+        say(std::to_string(it - list.begin() + 1) + " / " + std::to_string(list.size()) + " \xc2\xb7 " +
+                (t->heroTitle.empty() ? t->title : t->heroTitle),
+            3500);
     }
     bannerFrom_ = bannerUntil_ = app_.ms();
   }
@@ -679,6 +701,7 @@ class PlayerScreen : public Screen {
     }
     if (p.backupNotice()) return {"Back on " + (g ? g->name : std::string("the channel")), false, true};
     if (!p.note().empty()) return {p.note(), true, false};
+    if (!message_.empty() && app_.ms() < messageUntil_) return {message_, false, messageDone_};
     return {};
   }
 
@@ -856,6 +879,11 @@ class PlayerScreen : public Screen {
   std::string shownEntry_;
   std::string digits_;
   uint32_t digitsAt_ = 0;
+  std::string missed_;  // a number typed that no channel has, shown for a moment
+  uint32_t missedUntil_ = 0;
+  std::string message_;  // a message in the banner's status line
+  bool messageDone_ = false;
+  uint32_t messageUntil_ = 0;
   mutable std::shared_ptr<const Listings> listings_;
 };
 
