@@ -210,7 +210,7 @@ TEST_CASE("logos: another country's channel with an English feed, US names first
 TEST_CASE("logos: hand-picked logos for free streaming channels no database has") {
   // As the lineup spells them.
   for (const char* name : {"MAYDAY: AIR DISASTER", "BIG A ANIME", "TORQUE BY HISTORY", "Torque", "BOWLING TV",
-                           "Reelz Famous and Infamous", "REELZ FAMOUS & INFAMOUS", "NBC Sports California Plus",
+                           "Reelz Famous and Infamous", "REELZ FAMOUS & INFAMOUS", "STINGRAY SPA", "NBC Sports California Plus",
                            "NBC Sports California Plus 2"}) {
     INFO(name);
     CHECK(handPicked(name));

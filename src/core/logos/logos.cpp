@@ -108,6 +108,10 @@ std::optional<std::string> handPicked(std::string_view name) {
                                                  pluto + "6aab1ef220ec28a21adca712/colorLogoPNG_1791210850118.png"},
              std::pair<const char*, std::string>{"Bowling TV", xumo + "99951510" + onBlack},
              std::pair<const char*, std::string>{"Reelz Famous and Infamous", xumo + "99991368" + onBlack},
+             std::pair<const char*, std::string>{
+                 "Stingray Spa",
+                 "https://tvpnlogopus.samsungcloud.tv/platform/image/sourcelogo/vc/00/02/34/"
+                 "USBD3500013DG_20250630T232449SQUARE.png"},
              std::pair<const char*, std::string>{"NBC Sports California Plus",
                                                  std::string(kLogoBase) + "nbcsn-california-us.png"},
              std::pair<const char*, std::string>{"NBC Sports California Plus 2",
