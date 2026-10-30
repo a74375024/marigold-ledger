@@ -36,6 +36,12 @@ std::unique_ptr<Screen> makeSetupDone(App& app);
 std::unique_ptr<Screen> makeLineupSetup(App& app, bool onboarding = false);
 // Sources for a channel (red key).
 std::unique_ptr<Screen> makeSources(App& app, const std::string& entryId);
+// Subtitles (the player's Subtitles pill): Off or a language the stream
+// carries; Caption style; the Options page; and Options' one-word summary.
+std::unique_ptr<Screen> makeSubtitles(App& app);
+std::unique_ptr<Screen> makeCaptionStyle(App& app);
+std::unique_ptr<Screen> makeSubtitleSettings(App& app);
+std::string subtitleSummary(App& app);
 // Live Events: the board (Live Events tab). `pickTab` gets the guide tab to
 // show when the board closes (0 My Lineup, 1 Favorites, 2 Recent).
 std::unique_ptr<Screen> makeEventsBoard(App& app, std::function<void(int)> pickTab);

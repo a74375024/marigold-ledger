@@ -44,19 +44,24 @@
  #define PX_PONTA        3         // comeca 3 segmentos antes do fim (como os players)
  #define PX_SEM_NOVO_S   40        // sem segmento novo por isto: a fonte morreu
  #define PX_FALHAS_MAX   6         // pedidos de playlist seguidos que falharam
-@@ -63,7 +53,11 @@
+@@ -63,7 +53,16 @@
  static char fonteAtual[NV_MEDIA_URL_MAX];
  // Cabecalhos do addon: os pendentes (proxima sessao) e os da sessao em curso.
  static char cabsPendentes[512], cabsAtual[512];
 +// marigold: a resolucao da proxima sessao e a da sessao em curso.
 +static int resolucaoPendente, resolucaoAtual;
++// marigold: passar a .ts continua adiante (sem 302), e quem le o que passa
++// (as legendas). Valem para a proxima sessao, como a resolucao.
++static int passarPendente, passarAtual;
++static void (*espiao)(const unsigned char *, size_t, unsigned, void *);
++static void *espiaoU;
 +#ifndef MARIGOLD_PROXYTS_PURO
  static atomic_uint sessaoAtual, sessaoRedirecionada;
 +#endif
  // O download do segmento em curso, para a troca de canal cortar na hora (a
  // conta de 1 tela recusaria o canal novo com o velho ainda baixando).
  static volatile int *cancelarEmCurso;
-@@ -106,10 +100,11 @@
+@@ -106,10 +105,11 @@
  
  // Parse a media/master playlist. Automatic uses the highest variant; an
  // explicit resolution uses the nearest height. Re-read settings on each open.
@@ -70,7 +75,7 @@
    long banda = 0, melhorBanda = -1;
    memset(l, 0, sizeof *l);
    l->alvo = 6;
-@@ -190,6 +185,7 @@
+@@ -190,6 +190,7 @@
    return -1;
  }
  
@@ -78,15 +83,17 @@
  // --- envio ----------------------------------------------------------------------
  static int pxEnviar(int s, const void *b, size_t n) {
    const char *p = b;
-@@ -230,6 +226,7 @@
+@@ -230,6 +231,9 @@
    time_t semLeitorDesde;
    char lista[4096];
    char cabs[512];                   // os do addon, para playlist e segmentos
 +  int resolucao;                    // marigold: opcao da sessao, para a mestre
++  int continuo;                     // marigold: a fonte e .ts continua, passada adiante
++  uint64_t espiado;                 // marigold: ate onde o espiao ja leu
    PxConexao produtor;
  };
  static PxFluxo *fluxoAtual;
-@@ -284,7 +281,8 @@
+@@ -284,7 +288,8 @@
  // controle, que os aceita mas nao diz o endereco final: a base dos segmentos
  // e o endereco pedido. O redirecionamento da FONTE ja foi resolvido uma vez em
  // pxAtender (rede_url_final_cab), e e esse endereco que chega aqui.
@@ -96,7 +103,7 @@
    char atual[NV_MEDIA_URL_MAX];
    int volta;
    snprintf(atual, sizeof atual, "%s", url);
-@@ -308,7 +306,7 @@
+@@ -308,7 +313,7 @@
        b = rede_baixar_trecho_st(atual, 8, 0, 1048575, &n, &st, &er, fin, sizeof fin);
      if (!b || n <= 0) { free(b); return 0; }
      if (fin[0]) snprintf(atual, sizeof atual, "%s", fin);
@@ -105,7 +112,7 @@
      free(b);
      if (!l->mestre) { snprintf(final, nf, "%s", atual); return 1; }
      snprintf(atual, sizeof atual, "%s", l->uri[0]);
-@@ -366,7 +364,7 @@
+@@ -366,7 +371,7 @@
    return 1;
  }
  
@@ -114,7 +121,7 @@
    PxLista *lp = malloc(sizeof *lp);
    PxTabelas tab;
    char base[NV_MEDIA_URL_MAX];
-@@ -378,7 +376,7 @@
+@@ -378,7 +383,7 @@
  #define l (*lp)
    while (pxViva(c)) {
      int i, novos = 0;
@@ -123,33 +130,70 @@
        if (++falhas >= PX_FALHAS_MAX) { printf("[proxy-ts] playlist falhou %d vezes: fim\n", falhas); break; }
        pxDormir(c, 1000);
        continue;
-@@ -465,7 +463,7 @@
+@@ -463,9 +468,29 @@
+   fflush(stdout);
+ }
  
++// marigold: a .ts continua, inteira, para o ring (os leitores e o espiao
++// a leem dali).
++static int pxReceberVivo(const char *d, size_t n, void *u) {
++  PxConexao *c = u;
++  return pxViva(c) && pxEntregar(c, d, n);
++}
++
++static void pxContinuo(PxConexao *c, const char *url, const char *cabs) {
++  char copia[512];
++  const char *v[8];
++  int st = 0, ok;
++  snprintf(copia, sizeof copia, "%s", cabs ? cabs : "");
++  pthread_mutex_lock(&trava); cancelarEmCurso = &c->cancelar; pthread_mutex_unlock(&trava);
++  ok = rede_baixar_fluxo_vivo(url, pxVetor(copia, v), pxReceberVivo, c, &c->cancelar, &st);
++  pthread_mutex_lock(&trava); if (cancelarEmCurso == &c->cancelar) cancelarEmCurso = NULL; pthread_mutex_unlock(&trava);
++  printf("[proxy-ts] sessao %u: .ts continua %s (HTTP %d)\n", c->sessao, ok ? "encerrada" : "falhou", st);
++  fflush(stdout);
++}
++
  static void *pxProduzir(void *u) {
    PxFluxo *f = u;
 -  pxHls(&f->produtor, f->lista, f->cabs);
-+  pxHls(&f->produtor, f->lista, f->cabs, f->resolucao);
++  if (f->continuo) pxContinuo(&f->produtor, f->lista, f->cabs);
++  else pxHls(&f->produtor, f->lista, f->cabs, f->resolucao);
    pthread_mutex_lock(&f->trava);
    f->encerrado = 1; pthread_cond_broadcast(&f->chegou);
    pthread_mutex_unlock(&f->trava);
-@@ -473,7 +471,7 @@
+@@ -473,7 +498,8 @@
    return NULL;
  }
  
 -static PxFluxo *pxFluxoPegar(PxConexao *c, const char *lista, const char *cabs) {
-+static PxFluxo *pxFluxoPegar(PxConexao *c, const char *lista, const char *cabs, int resolucao) {
++static PxFluxo *pxFluxoPegar(PxConexao *c, const char *lista, const char *cabs, int resolucao,
++                             int continuo) {
    PxFluxo *f;
    pthread_t t;
    pthread_mutex_lock(&trava);
-@@ -499,6 +497,7 @@
+@@ -499,6 +525,8 @@
      f->produtor.s = -1; f->produtor.sessao = c->sessao; f->produtor.fluxo = f;
      snprintf(f->lista, sizeof f->lista, "%s", lista);
      snprintf(f->cabs, sizeof f->cabs, "%s", cabs ? cabs : "");
 +    f->resolucao = resolucao;
++    f->continuo = continuo;
      fluxoAtual = f;
      if (pthread_create(&t, NULL, pxProduzir, f) != 0) {
        fluxoAtual = NULL; pxFluxoDestruir(f); pthread_mutex_unlock(&trava); return NULL;
-@@ -580,9 +579,11 @@
+@@ -572,6 +600,12 @@
+     if (!pxEnviar(c->s, b, n)) break;
+     pthread_mutex_lock(&f->trava);
+     c->pos = pos; c->proteger = 1;
++    // marigold: o espiao ve cada byte uma vez, quando chega ao player.
++    if (espiao && pos > f->espiado) {
++      size_t novo = pos - f->espiado < n ? (size_t)(pos - f->espiado) : n;
++      espiao(b + n - novo, novo, c->sessao, espiaoU);
++      f->espiado = pos;
++    }
+     pthread_cond_broadcast(&f->chegou);
+     pthread_mutex_unlock(&f->trava);
+   }
+@@ -580,9 +614,11 @@
  
  static void *pxAtender(void *u) {
    PxConexao *c = u;
@@ -158,37 +202,52 @@
 +  char req[4096], cab[NV_MEDIA_URL_MAX + 128], cabs[512];
    ssize_t r, tot = 0;
    unsigned s = 0;
-+  int resolucao;
++  int resolucao, passar;
    const char *q;
    // O PEDIDO: so a primeira linha interessa (GET /live.ts?s=N).
    while (tot < (ssize_t)sizeof req - 1) {
-@@ -598,6 +599,7 @@
+@@ -598,6 +634,8 @@
    if (s && s == atomic_load(&sessaoAtual)) snprintf(c->fonte, sizeof c->fonte, "%s", fonteAtual);
    else c->fonte[0] = 0;
    snprintf(cabs, sizeof cabs, "%s", c->fonte[0] ? cabsAtual : "");
 +  resolucao = resolucaoAtual;
++  passar = passarAtual;
    pthread_mutex_unlock(&trava);
    c->sessao = s;
    if (!c->fonte[0] || strncmp(req, "GET ", 4)) {
-@@ -620,7 +622,7 @@
+@@ -620,11 +658,21 @@
      printf("[proxy-ts] sessao %u: GET (Range %s)\n", c->sessao, range);
      fflush(stdout); }
    // Uma conexao da mesma sessao usa a ingestao que ja esta em andamento.
 -  c->fluxo = pxFluxoPegar(c, NULL, NULL);
-+  c->fluxo = pxFluxoPegar(c, NULL, NULL, 0);
++  c->fluxo = pxFluxoPegar(c, NULL, NULL, 0, 0);
    if (c->fluxo) {
      printf("[proxy-ts] sessao %u: GET compartilha a ingestao HLS\n", c->sessao);
      fflush(stdout); pxServirFluxo(c); goto sair;
-@@ -652,7 +654,7 @@
+   }
++  // marigold: com a passagem ligada, uma fonte que nao e playlist vai direto
++  // para o ring, sem a sonda (o app ja sabe que nao e .m3u8); se nao tocar, o
++  // app toca a fonte direto.
++  if (passar) {
++    c->fluxo = pxFluxoPegar(c, c->fonte, cabs, resolucao, 1);
++    if (c->fluxo) {
++      printf("[proxy-ts] sessao %u: passando a .ts adiante\n", c->sessao);
++      fflush(stdout); pxServirFluxo(c); goto sair;
++    }
++  }
+   // O QUE A FONTE E: um trecho do comeco decide entre TS continuo e playlist.
+   { long n = 0;
+     int st = 0, er = 0;
+@@ -652,7 +700,7 @@
        b = rede_baixar_trecho_st(c->fonte, 8, 0, 65535, &n, &st, &er, fin, sizeof fin);
      if (b && n >= 7 && !strncmp(b, "#EXTM3U", 7) && (!st || (st >= 200 && st < 300))) {
        free(b);
 -      c->fluxo = pxFluxoPegar(c, fin[0] ? fin : c->fonte, cabs);
-+      c->fluxo = pxFluxoPegar(c, fin[0] ? fin : c->fonte, cabs, resolucao);
++      c->fluxo = pxFluxoPegar(c, fin[0] ? fin : c->fonte, cabs, resolucao, 0);
        if (c->fluxo) {
          printf("[proxy-ts] sessao %u: a fonte e playlist HLS; entregando TS continuo\n", c->sessao);
          fflush(stdout); pxServirFluxo(c);
-@@ -737,6 +739,21 @@
+@@ -737,12 +785,42 @@
  
  int proxyts_disponivel(void) { return 1; }
  
@@ -210,15 +269,37 @@
  void proxyts_definir_cabecalhos(const char *cabs) {
    pthread_mutex_lock(&trava);
    snprintf(cabsPendentes, sizeof cabsPendentes, "%s", cabs ? cabs : "");
-@@ -757,6 +774,7 @@
+   pthread_mutex_unlock(&trava);
+ }
+ 
++void proxyts_definir_passagem(int sim) {
++  pthread_mutex_lock(&trava);
++  passarPendente = sim;
++  pthread_mutex_unlock(&trava);
++}
++
++void proxyts_definir_espiao(void (*f)(const unsigned char *, size_t, unsigned, void *), void *u) {
++  pthread_mutex_lock(&trava);
++  espiaoU = u;
++  espiao = f;
++  pthread_mutex_unlock(&trava);
++}
++
++unsigned proxyts_sessao(void) { return atomic_load(&sessaoAtual); }
++
+ int proxyts_redirecionou(void) {
+   unsigned s = atomic_load(&sessaoAtual);
+   return s && atomic_load(&sessaoRedirecionada) == s;
+@@ -757,6 +835,8 @@
    pxFluxoParar();
    snprintf(fonteAtual, sizeof fonteAtual, "%s", fonte);
    snprintf(cabsAtual, sizeof cabsAtual, "%s", cabsPendentes);
 +  resolucaoAtual = resolucaoPendente;
++  passarAtual = passarPendente;
    s = atomic_fetch_add(&sessaoAtual, 1) + 1;
    pthread_mutex_unlock(&trava);
    snprintf(saida, n, "http://127.0.0.1:%d/live.ts?s=%u", porta, s);
-@@ -777,13 +795,4 @@
+@@ -777,13 +857,4 @@
    return url && !strncmp(url, "http://127.0.0.1:", 17) && strstr(url, "/live.ts?s=");
  }
  

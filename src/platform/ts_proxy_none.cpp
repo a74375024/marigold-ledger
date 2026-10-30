@@ -10,7 +10,9 @@ namespace marigold::platform {
 bool TsProxy::wanted() { return false; }
 bool TsProxy::start() { return false; }
 void TsProxy::stop() {}
-std::string TsProxy::localUrl(const std::string&, const std::string&) { return {}; }
+std::string TsProxy::localUrl(const std::string&, const std::string&, bool) { return {}; }
+unsigned TsProxy::session() const { return 0; }
+void TsProxy::setTap(Tap*) {}
 bool TsProxy::redirected() const { return false; }
 void TsProxy::setPreferredHeight(int) {}
 

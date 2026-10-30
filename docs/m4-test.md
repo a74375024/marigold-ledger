@@ -409,3 +409,18 @@ The app knows real US channels by their other names, language and closing. After
 | Apple TV | Change channels | Slightly sooner (half a second of buffer instead of one) |
 | Typed numbers | Type a channel number that no longer number starts with (e.g. 702 when there's no 7020) | It tunes at once; 7 alone still waits for the next digit if 70-something exists |
 | OK | Menus, Options, the player | OK acts as you press it; in the guide, Live Events and panels with a hold menu it still waits to tell a press from a hold |
+
+## Subtitles (Build 106)
+
+Off until turned on; then on for every channel that has them until turned off. Marigold draws them on LG and Fire TV (the same look); Apple TV's player draws its own.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Turning on | Options › Watching › Subtitles, or Down in the player › Subtitles | Picking a language (or On) turns them on; Off turns them off; the choice stays across channels and restarts |
+| On LG | Turn subtitles on while watching a US channel | The channel restarts once (a second or two) and captions appear low and centred; a CC tag next to LIVE |
+| Timing | Watch for a minute with captions | Captions appear with the speech, not seconds early |
+| Banner | Press OK while captions show | They move up above the banner and back down when it hides |
+| Pill | Down in the player | Subtitles pill (with the language) only on channels that carry them, or did before |
+| None | Subtitles on, a channel without them | "No subtitles on this channel" once in the banner; no pill, no CC |
+| Style | Subtitles › Caption style | Size, Box / Outline / Shadow, Sentence case and Top change the captions on screen at once (Apple TV: size and look from the next channel) |
+| Playback log | Help › playback log | "captions · in the stream (English…)" when a stream has them; "captions · none after a minute" when it doesn't |

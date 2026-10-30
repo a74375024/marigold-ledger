@@ -319,6 +319,12 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
       settings_.showScores = (*v)["showScores"].asBool(true);
       settings_.clock24 = (*v)["clock24"].asBool(false);
       settings_.playerTipsShown = (*v)["playerTipsShown"].asBool(false);
+      settings_.subtitles = (*v)["subtitles"].asBool(false);
+      settings_.subtitleLanguage = (*v)["subtitleLanguage"].asString();
+      settings_.subtitleSize = std::clamp(static_cast<int>((*v)["subtitleSize"].asNumber(1)), 0, 2);
+      settings_.subtitleLook = std::clamp(static_cast<int>((*v)["subtitleLook"].asNumber(0)), 0, 2);
+      settings_.subtitleSentenceCase = (*v)["subtitleSentenceCase"].asBool(false);
+      settings_.subtitleTop = (*v)["subtitleTop"].asBool(false);
       settings_.guideShards = stringSet((*v)["guideShards"]);
     }
   }
@@ -332,6 +338,7 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
       for (const auto& [k, x] : (*v)["lastFeed"].fields()) m.lastFeed[k] = x.asString();
       for (const auto& [k, x] : (*v)["unplayable"].fields()) m.unplayable[k] = x.asInt();
       m.quickStartRefused = stringSet((*v)["quickStartRefused"]);
+      m.captionChannels = stringSet((*v)["captionChannels"]);
       for (const auto& [k, x] : (*v)["reliability"].fields())
         m.reliability[k] = {static_cast<int>(x[size_t(0)].asInt()), static_cast<int>(x[size_t(1)].asInt())};
     }
@@ -395,6 +402,9 @@ void Store::saveLists() {
   v.set("unplayable", unplayable);
   v.set("quickStartRefused",
         stringArray(std::vector<std::string>(m.quickStartRefused.begin(), m.quickStartRefused.end())));
+  if (!m.captionChannels.empty())
+    v.set("captionChannels",
+          stringArray(std::vector<std::string>(m.captionChannels.begin(), m.captionChannels.end())));
   json::Value rel = json::Value::object();
   for (const auto& [k, x] : m.reliability) {
     json::Value pair = json::Value::array();
@@ -449,6 +459,20 @@ void Store::setSettings(const Settings& s) {
   bool tsChanged = s.preferTS != settings_.preferTS;
   bool fillChanged = s.fillMissingListings != settings_.fillMissingListings;
   bool tabChanged = s.allChannelsTab != settings_.allChannelsTab;
+  // Subtitle choices don't touch Live Events.
+  Settings same = s;
+  same.subtitles = settings_.subtitles;
+  same.subtitleLanguage = settings_.subtitleLanguage;
+  same.subtitleSize = settings_.subtitleSize;
+  same.subtitleLook = settings_.subtitleLook;
+  same.subtitleSentenceCase = settings_.subtitleSentenceCase;
+  same.subtitleTop = settings_.subtitleTop;
+  bool boardChanged = !(same.previewChannels == settings_.previewChannels && same.scheduleEnabled == settings_.scheduleEnabled &&
+                        same.showUnwatchable == settings_.showUnwatchable && same.showScores == settings_.showScores &&
+                        same.clock24 == settings_.clock24 && same.allChannelsTab == settings_.allChannelsTab &&
+                        same.preferTS == settings_.preferTS && same.embyQuickStart == settings_.embyQuickStart &&
+                        same.fillMissingListings == settings_.fillMissingListings &&
+                        same.playerTipsShown == settings_.playerTipsShown && same.guideShards == settings_.guideShards);
   settings_ = s;
   json::Value v = json::Value::object();
   v.set("previewChannels", s.previewChannels);
@@ -461,9 +485,15 @@ void Store::setSettings(const Settings& s) {
   v.set("showScores", s.showScores);
   v.set("clock24", s.clock24);
   v.set("playerTipsShown", s.playerTipsShown);
+  v.set("subtitles", s.subtitles);
+  if (!s.subtitleLanguage.empty()) v.set("subtitleLanguage", s.subtitleLanguage);
+  v.set("subtitleSize", s.subtitleSize);
+  v.set("subtitleLook", s.subtitleLook);
+  v.set("subtitleSentenceCase", s.subtitleSentenceCase);
+  v.set("subtitleTop", s.subtitleTop);
   if (!s.guideShards.empty())
     v.set("guideShards", stringArray(std::vector<std::string>(s.guideShards.begin(), s.guideShards.end())));
-  impl_->ev.boardDirty = true;
+  if (boardChanged) impl_->ev.boardDirty = true;
   host_.files.write(kSettingsFile, json::write(v, true));
   if (tsChanged) {
     for (sources::Account& a : impl_->accounts) a.preferTS = s.preferTS;
@@ -2558,6 +2588,12 @@ void Store::quickStartRefused(const std::string& channelId) {
   if (ci == m.indexByID.end()) return;
   if (m.quickStartRefused.insert((*m.channels)[ci->second].serverId).second) saveLists();
 }
+
+void Store::captionsSeen(const std::string& channelId) {
+  if (!channelId.empty() && impl_->captionChannels.insert(channelId).second) saveLists();
+}
+
+bool Store::captionsKnown(const std::string& channelId) const { return impl_->captionChannels.count(channelId) > 0; }
 
 bool Store::quickStartRefusedBy(const std::string& channelId) const {
   const Impl& m = *impl_;

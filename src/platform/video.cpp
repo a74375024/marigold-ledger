@@ -80,4 +80,15 @@ VideoState Video::state() const {
   return s;
 }
 
+// Captions on webOS come from the stream through the relay
+// (engine::Subtitles); the TV's player is never asked for text.
+std::vector<Video::TextTrack> Video::textTracks() const { return {}; }
+void Video::selectText(const std::string&, bool) {}
+std::vector<std::string> Video::textLines(uint64_t* version) const {
+  if (version) *version = 0;
+  return {};
+}
+bool Video::drawsText() { return false; }
+void Video::setTextStyle(int, int) {}
+
 }  // namespace marigold::platform

@@ -97,6 +97,10 @@ class Session {
   bool tuneEventVia(const std::string& eventId, const std::string& via, const std::vector<std::string>& flip = {});
   // Plays a specific feed of the current entry (Sources panel).
   bool useFeed(size_t index);
+  // The feed playing, opened again from the start (its backups after it):
+  // the app plays it another way now (webOS: subtitles through the relay).
+  // `why` goes in the log.
+  bool restart(std::string_view why);
   // A race camera: these feeds, while the race stays the entry (the event
   // guide, Up / Down and the cameras panel keep working). Not remembered as
   // the game's source.
@@ -158,6 +162,9 @@ class Session {
   // A "memory" line in the log: the app's memory now, after `what` ("channels
   // sorted"; empty for the regular reading every few minutes).
   void logMemory(std::string_view what = {});
+  // A line about the stream playing ("captions", "in the stream"), for the
+  // app's parts of playback.
+  void logNote(std::string_view event, std::string_view detail = {}) { logEvent(event, detail); }
 
  private:
   bool begin(const std::string& entryId, std::vector<Feed> feeds, const std::vector<std::string>& flip);

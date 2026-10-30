@@ -143,6 +143,21 @@ bool Session::tuneEventVia(const std::string& eventId, const std::string& via, c
   return begin(eventId, store_.eventFeeds(eventId, via), flip);
 }
 
+bool Session::restart(std::string_view why) {
+  if (entry_.empty() || feeds_.empty() || camera_) return false;
+  std::vector<playback::FeedInfo> infos;
+  bool quick = store_.settings().embyQuickStart;
+  for (const Feed& f : feeds_) infos.push_back({f.channelId, kindOf(f), quick && f.needsOpen});
+  logEvent("restart", why);
+  playback::TuneOptions options;
+  options.start = std::min(rec_.feedIndex(), feeds_.size() - 1);
+  options.settle = 0;
+  hadPicture_ = false;
+  player_->beginTune();
+  apply(rec_.tune(ms(), std::move(infos), options));
+  return true;
+}
+
 bool Session::useFeed(size_t index) {
   if (index >= feeds_.size()) return false;
   apply(rec_.pick(ms(), index));

@@ -49,6 +49,15 @@ void proxyts_definir_cabecalhos(const char *cabs);
 // 1 quando a sessao em curso so redirecionou o player para a fonte (ela nao
 // era playlist HLS): tocar a mesma fonte direto seria repetir a tentativa.
 int  proxyts_redirecionou(void);
+// marigold: PASSAGEM (legendas): na proxima sessao, uma fonte que nao e
+// playlist tambem passa pelo proxy (sem 302 e sem sonda), para o espiao ler
+// o fluxo. 0 = como antes.
+void proxyts_definir_passagem(int sim);
+// marigold: chamado nos fios do proxy com cada trecho do fluxo entregue ao
+// player (em ordem, cada byte uma vez) e a sessao dele. Rapido: o fluxo espera.
+void proxyts_definir_espiao(void (*f)(const unsigned char *, size_t, unsigned, void *), void *u);
+// marigold: a sessao em curso (a ultima aberta por proxyts_url).
+unsigned proxyts_sessao(void);
 // 1 se `url` (sem o prefixo) e candidata ao proxy num canal de addon: http(s)
 // e nao arquivo progressivo (.mp4/.mkv). Puro, testavel em qualquer alvo.
 int  proxyts_candidata(const char *url, int mp4);

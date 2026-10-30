@@ -557,6 +557,7 @@ typedef struct {
   unsigned long ultimoMs, paradoMs;
   long long visto;
   int parou;
+  unsigned long primeiroMs;  // marigold: fluxo vivo: sem o primeiro byte por isto, parou
 } Vigia;
 static int vigiar(void *u, long long dlTotal, long long dlAgora,
                   long long ulTotal, long long ulAgora) {
@@ -566,6 +567,10 @@ static int vigiar(void *u, long long dlTotal, long long dlAgora,
   if (redeCancelLocal && *redeCancelLocal) { redeCancelouLocal = 1; return 1; }
   if (dlAgora > v->visto) { v->visto = dlAgora; v->ultimoMs = agora; return 0; }
   if (v->visto > 0 && v->paradoMs && agora - v->ultimoMs > v->paradoMs) {
+    v->parou = 1;
+    return 1;
+  }
+  if (!v->visto && v->primeiroMs && agora - v->ultimoMs > v->primeiroMs) {
     v->parou = 1;
     return 1;
   }
@@ -1377,6 +1382,57 @@ int rede_baixar_fluxo(const char *url, int segundos, const char *const *cab,
     char seg[120];
     printf("[rede] fluxo: curl %d, HTTP %ld, %lld bytes em %s%s\n", r, http, f.n,
            rede_url_publica(url, seg, sizeof seg), f.limitou ? " (teto)" : "");
+    fflush(stdout);
+    return 0;
+  }
+  return 1;
+}
+
+// marigold: GET EM FLUXO SEM FIM, para a live .ts que o proxy passa adiante
+// (com legendas ligadas). Sem prazo total; 8 s sem byte, ou 15 s sem o
+// primeiro, encerram, e `cancelado` corta na hora (troca de canal).
+int rede_baixar_fluxo_vivo(const char *url, const char *const *cab,
+                           int (*cb)(const char *dados, size_t n, void *u), void *u,
+                           volatile int *cancelado, int *status) {
+  Fluxo f;
+  Vigia vigia;
+  void *c, *lista = NULL;
+  long http = 0;
+  int r;
+  if (status) *status = 0;
+  if (!url || !*url || !cb || !abrir()) return 0;
+  memset(&f, 0, sizeof f);
+  f.cb = cb; f.u = u;
+  c = pegarHandle(url);
+  if (!c) return 0;
+  curl_setopt(c, OPT_URL, url);
+  curl_setopt(c, OPT_WRITEFUNCTION, receberFluxo);
+  curl_setopt(c, OPT_WRITEDATA, &f);
+  curl_setopt(c, OPT_FOLLOWLOCATION, (long)1);
+  opcoesComuns(c, 30000UL);
+  curl_setopt(c, OPT_TIMEOUT_MS, (long)0);
+  ligarVigia(c, &vigia, 24000UL);
+  vigia.primeiroMs = 15000;
+  if (cab && slist_append) {
+    int k;
+    for (k = 0; cab[k]; k++) lista = slist_append(lista, cab[k]);
+    if (lista) curl_setopt(c, OPT_HTTPHEADER, lista);
+  }
+  redeCancelLocal = cancelado;
+  redeCancelouLocal = 0;
+  r = curl_perform(c);
+  redeCancelLocal = NULL;
+  if (r == 42 && vigia.parou) r = 28;
+  if (curl_getinfo) curl_getinfo(c, INFO_RESPONSE_CODE, &http);
+  if (status) *status = (int)http;
+  redeCurlLocal = r;
+  anotarErro(r);
+  if (lista) { curl_setopt(c, OPT_HTTPHEADER, (void *)0); if (slist_free) slist_free(lista); }
+  soltarHandleR(c, r, url);
+  if ((r == 23 && f.cortou) || redeCancelouLocal) r = 0;
+  redeCancelouLocal = 0;
+  if (r != 0 || http < 200 || http >= 300) {
+    printf("[rede] fluxo vivo: curl %d, HTTP %ld, %lld bytes\n", r, http, f.n);
     fflush(stdout);
     return 0;
   }

@@ -5,7 +5,9 @@
 // plain snapshot so the UI never touches the LS2 thread's variables directly.
 #pragma once
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 #include "platform/gfx.hpp"
 
@@ -50,6 +52,23 @@ class Video {
   void shutdown();
 
   VideoState state() const;
+
+  // Subtitles. The text tracks the player lists for the stream (none on
+  // webOS: captions there are read from the stream by the relay).
+  struct TextTrack {
+    std::string id, language;  // language: as the stream says ("en", "eng"), may be ""
+    int channel = 0;           // 1..4 for a 608 caption service
+  };
+  std::vector<TextTrack> textTracks() const;
+  // Shows (`on`) the track `id`, or the first when it isn't there; or none.
+  void selectText(const std::string& id, bool on);
+  // The selected track's lines as the player decoded them; `version` moves
+  // when they change.
+  std::vector<std::string> textLines(uint64_t* version) const;
+  // The player draws the text over the picture itself (tvOS: VLC), in this
+  // size (0..2) and look (0 box, 1 outline, 2 shadow) where it can.
+  static bool drawsText();
+  void setTextStyle(int size, int look);
 
  private:
   bool started_ = false;

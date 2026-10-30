@@ -120,6 +120,18 @@ final class Bridge {
     return utf8(Video.state(out));
   }
 
+  static byte[] videoTextTracks() {
+    return utf8(Video.textTracks());
+  }
+
+  static void videoSelectText(byte[] id, boolean on) {
+    Video.selectText(str(id), on);
+  }
+
+  static byte[] videoTextLines(long[] version) {
+    return utf8(Video.textLines(version));
+  }
+
   // ---- The keyboard and the app (the app thread) ----
 
   static void keyboardOpen(byte[] value) {

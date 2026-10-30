@@ -142,6 +142,14 @@ struct Settings {
   bool fillMissingListings = true;  // outside guides for channels without one
   bool clock24 = false;
   bool playerTipsShown = false;  // the one-time "Getting around" card in the player
+  // Subtitles: off until turned on, then on for every channel that has them
+  // until turned off.
+  bool subtitles = false;
+  std::string subtitleLanguage;  // the language picked last ("" = each channel's own)
+  int subtitleSize = 1;          // 0 small, 1 medium, 2 large
+  int subtitleLook = 0;          // 0 box, 1 outline, 2 shadow
+  bool subtitleSentenceCase = false;
+  bool subtitleTop = false;
   std::set<std::string> guideShards;  // outside listings to use; empty = the defaults
 };
 
@@ -205,6 +213,10 @@ class Store {
   // from now on (saved).
   void quickStartRefused(const std::string& channelId);
   bool quickStartRefusedBy(const std::string& channelId) const;
+  // A feed's stream carried captions (remembered, so the player can offer
+  // them before they're switched on).
+  void captionsSeen(const std::string& channelId);
+  bool captionsKnown(const std::string& channelId) const;
   // `first`: the server's stream is closed before the next open (on the
   // playback lane, briefly), the rest in the background.
   void closeStream(bool first = false);

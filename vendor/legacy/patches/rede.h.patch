@@ -69,8 +69,15 @@
  typedef struct {
    int status;          // 0 = transporte sem resposta
    long bytes;          // corpo recebido; -1 quando nao medido
-@@ -176,14 +149,6 @@
+@@ -174,16 +147,13 @@
+ int rede_baixar_fluxo(const char *url, int segundos, const char *const *cab,
+                       int (*cb)(const char *dados, size_t n, void *u), void *u,
                        long long maxBytes, int *status, long long *bytes);
++// marigold: o mesmo para um fluxo sem fim (a live .ts passada adiante pelo
++// proxy): sem prazo total, 8 s parado encerra, `cancelado` corta. BLOQUEIA.
++int rede_baixar_fluxo_vivo(const char *url, const char *const *cab,
++                           int (*cb)(const char *dados, size_t n, void *u), void *u,
++                           volatile int *cancelado, int *status);
  
  
 -#ifdef __EMSCRIPTEN__
@@ -84,7 +91,7 @@
  
  // Com cabecalhos. `cabecalhos` e um vetor terminado em NULL de linhas prontas
  // ("Authorization: Bearer x"). Existe por causa do Trakt, que exige token e
-@@ -255,9 +220,8 @@
+@@ -255,9 +225,8 @@
  // (Program40.cs), que nao monta TLS de compilador — o primeiro acesso a uma
  // variavel _Thread_local seria o fim do processo. O estado por fio vive numa
  // struct por pthread_key (rede.c); o nome continua um lvalue por macro.
@@ -96,7 +103,7 @@
  #elif defined(__GNUC__)
  extern _Thread_local long rede_teto;
  #else
-@@ -288,19 +252,6 @@
+@@ -288,19 +257,6 @@
                          char *dst, unsigned tam, int *status,
                          char *mime, unsigned mimeTam, long *corpo);
  
@@ -116,7 +123,7 @@
  
  // POST de JSON. Existe para o Trakt, que so aceita escrita por POST.
  char *rede_postar(const char *url, int segundos, const char *const *cabecalhos,
-@@ -329,11 +280,6 @@
+@@ -329,11 +285,6 @@
  // 4xx volta com corpo). Existe para o TorBox, que edita um item so por PUT.
  char *rede_colocar_st(const char *url, int segundos, const char *const *cabecalhos,
                        const char *corpo, int *status);
@@ -128,7 +135,7 @@
  // POST que repete (espera 1 s, 2 s, ...) so quando nao houve resposta (status 0).
  char *rede_postar_repetindo(const char *url, int segundos, const char *const *cabecalhos,
                              const char *corpo, int *status, int tentativas);
-@@ -487,26 +433,14 @@
+@@ -487,26 +438,14 @@
  // O criterio de "segmento suspeito" acima, exposto para o teste.
  int rede_segmento_suspeito(const char *s, unsigned n);
  

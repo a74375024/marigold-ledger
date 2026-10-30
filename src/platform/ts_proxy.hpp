@@ -21,6 +21,7 @@
 // the vendored code.
 #pragma once
 
+#include <cstddef>
 #include <string>
 
 namespace marigold::platform {
@@ -41,7 +42,19 @@ class TsProxy {
   // started, not an http(s) link, a progressive .mp4/.mkv file, a link or
   // headers too long for it). `headers`: "Name: value" lines, '\n'
   // separated, sent with every request to the source. Opens a new session.
-  std::string localUrl(const std::string& source, const std::string& headers);
+  // `passThrough`: a continuous TS source is served through the proxy too
+  // (no redirect), so the tap sees it (subtitles).
+  std::string localUrl(const std::string& source, const std::string& headers, bool passThrough = false);
+  // The session localUrl() opened last.
+  unsigned session() const;
+
+  // Sees every byte of a session's stream as it reaches the player, on the
+  // proxy's threads. Set once, before the first session.
+  struct Tap {
+    virtual ~Tap() = default;
+    virtual void bytes(const unsigned char* data, size_t n, unsigned session) = 0;
+  };
+  void setTap(Tap* tap);
   // True when the current session only redirected the player to the source
   // (it was not an HLS playlist): playing the same source directly would
   // repeat the same attempt.

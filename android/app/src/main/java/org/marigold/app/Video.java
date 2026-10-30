@@ -16,7 +16,12 @@ import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
+import androidx.media3.common.TrackGroup;
+import androidx.media3.common.TrackSelectionOverride;
+import androidx.media3.common.TrackSelectionParameters;
 import androidx.media3.common.Tracks;
+import androidx.media3.common.text.Cue;
+import androidx.media3.common.text.CueGroup;
 import androidx.media3.common.VideoSize;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.DefaultLoadControl;
@@ -24,7 +29,9 @@ import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -69,6 +76,15 @@ final class Video {
   private static int width, height;
   private static float pixelRatio = 1f;
   private static String error = "";
+  // Subtitles: the text tracks ("id\tlanguage\tchannel" lines), the lines
+  // decoded for the one shown, and a counter that moves when they change.
+  private static String textTracks = "", textLines = "";
+  private static long textVersion;
+  // What the app asked for (UI thread): a track shown or none. ExoPlayer draws
+  // nothing itself; the app draws the lines.
+  private static boolean textOn;
+  private static String textWanted = "";
+  private static final List<TrackGroup> textGroups = new ArrayList<>();
 
   /** UI thread, once the views exist. */
   static void attach(Context context, FrameLayout parent, SurfaceView surface) {
@@ -122,6 +138,9 @@ final class Video {
         position = bufferEnd = 0;
         width = height = 0;
         error = "";
+        textTracks = "";
+        textLines = "";
+        textVersion++;
       }
       Bridge.keepScreenOn(true);
       start();
@@ -199,6 +218,64 @@ final class Video {
     }
     http.setUserAgent(agent);
     http.setDefaultRequestProperties(props);
+  }
+
+  static String textTracks() {
+    synchronized (lock) {
+      return textTracks;
+    }
+  }
+
+  static String textLines(long[] version) {
+    synchronized (lock) {
+      if (version != null && version.length > 0) version[0] = textVersion;
+      return textLines;
+    }
+  }
+
+  static void selectText(String id, boolean on) {
+    ui.post(() -> {
+      textOn = on;
+      textWanted = id == null ? "" : id;
+      applyText();
+    });
+  }
+
+  // UI thread: the track asked for (or the first), or text off.
+  private static void applyText() {
+    if (player == null) return;
+    TrackSelectionParameters.Builder p = player.getTrackSelectionParameters().buildUpon()
+        .clearOverridesOfType(C.TRACK_TYPE_TEXT);
+    TrackGroup group = null;
+    int index = 0;
+    if (textOn && !textGroups.isEmpty()) {
+      group = textGroups.get(0);
+      if (textWanted.startsWith("t")) {
+        try {
+          int dot = textWanted.indexOf('.');
+          int k = Integer.parseInt(textWanted.substring(1, dot));
+          int i = Integer.parseInt(textWanted.substring(dot + 1));
+          if (k < textGroups.size() && i < textGroups.get(k).length) {
+            group = textGroups.get(k);
+            index = i;
+          }
+        } catch (RuntimeException ignored) {
+          // not one of ours: the first track
+        }
+      }
+    }
+    if (group != null) {
+      p.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).setOverrideForType(new TrackSelectionOverride(group, index));
+    } else {
+      p.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true);
+      synchronized (lock) {
+        if (!textLines.isEmpty()) {
+          textLines = "";
+          textVersion++;
+        }
+      }
+    }
+    player.setTrackSelectionParameters(p.build());
   }
 
   private static void start() {
@@ -299,13 +376,47 @@ final class Video {
     @Override
     public void onTracksChanged(Tracks tracks) {
       boolean audio = false, playable = false;
+      StringBuilder text = new StringBuilder();
+      textGroups.clear();
       for (Tracks.Group g : tracks.getGroups()) {
+        if (g.getType() == C.TRACK_TYPE_TEXT && g.isSupported()) {
+          TrackGroup group = g.getMediaTrackGroup();
+          int k = textGroups.size();
+          textGroups.add(group);
+          for (int i = 0; i < group.length; i++) {
+            if (!g.isTrackSupported(i)) continue;
+            String language = group.getFormat(i).language;
+            int channel = group.getFormat(i).accessibilityChannel;
+            text.append('t').append(k).append('.').append(i).append('\t')
+                .append(language == null ? "" : language).append('\t')
+                .append(channel == androidx.media3.common.Format.NO_VALUE ? 0 : channel).append('\n');
+          }
+        }
         if (g.getType() != C.TRACK_TYPE_AUDIO) continue;
         audio = true;
         if (g.isSupported()) playable = true;
       }
       synchronized (lock) {
         audioUnsupported = audio && !playable;
+        textTracks = text.toString();
+      }
+      applyText();
+    }
+
+    @Override
+    public void onCues(CueGroup cues) {
+      StringBuilder b = new StringBuilder();
+      for (Cue c : cues.cues) {
+        if (c.text == null) continue;
+        if (b.length() > 0) b.append('\n');
+        b.append(c.text.toString());
+      }
+      synchronized (lock) {
+        String now = b.toString();
+        if (!now.equals(textLines)) {
+          textLines = now;
+          textVersion++;
+        }
       }
     }
 

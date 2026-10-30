@@ -716,7 +716,7 @@
 -                   long *tam, int *status) {
 -  return pedir2(metodo, url, segundos, cab, extraCab, corpo, tam, status, NULL, 0, NULL);
 -}
- 
+-
 -char *rede_baixar_etag(const char *url, int segundos, const char *const *cab,
 -                       int *status, char *etag, unsigned tamEtag) {
 -  return pedir2("GET", url, segundos, cab, NULL, NULL, NULL, status, etag, tamEtag, NULL);
@@ -977,7 +977,7 @@
 -}
 -
 -void rede_vazao_espera(unsigned long ms) { (void)ms; }
--
+ 
 -int rede_medir_vazao(const char *url, const char *const *cab, int segundos,
 -                     long inicio, long long maxBytes, volatile int *cancelado,
 -                     int *kbps, int nMax, RedeVazao *res,
@@ -1236,7 +1236,26 @@
    redeErroBuf[0] = 0;
    redeErroTxt[0] = 0;
    curl_setopt(c, OPT_ERRORBUFFER, redeErroBuf);
-@@ -1764,9 +639,7 @@
+@@ -1682,6 +557,7 @@
+   unsigned long ultimoMs, paradoMs;
+   long long visto;
+   int parou;
++  unsigned long primeiroMs;  // marigold: fluxo vivo: sem o primeiro byte por isto, parou
+ } Vigia;
+ static int vigiar(void *u, long long dlTotal, long long dlAgora,
+                   long long ulTotal, long long ulAgora) {
+@@ -1694,6 +570,10 @@
+     v->parou = 1;
+     return 1;
+   }
++  if (!v->visto && v->primeiroMs && agora - v->ultimoMs > v->primeiroMs) {
++    v->parou = 1;
++    return 1;
++  }
+   return 0;
+ }
+ static unsigned long paradoMsDe(unsigned long prazoMs) {
+@@ -1764,9 +644,7 @@
  // Teto opcional de bytes para a proxima transferencia; 0 = sem teto. Existe
  // porque servidor que IGNORA o cabecalho Range responde 200 com o arquivo
  // inteiro, e nesse caso o cabecalho pedido nao limita nada.
@@ -1246,7 +1265,7 @@
  
  static size_t receber(void *dados, size_t tam, size_t qtd, void *u) {
    Balde *b = (Balde *)u;
-@@ -1894,37 +767,6 @@
+@@ -1894,37 +772,6 @@
    fflush(stdout);
  }
  
@@ -1284,7 +1303,7 @@
  
  static int abrirReal(void) {
    void *h;
-@@ -1942,32 +784,8 @@
+@@ -1942,32 +789,8 @@
    r = __atomic_load_n(&pronto, __ATOMIC_ACQUIRE);
    if (r == 1 || r == -1) { pthread_mutex_unlock(&abrirTrava); return r > 0; }
    __atomic_store_n(&pronto, -2, __ATOMIC_RELEASE);
@@ -1317,7 +1336,7 @@
    if (!h) h = dlopen("libcurl.4.dylib", RTLD_NOW);   // Mac
    if (!h) h = dlopen("libcurl.dylib", RTLD_NOW);
    if (!h) { printf("[rede] sem libcurl: %s\n", dlerror());
-@@ -1992,10 +810,10 @@
+@@ -1992,10 +815,10 @@
    // image.tmdb.org w1280 1,14-1,19 s x 0,32 s. O relatorio 1669 batia com o
    // numero de conexao nova: tmdb resolve 646 ms e download 1116 ms por arte.
    // REUSO LIGADO, mas so para transferencia limpa (soltarHandleR).
@@ -1331,7 +1350,7 @@
      if (o && *o) ociosoMaxMs = strtoul(o, NULL, 10); }
    if (!curl_init || !curl_setopt_f || !curl_perform) {
      printf("[rede] libcurl sem os simbolos esperados\n");
-@@ -2003,18 +821,7 @@
+@@ -2003,18 +826,7 @@
      pthread_mutex_unlock(&abrirTrava);
      return 0;
    }
@@ -1350,7 +1369,7 @@
    // Prefixo ABI de curl_version_info_data ate CURLVERSION_SECOND (7.11.1).
    // Sem curl.h, como as opcoes acima: a biblioteca carregada vem do aparelho.
    {
-@@ -2041,178 +848,18 @@
+@@ -2041,178 +853,18 @@
                    (v->features & (1 << 7)) ? "threaded" : "no (synchronous)",
                    v->age >= 1 && v->ares ? v->ares : "");
      else printf("[rede] curl_version_info indisponivel\n");
@@ -1529,7 +1548,7 @@
  
  /* Request novo isolado do handle/controles por fio dos wrappers. */
  // Trusted Mozilla bundle configured once at startup. Android's libcurl has
-@@ -2278,26 +925,7 @@
+@@ -2278,26 +930,7 @@
  
  char *rede_baixar_st(const char *url, int segundos, const char *const *cab,
                       int *status) {
@@ -1556,7 +1575,7 @@
  }
  char *rede_baixar_st_retry(const char *url, int segundos, const char *const *cab,
                             int *status, int *retryAfter) {
-@@ -2360,12 +988,7 @@
+@@ -2360,12 +993,7 @@
    // Endereco de API de metadados que ja respondeu "nao existe" (ou host em
    // recuo por timeout): nao pede de novo — ver negcache.h.
    if (!status && negcache_barra(url, (long)time(NULL))) return NULL;
@@ -1569,7 +1588,7 @@
    inicio = redeAgoraMs();
    prazoMs = (unsigned long)(segundos > 0 ? segundos : 30) * 1000UL;
    for (tentativa = 0; ; tentativa++) {
-@@ -2392,23 +1015,7 @@
+@@ -2392,23 +1020,7 @@
        for (k = 0; cab[k]; k++) lista = slist_append(lista, cab[k]);
        if (lista) curl_setopt(c, OPT_HTTPHEADER, lista);
      }
@@ -1593,7 +1612,7 @@
      { long novas = -1;
        if (curl_getinfo) curl_getinfo(c, INFO_NUM_CONNECTS, &novas);
        reusada = novas == 0; }
-@@ -2429,7 +1036,7 @@
+@@ -2429,7 +1041,7 @@
        if (etag && tamEtag) etag[0] = 0;
        continue;
      }
@@ -1602,7 +1621,7 @@
      break;
    }
    redeCurlLocal = r;
-@@ -2563,7 +1170,7 @@
+@@ -2563,7 +1175,7 @@
      lista = nova;
    }
    if (lista) curl_setopt(c, OPT_HTTPHEADER, lista);
@@ -1611,7 +1630,7 @@
    curl_getinfo(c, INFO_RESPONSE_CODE, &http);
    curl_getinfo(c, INFO_URL_FINAL, &fim);
    if (status) *status = (int)http;
-@@ -2641,7 +1248,7 @@
+@@ -2641,7 +1253,7 @@
        curl_setopt(c, OPT_NOPROGRESS, 0L);
      }
      t0 = redeAgoraMs();
@@ -1620,7 +1639,7 @@
      curl_setopt(c, OPT_XFERINFOFUNCTION, (void *)0);
      curl_setopt(c, OPT_XFERINFODATA, (void *)0);
      curl_setopt(c, OPT_NOPROGRESS, 1L);
-@@ -2692,7 +1299,7 @@
+@@ -2692,7 +1304,7 @@
      for (k = 0; cab && cab[k]; k++) lista = slist_append(lista, cab[k]);
      if (lista) curl_setopt(c, OPT_HTTPHEADER, lista);
    }
@@ -1629,9 +1648,61 @@
    { long h = 0;
      if (!r && curl_getinfo) curl_getinfo(c, INFO_RESPONSE_CODE, &h);
      if (status) *status = (int)h;
-@@ -2777,8 +1384,8 @@
+@@ -2776,9 +1388,60 @@
+   return 1;
  }
  
++// marigold: GET EM FLUXO SEM FIM, para a live .ts que o proxy passa adiante
++// (com legendas ligadas). Sem prazo total; 8 s sem byte, ou 15 s sem o
++// primeiro, encerram, e `cancelado` corta na hora (troca de canal).
++int rede_baixar_fluxo_vivo(const char *url, const char *const *cab,
++                           int (*cb)(const char *dados, size_t n, void *u), void *u,
++                           volatile int *cancelado, int *status) {
++  Fluxo f;
++  Vigia vigia;
++  void *c, *lista = NULL;
++  long http = 0;
++  int r;
++  if (status) *status = 0;
++  if (!url || !*url || !cb || !abrir()) return 0;
++  memset(&f, 0, sizeof f);
++  f.cb = cb; f.u = u;
++  c = pegarHandle(url);
++  if (!c) return 0;
++  curl_setopt(c, OPT_URL, url);
++  curl_setopt(c, OPT_WRITEFUNCTION, receberFluxo);
++  curl_setopt(c, OPT_WRITEDATA, &f);
++  curl_setopt(c, OPT_FOLLOWLOCATION, (long)1);
++  opcoesComuns(c, 30000UL);
++  curl_setopt(c, OPT_TIMEOUT_MS, (long)0);
++  ligarVigia(c, &vigia, 24000UL);
++  vigia.primeiroMs = 15000;
++  if (cab && slist_append) {
++    int k;
++    for (k = 0; cab[k]; k++) lista = slist_append(lista, cab[k]);
++    if (lista) curl_setopt(c, OPT_HTTPHEADER, lista);
++  }
++  redeCancelLocal = cancelado;
++  redeCancelouLocal = 0;
++  r = curl_perform(c);
++  redeCancelLocal = NULL;
++  if (r == 42 && vigia.parou) r = 28;
++  if (curl_getinfo) curl_getinfo(c, INFO_RESPONSE_CODE, &http);
++  if (status) *status = (int)http;
++  redeCurlLocal = r;
++  anotarErro(r);
++  if (lista) { curl_setopt(c, OPT_HTTPHEADER, (void *)0); if (slist_free) slist_free(lista); }
++  soltarHandleR(c, r, url);
++  if ((r == 23 && f.cortou) || redeCancelouLocal) r = 0;
++  redeCancelouLocal = 0;
++  if (r != 0 || http < 200 || http >= 300) {
++    printf("[rede] fluxo vivo: curl %d, HTTP %ld, %lld bytes\n", r, http, f.n);
++    fflush(stdout);
++    return 0;
++  }
++  return 1;
++}
++
  // Set once at startup before OAuth/WebSocket workers begin.
 -void rede_discord_ca(const char *caminho) {
 -  snprintf(discordCa, sizeof discordCa, "%s", caminho ? caminho : "");
@@ -1640,7 +1711,7 @@
  }
  #define OPT_CAINFO 10065
  
-@@ -2805,7 +1412,7 @@
+@@ -2805,7 +1468,7 @@
      // OAuth credentials require authenticated TLS and never follow redirects.
      curl_setopt(c, OPT_SSL_VERIFYPEER, (long)1);
      curl_setopt(c, OPT_SSL_VERIFYHOST, (long)2);
@@ -1649,7 +1720,7 @@
      curl_setopt(c, OPT_FOLLOWLOCATION, (long)0);
    }
    if (retryAfter) {
-@@ -2825,7 +1432,7 @@
+@@ -2825,7 +1488,7 @@
      for (k = 0; cab && cab[k]; k++) lista = slist_append(lista, cab[k]);
      if (lista) curl_setopt(c, OPT_HTTPHEADER, lista);
    }
@@ -1658,7 +1729,7 @@
    redeCurlLocal = r;
    anotarErro(r);
    if (r != 0) { char seg[120];
-@@ -2854,27 +1461,7 @@
+@@ -2854,27 +1517,7 @@
  // se ela nao respondeu). `verbo` NULL = POST.
  static char *enviarNativo(const char *verbo, const char *url, int segundos, const char *const *cab,
                            const char *corpo, int *status, int *retryAfter) {
@@ -1686,7 +1757,7 @@
  }
  
  char *rede_postar_st_retry(const char *url, int segundos, const char *const *cab,
-@@ -2956,69 +1543,10 @@
+@@ -2956,69 +1599,10 @@
    return 0;
  }
  
@@ -1714,10 +1785,10 @@
 -                  x->kbps, VAZ_SEG_BALDES, &x->res, NULL, 0);
 -  return NULL;
 -}
- int rede_medir_vazao(const char *url, const char *const *cab, int segundos,
-                      long inicio, long long maxBytes, volatile int *cancelado,
-                      int *kbps, int nMax, RedeVazao *res,
-                      char *final, unsigned tamFinal) {
+-int rede_medir_vazao(const char *url, const char *const *cab, int segundos,
+-                     long inicio, long long maxBytes, volatile int *cancelado,
+-                     int *kbps, int nMax, RedeVazao *res,
+-                     char *final, unsigned tamFinal) {
 -  VazExtra ex[VAZ_ANDROID_CONEXOES - 1];
 -  pthread_t fio[VAZ_ANDROID_CONEXOES - 1];
 -  int vivo[VAZ_ANDROID_CONEXOES - 1];
@@ -1748,15 +1819,15 @@
 -                    int *kbps, int nMax, RedeVazao *res,
 -                    char *final, unsigned tamFinal) {
 -#else
--int rede_medir_vazao(const char *url, const char *const *cab, int segundos,
--                     long inicio, long long maxBytes, volatile int *cancelado,
--                     int *kbps, int nMax, RedeVazao *res,
--                     char *final, unsigned tamFinal) {
+ int rede_medir_vazao(const char *url, const char *const *cab, int segundos,
+                      long inicio, long long maxBytes, volatile int *cancelado,
+                      int *kbps, int nMax, RedeVazao *res,
+                      char *final, unsigned tamFinal) {
 -#endif
    static const Contador vazio;
    Contador ct = vazio;
    char faixa[40];
-@@ -3058,7 +1586,7 @@
+@@ -3058,7 +1642,7 @@
      for (k = 0; cab[k]; k++) lista = slist_append(lista, cab[k]);
      if (lista) curl_setopt(c, OPT_HTTPHEADER, lista);
    }
@@ -1765,7 +1836,7 @@
    { long http = 0;
      if (curl_getinfo) curl_getinfo(c, INFO_RESPONSE_CODE, &http);
      if (http > 0) ct.status = (int)http; }
-@@ -3096,520 +1624,8 @@
+@@ -3096,520 +1680,8 @@
  }
  
  
@@ -1865,7 +1936,8 @@
 -  }
 -  return 0;
 -}
--
++// marigold: raw TLS socket (Discord websocket) and the DTS range reader removed.
+ 
 -int rede_tls_receber(RedeTls *t, void *buf, size_t n, int esperaMs) {
 -  size_t veio = 0;
 -  int r;
@@ -1888,8 +1960,7 @@
 -  free(t);
 -}
 -
-+// marigold: raw TLS socket (Discord websocket) and the DTS range reader removed.
- 
+-
 -/* One response, bounded independently of the generic download TLS state. */
 -typedef struct {
 -  Balde body;
@@ -2287,7 +2358,7 @@
  #ifndef REDE_POST_ESPERA_MS
  #define REDE_POST_ESPERA_MS 1000
  #endif
-@@ -3630,36 +1646,6 @@
+@@ -3630,36 +1702,6 @@
    return r;
  }
  
@@ -2324,7 +2395,7 @@
  
  static unsigned long redeAgoraMs(void) {
    struct timespec ts;
-@@ -3694,9 +1680,7 @@
+@@ -3694,9 +1736,7 @@
  // pedido do resto volta com ZERO bytes em ~140 ms, toda vez, e as tentativas
  // de 2 s e 5 s so repetem a recusa. Quem chama le isto logo depois de
  // rede_baixar_trecho_st, NO MESMO FIO, para recuar de verdade.

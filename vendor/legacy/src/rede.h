@@ -147,6 +147,11 @@ char *rede_baixar_bin(const char *url, int segundos, long *n);
 int rede_baixar_fluxo(const char *url, int segundos, const char *const *cab,
                       int (*cb)(const char *dados, size_t n, void *u), void *u,
                       long long maxBytes, int *status, long long *bytes);
+// marigold: o mesmo para um fluxo sem fim (a live .ts passada adiante pelo
+// proxy): sem prazo total, 8 s parado encerra, `cancelado` corta. BLOQUEIA.
+int rede_baixar_fluxo_vivo(const char *url, const char *const *cab,
+                           int (*cb)(const char *dados, size_t n, void *u), void *u,
+                           volatile int *cancelado, int *status);
 
 
 

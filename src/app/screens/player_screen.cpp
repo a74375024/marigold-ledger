@@ -1,7 +1,8 @@
 // Full screen playback (LiveTVOverlay): the info banner, which also carries
 // every load state (tuning, reconnecting, another feed, still trying, not
 // playing) in one quiet line, with what's on and later on the channel; its
-// key guide; the action row (Sources, Guide, last channel, Favorite, More);
+// key guide; the action row (Sources, Subtitles, Guide, last channel,
+// Favorite, More); the subtitles, lifted over the banner while it shows;
 // the one-time "Getting around" card; channel flipping (the banner shows the
 // channel at once, the one stopped on tunes), previous channel and number
 // keys. With the Magic Remote pointer the row and two edge buttons (Guide,
@@ -15,6 +16,7 @@
 #include "app/playback.hpp"
 #include "app/screens/screens.hpp"
 #include "app/store/store.hpp"
+#include "core/captions/sentence_case.hpp"
 #include "core/engine/views.hpp"
 #include "core/input/hints.hpp"
 #include "platform/icons.hpp"
@@ -168,6 +170,7 @@ class PlayerScreen : public Screen {
       // The banner is up while it loads; its few seconds start with the picture.
       bannerFrom_ = bannerUntil_ = ms;
       wasReady_ = pictureSeen_ = false;
+      noSubtitlesSaid_ = false;
       zone_ = Zone::None;
       prefetch(shownEntry_);
       cameras_ = app_.store().isEvent(shownEntry_) && app_.store().hasCameras(shownEntry_);
@@ -192,7 +195,14 @@ class PlayerScreen : public Screen {
       // A backup on the first start isn't "back on" anything: the banner
       // said it was still trying.
       if (!pictureSeen_) p.dismissBackupNotice();
+      if (!pictureSeen_) pictureAt_ = ms;
       pictureSeen_ = true;
+    }
+    // Subtitles on and none here: said once, quietly, while the banner is
+    // still up from tuning in.
+    if (pictureSeen_ && !noSubtitlesSaid_ && ms - pictureAt_ > 4500 && app_.store().settings().subtitles) {
+      noSubtitlesSaid_ = true;
+      if (!offersSubtitles() && bannerVisible()) say("No subtitles on this channel", 2500);
     }
     wasReady_ = p.ready();
     if (p.ready()) pictureFeed_ = p.feedIndex();
@@ -259,6 +269,7 @@ class PlayerScreen : public Screen {
       if ((zone_ == Zone::Row || pointer_) && picture) drawPills(c, g);
       else drawKeyGuide(c, g);
     }
+    if (picture) drawSubtitles(c, bannerVisible() || zone_ == Zone::Row || pointer_);
     if (pointer_ && picture) drawEdges(c);
     if (!digits_.empty()) {
       Rect r{gfx::kLayoutWidth - 80 - 220, 60, 220, 90};
@@ -280,7 +291,7 @@ class PlayerScreen : public Screen {
 
  private:
   enum class Zone { None, Row, EdgeGuide, EdgeLast };
-  enum class Pill { Cameras, Sources, Coast, Guide, Last, Favorite, More };
+  enum class Pill { Cameras, Sources, Subtitles, Coast, Guide, Last, Favorite, More };
 
   // ---------------------------------------------------------- actions
   // A message while watching: in the banner's status line (brought up for
@@ -345,6 +356,7 @@ class PlayerScreen : public Screen {
     pills_.clear();
     if (cameras_) pills_.push_back(Pill::Cameras);
     pills_.push_back(Pill::Sources);
+    if (offersSubtitles()) pills_.push_back(Pill::Subtitles);
     if (!otherCoast().empty()) pills_.push_back(Pill::Coast);
     pills_.push_back(Pill::Guide);
     if (app_.store().channels()->find(p.previousEntry())) pills_.push_back(Pill::Last);
@@ -387,6 +399,7 @@ class PlayerScreen : public Screen {
     switch (pill) {
       case Pill::Cameras: zone_ = Zone::None; app_.nav().push(makeCameraPanel(app_)); break;
       case Pill::Sources: openSources(); break;
+      case Pill::Subtitles: app_.nav().push(makeSubtitles(app_)); break;
       case Pill::Coast: {
         // The other version, in place (Last goes back).
         std::string other = otherCoast();
@@ -557,7 +570,58 @@ class PlayerScreen : public Screen {
     return 22;
   }
 
+  // The Subtitles pill: the stream carries captions, or this channel did
+  // before (with subtitles off, LG only reads them once they're on).
+  bool offersSubtitles() const {
+    const Playback& p = app_.playback();
+    if (p.subtitles().present()) return true;
+    size_t i = p.feedIndex();
+    return i < p.feeds().size() && app_.store().captionsKnown(p.feeds()[i].channelId);
+  }
+
   // ---------------------------------------------------------- drawing
+  // The captions, centred low (or at the top), lifted over the banner while
+  // it shows. Players that draw them themselves (tvOS) leave nothing here.
+  void drawSubtitles(ui::Ctx& c, bool banner) {
+    const engine::Subtitles& subs = app_.playback().subtitles();
+    const std::vector<captions::Line>& lines = subs.lines();
+    if (lines.empty()) return;
+    const Settings& set = app_.store().settings();
+    static const int kPx[] = {36, 44, 56};
+    int px = kPx[std::clamp(set.subtitleSize, 0, 2)];
+    float lineH = std::round(static_cast<float>(px) * 1.36f);
+    float pad = std::round(static_cast<float>(px) * 0.4f);
+    float total = lineH * static_cast<float>(lines.size());
+    float y = set.subtitleTop ? 70.0f : (banner ? kBannerBottom - 150 - 52 : gfx::kLayoutHeight - 70.0f) - total;
+    bool sentences = set.subtitleSentenceCase;  // mixed-case text is left as it is
+    bool startsSentence = true;
+    for (const captions::Line& l : lines) {
+      std::string text = sentences ? captions::sentenceCase(l.text, startsSentence) : l.text;
+      char last = l.text.empty() ? ' ' : l.text.back();
+      startsSentence = last == '.' || last == '!' || last == '?';
+      float w = ui::textWidth(c, text, Weight::Medium, px);
+      float x = std::round((gfx::kLayoutWidth - w) * 0.5f);
+      float ty = y + std::round((lineH - static_cast<float>(px) * 1.2f) * 0.5f);
+      switch (std::clamp(set.subtitleLook, 0, 2)) {
+        case 0:
+          c.g.fill({x - pad, y, w + 2 * pad, lineH}, theme::black(0.78f));
+          break;
+        case 1: {
+          // A dark edge round each letter.
+          static const float kRing[][2] = {{-2, -2}, {0, -2}, {2, -2}, {-2, 0}, {2, 0}, {-2, 2}, {0, 2}, {2, 2}};
+          for (const auto& o : kRing) ui::label(c, text, x + o[0], ty + o[1], Weight::Medium, px, theme::black(0.9f));
+          break;
+        }
+        default:
+          ui::label(c, text, x + 1, ty + 3, Weight::Medium, px, theme::black(0.85f));
+          ui::label(c, text, x + 2, ty + 4, Weight::Medium, px, theme::black(0.5f));
+          break;
+      }
+      ui::label(c, text, x, ty, Weight::Medium, px, theme::white());
+      y += lineH;
+    }
+  }
+
   void drawScrim(ui::Ctx& c) {
     // Darkens the bottom of the picture under the banner: already about two
     // thirds dark at the title, so white text reads on a bright frame (snow,
@@ -613,6 +677,13 @@ class PlayerScreen : public Screen {
       return;
     }
     float lx = tx + ui::chip(c, "LIVE", tx, top + 42, 16, theme::hex(kRed), theme::white()) + 12;
+    // CC: this stream carries captions.
+    if (!pending && p.subtitles().present()) {
+      float ccW = ui::chipWidth(c, "CC", 15);
+      c.g.stroke({lx, top + 42, ccW, 24}, theme::white(0.75f), 6, 2);
+      ui::labelIn(c, "CC", {lx, top + 42, ccW, 24}, Weight::Bold, 15, theme::white(), Align::Center);
+      lx += ccW + 12;
+    }
     std::string title = l ? l->title : (g ? g->name : std::string());
     if (const EventTile* t = pending ? nullptr : app_.store().eventTile(p.entry()))
       title = t->heroTitle.empty() ? t->title : t->heroTitle;
@@ -786,6 +857,12 @@ class PlayerScreen : public Screen {
       switch (pills_[i]) {
         case Pill::Cameras: title = "Cameras"; break;
         case Pill::Sources: title = "Sources"; extra = feedLine(); break;
+        case Pill::Subtitles: {
+          title = "Subtitles";
+          std::string label = p.subtitles().selectedLabel();
+          extra = !app_.store().settings().subtitles ? "Off" : label.empty() ? "On" : label;
+          break;
+        }
         case Pill::Coast: title = g && g->west ? "Watch East \xe2\x86\x94" : "Watch West \xe2\x86\x94"; break;
         case Pill::Guide: title = app_.store().isEvent(p.entry()) ? "Games" : "Guide"; break;
         case Pill::Last: title = "Back to " + nameOf(p.previousEntry()); break;
@@ -870,6 +947,8 @@ class PlayerScreen : public Screen {
   std::string pendingFlip_;  // channel keys: the channel the banner shows, tuned once they stop
   uint32_t flipAt_ = 0;
   bool wasReady_ = false, pictureSeen_ = false;  // this tune's picture: now, and ever
+  uint32_t pictureAt_ = 0;                        // when this tune's first picture came
+  bool noSubtitlesSaid_ = false;
   size_t pictureFeed_ = 0;  // the feed the picture last came from
   Zone zone_ = Zone::None;
   std::vector<Pill> pills_;

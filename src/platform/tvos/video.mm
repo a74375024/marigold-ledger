@@ -10,7 +10,10 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <mutex>
+#include <string>
+#include <vector>
 
 #include "core/util/log.hpp"
 #include "core/util/redact.hpp"
@@ -30,6 +33,16 @@ struct Snapshot {
 
 std::mutex gMu;
 Snapshot gState;
+
+// Subtitles: VLC draws them over the picture itself. Its tracks (id = VLC's
+// index), what the app asked for, and the style for the next stream.
+struct TextState {
+  std::vector<marigold::platform::Video::TextTrack> tracks;
+  bool on = false;
+  std::string wanted;
+  int size = 1, look = 0;
+};
+TextState gText;  // guarded by gMu
 
 }  // namespace
 
@@ -69,6 +82,19 @@ Snapshot gState;
   [self.timer invalidate];
   VLCMedia* media = [VLCMedia mediaWithURL:url];
   for (NSString* o in options) [media addOption:o];
+  // The caption style VLC draws with (it reads these when the stream starts).
+  int size = 1, look = 0;
+  {
+    std::lock_guard<std::mutex> lock(gMu);
+    size = gText.size;
+    look = gText.look;
+    gText.tracks.clear();
+  }
+  static const int kScale[] = {80, 100, 130};
+  [media addOption:[NSString stringWithFormat:@":sub-text-scale=%d", kScale[std::clamp(size, 0, 2)]]];
+  [media addOption:[NSString stringWithFormat:@":freetype-background-opacity=%d", look == 0 ? 200 : 0]];
+  [media addOption:[NSString stringWithFormat:@":freetype-outline-thickness=%d", look == 1 ? 6 : 0]];
+  [media addOption:[NSString stringWithFormat:@":freetype-shadow-opacity=%d", look == 2 ? 200 : 0]];
   self.lastTime = -1;
   {
     std::lock_guard<std::mutex> lock(gMu);
@@ -116,6 +142,34 @@ Snapshot gState;
     gState.height = static_cast<int>(size.height);
   }
   if (shown > 0) gState.picture = true;
+  // The stream's subtitle tracks (VLC lists closed captions once it sees
+  // them), and the one asked for shown or none.
+  {
+    NSArray* names = p.videoSubTitlesNames;
+    NSArray* indexes = p.videoSubTitlesIndexes;
+    std::vector<marigold::platform::Video::TextTrack> tracks;
+    for (NSUInteger i = 0; i < MIN(names.count, indexes.count); ++i) {
+      int index = [indexes[i] intValue];
+      if (index < 0) continue;  // "Disable"
+      NSString* name = [names[i] isKindOfClass:NSString.class] ? names[i] : @"";
+      marigold::platform::Video::TextTrack t;
+      t.id = std::to_string(index);
+      std::string n = name.UTF8String ?: "";
+      size_t open = n.find('['), close = n.rfind(']');
+      if (open != std::string::npos && close != std::string::npos && close > open) t.language = n.substr(open + 1, close - open - 1);
+      size_t cc = n.find("Closed captions ");
+      if (cc != std::string::npos) t.channel = std::atoi(n.c_str() + cc + 16);
+      tracks.push_back(std::move(t));
+    }
+    int want = -1;
+    if (gText.on && !tracks.empty()) {
+      want = std::atoi(tracks.front().id.c_str());
+      for (const auto& t : tracks)
+        if (t.id == gText.wanted) want = std::atoi(t.id.c_str());
+    }
+    gText.tracks = std::move(tracks);
+    if (p.currentVideoSubTitleIndex != want && (want >= 0 || p.currentVideoSubTitleIndex >= 0)) p.currentVideoSubTitleIndex = want;
+  }
   bool waiting = !gState.picture || (!advancing && p.state != VLCMediaPlayerStatePaused);
   if (waiting && !gState.waiting) gState.waitingSince = std::chrono::steady_clock::now();
   gState.waiting = waiting && !gState.failed && !gState.ended;
@@ -240,6 +294,31 @@ VideoState Video::state() const {
   s.height = gState.height;
   s.error = redact(gState.error);
   return s;
+}
+
+std::vector<Video::TextTrack> Video::textTracks() const {
+  std::lock_guard<std::mutex> lock(gMu);
+  return gText.tracks;
+}
+
+// Applied by the player's next tick (on the main thread).
+void Video::selectText(const std::string& id, bool on) {
+  std::lock_guard<std::mutex> lock(gMu);
+  gText.on = on;
+  gText.wanted = id;
+}
+
+std::vector<std::string> Video::textLines(uint64_t* version) const {
+  if (version) *version = 0;
+  return {};
+}
+
+bool Video::drawsText() { return true; }
+
+void Video::setTextStyle(int size, int look) {
+  std::lock_guard<std::mutex> lock(gMu);
+  gText.size = size;
+  gText.look = look;
 }
 
 }  // namespace marigold::platform

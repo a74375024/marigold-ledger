@@ -6,9 +6,11 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 
 #include "app/store/store.hpp"
 #include "core/engine/session.hpp"
+#include "core/engine/subtitles.hpp"
 #include "platform/gfx.hpp"
 
 namespace marigold::app {
@@ -26,11 +28,32 @@ class Playback : public engine::Session {
   // True while something is pending.
   bool tick(uint32_t ms);
 
+  // The captions of what plays (drawn by the player screen).
+  engine::Subtitles& subtitles() { return *subtitles_; }
+  const engine::Subtitles& subtitles() const { return *subtitles_; }
+  // The player draws them itself (tvOS), so the app only offers the choice.
+  static bool playerDrawsSubtitles();
+  // Subtitles were switched on or off, or another language picked.
+  void subtitlesChanged();
+  // A new attempt of the stream started (the player's play()): the relay
+  // session its bytes come through (0 none), and whether this feed could
+  // have gone through the relay (webOS, not a server-opened stream).
+  void subtitlesBegin(unsigned relaySession, bool relayPossible);
+
  private:
+  Playback(App& app, std::shared_ptr<engine::Subtitles> subtitles);
   gfx::Rect window() const;
   void scheduleReapply();
+  void tickSubtitles(uint32_t ms);
 
   App& app_;
+  // Shared with the player, whose relay thread feeds it.
+  std::shared_ptr<engine::Subtitles> subtitles_;
+  bool captionsLogged_ = false, noneLogged_ = false;
+  bool relayPossible_ = false;
+  uint64_t textVersion_ = 0;
+  uint32_t textTracksAt_ = 0;
+  uint32_t pictureAt_ = 0;
   gfx::Rect corner_{};
   uint32_t reapplyAt_[3] = {0, 0, 0};
   bool reapplyOnReady_ = false;

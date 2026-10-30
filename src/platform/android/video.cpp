@@ -4,9 +4,11 @@
 #include "platform/video.hpp"
 
 #include <cmath>
+#include <cstdlib>
 
 #include "core/util/log.hpp"
 #include "core/util/redact.hpp"
+#include "core/util/strings.hpp"
 #include "platform/android/jni.hpp"
 
 namespace marigold::platform {
@@ -89,5 +91,57 @@ VideoState Video::state() const {
   s.error = redact(android::text(e, error.get()));
   return s;
 }
+
+// ExoPlayer decodes the captions (CEA-608 in the video, WebVTT, DVB text);
+// no view of its own draws them: the app does, from textLines().
+std::vector<Video::TextTrack> Video::textTracks() const {
+  std::vector<TextTrack> out;
+  JNIEnv* e = android::env();
+  if (!e) return out;
+  static jmethodID id = android::method("videoTextTracks", "()[B");
+  android::Local<jbyteArray> b(e, static_cast<jbyteArray>(e->CallStaticObjectMethod(android::bridge(), id)));
+  if (android::caught(e, "videoTextTracks")) return out;
+  // One track a line: id, language, 608 channel (tab separated).
+  std::string all = android::text(e, b.get());
+  for (std::string_view line : str::split(all, '\n')) {
+    std::vector<std::string_view> f = str::split(line, '\t', true);
+    if (f.size() < 3 || f[0].empty()) continue;
+    TextTrack t;
+    t.id = std::string(f[0]);
+    t.language = std::string(f[1]);
+    t.channel = std::atoi(std::string(f[2]).c_str());
+    out.push_back(std::move(t));
+  }
+  return out;
+}
+
+void Video::selectText(const std::string& track, bool on) {
+  JNIEnv* e = android::env();
+  if (!e) return;
+  static jmethodID id = android::method("videoSelectText", "([BZ)V");
+  android::Local<jbyteArray> t(e, android::bytes(e, track));
+  e->CallStaticVoidMethod(android::bridge(), id, t.get(), static_cast<jboolean>(on));
+  android::caught(e, "videoSelectText");
+}
+
+std::vector<std::string> Video::textLines(uint64_t* version) const {
+  if (version) *version = 0;
+  JNIEnv* e = android::env();
+  if (!e) return {};
+  static jmethodID id = android::method("videoTextLines", "([J)[B");
+  android::Local<jlongArray> v(e, e->NewLongArray(1));
+  android::Local<jbyteArray> b(e, static_cast<jbyteArray>(e->CallStaticObjectMethod(android::bridge(), id, v.get())));
+  if (android::caught(e, "videoTextLines")) return {};
+  jlong n = 0;
+  e->GetLongArrayRegion(v.get(), 0, 1, &n);
+  if (version) *version = static_cast<uint64_t>(n);
+  std::string all = android::text(e, b.get());
+  std::vector<std::string> out;
+  for (std::string_view line : str::split(all, '\n', true)) out.emplace_back(line);
+  return out;
+}
+
+bool Video::drawsText() { return false; }
+void Video::setTextStyle(int, int) {}
 
 }  // namespace marigold::platform
