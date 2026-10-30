@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "app/screen.hpp"
+#include "app/screens/launch_mark.hpp"
 #include "app/screens/setup_ui.hpp"
 #include "app/store/store.hpp"
 #include "core/engine/views.hpp"
@@ -85,6 +86,7 @@ class GuideScreen : public Screen {
   void drawRow(ui::Ctx& c, int lineIndex, float y);
   void drawChannelCell(ui::Ctx& c, const GuideChannel& g, ui::Rect r, bool focused);
   void drawRail(ui::Ctx& c);
+  void drawGuide(ui::Ctx& c);
   void drawStatus(ui::Ctx& c);
   // The header's status line (updating, updated, couldn't), fading out when
   // a result's few seconds are up.
@@ -112,6 +114,9 @@ class GuideScreen : public Screen {
   float contentH_ = 0;
   int focusLine_ = -1;
   setup_ui::Building building_;
+  // Opening the app: the flower covers loading, then blooms out (once).
+  LaunchMark launch_;
+  bool launchOff_ = false;
   bool skeletonShown_ = false;  // placeholders were drawn last frame
   uint32_t pulseStep_ = 0;
   std::string shownLine_;

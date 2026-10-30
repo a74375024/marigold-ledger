@@ -166,6 +166,8 @@ class Store {
   const StoreStatus& status() const { return status_; }
   // How far the full sort under way has got (Stage::Done when none is).
   LoadProgress loadProgress() const;
+  // The list on its way is the one saved on this TV (a relaunch).
+  bool openingSaved() const;
 
   // Accounts.
   std::vector<AccountSummary> accounts() const;

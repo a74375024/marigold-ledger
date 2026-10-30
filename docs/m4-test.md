@@ -383,3 +383,11 @@ The app knows real US channels by their other names, language and closing. After
 | Dead copy | A copy that sends nothing (Help › playback log) | "start failed · no data after 6s", then the retry; never a 10 s wait for a copy that sent no data (LG and Fire TV; Apple TV waits as before) |
 | Emby quick start | Options › Quick start for Emby (test) on; tune Emby-only channels (your locals) | "quick start" in the log, then a picture; if the server refuses, one retry the normal way and it plays as before. Compare the time to picture with the switch off |
 | Emby to Emby | With an Emby channel playing, change to another Emby channel | No longer slower than the first one |
+
+## Launch (Build 103)
+
+| Area | How to check | Pass |
+|---|---|---|
+| Relaunch | Open the app | The splash's flower stays in place, breathes in and unfurls; the petals light in a quick sweep; it flashes, blooms out and fades while the guide comes in top to bottom; no text |
+| Slow start | First setup, or a provider that's slow | After 1.5 s a line under the flower says what's happening (GETTING YOUR CHANNELS, SORTING YOUR LINEUP…); petals light only as it gets there; never a number |
+| Hand-off | Any start | No jump from the splash; no "No channels" or loading screen before the guide |

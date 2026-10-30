@@ -719,6 +719,8 @@ void Store::load(bool force) {
     std::string fullPath = host_.files.path(catalog::cache::fileName(signature, catalog::cache::Part::full));
     auto saved = std::make_shared<std::optional<catalog::cache::Saved>>();
     auto foreground = m.foregroundJobs;
+    // A saved list to open (the launch says "opening", not "getting").
+    m.openingSaved = std::ifstream(path).good();
     host_.pool.post(
         [path, saved, signature, foreground] {
           Foreground busy(foreground);
@@ -727,6 +729,7 @@ void Store::load(bool force) {
         },
         [this, gen, saved, fullPath, signature] {
           if (gen != impl_->generation) return;
+          if (!*saved) impl_->openingSaved = false;  // unreadable: a download after all
           if (*saved) {
             MLOG_I("store", "first screen from the saved list: %zu channels", (*saved)->channels.size());
             installSaved(std::move(**saved), true);
@@ -1063,6 +1066,8 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
       },
       showing ? http::Priority::Background : http::Priority::Visible);
 }
+
+bool Store::openingSaved() const { return impl_->openingSaved; }
 
 LoadProgress Store::loadProgress() const {
   const Impl& m = *impl_;

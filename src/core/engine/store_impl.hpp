@@ -217,6 +217,8 @@ struct Store::Impl {
   bool readyOnPublish = false, rowsBuilt = false, saveOnRows = false;
   // The saved channel list is behind the one on screen (only event names
   // changed since), and when it was last written.
+  // The list saved on this TV is being opened (a relaunch, not a download).
+  bool openingSaved = false;
   bool catalogUnsaved = false;
   time::Seconds catalogSavedAt = 0;
   // What was last written, so an unchanged file isn't written again.

@@ -848,7 +848,7 @@ void GuideScreen::hover(int id) {
 }
 
 bool GuideScreen::tick(uint32_t ms) {
-  bool animating = false;
+  bool animating = !launchOff_;  // the launch mark moves every frame
   Store& s = app_.store();
   if (s.channels()->version != chVersion_ || s.listings()->version != liVersion_) {
     refresh();
@@ -909,6 +909,27 @@ bool GuideScreen::tick(uint32_t ms) {
 
 void GuideScreen::draw(ui::Ctx& c) {
   skeletonShown_ = false;
+  if (!launchOff_) {
+    // Opening the app: the flower covers loading until the guide can show,
+    // then blooms out as the guide comes in behind it.
+    Store& s = app_.store();
+    bool ready = s.status().phase != StoreStatus::Phase::Loading;
+    launch_.update(c.ms, s.loadProgress(), s.openingSaved(), ready);
+    if (launch_.covering(c.ms)) {
+      launch_.backdrop(c, c.ms);
+      launch_.mark(c, c.ms);
+      return;
+    }
+    if (launch_.done(c.ms)) launchOff_ = true;
+  }
+  drawGuide(c);
+  if (!launchOff_) {
+    launch_.veil(c, c.ms);
+    launch_.mark(c, c.ms);
+  }
+}
+
+void GuideScreen::drawGuide(ui::Ctx& c) {
   if (!ch_ || ch_->all.empty()) {
     drawStatus(c);
     drawPreview(c);
