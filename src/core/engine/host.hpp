@@ -49,6 +49,9 @@ struct Host {
   std::function<bool()> playingFull;
   // A memory reading after a big job ("channels sorted"), for the playback log.
   std::function<void(const char* what)> memoryNote;
+  // Nothing needs the CPU this moment (no key pressed lately, no channel
+  // starting): the time to hand freed memory back. Unset counts as idle.
+  std::function<bool()> idle;
   // For the channel report: whether a channel's logo is on screen.
   std::function<std::string(const std::string& logoUrl)> logoStatus;
   // Every request was cancelled (a provider change): image loads in flight

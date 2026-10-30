@@ -34,6 +34,7 @@ App::App(platform::Window& window, platform::Storage& storage, gfx::Renderer& g,
   host.memoryNote = [this](const char* what) {
     if (playback_) playback_->logMemory(what);
   };
+  host.idle = [this] { return ms_ - lastKeyMs_ >= 2000 && !playbackBusy_; };
   host.logoStatus = [this](const std::string& url) { return logos_->status(url); };
   host.requestsCancelled = [this] { logos_->abandonLoads(); };
   host.build = build_.build;
@@ -74,6 +75,7 @@ void App::suspend() {
 void App::dispatch(const KeyEvent& k) {
   Screen* top = nav_.top();
   dirty_ = true;
+  lastKeyMs_ = ms_;
   // A reminder card takes OK (watch) and Back (dismiss) while it shows.
   if (const auto& due = store_->dueReminder()) {
     if (k.key == Key::Ok) {
@@ -244,7 +246,8 @@ void App::run() {
     Screen* top = nav_.top();
     bool animating = top && top->tick(ms_);
     // Failover runs whatever is on top (a panel over the player too).
-    if (playback_->tick(ms_)) animating = true;
+    playbackBusy_ = playback_->tick(ms_);
+    if (playbackBusy_) animating = true;
     if (!toast_.empty()) animating = animating || ms_ < toastUntil_ + 50;
     if (store_->dueReminder()) animating = true;
     bool okHeld = okDown_ && !okLongSent_;

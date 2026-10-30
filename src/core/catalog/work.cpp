@@ -186,25 +186,37 @@ ProgramLists mergedListings(const std::set<std::string>& ids,
 
 LineupOutput lineup(const LineupInput& input) {
   const LineupPrefs& prefs = input.prefs;
+  const std::vector<EntryInfo>& infos = input.sharedInfos ? *input.sharedInfos : input.infos;
+  const std::vector<Channel>& channels = input.sharedChannels ? *input.sharedChannels : input.channels;
+  // A shared list comes without its index: made here, on the worker.
+  std::unordered_map<std::string, size_t> ownIndex;
+  if (input.sharedChannels && input.indexByID.empty()) {
+    ownIndex.reserve(channels.size());
+    for (size_t i = 0; i < channels.size(); ++i) ownIndex.emplace(channels[i].id, i);
+  }
+  const std::unordered_map<std::string, size_t>& indexByID = ownIndex.empty() ? input.indexByID : ownIndex;
   auto member = [&](const std::string& id) -> const Channel* {
-    auto it = input.indexByID.find(id);
-    if (it == input.indexByID.end() || it->second >= input.channels.size()) return nullptr;
-    return &input.channels[it->second];
+    auto it = indexByID.find(id);
+    if (it == indexByID.end() || it->second >= channels.size()) return nullptr;
+    return &channels[it->second];
+  };
+  auto isFavorite = [&](const Channel* c) {
+    return c && (input.favoriteIDs ? input.favoriteIDs->count(c->id) > 0 : c->isFavorite);
   };
   LineupOutput out;
-  CoastFeeds coasts = CoastFeeds::of(input.infos, input.coast);
+  CoastFeeds coasts = CoastFeeds::of(infos, input.coast);
   // The user's choices, also those made under a row's earlier ids.
   auto chosen = [](const std::set<std::string>& ids, const EntryInfo& info) {
     if (ids.count(info.id)) return true;
     return std::any_of(info.formerIds.begin(), info.formerIds.end(),
                        [&](const std::string& id) { return ids.count(id) > 0; });
   };
-  for (const EntryInfo& info : input.infos) {
+  for (const EntryInfo& info : infos) {
     if (chosen(prefs.removed, info)) continue;
     bool favorite =
         std::any_of(info.members.begin(), info.members.end(), [&](const std::string& m) {
           const Channel* c = member(m);
-          return c && c->isFavorite;
+          return isFavorite(c);
         });
     if (favorite || chosen(prefs.added, info)) {
       out.lineupIDs.insert(info.id);
@@ -221,15 +233,15 @@ LineupOutput lineup(const LineupInput& input) {
   // A channel's West version sorts right after its East one (when they're
   // filed alike: else it would sit in another section's block).
   std::unordered_map<std::string, const EntryInfo*> byId;
-  for (const EntryInfo& info : input.infos) byId.emplace(info.id, &info);
+  for (const EntryInfo& info : infos) byId.emplace(info.id, &info);
   auto sortAs = [&](const EntryInfo* e) {
     if (!isWestId(e->id) || !coasts.paired.count(eastIdOf(e->id))) return e;
     const EntryInfo* east = byId.at(eastIdOf(e->id));
     return east->category == e->category ? east : e;
   };
   std::vector<const EntryInfo*> ordered;
-  ordered.reserve(input.infos.size());
-  for (const EntryInfo& info : input.infos) ordered.push_back(&info);
+  ordered.reserve(infos.size());
+  for (const EntryInfo& info : infos) ordered.push_back(&info);
   std::sort(ordered.begin(), ordered.end(), [&](const EntryInfo* x, const EntryInfo* y) {
     const EntryInfo* a = sortAs(x);
     const EntryInfo* b = sortAs(y);
@@ -265,7 +277,7 @@ LineupOutput lineup(const LineupInput& input) {
       }
     }
     entry.isFavorite =
-        std::any_of(members.begin(), members.end(), [](const Channel* c) { return c->isFavorite; });
+        std::any_of(members.begin(), members.end(), isFavorite);
     entry.tags = primary.tags;
     entry.isRadio = primary.isRadio;
     entry.group = primary.group;

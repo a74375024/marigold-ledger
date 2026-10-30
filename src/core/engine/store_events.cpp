@@ -376,10 +376,17 @@ void Store::rebuildEvents() {
 
   // Read the guide's game listings when due (sports, local and Spanish
   // channels of the lineup and the browse list).
+  // Every row by id: made only when it's needed (listings due, or something
+  // changed), not on every check.
   std::unordered_map<std::string, EntryInfo> infos;
-  for (const EntryInfo& info : m.catalog->entries) infos.emplace(info.id, info);
+  auto needInfos = [&] {
+    if (!infos.empty()) return;
+    infos.reserve(m.catalog->entries.size());
+    for (const EntryInfo& info : m.catalog->entries) infos.emplace(info.id, info);
+  };
   sports::StationMarkets markets = sports::stationMarkets(m.prefs);
   if (!e.listingsAt || now - *e.listingsAt > ss::kListingsStale) {
+    needInfos();
     std::vector<std::string> browse;
     for (const Channel& c : m.lineup.browseEntries) browse.push_back(c.id);
     std::vector<ss::ListingChannel> chans = ss::listingChannels(m.lineup.lineupIDs, browse, infos, markets);
@@ -408,23 +415,26 @@ void Store::rebuildEvents() {
   std::string key = ss::fingerprint(fp, now);
   if (key == e.lastFingerprint) return;
   e.lastFingerprint = key;
+  needInfos();
 
   auto in = std::make_shared<ss::RebuildInput>();
   in->games = std::move(pub.games);
   in->schools = std::move(pub.schools);
   in->rosters = rosters;
   in->preferSpanish = fp.preferSpanish;
-  in->events = m.catalog->events;
-  in->traits = m.catalog->traits;
+  // Shared with the live catalog (immutable once installed), not copied.
+  in->sharedEvents = std::shared_ptr<const std::vector<catalog::LiveEvent>>(m.catalog, &m.catalog->events);
+  in->sharedTraits =
+      std::shared_ptr<const std::unordered_map<std::string, catalog::ChannelTraits>>(m.catalog, &m.catalog->traits);
   in->listings = e.listings;
   in->previous = e.events;
   in->channelIndex = sports::network_map::channelIndex(m.lineup.lineupIDs, m.lineup.lineupEntries, m.lineup.browseEntries,
                                                        m.lineup.entries, infos, {}, rosters, markets);
   in->now = now;
   in->zone = host_.zone();
-  auto channels = m.channels;
-  auto index = std::make_shared<std::unordered_map<std::string, size_t>>(m.indexByID);
-  in->channelExists = [index](const std::string& id) { return index->count(id) > 0; };
+  // Every raw channel has traits: they answer "does it still exist".
+  auto traits = in->sharedTraits;
+  in->channelExists = [traits](const std::string& id) { return traits->count(id) > 0; };
   in->isCameraName = sports::special_feeds::isCameraName;
   // F1 sessions are also on the F1 channels, while the schedule has one.
   if (sports::special_feeds::wantsF1Sources(in->games)) {

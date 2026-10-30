@@ -329,7 +329,12 @@ class Store {
   void rebuildCatalog();
   void installCatalog(std::shared_ptr<const std::vector<Channel>> list,
                       std::shared_ptr<const catalog::CatalogResult> cat, bool partial);
+  // Only event slots were renamed: the new list and catalog, keeping the
+  // lineup and listings.
+  void installRenamed(std::shared_ptr<const std::vector<Channel>> list,
+                      std::shared_ptr<const catalog::CatalogResult> cat);
   void saveCatalog();
+  void releaseMemoryWhenIdle(uint32_t ms);
   void rebuildEntries();
   // Moves versions this TV couldn't play lately after the others (stable);
   // `pinned` stays where it is.

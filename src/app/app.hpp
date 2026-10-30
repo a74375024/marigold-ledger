@@ -99,6 +99,8 @@ class App {
   bool quit_ = false;
   bool dirty_ = true;
   uint32_t ms_ = 0;
+  uint32_t lastKeyMs_ = 0;    // the last key press (host.idle)
+  bool playbackBusy_ = false;  // a channel is starting or recovering
   time::Seconds lastMinute_ = 0;
 
   // OK is reported on release, or as a long press after kHoldMs (700 ms).

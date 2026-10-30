@@ -190,6 +190,27 @@ TEST_CASE("catalog cache: JSON round trip, version and signature checks") {
   auto none = cache::firstPart(saved, {}, {});
   CHECK(none.channels.empty());
   CHECK(none.catalog.events.empty());
+  // Only games still to come (or with no start) and their feeds; a family
+  // whose games are all over is left out.
+  {
+    std::optional<time::Seconds> latest;
+    for (const auto& e : saved.catalog.events)
+      if (e.start && (!latest || *e.start > *latest)) latest = e.start;
+    if (latest) {
+      auto upcoming = cache::firstPart(cache::ref(saved), {cnn}, {"fam|espn+ #"}, *latest);
+      CHECK(upcoming.catalog.events.size() <= first.catalog.events.size());
+      for (const auto& e : upcoming.catalog.events) CHECK((!e.start || *e.start >= *latest));
+      CHECK(upcoming.channels.size() <= first.channels.size());
+      auto past = cache::firstPart(cache::ref(saved), {cnn}, {"fam|espn+ #"}, *latest + 86400);
+      size_t undated = 0;
+      for (const auto& e : saved.catalog.events) undated += e.start ? 0 : 1;
+      CHECK(past.catalog.events.size() == undated);
+      if (undated == 0) {
+        CHECK(past.catalog.families.empty());
+        CHECK(past.channels.size() == 1);  // CNN alone
+      }
+    }
+  }
 
   CHECK(cache::fileName("abc", cache::Part::first) ==
         "catalog-" + std::string("e16801510db89efd") + "-first.json");

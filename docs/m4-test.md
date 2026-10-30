@@ -361,3 +361,14 @@ The app knows real US channels by their other names, language and closing. After
 | Guide while tuning | Scroll a page of the guide, then press OK on an Emby channel | No extra wait for the guide's listings to load first |
 | Half past | Leave the guide open across :00 or :30 | Rows whose listings still run 90 minutes ahead don't reload; rows about to run out do |
 | Log | Help › playback log | "server opened · N ms" after each Emby tune; a 601 says which audio the stream carries ("(audio: dts)") |
+
+## Lighter in the background (Build 101)
+
+| Area | How to check | Pass |
+|---|---|---|
+| Half-hour refresh | Leave the guide or Live Events open across :00 / :30 | No stutter when it refreshes; renamed games update in Live Events; the guide rows and their listings stay as they were |
+| Memory | Help › playback log after an hour | Notes read "… (memory handed back in N ms)"; the peaks sit lower than before (they were 430–465 MB) |
+| No freeze | Scroll the guide right after a refresh | Smooth; memory is handed back only after 2 s without a key press |
+| Lineup toggles | Edit My Lineup, tick several channels quickly | No pause on each tick |
+| Relaunch | Close and reopen the app | Your rows appear sooner (the first-screen file only holds today's games now); the full list follows a few seconds later |
+| Saved files | — | The full list and guides are saved compressed; the list isn't rewritten when only game names changed (at most every 6 h) |

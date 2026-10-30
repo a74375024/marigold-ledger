@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <unordered_set>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -88,6 +89,13 @@ struct LineupInput {
   std::string otherGroup;
   // The coast whose East/West versions are suggested (resolveCoast(prefs)).
   Coast coast = Coast::both;
+  // Marigold: the store's live list and rows, shared rather than copied on
+  // the UI thread (`infos`, `channels` and `indexByID` are then left empty),
+  // with the raw ids that count as favourites (the channels' own flags are
+  // then not used).
+  std::shared_ptr<const std::vector<EntryInfo>> sharedInfos;
+  std::shared_ptr<const std::vector<Channel>> sharedChannels;
+  std::optional<std::unordered_set<std::string>> favoriteIDs;
 };
 
 struct LineupOutput {

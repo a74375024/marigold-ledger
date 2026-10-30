@@ -45,4 +45,30 @@ class Gunzip {
   bool ended_ = false;  // last member finished
 };
 
+// Streaming gzip writer for the app's own saved files: deflates what it is
+// fed and passes the compressed bytes to `sink`. Gunzip reads them back
+// (and still reads files saved plain).
+class Deflate {
+ public:
+  using Sink = std::function<bool(std::string_view)>;  // false stops
+
+  // Level 1: fast, and most of the size win on JSON.
+  explicit Deflate(Sink sink, int level = 1);
+  ~Deflate();
+  Deflate(const Deflate&) = delete;
+  Deflate& operator=(const Deflate&) = delete;
+
+  bool feed(std::string_view chunk);
+  // Flushes the rest and the gzip trailer.
+  bool finish();
+
+ private:
+  bool run(std::string_view in, int flush);
+
+  struct State;
+  std::unique_ptr<State> z_;
+  Sink sink_;
+  bool failed_ = false;
+};
+
 }  // namespace marigold::gz

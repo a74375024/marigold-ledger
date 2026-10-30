@@ -1,5 +1,7 @@
 #include "core/util/json_doc.hpp"
 
+#include "core/util/gunzip.hpp"
+
 #include <istream>
 #include <memory>
 #include <utility>
@@ -235,14 +237,17 @@ const std::string& DocumentReader::error() const {
 }
 
 bool feedAll(std::istream& in, DocumentReader& reader) {
+  // The app's saved files may be gzipped (newer) or plain (older, and the
+  // first-screen list): either reads.
+  gz::Gunzip unzip([&reader](std::string_view c) { return reader.feed(c); });
   std::vector<char> buf(64 * 1024);
   while (in) {
     in.read(buf.data(), static_cast<std::streamsize>(buf.size()));
     std::streamsize got = in.gcount();
     if (got <= 0) break;
-    if (!reader.feed(std::string_view(buf.data(), static_cast<size_t>(got)))) return false;
+    if (!unzip.feed(std::string_view(buf.data(), static_cast<size_t>(got)))) return false;
   }
-  return !in.bad();
+  return !in.bad() && unzip.finish();
 }
 
 }  // namespace marigold::json

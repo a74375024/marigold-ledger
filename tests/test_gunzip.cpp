@@ -90,3 +90,25 @@ TEST_CASE("gunzip stops when the sink says so") {
   CHECK_FALSE(good);
   CHECK(calls == 2);
 }
+
+TEST_CASE("deflate: what it writes reads back through Gunzip, in any chunking") {
+  std::string text;
+  for (int i = 0; i < 20000; ++i) text += "{\"id\":\"xt:1|" + std::to_string(i) + "\",\"name\":\"Channel " + std::to_string(i % 97) + "\"},";
+  std::string packed;
+  marigold::gz::Deflate pack([&packed](std::string_view c) {
+    packed.append(c);
+    return true;
+  });
+  for (size_t at = 0; at < text.size(); at += 7777) REQUIRE(pack.feed(std::string_view(text).substr(at, 7777)));
+  REQUIRE(pack.finish());
+  CHECK(packed.size() < text.size() / 4);
+  CHECK(static_cast<unsigned char>(packed[0]) == 0x1f);
+  std::string back;
+  marigold::gz::Gunzip unzip([&back](std::string_view c) {
+    back.append(c);
+    return true;
+  });
+  for (size_t at = 0; at < packed.size(); at += 333) REQUIRE(unzip.feed(std::string_view(packed).substr(at, 333)));
+  REQUIRE(unzip.finish());
+  CHECK(back == text);
+}

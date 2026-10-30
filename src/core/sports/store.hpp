@@ -12,6 +12,7 @@
 
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -135,6 +136,10 @@ struct RebuildInput {
   bool preferSpanish = false;
   std::vector<catalog::LiveEvent> events;
   std::unordered_map<std::string, catalog::ChannelTraits> traits;
+  // Marigold: the live catalog's, shared rather than copied on the UI
+  // thread (`events` / `traits` above are then left empty).
+  std::shared_ptr<const std::vector<catalog::LiveEvent>> sharedEvents;
+  std::shared_ptr<const std::unordered_map<std::string, catalog::ChannelTraits>> sharedTraits;
   std::vector<matcher::GuideListing> listings;
   // Last result: tile ids stay stable, and "feeds moved on" is read from it.
   std::vector<SportsEvent> previous;

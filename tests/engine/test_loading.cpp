@@ -5,6 +5,7 @@
 #include <doctest.h>
 
 #include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -12,6 +13,8 @@
 #include "core/catalog/cache.hpp"
 #include "core/catalog/catalog.hpp"
 #include "core/engine/store.hpp"
+#include "core/sources/xtream.hpp"
+#include "core/util/gunzip.hpp"
 #include "core/util/json.hpp"
 #include "engine/loaded_store.hpp"
 #include "sources/mock_provider.hpp"
@@ -54,6 +57,19 @@ bool saidNoChannels(Store& store, fake::Tv& tv) {
     if (steps == 0 && i > 400) break;
   }
   return said;
+}
+
+// A saved list as text (the full one is saved gzipped).
+std::string savedText(const fake::Tv& tv, const std::string& name) {
+  std::string out;
+  marigold::gz::Gunzip unzip([&out](std::string_view c) {
+    out.append(c);
+    return true;
+  });
+  std::string raw = tv.files.read(name).value_or("");
+  unzip.feed(raw);
+  unzip.finish();
+  return out;
 }
 
 }  // namespace
@@ -179,7 +195,7 @@ TEST_CASE("loading: a list an older version saved opens the guide, then is sorte
   std::vector<std::string> lists = savedLists(tv);
   REQUIRE(lists.size() == 2);
   for (const std::string& name : lists) {
-    std::string text = tv.files.read(name).value_or("");
+    std::string text = savedText(tv, name);
     REQUIRE(text.find(now) != std::string::npos);
     text.replace(text.find(now), now.size(), older);
     tv.files.write(name, text, false);
@@ -191,13 +207,13 @@ TEST_CASE("loading: a list an older version saved opens the guide, then is sorte
   CHECK(again.status().phase == StoreStatus::Phase::Ready);
   REQUIRE(again.channels());
   CHECK(again.channels()->all.size() > 50);
-  for (const std::string& name : savedLists(tv)) CHECK(tv.files.read(name).value_or("").find(older) != std::string::npos);
+  for (const std::string& name : savedLists(tv)) CHECK(savedText(tv, name).find(older) != std::string::npos);
   // Then the same download as before, sorted again by this version (not
   // "unchanged") and saved as its own.
   tv.pool.answer(kPlaylist, provider.m3u());
   again.refreshAll();
   settle(again, tv);
-  for (const std::string& name : savedLists(tv)) CHECK(tv.files.read(name).value_or("").find(now) != std::string::npos);
+  for (const std::string& name : savedLists(tv)) CHECK(savedText(tv, name).find(now) != std::string::npos);
 }
 
 TEST_CASE("loading: the sort says how far it has got") {
@@ -248,4 +264,83 @@ TEST_CASE("loading: a provider added later merges into the list on screen") {
   // The second provider's copies joined the rows (the same channels here).
   CHECK(store.channels()->rawChannels > copies);
   CHECK(store.channels()->all.size() >= rows);
+}
+
+TEST_CASE("loading: a refresh where only event names changed keeps the rows and doesn't rewrite the saved list") {
+  using marigold::engine::AccountForm;
+  fake::Tv tv;
+  mock::Provider provider(400);
+  // An Xtream account (its channel ids don't change when a slot is renamed).
+  marigold::sources::Account a;
+  a.kind = marigold::sources::AccountKind::Xtream;
+  a.serverUrl = std::string(mock::kHost);
+  a.userName = std::string(mock::kUser);
+  a.password = std::string(mock::kPass);
+  auto client = marigold::sources::xtream::Client::make(a);
+  REQUIRE(client);
+  const std::string infoURL = client.value().accountInfoRequest().url;
+  const std::string categoriesURL = client.value().categoriesRequest().url;
+  const std::string streamsURL = client.value().streamsRequest().url;
+  tv.pool.answer(infoURL, R"({"user_info":{"auth":1,"status":"Active"},"server_info":{}})");
+  tv.pool.answer(categoriesURL, provider.categoriesJson());
+  std::string before = provider.liveStreamsJson();
+  tv.pool.answer(streamsURL, before);
+  Store store(tv.host());
+  AccountForm form;
+  form.kind = AccountForm::Kind::Xtream;
+  form.name = "Mock";
+  form.server = a.serverUrl;
+  form.user = a.userName;
+  form.password = a.password;
+  std::string problem = "(not answered)";
+  store.addAccount(form, [&](std::string p) { problem = std::move(p); });
+  settle(store, tv);
+  REQUIRE(problem.empty());
+  auto shown = store.channels();
+  REQUIRE(shown);
+  size_t rows = shown->all.size();
+  REQUIRE(rows > 20);
+  std::map<std::string, std::string> saved;
+  for (const std::string& name : savedLists(tv)) saved[name] = tv.files.read(name).value_or("");
+  REQUIRE(saved.size() == 2);
+  // The same list with the games in the event slots renamed.
+  std::string after = before;
+  size_t renamed = 0;
+  for (size_t at = after.find("7:30 PM ET"); at != std::string::npos; at = after.find("7:30 PM ET", at + 1)) {
+    after.replace(at, 10, "8:00 PM ET");
+    ++renamed;
+  }
+  REQUIRE(renamed > 0);
+  tv.pool.answer(streamsURL, after);
+  store.refreshAll();
+  settle(store, tv);
+  REQUIRE(store.channels());
+  CHECK(store.channels()->all.size() == rows);
+  CHECK(store.status().phase == StoreStatus::Phase::Ready);
+  // No "Channel list updated" for renamed games, and the saved list waits.
+  CHECK(store.status().mark != StoreStatus::Mark::Done);
+  for (const auto& [name, text] : saved) CHECK(tv.files.read(name).value_or("") == text);
+}
+
+TEST_CASE("loading: the full saved list is gzipped, the first-screen one plain") {
+  fake::Tv tv;
+  mock::Provider provider(200);
+  tv.pool.answer(kPlaylist, provider.m3u());
+  {
+    Store store(tv.host());
+    REQUIRE(addPlaylist(store, tv).empty());
+  }
+  for (const std::string& name : savedLists(tv)) {
+    std::string raw = tv.files.read(name).value_or("");
+    REQUIRE(raw.size() > 2);
+    bool gz = static_cast<unsigned char>(raw[0]) == 0x1f && static_cast<unsigned char>(raw[1]) == 0x8b;
+    CHECK(gz == (name.find("-full") != std::string::npos));
+    CHECK(savedText(tv, name).find("\"catalog\"") != std::string::npos);
+  }
+  // And it reads back: the next launch opens on it.
+  tv.pool.answer(kPlaylist, "down", 503);
+  Store again(tv.host());
+  settle(again, tv);
+  REQUIRE(again.channels());
+  CHECK(again.channels()->all.size() > 50);
 }

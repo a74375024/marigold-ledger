@@ -215,6 +215,18 @@ struct Store::Impl {
   // lineup is in; `saveOnRows` saves the list then (its first-screen file is
   // those rows).
   bool readyOnPublish = false, rowsBuilt = false, saveOnRows = false;
+  // The saved channel list is behind the one on screen (only event names
+  // changed since), and when it was last written.
+  bool catalogUnsaved = false;
+  time::Seconds catalogSavedAt = 0;
+  // What was last written, so an unchanged file isn't written again.
+  std::string savedAccounts, savedSecrets;
+  uint64_t savedM3uPrint = 0;
+  // A big job finished: memory goes back to the system when idle (ms; 0 =
+  // nothing due), noted in the playback log as `releaseWhat`.
+  uint32_t releaseAfter = 0;
+  bool releasing = false;
+  std::string releaseWhat;
   std::unordered_set<std::string> dirtyEntries;  // entry ids whose listings changed
   bool allListingsDirty = false;
 };

@@ -250,8 +250,10 @@ std::string fingerprint(const Fingerprint& f, Seconds now) {
 
 std::optional<RebuildResult> rebuild(const RebuildInput& in) {
   matcher::BuildInput b;
-  b.events = providerEvents(in.events, in.traits, in.now);
-  b.pastEvents = pastEvents(in.events, in.traits, in.now);
+  const auto& events = in.sharedEvents ? *in.sharedEvents : in.events;
+  const auto& traits = in.sharedTraits ? *in.sharedTraits : in.traits;
+  b.events = providerEvents(events, traits, in.now);
+  b.pastEvents = pastEvents(events, traits, in.now);
   network_map::NetworkSources network = network_map::networkSources(in.games, in.channelIndex);
   b.channelSources = network.sources;
   if (!in.f1Sources.empty()) {

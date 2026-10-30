@@ -449,6 +449,11 @@ Saved firstPart(const Saved& saved, const std::set<std::string>& firstEntryIDs,
 
 Saved firstPart(const SavedRef& ref, const std::set<std::string>& firstEntryIDs,
                 const std::set<std::string>& firstFamilyIDs) {
+  return firstPart(ref, firstEntryIDs, firstFamilyIDs, 0);
+}
+
+Saved firstPart(const SavedRef& ref, const std::set<std::string>& firstEntryIDs,
+                const std::set<std::string>& firstFamilyIDs, time::Seconds since) {
   static const std::vector<Channel> kNoChannels;
   static const CatalogResult kNoCatalog;
   struct {
@@ -467,11 +472,27 @@ Saved firstPart(const SavedRef& ref, const std::set<std::string>& firstEntryIDs,
     keep.insert(e.members.begin(), e.members.end());
   }
   std::set<std::string> familyKeys;
+  // With `since`: only the feeds of the events still to come (or on now).
+  std::set<std::string> eventFeeds;
+  if (since) {
+    for (const LiveEvent& e : saved.catalog.events)
+      if (!e.start || *e.start >= since) eventFeeds.insert(e.feeds.begin(), e.feeds.end());
+  }
   for (const EventFamily& f : saved.catalog.families) {
     if (!firstFamilyIDs.count(f.id)) continue;
-    first.catalog.families.push_back(f);
-    keep.insert(f.feeds.begin(), f.feeds.end());
     familyKeys.insert(f.id.substr(std::min<size_t>(4, f.id.size())));  // drops "fam|"
+    if (!since) {
+      first.catalog.families.push_back(f);
+      keep.insert(f.feeds.begin(), f.feeds.end());
+      continue;
+    }
+    EventFamily slim = f;
+    slim.feeds.clear();
+    for (const std::string& feed : f.feeds)
+      if (eventFeeds.count(feed)) slim.feeds.push_back(feed);
+    if (slim.feeds.empty()) continue;
+    keep.insert(slim.feeds.begin(), slim.feeds.end());
+    first.catalog.families.push_back(std::move(slim));
   }
   for (const Channel& c : saved.channels) {
     if (keep.count(c.id)) first.channels.push_back(c);
@@ -483,7 +504,9 @@ Saved firstPart(const SavedRef& ref, const std::set<std::string>& firstEntryIDs,
     if (keep.count(id)) first.catalog.entryOf.emplace(id, e);
   }
   for (const LiveEvent& e : saved.catalog.events) {
-    if (familyKeys.count(e.family)) first.catalog.events.push_back(e);
+    if (!familyKeys.count(e.family)) continue;
+    if (since && e.start && *e.start < since) continue;
+    first.catalog.events.push_back(e);
   }
   return first;
 }

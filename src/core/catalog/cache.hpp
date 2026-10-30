@@ -84,6 +84,12 @@ Saved firstPart(const Saved& saved, const std::set<std::string>& firstEntryIDs,
                 const std::set<std::string>& firstFamilyIDs);
 Saved firstPart(const SavedRef& saved, const std::set<std::string>& firstEntryIDs,
                 const std::set<std::string>& firstFamilyIDs);
+// Marigold: the same, keeping of those families only the events that start
+// at or after `since` (or have no start), and only those events' feeds: the
+// first screen needs today's games, not every empty slot. The full file
+// follows seconds later.
+Saved firstPart(const SavedRef& saved, const std::set<std::string>& firstEntryIDs,
+                const std::set<std::string>& firstFamilyIDs, time::Seconds since);
 
 // The pieces, for other caches.
 json::Value toJson(const Channel& channel);

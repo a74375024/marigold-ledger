@@ -85,6 +85,13 @@ using catalog::EntryInfo;
 
 // LiveTVStore constants.
 constexpr time::Seconds kChannelLifetime = 30 * 60;  // channel list re-read
+// A list where only event names changed is saved at most this often (the
+// next launch's download renames them again within seconds).
+constexpr time::Seconds kRenamedSaveEvery = 6 * 3600;
+// After a big job, memory is handed back once nothing has needed the CPU
+// for this long (no key, no channel starting), or after the latest wait.
+constexpr uint32_t kReleaseIdleMs = 2000;
+constexpr uint32_t kReleaseLatestMs = 60000;
 constexpr size_t kProgramBatch = 25;
 constexpr int kGuideConcurrency = 4;
 // Requests per batch at once: with kGuideConcurrency batches, at most 8
@@ -236,16 +243,24 @@ bool writeFileAtomic(const std::string& path, const std::string& data, bool secr
 
 // Writes a file a piece at a time (`write` sends its chunks to the sink),
 // next to `path`, and renames it into place.
-bool writeFileStreaming(const std::string& path, const std::function<bool(const json::Writer::Sink&)>& write) {
+bool writeFileStreaming(const std::string& path, const std::function<bool(const json::Writer::Sink&)>& write,
+                        bool gzip = false) {
   std::string tmp = path + ".tmp";
   bool ok;
   {
     std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
     if (!f) return false;
-    ok = write([&f](std::string_view chunk) {
+    auto toFile = [&f](std::string_view chunk) {
       f.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
       return static_cast<bool>(f);
-    });
+    };
+    if (gzip) {
+      // A fraction of the size on flash (JSON packs well), written as made.
+      gz::Deflate pack(toFile);
+      ok = write([&pack](std::string_view chunk) { return pack.feed(chunk); }) && pack.finish();
+    } else {
+      ok = write(toFile);
+    }
     ok = ok && static_cast<bool>(f);
   }
   if (!ok) {
@@ -347,8 +362,12 @@ Store::~Store() { *impl_->stopJobs = true; }
 
 void Store::saveAccounts() {
   sources::EncodedAccounts enc = sources::encodeAccounts(impl_->accounts);
+  // Rewritten after every download otherwise; only a change goes to flash.
+  if (enc.main == impl_->savedAccounts && enc.secrets == impl_->savedSecrets) return;
   host_.files.write(kAccountsFile, enc.main);
   host_.files.write(kSecretsFile, enc.secrets, true);
+  impl_->savedAccounts = std::move(enc.main);
+  impl_->savedSecrets = std::move(enc.secrets);
 }
 
 void Store::saveLists() {
@@ -378,18 +397,42 @@ void Store::saveLists() {
 }
 
 void Store::saveM3uStreams() {
-  json::Value v = json::Value::object();
-  for (const auto& [id, info] : impl_->m3uStreams) {
-    json::Value x = json::Value::object();
-    x.set("url", info.url);
-    json::Value h = json::Value::array();
-    for (const std::string& line : info.headers) h.push(line);
-    x.set("headers", h);
-    v.set(id, x);
+  Impl& m = *impl_;
+  // Only a changed set of links is written (every download otherwise), and
+  // the JSON is made on a worker, not the UI thread.
+  uint64_t print = 1469598103934665603ull;
+  auto mix = [&print](std::string_view text) {
+    for (unsigned char c : text) print = (print ^ c) * 1099511628211ull;
+    print = (print ^ 0xff) * 1099511628211ull;
+  };
+  std::vector<const std::string*> ids;
+  ids.reserve(m.m3uStreams.size());
+  for (const auto& [id, info] : m.m3uStreams) ids.push_back(&id);
+  std::sort(ids.begin(), ids.end(), [](const std::string* a, const std::string* b) { return *a < *b; });
+  for (const std::string* id : ids) {
+    const auto& info = m.m3uStreams.at(*id);
+    mix(*id);
+    mix(info.url);
+    for (const std::string& line : info.headers) mix(line);
   }
-  std::string text = json::write(v);
+  if (print == m.savedM3uPrint) return;
+  m.savedM3uPrint = print;
+  auto streams = std::make_shared<std::unordered_map<std::string, sources::m3u::StreamInfo>>(m.m3uStreams);
   std::string path = host_.files.path(kM3uStreamsFile);
-  host_.pool.post([path, text] { writeFileAtomic(path, text, true); }, nullptr, http::Priority::Background);
+  host_.pool.post(
+      [path, streams] {
+        json::Value v = json::Value::object();
+        for (const auto& [id, info] : *streams) {
+          json::Value x = json::Value::object();
+          x.set("url", info.url);
+          json::Value h = json::Value::array();
+          for (const std::string& line : info.headers) h.push(line);
+          x.set("headers", h);
+          v.set(id, x);
+        }
+        writeFileAtomic(path, json::write(v), true);
+      },
+      nullptr, http::Priority::Background);
 }
 
 void Store::setSettings(const Settings& s) {
@@ -978,6 +1021,20 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
         mm.admissionChanged = false;
         mm.admissionCut = *cut;
         bool wasEmpty = mm.channels->empty();
+        // Only event slots were renamed: the rows, their listings and the
+        // lineup can't have changed (event feeds are never rows), so only
+        // the names and Live Events are new. No lineup rebuild, no listings
+        // re-merge, and the saved list waits (kRenamedSaveEvery).
+        if (*renamedCount >= 0 && !wasEmpty && showing && !mm.accountsChanged && !mm.partial) {
+          installRenamed(result->first, result->second);
+          status_.problem = str::join(problems, "\n");
+          status_.line.clear();
+          MLOG_I("store", "refresh: only %ld event names changed", *renamedCount);
+          if (time::now() - mm.catalogSavedAt >= kRenamedSaveEvery) saveCatalog();
+          else mm.catalogUnsaved = true;
+          afterBigJob("event names refreshed");
+          return;
+        }
         // A list was on screen and is now sorted again: the header says so.
         if (!wasEmpty && *renamedCount < 0) mm.loadUpdated = true;
         installCatalog(result->first, result->second, false);
@@ -1111,6 +1168,20 @@ void Store::installCatalog(std::shared_ptr<const std::vector<Channel>> list, std
   rebuildEntries();
 }
 
+void Store::installRenamed(std::shared_ptr<const std::vector<Channel>> list,
+                           std::shared_ptr<const CatalogResult> cat) {
+  Impl& m = *impl_;
+  m.channels = std::move(list);
+  m.catalog = std::move(cat);
+  m.indexByID.clear();
+  m.indexByID.reserve(m.channels->size());
+  for (size_t i = 0; i < m.channels->size(); ++i) m.indexByID.emplace((*m.channels)[i].id, i);
+  m.entryInfo.clear();
+  for (size_t i = 0; i < m.catalog->entries.size(); ++i) m.entryInfo.emplace(m.catalog->entries[i].id, i);
+  ++m.catalogRevision;  // Live Events rebuild from the new names
+  m.channelsDirty = true;
+}
+
 void Store::saveCatalog() {
   Impl& m = *impl_;
   if (m.partial || m.channels->empty()) return;
@@ -1120,6 +1191,8 @@ void Store::saveCatalog() {
     return;
   }
   m.saveOnRows = false;
+  m.catalogUnsaved = false;
+  m.catalogSavedAt = time::now();
   // The live list and catalog are shared with the writer, not copied, and
   // written a piece at a time.
   struct Job {
@@ -1154,7 +1227,9 @@ void Store::saveCatalog() {
         job->ref.xtreamFormats = &job->formats;
         int64_t partBytes = 0, fullBytes = 0;
         {
-          catalog::cache::Saved part = catalog::cache::firstPart(job->ref, first, families);
+          // Games on now or still to come (a game started up to 6 h ago may
+          // still be on); the full file has the rest.
+          catalog::cache::Saved part = catalog::cache::firstPart(job->ref, first, families, time::now() - 6 * 3600);
           part.fingerprint = 0;  // only the full list can skip a sort
           writeFileStreaming(firstPath, [&](const json::Writer::Sink& sink) {
             return catalog::cache::writeSaved(catalog::cache::ref(part), [&](std::string_view c) {
@@ -1163,12 +1238,17 @@ void Store::saveCatalog() {
             });
           });
         }
-        writeFileStreaming(fullPath, [&](const json::Writer::Sink& sink) {
-          return catalog::cache::writeSaved(job->ref, [&](std::string_view c) {
-            fullBytes += static_cast<int64_t>(c.size());
-            return sink(c);
-          });
-        });
+        // The full list gzipped (read after the first screen is up); the
+        // first-screen file stays plain, so launch never waits to inflate.
+        writeFileStreaming(
+            fullPath,
+            [&](const json::Writer::Sink& sink) {
+              return catalog::cache::writeSaved(job->ref, [&](std::string_view c) {
+                fullBytes += static_cast<int64_t>(c.size());
+                return sink(c);
+              });
+            },
+            true);
         MLOG_I("store", "saved channel list: first screen %s, full %s", catalog::sizeText(partBytes).c_str(),
                catalog::sizeText(fullBytes).c_str());
       },
@@ -1182,9 +1262,9 @@ void Store::rebuildEntries() {
   uint64_t generation = ++m.rebuildGeneration;
   m.rowsBuilt = false;
   auto input = std::make_shared<catalog::LineupInput>();
-  input->infos = m.catalog->entries;
-  input->channels = *m.channels;
-  input->indexByID = m.indexByID;
+  // Shared, not copied: the list and rows are immutable once installed.
+  input->sharedInfos = std::shared_ptr<const std::vector<catalog::EntryInfo>>(m.catalog, &m.catalog->entries);
+  input->sharedChannels = m.channels;
   input->prefs = m.prefs;
   input->coast = catalog::resolveCoast(m.prefs);
   input->otherGroup = kOtherGroup;
@@ -1192,18 +1272,18 @@ void Store::rebuildEntries() {
   for (const auto& [id, list] : m.providerMatches) input->guideIDs.insert(id);
   for (const auto& [id, list] : m.serverPrograms)
     if (!list.empty()) input->guideIDs.insert(id);
-  // Local favourites count as favourites for the lineup rules.
-  for (Channel& c : input->channels) {
-    if (!str::startsWith(c.serverId, "jf:")) c.isFavorite = false;
-  }
+  // Local favourites count as favourites for the lineup rules, with the
+  // server's own (Emby / Jellyfin) ones.
+  std::unordered_set<std::string> favorites;
+  for (const Channel& c : *m.channels)
+    if (c.isFavorite && str::startsWith(c.serverId, "jf:")) favorites.insert(c.id);
   for (const std::string& fav : m.favorites) {
     auto it = m.entryInfo.find(fav);
     if (it == m.entryInfo.end()) continue;
-    for (const std::string& member : m.catalog->entries[it->second].members) {
-      auto ci = m.indexByID.find(member);
-      if (ci != m.indexByID.end()) input->channels[ci->second].isFavorite = true;
-    }
+    for (const std::string& member : m.catalog->entries[it->second].members)
+      if (m.indexByID.count(member)) favorites.insert(member);
   }
+  input->favoriteIDs = std::move(favorites);
   auto out = std::make_shared<catalog::LineupOutput>();
   uint64_t gen = m.generation;
   host_.pool.post([input, out] { *out = catalog::lineup(*input); },
@@ -2037,8 +2117,9 @@ void Store::runProviderGuide() {
           };
           guide::provider::Outcome o = guide::provider::build(j.channels, time::now(), read);
           if (o.kind == guide::provider::Outcome::Kind::built) {
-            writeFileStreaming(storage->path(guide::provider::savedFileName(j.key)),
-                               [&o](const json::Writer::Sink& sink) { return guide::provider::writeSaved(o.saved, sink); });
+            writeFileStreaming(
+                storage->path(guide::provider::savedFileName(j.key)),
+                [&o](const json::Writer::Sink& sink) { return guide::provider::writeSaved(o.saved, sink); }, true);
           }
           results->push_back({j.key, std::move(o)});
         }
@@ -2215,7 +2296,8 @@ void Store::runOutsideGuide() {
           s.nextCheck = built->nextCheck;
           s.targetsKey = built->targetsKey;
           s.detailVersion = guide::kDetailVersion;
-          writeFileStreaming(savedPath, [&s](const json::Writer::Sink& sink) { return guide::writeSaved(s, sink); });
+          writeFileStreaming(
+              savedPath, [&s](const json::Writer::Sink& sink) { return guide::writeSaved(s, sink); }, true);
           *newSaved = std::move(s);
         }
       },
@@ -2238,8 +2320,38 @@ void Store::runOutsideGuide() {
 // ------------------------------------------------------------ memory
 
 void Store::afterBigJob(const char* what) {
-  memory::release();
-  if (host_.memoryNote) host_.memoryNote(what);
+  // Handing memory back walks the whole heap (a freeze of a few hundred ms
+  // on a TV): it waits for an idle moment, at most a minute, and runs on a
+  // worker. The playback log notes it then, with how long it took.
+  Impl& m = *impl_;
+  if (m.releaseWhat.find(what) == std::string::npos)
+    m.releaseWhat += (m.releaseWhat.empty() ? "" : ", ") + std::string(what);
+  if (!m.releaseAfter) m.releaseAfter = std::max<uint32_t>(1, host_.ms() + kReleaseIdleMs);
+}
+
+void Store::releaseMemoryWhenIdle(uint32_t ms) {
+  Impl& m = *impl_;
+  if (!m.releaseAfter || ms < m.releaseAfter || m.releasing) return;
+  bool idle = !host_.idle || host_.idle();
+  if (!idle && ms < m.releaseAfter + kReleaseLatestMs) return;
+  m.releaseAfter = 0;
+  m.releasing = true;
+  auto what = std::make_shared<std::string>(std::move(m.releaseWhat));
+  m.releaseWhat.clear();
+  auto took = std::make_shared<long>(0);
+  host_.pool.post(
+      [took] {
+        auto started = std::chrono::steady_clock::now();
+        memory::release();
+        *took = static_cast<long>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count());
+      },
+      [this, what, took] {
+        impl_->releasing = false;
+        std::string note = *what + " (memory handed back in " + std::to_string(*took) + " ms)";
+        if (host_.memoryNote) host_.memoryNote(note.c_str());
+      },
+      http::Priority::Background);
 }
 
 // ------------------------------------------------------------ playback
@@ -2629,6 +2741,7 @@ void Store::publishListings() {
 
 bool Store::tick(uint32_t ms) {
   Impl& m = *impl_;
+  releaseMemoryWhenIdle(ms);
   uint64_t eventsVersion = events_->version;
   eventsTick(ms);
   *m.playingFull = host_.playingFull();
@@ -2657,6 +2770,7 @@ bool Store::tick(uint32_t ms) {
       rebuildOutsidePrograms();
       wantListings(m.recentlyRequested);
     }
+    if (m.catalogUnsaved && !m.loading && time::now() - m.catalogSavedAt >= kRenamedSaveEvery) saveCatalog();
     if (m.channelsLoadedAt && time::now() - m.channelsLoadedAt > kChannelLifetime && !m.loading && !*m.playingFull) {
       m.channelsLoadedAt = time::now();  // one attempt per lifetime
       load(true);
