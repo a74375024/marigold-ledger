@@ -25,6 +25,7 @@
 #include "core/catalog/directory.hpp"
 #include "core/catalog/lineup.hpp"
 #include "core/catalog/markets.hpp"
+#include "core/catalog/reference.hpp"
 #include "core/catalog/wiki_data.hpp"
 #include "core/catalog/work.hpp"
 #include "core/guide/genre.hpp"
@@ -55,6 +56,11 @@ using catalog::CatalogResult;
 // The built-in channel directory, when the build has one.
 const catalog::directory::Index* builtInDirectory() {
   return catalog::directory::builtIn().empty() ? nullptr : &catalog::directory::builtInIndex();
+}
+
+// The built-in lineup reference, when the build has one.
+const catalog::reference::Index* builtInReference() {
+  return catalog::reference::builtIn().empty() ? nullptr : &catalog::reference::builtInIndex();
 }
 
 // The channel names the area suggestion reads: local-looking ones first
@@ -1050,6 +1056,7 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
         // (The built-in channel directory too: a new one sorts again.)
         std::set<std::string> also = wanted;
         also.insert("directory:" + catalog::directory::builtIn().made);
+        also.insert("reference:" + catalog::reference::builtIn().made);
         *print = catalog::fingerprint(list, also);
         if (lastPrint && *print == lastPrint) {
           *unchanged = true;
@@ -1079,7 +1086,8 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
           }
         }
         *result = {annotated, std::make_shared<CatalogResult>(
-                                  catalog::build(*annotated, now, *stations, builtInDirectory(), progress.get()))};
+                                  catalog::build(*annotated, now, *stations, builtInDirectory(), progress.get(),
+                                                 builtInReference()))};
         // How long a full sort takes on this device (the log, for tuning).
         long ms = static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                         std::chrono::steady_clock::now() - started).count());
@@ -1228,7 +1236,8 @@ void Store::rebuildCatalog() {
   uint64_t gen = m.generation;
   time::Seconds now = time::now();
   host_.pool.post([list, stations, result, now] {
-    *result = std::make_shared<CatalogResult>(catalog::build(*list, now, *stations, builtInDirectory()));
+    *result = std::make_shared<CatalogResult>(catalog::build(*list, now, *stations, builtInDirectory(), nullptr,
+                                                                   builtInReference()));
   },
                    [this, gen, list, result] {
                      if (gen != impl_->generation || list != impl_->channels || impl_->loading) return;

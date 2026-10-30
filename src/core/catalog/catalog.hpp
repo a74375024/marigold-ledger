@@ -23,6 +23,9 @@ namespace marigold::catalog {
 namespace directory {
 class Index;
 }
+namespace reference {
+class Index;
+}
 
 // Which call signs are real in this lineup, and each one's network.
 struct CallsignContext {
@@ -36,6 +39,8 @@ struct CallsignContext {
   bool unknownIsUS = false;
   // The channel directory to tell channels by (none: the rules alone).
   const directory::Index* directory = nullptr;
+  // Reference data, which wins over the directory where it knows a channel.
+  const reference::Index* reference = nullptr;
   // Multi-language news channels a server also lists marked English, as
   // "server|home market" ("xt:1|FR" for "FRANCE 24 (ENGLISH)").
   std::unordered_set<std::string> englishFeeds;
@@ -72,9 +77,12 @@ struct BuildProgress {
 // entries (clusters of variants); pass 3: event families and events.
 // With a channel directory, a channel it knows is told by it
 // (catalog/directory.hpp): its row, language, area and whether it shut down.
+// With reference data, a channel or station it knows is told by it
+// (catalog/reference.hpp); copies of one channel are one row.
 CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
                     const std::vector<guide::Station>& stations = {},
-                    const directory::Index* directory = nullptr, BuildProgress* progress = nullptr);
+                    const directory::Index* directory = nullptr, BuildProgress* progress = nullptr,
+                    const reference::Index* reference = nullptr);
 
 struct EventsResult {
   std::vector<EventFamily> families;

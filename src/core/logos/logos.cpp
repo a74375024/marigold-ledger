@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <set>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "core/catalog/catalog.hpp"
+#include "core/catalog/reference.hpp"
 #include "core/logos/table.hpp"
 #include "core/util/json.hpp"
 #include "core/util/rx.hpp"
@@ -82,8 +84,20 @@ std::string chain(const std::vector<std::string>& urls) {
 
 std::optional<std::string> logoSetFile(std::string_view name) {
   static const std::unordered_set<std::string_view> kNames(logoSetNames().begin(), logoSetNames().end());
-  for (const std::string& key : logoSetKeys(name)) {
+  // The library splits some names the channels write as one word
+  // ("byu-tv" for BYUtv, "me-tv" for MeTV): its names without dashes.
+  static const std::unordered_map<std::string, std::string_view> kJoined = [] {
+    std::unordered_map<std::string, std::string_view> m;
+    for (std::string_view n : logoSetNames()) m.emplace(str::replaceAll(std::string(n), "-", ""), n);
+    return m;
+  }();
+  std::vector<std::string> keys = logoSetKeys(name);
+  for (const std::string& key : keys) {
     if (kNames.count(key)) return key + "-us.png";
+  }
+  for (const std::string& key : keys) {
+    auto it = kJoined.find(str::replaceAll(key, "-", ""));
+    if (it != kJoined.end()) return std::string(it->second) + "-us.png";
   }
   return std::nullopt;
 }
@@ -184,6 +198,17 @@ LogoSpec spec(std::string_view name, const std::optional<std::string>& core, boo
     }
   }
 
+  // The reference data's logo for a channel it knows.
+  if (category != catalog::LineupCategory::local && category != catalog::LineupCategory::international) {
+    const catalog::reference::Channel* known = catalog::reference::builtInIndex().match(name).channel;
+    if (known && !known->logo.empty()) {
+      add(url(known->logo), "logo set");
+      if (!provider.empty()) add(provider, "provider");
+      out.style = LogoSpec::Style::logoOnly;
+      out.isWest = isWest;
+      return out;
+    }
+  }
   // A local with no call sign ("FOX 5 San Diego"): its network's logo.
   if (category == catalog::LineupCategory::local) {
     if (auto network = catalog::networkWord(name)) {

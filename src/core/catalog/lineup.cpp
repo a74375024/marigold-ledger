@@ -4,6 +4,7 @@
 
 #include "core/catalog/core_channels.hpp"
 #include "core/catalog/markets.hpp"
+#include "core/catalog/reference.hpp"
 #include "core/catalog/text.hpp"
 #include "core/util/rx.hpp"
 #include "core/util/strings.hpp"
@@ -111,7 +112,13 @@ bool LineupPrefs::includes(const std::optional<std::string>& market) const {
 
 std::set<std::string> LineupPrefs::marketCallsigns() const {
   std::set<std::string> out;
-  for (const MarketChoice& m : markets) out.insert(m.callsigns.begin(), m.callsigns.end());
+  for (const MarketChoice& m : markets) {
+    out.insert(m.callsigns.begin(), m.callsigns.end());
+    // The reference data's stations in that market too.
+    for (const reference::Station* s : reference::builtInIndex().stationsIn(m.name)) {
+      out.insert(reference::bareCallsign(s->callsign));
+    }
+  }
   return out;
 }
 

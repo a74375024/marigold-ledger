@@ -230,9 +230,9 @@ Fixture sample() {
 
 TEST_CASE("channel report: header") {
   const auto& columns = channelReportColumns();
-  CHECK(columns.size() == 40);
+  CHECK(columns.size() == 41);
   CHECK(columns.front() == "number");
-  CHECK(columns.back() == "directory_match");
+  CHECK(columns.back() == "row_id");
   std::string csv = channelReportCSV(ChannelReportInput());
   CHECK(csv ==
         "number,name,group,tags,hidden_group,favorite,callsign_in_name,station_lookup,match_key,"
@@ -241,7 +241,7 @@ TEST_CASE("channel report: header") {
         "provider_guide,provider_guide_programs_next_3h,kind,market,core_network,scope,"
         "server_genre_tagged_next_3h,outside_genre_tagged_next_3h,"
         "provider_guide_genre_tagged_next_3h,now_genres,now_subtitle,now_description,"
-        "outside_listings_end,logo_sources,logo_status,directory_id,directory_match\n");
+        "outside_listings_end,logo_sources,logo_status,directory_id,directory_match,row_id\n");
 }
 
 TEST_CASE("channel report: one row per channel with the Swift rules") {
@@ -250,7 +250,7 @@ TEST_CASE("channel report: one row per channel with the Swift rules") {
   std::string csv = channelReportCSV(f.input());
   auto rows = parseCsv(csv);
   REQUIRE(rows.size() == 6);
-  for (const auto& r : rows) CHECK(r.size() == 40);
+  for (const auto& r : rows) CHECK(r.size() == 41);
   CHECK(csv.back() == '\n');
 
   auto nbc = rowFor(rows, "US: NBC 4 WNBC");

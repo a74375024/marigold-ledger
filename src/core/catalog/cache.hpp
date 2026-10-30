@@ -34,7 +34,8 @@ namespace marigold::catalog::cache {
 // 12: premium and free streaming by name, renamed Cinemax channels, movie
 //     loops, overflow feeds, multi-language news beside an English copy.
 // 13: a darts event's boards are one event; feeds' times in their own country.
-constexpr int kVersion = 13;
+// 14: reference data decides rows, names and sections where it knows them.
+constexpr int kVersion = 14;
 // The oldest version still read, to show until this version sorts the list
 // again (after an app update the guide opens on the old list).
 constexpr int kOldestShown = 9;

@@ -99,7 +99,8 @@ struct ChannelTraits {
   std::string directoryId;
   std::string closed;
   // The cluster key the rules before the directory gave it, when the
-  // directory gave another (its entry's earlier id).
+  // directory gave another (its entry's earlier id). Several, one per line,
+  // when the reference data gave yet another.
   std::string formerKey;
 };
 

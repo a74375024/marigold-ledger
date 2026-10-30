@@ -7,6 +7,7 @@
 
 #include "core/catalog/directory.hpp"
 #include "core/catalog/lineup.hpp"
+#include "core/catalog/reference.hpp"
 #include "core/catalog/text.hpp"
 #include "core/util/rx.hpp"
 #include "core/util/strings.hpp"
@@ -491,9 +492,43 @@ std::optional<std::string> markedCountry(const Channel& channel) {
 
 // MARK: Build
 
+namespace {
+
+// A US channel nothing knows (the reference data, the directory, the core
+// networks, the stations) is a free streaming channel the lists missed. A
+// known channel's other feed ("Tennis Channel 2", "Willow Xtra") isn't, nor
+// is anything in a sports or pay-per-view group or another country's.
+bool unknownChannel(const std::string& name, const ChannelTraits& traits, const Channel* first,
+                    const CallsignContext& context) {
+  if (traits.market != std::string("US") || traits.scope != "national") return false;
+  if (traits.category == LineupCategory::local || traits.core || traits.callsign || !traits.directoryId.empty()) {
+    return false;
+  }
+  // A station by its network's name ("ABC7 NEW YORK").
+  if (networkWord(name)) return false;
+  std::string group = str::lower(groupOf(*first));
+  if (sportsGroup(group) || rx::test("\\b(ppv|sports?|adult|xxx|events?|premium)\\b", group)) return false;
+  // The provider's own show and movie channels ("CINEMA TV SHOWS"): as before.
+  if (rx::test("\\b(shows?|cinema|series|movies?|24/?7|vod)\\b", group)) return false;
+  std::string stem(str::trimUnicode(rx::replace(
+      name, "(?i)\\s+(\\d+|plus|xtra|extra|alt|alternate|overflow|latin|espa\\S*|backup)$", "")));
+  if (stem != name && !stem.empty()) {
+    if (context.reference->match(stem).channel || coreMatch(stem)) return false;
+    if (context.directory && context.directory->match(stem).entry) return false;
+  }
+  if (context.directory) {
+    directory::Match m = context.directory->match(name);
+    if (!m.elsewhere.empty()) return false;
+    if (m.entry) return m.entry->list == "free";
+  }
+  return true;
+}
+
+}  // namespace
+
 CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
                     const std::vector<guide::Station>& stations, const directory::Index* directory,
-                    BuildProgress* progress) {
+                    BuildProgress* progress, const reference::Index* reference) {
   CatalogResult result;
   result.traits.reserve(channels.size());
   // A shared count, bumped now and then.
@@ -504,6 +539,16 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
   if (progress) progress->start(BuildProgress::callSigns, channels.size());
   CallsignContext context(channels, stations);
   context.directory = directory;
+  if (reference && !reference->data().empty()) {
+    context.reference = reference;
+    // Its stations are real call signs too, also the ones they had before.
+    for (const reference::Station& s : reference->data().stations) {
+      std::string sign = reference::bareCallsign(s.callsign);
+      context.known.insert(sign);
+      if (!s.network.empty() && s.network != "Various (multicast)") context.networkOf.emplace(sign, s.network);
+      for (const std::string& f : s.former) context.known.insert(reference::bareCallsign(f));
+    }
+  }
   // Pass 1: traits and candidate event families.
   std::unordered_map<std::string, int> familyCounts;
   std::unordered_map<std::string, int> familySeparators;
@@ -577,11 +622,46 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
     clusterOfSame.emplace(sameKeyOf(it->second), it->second.clusterKey);
     if (!it->second.formerKey.empty()) directoryRowOf.emplace(it->second.formerKey, it->second.clusterKey);
   }
+  // A spelling the reference data doesn't know joins its row for another
+  // spelling ("BOUNCETV" with "BOUNCE"), by the name it's under and the
+  // provider's own.
+  for (const Channel& channel : channels) {
+    auto it = result.traits.find(channel.id);
+    if (it == result.traits.end() || !str::startsWith(it->second.clusterKey, "r:") || it->second.familyKey) continue;
+    ChannelTraits own = it->second;
+    clusterOfSame.emplace(sameChannelKey(own), own.clusterKey);
+    own.displayName = cleanName(channel.name);
+    clusterOfSame.emplace(sameChannelKey(own), own.clusterKey);
+  }
+  // A shut-down channel's copy the provider's guide files under a channel
+  // the reference data knows ("ThrillerMAX" under Cinemax's listings) plays
+  // that channel now: it joins that row, tried last. Others stay apart.
+  std::unordered_map<std::string, std::string> rowOfGuide;
+  std::unordered_set<std::string> borrowed;
+  if (context.reference) {
+    for (const Channel& channel : channels) {
+      auto it = result.traits.find(channel.id);
+      if (it == result.traits.end() || !channel.epgId || channel.epgId->empty()) continue;
+      const ChannelTraits& t = it->second;
+      if (str::startsWith(t.clusterKey, "r:") && t.closed.empty() && !t.familyKey) {
+        rowOfGuide.emplace(str::lower(*channel.epgId), t.clusterKey);
+      }
+    }
+  }
   for (const Channel& channel : channels) {
     auto it = result.traits.find(channel.id);
     if (it == result.traits.end()) continue;
-    const ChannelTraits& traits = it->second;
+    ChannelTraits& traits = it->second;
     if (traits.familyKey) continue;
+    if (!traits.closed.empty() && !rowOfGuide.empty() && channel.epgId) {
+      auto row = rowOfGuide.find(str::lower(*channel.epgId));
+      if (row != rowOfGuide.end()) {
+        traits.formerKey = traits.clusterKey + (traits.formerKey.empty() ? "" : "\n" + traits.formerKey);
+        traits.clusterKey = row->second;
+        traits.closed.clear();
+        borrowed.insert(channel.id);
+      }
+    }
     // Placeholders and headings outside event groups are hidden.
     if (traits.kind == ChannelKind::placeholder || traits.kind == ChannelKind::separator ||
         traits.kind == ChannelKind::event) {
@@ -607,6 +687,13 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
     // A directory row is told by a copy the directory knows ("TV One", not
     // the "ONE TV" seen first).
     const Channel* told = members.front();
+    if (str::startsWith(key, "r:")) {
+      // A regular copy says what the row is, not a free streaming one.
+      auto regular = std::find_if(members.begin(), members.end(), [&](const Channel* c) {
+        return result.traits[c->id].kind == ChannelKind::channel && !borrowed.count(c->id);
+      });
+      if (regular != members.end()) told = *regular;
+    }
     if (str::startsWith(key, "d:")) {
       auto known = std::find_if(members.begin(), members.end(),
                                 [&](const Channel* c) { return result.traits[c->id].clusterKey == key; });
@@ -624,7 +711,10 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
       ranked.push_back({m, &result.traits[m->id], text::count(m->name)});
     }
     // Stable, like Swift's sort in practice.
-    std::stable_sort(ranked.begin(), ranked.end(), [](const Ranked& a, const Ranked& b) {
+    std::stable_sort(ranked.begin(), ranked.end(), [&borrowed](const Ranked& a, const Ranked& b) {
+      // A shut-down channel's copy that plays this one: last.
+      bool ba = borrowed.count(a.channel->id) > 0, bb = borrowed.count(b.channel->id) > 0;
+      if (ba != bb) return bb;
       // Xtream versions first, server (Emby / Jellyfin) as backup.
       bool xa = str::startsWith(a.channel->serverId, "xt:");
       bool xb = str::startsWith(b.channel->serverId, "xt:");
@@ -640,7 +730,12 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
     if (directory && !traits.directoryId.empty() && str::startsWith(key, "d:")) {
       listed = directory->entryById(traits.directoryId);
     }
-    if (traits.core) {
+    if (str::startsWith(key, "r:")) {
+      // The reference data's name ("MS NOW", "HBO Hits"), from a copy it named.
+      auto named = std::find_if(ranked.begin(), ranked.end(),
+                                [&borrowed](const Ranked& r) { return !borrowed.count(r.channel->id); });
+      entry.name = (named != ranked.end() ? named : ranked.begin())->traits->displayName;
+    } else if (traits.core) {
       entry.name = traits.isWest ? *traits.core + " West" : *traits.core;
     } else if (listed) {
       // The directory's name for it ("Hallmark Mystery", not "HALLMARK M & M").
@@ -664,7 +759,7 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
     // provider also lists under Roku, Pluto, Tubi... is free streaming even
     // when its first copy sits in a catch-all group ("US| AT&T"); a premium
     // channel never is, whatever group a copy turns up in.
-    if (!traits.core && !traits.callsign && traits.category != LineupCategory::local) {
+    if (!traits.core && !traits.callsign && traits.category != LineupCategory::local && !str::startsWith(key, "r:")) {
       if (premiumName(entry.name)) {
         if (entry.kind == ChannelKind::fast) {
           entry.kind = ChannelKind::channel;
@@ -676,7 +771,9 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
         if (entry.category == LineupCategory::entertainment) entry.category = LineupCategory::movies;
       } else if (entry.kind == ChannelKind::channel &&
                  (freeStreamingName(entry.name) ||
-                  std::any_of(ranked.begin(), ranked.end(), [](const Ranked& r) { return freeStreamingCopy(*r.channel); }))) {
+                  std::any_of(ranked.begin(), ranked.end(), [](const Ranked& r) { return freeStreamingCopy(*r.channel); }) ||
+                  (context.reference && str::startsWith(key, "n:") && unknownChannel(entry.name, traits, ranked.front().channel,
+                                                                                    context)))) {
         entry.kind = ChannelKind::fast;
         entry.category = LineupCategory::free;
       }
@@ -691,11 +788,24 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
     std::set<std::string> former;
     for (const Ranked& r : ranked) {
       std::string was = r.traits->formerKey.empty() ? r.traits->clusterKey : r.traits->formerKey;
-      if ("e|" + was != entry.id) former.insert("e|" + was);
+      for (std::string_view one : str::split(was, '\n')) {
+        if (!one.empty() && "e|" + std::string(one) != entry.id) former.insert("e|" + std::string(one));
+      }
     }
     entry.formerIds.assign(former.begin(), former.end());
     for (const std::string& member : entry.members) result.entryOf[member] = entry.id;
     result.entries.push_back(std::move(entry));
+  }
+
+  // An earlier id that is another row's own id now isn't this row's.
+  if (context.reference) {
+    std::unordered_set<std::string> ids;
+    for (const EntryInfo& e : result.entries) ids.insert(e.id);
+    for (EntryInfo& e : result.entries) {
+      e.formerIds.erase(std::remove_if(e.formerIds.begin(), e.formerIds.end(),
+                                       [&](const std::string& id) { return ids.count(id) > 0; }),
+                        e.formerIds.end());
+    }
   }
 
   // Pass 3: event families and events.
@@ -838,6 +948,73 @@ void refreshEvents(CatalogResult& result, const std::vector<Channel>& channels,
 
 // MARK: Traits
 
+namespace {
+
+// The reference data's say on a channel it knows: its row (all its copies,
+// one per coast or overflow feed), name, section, language and area. The
+// key the rules gave stays as the row's earlier id.
+void applyReference(ChannelTraits& traits, const reference::Channel& ref, const reference::Feed* feed,
+                    const std::optional<CoreHit>& core) {
+  std::string feedName = feed ? feed->name : std::string();
+  // "NBC BRAVO (WEST)": the name's coast wins over the East feed's other name.
+  if (feedName == "east" && traits.isWest) feedName.clear();
+  if (feedName.empty() && traits.isWest && ref.feed("west")) feedName = "west";
+  if (feedName == "west") traits.isWest = true;
+  if (feedName == "east") traits.isWest = false;
+  std::string suffix = traits.isWest ? "~west"
+                       : (feedName == "plus" || feedName == "alternate") ? "~" + feedName
+                                                                          : std::string();
+  std::string key = "r:" + ref.id + suffix;
+  if (key != traits.clusterKey) {
+    std::string former = traits.clusterKey;
+    if (!traits.formerKey.empty()) former += "\n" + traits.formerKey;
+    traits.formerKey = std::move(former);
+    traits.clusterKey = std::move(key);
+  }
+  if (traits.isWest) {
+    traits.displayName = ref.name + " West";
+  } else if (suffix.size() > 1) {
+    traits.displayName = feed && !feed->aliases.empty() ? feed->aliases.front()
+                                                         : ref.name + (feedName == "plus" ? " Plus" : " Alternate");
+  } else {
+    traits.displayName = ref.name;
+  }
+  traits.callsign.reset();
+  if (ref.language == "es") {
+    traits.market = "US-ES";
+  } else if (!ref.language.empty()) {
+    if (auto other = marketOfLanguage(ref.language)) traits.market = *other;
+  } else if (traits.market != std::string("US")) {
+    traits.market = "US";
+  }
+  traits.category = core ? core->category : ref.category;
+  if (ref.kind == "regional") {
+    if (!str::startsWith(traits.scope, "regional")) {
+      std::vector<std::string> places;
+      for (const std::string& market : ref.markets) {
+        MarketChoice m;
+        m.name = market;
+        for (std::string& part : m.cityParts()) {
+          if (std::find(places.begin(), places.end(), part) == places.end()) places.push_back(std::move(part));
+        }
+      }
+      traits.scope = "regional:" + (places.empty() ? std::string("?") : str::join(places, "|"));
+    }
+  } else {
+    traits.scope = "national";
+  }
+  // The directory's row only when it's this channel.
+  if (!traits.directoryId.empty()) {
+    std::string listed = directory::exactKey(traits.directoryId);
+    bool same = listed == directory::exactKey(ref.name);
+    for (const std::string& alias : ref.aliases) same = same || listed == directory::exactKey(alias);
+    if (!same) traits.directoryId.clear();
+  }
+  traits.closed = ref.closed ? "yes" : std::string();
+}
+
+}  // namespace
+
 ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, bool numberedFamilies) {
   const std::string& name = channel.name;
   std::string lower = str::lower(name);
@@ -925,6 +1102,26 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
     }
   }
 
+  // The reference data's channel, by its name, another name or a feed's
+  // name; also without a network word the provider put in front ("NBC
+  // BRAVO (WEST)") or by the core network's name ("HBO 2" is HBO Hits).
+  const reference::Channel* refChannel = nullptr;
+  const reference::Feed* refFeed = nullptr;
+  if (context.reference && (kind == ChannelKind::channel || kind == ChannelKind::fast) && !familyKey &&
+      (!country || *country == "US") && !rx::test("\\((?!WEST\\))[KW][A-Z]{2,3}(-[A-Z0-9]+)?\\)", display)) {
+    reference::Match m = context.reference->match(display);
+    if (!m.channel) {
+      if (auto rest = text::firstGroup("^(?:NBC|ABC|CBS|FOX)\\s+(.{3,})$", display, 1)) {
+        reference::Match bare = context.reference->match(*rest);
+        // A station's own name ("FOX 5 ...") never: its rest is no channel.
+        if (bare.channel && !text::firstMatch("^\\d", *rest)) m = bare;
+      }
+    }
+    if (!m.channel && core) m = context.reference->match(core->name);
+    refChannel = m.channel;
+    refFeed = m.feed;
+  }
+
   // Call sign: only real ones (station directory, local groups, or written
   // next to a network name), never for other countries.
   std::optional<std::string> callsign;
@@ -957,6 +1154,12 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
     if (!callsign && stationLike() && !context.stationsByNetwork.empty()) {
       callsign = guide::stationCallsign(bracketCity ? display + " " + *bracketCity : display,
                                         context.stationsByNetwork);
+    }
+    // A call sign the station has since given up ("WGCL" is WANF now).
+    if (callsign && context.reference && !context.reference->station(*callsign)) {
+      if (const reference::Station* now = context.reference->formerly(*callsign)) {
+        callsign = reference::bareCallsign(now->callsign);
+      }
     }
   }
   // The channel directory, for channels that aren't stations: one it knows
@@ -1091,6 +1294,12 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
     traits.closed = listed->closed;
   }
   traits.formerKey = std::move(formerKey);
+  if (refChannel) applyReference(traits, *refChannel, refFeed, core);
+  // A channel that shut down (and has no row of its own) isn't suggested.
+  if (context.reference && kind == ChannelKind::channel && !traits.callsign &&
+      (refChannel ? refChannel->closed : context.reference->gone(display))) {
+    traits.closed = "yes";
+  }
   return traits;
 }
 
@@ -1221,6 +1430,8 @@ std::vector<CallsignCandidate> callsignCandidates(std::string_view name, bool al
     // name, or the whole name in a locals group); the caller still needs the
     // sign to be a known station.
     if (!(sign.size() == 4 || inParens || m.has(2) || allowShort)) continue;
+    // "NBC BRAVO (WEST)": a coast, not a station.
+    if (sign == "WEST") continue;
     bool seen = std::any_of(found.begin(), found.end(),
                             [&](const CallsignCandidate& c) { return c.sign == sign; });
     if (!seen) found.push_back({sign, inParens});

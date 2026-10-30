@@ -494,3 +494,18 @@ Off until turned on; then on for every channel that has them until turned off. M
 | Guide OK | OK on a show on now; OK on a later show; hold OK on a later show | Tunes and closes; opens details (Watch tunes in place); sets a reminder with a notice |
 | Guide numbers | Type a channel number in the guide | Jumps to that row without tuning |
 | Guide pointer | Click a show, the ▶ arrow, a tab, and beside the guide | Focuses or opens it; the window slides; the tab applies; the guide closes |
+
+## Channel rows (Build 111)
+
+| Area | How to check | Pass |
+|---|---|---|
+| Renamed channels | Find HBO Hits, HBO Drama, Cinemax Hits, MGM+ Hits in the guide | One row each, with every copy (old and new names) in Sources; no separate HBO 2 / HBO Signature / MoreMAX rows |
+| Names | Look for MSNBC, Fox News, TCM | Shown as MS NOW, FOX News Channel, Turner Classic Movies |
+| West feeds | Set East/West to West; open Bravo, E!, Oxygen, Syfy | Each plays its West feed; no "WILD WEST TV" row holding them |
+| Stations | Your local CBS, ABC, NBC | Still one row per station with its call sign, never merged into a national row |
+| Old call signs | A local listed under a call sign it has since given up | Shown under the station that holds it now |
+| Shut-down channels | HBO Family | Not suggested in My Lineup (still found by search) |
+| Free streaming | Free streaming off | Channels no list knows (e.g. 365BLK, Love Kills) are gone from My Lineup; show channels and sports feeds stay |
+| Saved picks | Favorites, hidden channels and lineup order from before | All still apply to the merged rows |
+| Logos | BYUtv, MeTV, BabyFirst, News 12 | Clean library logos instead of the provider's |
+| Channel report | Export it | A row_id column says which row each stream is in |
