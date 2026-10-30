@@ -120,7 +120,9 @@ bool Session::begin(const std::string& entryId, std::vector<Feed> feeds, const s
   tunedAt_ = ms();
   if (full_) watched();
   std::vector<playback::FeedInfo> infos;
-  for (const Feed& f : feeds_) infos.push_back({f.channelId, kindOf(f)});
+  quickTried_.clear();
+  bool quick = store_.settings().embyQuickStart;
+  for (const Feed& f : feeds_) infos.push_back({f.channelId, kindOf(f), quick && f.needsOpen});
   logEvent("tune", std::to_string(feeds_.size()) + (feeds_.size() == 1 ? " feed" : " feeds"));
   // Every caller has already waited (OK, a settled flip, a preview's dwell,
   // a typed number): no second settle.
@@ -228,6 +230,19 @@ void Session::playFeed(size_t index, uint64_t token) {
   player_->attempt();
   const Feed& f = feeds_[index];
   MLOG_I("play", "feed %zu of %zu (%s)", index + 1, feeds_.size(), f.label.c_str());
+  // Experimental Emby quick start: the direct link first, no open step; a
+  // failed start falls back to the normal open (FeedInfo::retryOnce).
+  if (f.needsOpen && store_.settings().embyQuickStart && quickTried_.insert(f.channelId).second) {
+    if (std::optional<Feed> q = store_.quickOpen(f)) {
+      logEvent("quick start", "the server's direct link");
+      feeds_[index] = *q;
+      feeds_[index].needsOpen = true;  // a retry goes through the normal open
+      Feed play = *q;
+      player_->play(play, true);
+      apply(rec_.streamHanded(ms(), token));
+      return;
+    }
+  }
   if (f.needsOpen) {
     // Emby / Jellyfin open the stream on the server first. Every open
     // reports back exactly once; a superseded one is closed again.
@@ -322,6 +337,7 @@ bool Session::tick(uint32_t now) {
     apply(rec_.ended(now));
   }
   if (sawPicture_) apply(rec_.position(now, s.position, s.bufferEnd));
+  else if (s.reportsLoading) rec_.loading(s.loaded);
   apply(rec_.tick(now));
   return (!ready() && !failed()) || !note().empty();
 }

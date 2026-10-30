@@ -253,7 +253,9 @@ void Store::eventsOpen(bool open) {
   EventsState& e = impl_->ev;
   int before = eventsOpen_;
   eventsOpen_ = std::max(0, eventsOpen_ + (open ? 1 : -1));
+  if (!open && eventsOpen_ == 0) impl_->eventsUsedAt = time::now();
   if (open && before == 0) {
+    liveEventsOpened();
     // Opened: new sport feeds seen, the schedule if due, scores, listings.
     if (sports::noteSportFeeds(e.seen, e.seenCheckedAt, impl_->catalog->events, time::now()))
       e.schedule.leaguesChanged(scheduleContext());

@@ -115,6 +115,7 @@ Actions Recovery::streamHanded(Ms now, uint64_t token) {
   phase_ = Phase::Playing;
   playerOnScreen_ = true;
   handedAt_ = now;
+  reportsLoading_ = loaded_ = false;
   havePosition_ = false;
   moved_ = false;
   position_ = 0;
@@ -193,6 +194,12 @@ Actions Recovery::position(Ms now, double positionS, double bufferEndS) {
   return out;
 }
 
+void Recovery::loading(bool loaded) {
+  if (!playing() || sawFirstFrame_) return;
+  reportsLoading_ = true;
+  loaded_ = loaded_ || loaded;
+}
+
 Actions Recovery::bufferingStarted(Ms now) {
   Actions out;
   // Before the first picture this is just the start; startup has its own timer.
@@ -262,6 +269,12 @@ Actions Recovery::tick(Ms now) {
   if (!sawFirstFrame_) {
     // armFirstFrameWatchdog and scheduleStartupFailure: whichever is due first.
     Ms timeout = startupTimeout(feeds_[index_].kind);
+    // Nothing at all came yet on a direct feed: no point waiting it out.
+    if (isDirect(feeds_[index_].kind) && reportsLoading_ && !loaded_ && !startupErrorAt_ &&
+        now >= handedAt_ + kNoDataMs) {
+      startupFailed(now, "no data after " + seconds(kNoDataMs), out);
+      return out;
+    }
     Ms watchdog = handedAt_ + timeout;
     if (startupErrorAt_ && now >= *startupErrorAt_ && *startupErrorAt_ <= watchdog) {
       std::string reason = startupErrorReason_;
@@ -403,7 +416,7 @@ void Recovery::startupFailed(Ms now, const std::string& reason, Actions& out, bo
   // often the provider's connection limit while the previous stream lets go,
   // or a slow first segment.
   int retries = startupRetries_[feed.id];
-  if (isDirect(feed.kind) && retries < kXtreamStartRetries) {
+  if ((isDirect(feed.kind) && retries < kXtreamStartRetries) || (feed.retryOnce && retries < 1)) {
     startupRetries_[feed.id] = retries + 1;
     if (!allowRecovery(now)) {
       giveUp("This channel keeps failing to start. Pick another feed, or try again later.", out);
@@ -412,7 +425,7 @@ void Recovery::startupFailed(Ms now, const std::string& reason, Actions& out, bo
     setNote("Retrying…", out);
     log(out, "retry",
         "same feed in " + seconds(kXtreamRetryDelayMs) + " (attempt " + std::to_string(retries + 1) + " of " +
-            std::to_string(kXtreamStartRetries) + ")",
+            std::to_string(isDirect(feed.kind) ? kXtreamStartRetries : 1) + ")",
         index_);
     startTune(now, index_, kXtreamRetryDelayMs, true, true, false, reason, out);
     return;

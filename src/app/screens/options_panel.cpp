@@ -392,12 +392,18 @@ std::unique_ptr<Screen> makeOptions(App& app) {
                                       &Settings::showScores));
     }
 
-    bool anyXtream = false;
-    for (const AccountSummary& a : accounts) anyXtream = anyXtream || a.kind == "Xtream";
-    if (anyXtream) {
-      p.items.push_back(ui::PanelItem::header("PLAYBACK"));
-      p.items.push_back(settingToggle(app, "Use MPEG-TS for Xtream", "Try this if Xtream channels stutter", &Settings::preferTS));
+    bool anyXtream = false, anyEmby = false;
+    for (const AccountSummary& a : accounts) {
+      anyXtream = anyXtream || a.kind == "Xtream";
+      anyEmby = anyEmby || a.kind == "Emby / Jellyfin";
     }
+    if (anyXtream || anyEmby) p.items.push_back(ui::PanelItem::header("PLAYBACK"));
+    if (anyXtream)
+      p.items.push_back(settingToggle(app, "Use MPEG-TS for Xtream", "Try this if Xtream channels stutter", &Settings::preferTS));
+    if (anyEmby)
+      p.items.push_back(settingToggle(app, "Quick start for Emby (test)",
+                                      "Starts Emby channels without waiting for the server to open them first",
+                                      &Settings::embyQuickStart));
 
     p.items.push_back(ui::PanelItem::header("HELP"));
     ui::PanelItem report{ui::PanelItem::Kind::Chevron, "Export Channel Report"};

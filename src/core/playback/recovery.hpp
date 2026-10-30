@@ -45,6 +45,10 @@ inline constexpr Ms kStartupTimeoutMs = 20000;    // startupTimeout: no picture
 // the slowest 5.7 s), and a start that hangs comes back on the retry, so
 // Xtream waits 10 s; Emby / Jellyfin open on the server first and keep 20.
 inline constexpr Ms kXtreamStartupTimeoutMs = 10000;
+// Marigold: a direct feed whose player reports loading but has had no data
+// at all this long is retried at once (the retry usually plays in ~3 s),
+// rather than waiting the full timeout.
+inline constexpr Ms kNoDataMs = 6000;
 inline constexpr Ms kStallNoteDelayMs = 3000;     // stallNoteDelay: "Buffering…"
 inline constexpr Ms kStallTimeoutMs = 10000;      // stallTimeout
 inline constexpr int kMaxRecoveries = 6;          // maxRecoveries
@@ -84,6 +88,9 @@ bool cannotPlayHere(std::string_view message);
 struct FeedInfo {
   std::string id;  // stable feed id (never a URL)
   FeedKind kind = FeedKind::Xtream;
+  // Marigold: a failed start gets one more try on the same feed (an Emby
+  // quick start falls back to the server's normal open).
+  bool retryOnce = false;
 };
 
 struct TuneOptions {
@@ -169,6 +176,9 @@ class Recovery {
   // Playback position and, when known, how far the buffer reaches (s; 0 =
   // unknown). Forward motion is new video.
   Actions position(Ms now, double positionS, double bufferEndS = 0);
+  // Before the first picture, every frame, on players that say when data
+  // has arrived: whether it has.
+  void loading(bool loaded);
   Actions bufferingStarted(Ms now);
   Actions bufferingEnded(Ms now);
   Actions playerError(Ms now, std::string_view message);
@@ -233,6 +243,7 @@ class Recovery {
   bool sawFirstFrame_ = false;
   Ms handedAt_ = 0;
   std::optional<Ms> firstFrameAt_;
+  bool reportsLoading_ = false, loaded_ = false;  // this stream (loading())
   std::optional<Ms> startupErrorAt_;
   std::string startupErrorReason_;
   std::optional<Trouble> trouble_;

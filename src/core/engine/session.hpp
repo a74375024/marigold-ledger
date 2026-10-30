@@ -20,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -40,6 +41,9 @@ struct PlayerState {
   bool failed = false;
   bool ended = false;
   std::string error;       // already safe to log
+  // Before a picture: the stream's data has arrived (`loaded`), on players
+  // that report that at all (`reportsLoading`).
+  bool loaded = false, reportsLoading = false;
   double position = 0, bufferEnd = 0;
 };
 
@@ -175,6 +179,7 @@ class Session {
   std::vector<Feed> feeds_;
   bool full_ = false;
   std::string failMessage_;
+  std::set<std::string> quickTried_;  // Emby quick starts tried this tune
   uint32_t tunedAt_ = 0;
   // Player flags seen last tick, to report changes only.
   bool sawPicture_ = false, sawBuffering_ = false, sawFailed_ = false, sawEnded_ = false;

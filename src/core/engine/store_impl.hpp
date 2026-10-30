@@ -224,6 +224,8 @@ struct Store::Impl {
   uint64_t savedM3uPrint = 0;
   // A big job finished: memory goes back to the system when idle (ms; 0 =
   // nothing due), noted in the playback log as `releaseWhat`.
+  // Live Events was last open then (the channel list re-read interval).
+  time::Seconds eventsUsedAt = 0;
   uint32_t releaseAfter = 0;
   bool releasing = false;
   std::string releaseWhat;

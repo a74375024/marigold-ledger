@@ -136,6 +136,9 @@ struct Settings {
   bool showScores = true;
   bool allChannelsTab = false;
   bool preferTS = true;         // Xtream: MPEG-TS rather than HLS
+  // Experimental: Emby / Jellyfin channels start from the server's direct
+  // link (no open step first), with the lean live load on webOS.
+  bool embyQuickStart = false;
   bool fillMissingListings = true;  // outside guides for channels without one
   bool clock24 = false;
   bool playerTipsShown = false;  // the one-time "Getting around" card in the player
@@ -193,7 +196,12 @@ class Store {
   // Emby: asks the server to open a feed (needsOpen); `done` gets it with
   // its URL, or nothing. Closes the stream opened before.
   void open(const Feed& feed, std::function<void(std::optional<Feed>)> done);
-  void closeStream();
+  // Settings::embyQuickStart: the feed with the server's direct link, no
+  // open step (closes what is open first); nullopt if it can't be made.
+  std::optional<Feed> quickOpen(const Feed& feed);
+  // `first`: the server's stream is closed before the next open (on the
+  // playback lane, briefly), the rest in the background.
+  void closeStream(bool first = false);
   // Feed outcomes move reliable sources up.
   void recordFeed(const std::string& channelId, bool worked);
   // This TV couldn't play that version (playback::cannotPlayHere): it is
@@ -335,6 +343,9 @@ class Store {
                       std::shared_ptr<const catalog::CatalogResult> cat);
   void saveCatalog();
   void releaseMemoryWhenIdle(uint32_t ms);
+  // How old the channel list may get before it's read again.
+  time::Seconds channelLifetime() const;
+  void liveEventsOpened();
   void rebuildEntries();
   // Moves versions this TV couldn't play lately after the others (stable);
   // `pinned` stays where it is.

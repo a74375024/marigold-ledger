@@ -113,6 +113,10 @@ class Client {
   // the server's HLS.
   Request openStreamRequest(const std::string& channelItemId) const;
   Result<Stream> parseOpenStream(int status, std::string_view body, const std::string& channelItemId) const;
+  // Marigold, experimental: the channel's direct stream link, without
+  // asking the server to open it first (PlaybackInfo). The server opens the
+  // live stream when the link is read; it may refuse.
+  std::string quickStreamURL(const std::string& channelItemId) const;
 
   // Tells the server playback started, so its session (and stream count) is
   // tracked like any Emby / Jellyfin app's.

@@ -475,6 +475,11 @@ Result<Stream> Client::parseOpenStream(int status, std::string_view body, const 
   return Error::make("This channel can't be streamed to this device.");
 }
 
+std::string Client::quickStreamURL(const std::string& channelItemId) const {
+  return makeURL("Videos/" + percentEncode(channelItemId) + "/stream.ts",
+                 {{"Static", "true"}, {"MediaSourceId", channelItemId}, {"DeviceId", deviceId_}, {"api_key", token_}});
+}
+
 json::Value Client::playbackBody(const Stream& stream) const {
   json::Value body;
   body.set("ItemId", stream.itemId);

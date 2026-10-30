@@ -16,6 +16,10 @@ struct VideoState {
   bool registrationDenied = false;
   bool active = false;           // a mediaId exists: the UI should cut the hole
   bool ready = false;            // loadCompleted
+  // The player says when the stream's data has arrived, before any picture
+  // (webOS loadCompleted, Android's buffered position). Not tvOS: VLC is
+  // only "ready" with the picture.
+  bool reportsLoading = false;
   bool playing = false;
   bool failed = false;
   bool ended = false;

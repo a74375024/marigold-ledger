@@ -372,3 +372,14 @@ The app knows real US channels by their other names, language and closing. After
 | Lineup toggles | Edit My Lineup, tick several channels quickly | No pause on each tick |
 | Relaunch | Close and reopen the app | Your rows appear sooner (the first-screen file only holds today's games now); the full list follows a few seconds later |
 | Saved files | — | The full list and guides are saved compressed; the list isn't rewritten when only game names changed (at most every 6 h) |
+
+## Batch 3: LG connections, rechecks, dead copies, Emby test (Build 102)
+
+| Area | How to check | Pass |
+|---|---|---|
+| Faster loading on LG | Scroll the guide quickly after launch | Logos and listings fill in faster than before |
+| Rechecks | Leave the app on the guide for a few hours without opening Live Events | The channel list is read about every 2 hours, not every 30 minutes; with Live Events open (or used in the last 3 hours, or a reminder coming up) still every 30 minutes |
+| New games | Open Live Events after a while away | New games show up within moments (a list older than 10 minutes is read again) |
+| Dead copy | A copy that sends nothing (Help › playback log) | "start failed · no data after 6s", then the retry; never a 10 s wait for a copy that sent no data (LG and Fire TV; Apple TV waits as before) |
+| Emby quick start | Options › Quick start for Emby (test) on; tune Emby-only channels (your locals) | "quick start" in the log, then a picture; if the server refuses, one retry the normal way and it plays as before. Compare the time to picture with the switch off |
+| Emby to Emby | With an Emby channel playing, change to another Emby channel | No longer slower than the first one |

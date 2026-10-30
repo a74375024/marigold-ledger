@@ -75,6 +75,7 @@ VideoState Video::state() const {
   int flags = static_cast<int>(v[0]);
   s.active = flags & 1;
   s.ready = flags & 2;
+  s.reportsLoading = true;  // the buffered position
   s.playing = flags & 4;
   s.failed = flags & 8;
   s.ended = flags & 16;

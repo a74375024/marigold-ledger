@@ -406,3 +406,71 @@ TEST_CASE("a tune with no settle opens at once") {
   CHECK(has(t.untilOpen(kSettleMs), Kind::Play));
   CHECK(t.now - tuned < kSettleMs);  // the first tick, not after a settle
 }
+
+TEST_CASE("a direct start with no data at all is retried after 6 s, where the player reports loading") {
+  using marigold::playback::kNoDataMs;
+  {
+    Rig t;
+    t.tune({xt("a"), xt("b")});
+    t.untilOpen();
+    t.hand();
+    Ms handed = t.now;
+    for (Ms at = handed; at < handed + kNoDataMs - 10; at += 100) {
+      t.r.loading(false);
+      CHECK_FALSE(logged(t.until(at + 100 > handed + kNoDataMs - 10 ? handed + kNoDataMs - 10 : at + 100), "start failed"));
+    }
+    t.r.loading(false);
+    Actions fail = t.until(handed + kNoDataMs);
+    CHECK(logDetail(fail, "start failed") == "no data after 6s");
+    CHECK(logged(fail, "retry"));
+  }
+  {
+    // Data came (loadCompleted / buffered): the full timeout applies.
+    Rig t;
+    t.tune({xt("a"), xt("b")});
+    t.untilOpen();
+    t.hand();
+    Ms handed = t.now;
+    t.r.loading(true);
+    CHECK_FALSE(logged(t.until(handed + kNoDataMs + 1000), "start failed"));
+  }
+  {
+    // A player that doesn't report loading (tvOS): the full timeout applies.
+    Rig t;
+    t.tune({xt("a"), xt("b")});
+    t.untilOpen();
+    t.hand();
+    Ms handed = t.now;
+    CHECK_FALSE(logged(t.until(handed + kNoDataMs + 1000), "start failed"));
+  }
+  {
+    // Emby opens on the server first and is slower: never cut early.
+    Rig t;
+    t.tune({emby("a"), emby("b")});
+    t.untilOpen();
+    t.hand();
+    Ms handed = t.now;
+    t.r.loading(false);
+    CHECK_FALSE(logged(t.until(handed + kNoDataMs + 1000), "start failed"));
+  }
+}
+
+TEST_CASE("an Emby quick start that fails gets one more try on the same feed (the normal open)") {
+  Rig t;
+  marigold::playback::FeedInfo a{"a", marigold::playback::FeedKind::Emby, true};
+  marigold::playback::FeedInfo b{"b", marigold::playback::FeedKind::Emby, true};
+  t.tune({a, b});
+  t.untilOpen();
+  t.hand();
+  Actions fail = t.until(t.now + kStartupTimeoutMs);
+  CHECK(logged(fail, "retry"));
+  CHECK(logDetail(fail, "retry") == "same feed in 2s (attempt 1 of 1)");
+  Actions open = t.untilOpen();
+  const Action* re = first(open, Kind::Reconnect);
+  REQUIRE(re);
+  CHECK(re->feed == 0);
+  // The second failure moves on.
+  t.hand();
+  Actions again = t.until(t.now + kStartupTimeoutMs);
+  CHECK(logged(again, "switch"));
+}

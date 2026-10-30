@@ -51,6 +51,7 @@ VideoState Video::state() const {
   s.registrationDenied = video_registro_negado() != 0;
   s.active = video_ativo() != 0;
   s.ready = video_pronto() != 0;
+  s.reportsLoading = true;
   s.playing = video_tocando() != 0;
   s.failed = video_falhou() != 0;
   s.ended = video_terminou() != 0;

@@ -84,6 +84,8 @@ class TvPlayer final : public engine::Player {
     s.error = v.error;
     s.position = v.position;
     s.bufferEnd = v.bufferEnd;
+    s.reportsLoading = v.reportsLoading;
+    s.loaded = v.ready || v.bufferEnd > 0;
     return s;
   }
 

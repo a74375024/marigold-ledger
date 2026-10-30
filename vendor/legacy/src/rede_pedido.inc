@@ -266,8 +266,12 @@ int rede_pedir(const RedePedido *p, RedeResposta *r) {
   if (!abrir() || !curl_cleanup || !curl_getinfo || !slist_append || !slist_free) {
     r->erro = REDE_INDISPONIVEL; goto fim;
   }
-  curl = curl_init();
+  /* marigold: this thread's handle, so connections, DNS and TLS sessions
+   * carry over between requests (pegarHandle: a host idle 20 s starts over).
+   * A few connections per thread at most. */
+  curl = pegarHandle(p->url);
   if (!curl) { r->erro = REDE_MEMORIA; goto fim; }
+  curl_setopt(curl, OPT_MAXCONNECTS, 4L);
   strcpy(url, p->url); corpo = p->corpo; nCorpo = p->n_corpo;
   for (hop = 0; ; hop++) {
     long status = 0;
@@ -390,7 +394,19 @@ fim:
   r->ms = pedidoMs(pedidoAgoraMs() - c.inicio);
   if (!ok) { free(r->corpo); r->corpo = NULL; r->n_corpo = 0; }
   if (lista) slist_free(lista);
-  if (curl) curl_cleanup(curl);
+  if (curl) {
+    /* marigold: only a clean, whole transfer keeps its handle; an error, a
+     * cancel or a deliberate cut discards it with its connection (the TV's
+     * libcurl 7.53 can hand back a connection with the aborted rest of a
+     * response, see descartarHandle). */
+    if (curl_reset && ok && !r->curl_erro && !r->fim_janela && !r->fim_teto) {
+      unsigned long agoraMs = redeAgoraMs();
+      hostUsado(p->url, agoraMs);
+      if (r->final[0]) hostUsado(r->final, agoraMs);
+    } else {
+      descartarHandle(curl);
+    }
+  }
   /* Cleanup may block briefly; fence generation again at the handoff. */
   if (ok) {
     RedeErro e = rede_job_estado(p->job);

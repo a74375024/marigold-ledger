@@ -85,6 +85,12 @@ using catalog::EntryInfo;
 
 // LiveTVStore constants.
 constexpr time::Seconds kChannelLifetime = 30 * 60;  // channel list re-read
+// Marigold: that often only while games matter (Live Events open or used
+// in the last few hours, a reminder coming up); otherwise every 2 hours.
+// Opening Live Events re-reads a list older than kChannelFreshForEvents.
+constexpr time::Seconds kChannelLifetimeQuiet = 2 * 3600;
+constexpr time::Seconds kGamesMatterFor = 3 * 3600;
+constexpr time::Seconds kChannelFreshForEvents = 10 * 60;
 // A list where only event names changed is saved at most this often (the
 // next launch's download renames them again within seconds).
 constexpr time::Seconds kRenamedSaveEvery = 6 * 3600;
@@ -306,6 +312,7 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
       settings_.previewChannels = (*v)["previewChannels"].asBool(true);
       settings_.allChannelsTab = (*v)["allChannelsTab"].asBool(false);
       settings_.preferTS = (*v)["preferTS"].asBool(true);
+      settings_.embyQuickStart = (*v)["embyQuickStart"].asBool(false);
       settings_.fillMissingListings = (*v)["fillMissingListings"].asBool(true);
       settings_.scheduleEnabled = (*v)["scheduleEnabled"].asBool(true);
       settings_.showUnwatchable = (*v)["showUnwatchable"].asBool(true);
@@ -444,6 +451,7 @@ void Store::setSettings(const Settings& s) {
   v.set("previewChannels", s.previewChannels);
   v.set("allChannelsTab", s.allChannelsTab);
   v.set("preferTS", s.preferTS);
+  v.set("embyQuickStart", s.embyQuickStart);
   v.set("fillMissingListings", s.fillMissingListings);
   v.set("scheduleEnabled", s.scheduleEnabled);
   v.set("showUnwatchable", s.showUnwatchable);
@@ -2520,7 +2528,7 @@ void Store::open(const Feed& feed, std::function<void(std::optional<Feed>)> done
     r.body.clear();
   };
   Feed base = feed;
-  closeStream();
+  closeStream(true);
   host_.pool.submit(std::move(q), [this, cl, stream, base, done](http::Response&&) {
     if (!*stream) {
       done(std::nullopt);
@@ -2529,19 +2537,48 @@ void Store::open(const Feed& feed, std::function<void(std::optional<Feed>)> done
     Feed f = base;
     f.url = (*stream)->url;
     f.needsOpen = false;
+    if (settings_.embyQuickStart) f.loadMode = 2;  // the lean live load (webOS)
     openStream_ = std::make_shared<OpenStream>(OpenStream{cl, **stream});
     host_.pool.submit(toHttp(cl->reportPlayingRequest(**stream), "emby.playing"), nullptr);
     done(f);
   });
 }
 
-void Store::closeStream() {
+std::optional<Feed> Store::quickOpen(const Feed& feed) {
+  const Impl& m = *impl_;
+  auto ci = m.indexByID.find(feed.channelId);
+  if (ci == m.indexByID.end()) return std::nullopt;
+  const Channel& c = (*m.channels)[ci->second];
+  for (const sources::Account& a : m.accounts) {
+    if (a.sourceId() != c.serverId) continue;
+    auto client = sources::emby::Client::make(a);
+    if (!client) return std::nullopt;
+    closeStream(true);
+    Feed f = feed;
+    f.url = client.value().quickStreamURL(c.itemId);
+    f.needsOpen = false;
+    f.loadMode = 2;  // the lean live load (webOS)
+    return f;
+  }
+  return std::nullopt;
+}
+
+void Store::closeStream(bool first) {
   if (!openStream_) return;
   // Each step best-effort, in order: report stopped, stop transcode, close.
   auto os = openStream_;
   openStream_.reset();
   std::vector<sources::Request> steps = os->client->closeStreamRequests(os->stream);
   http::Pool& pool = host_.pool;
+  if (first && os->stream.liveStreamId && !steps.empty()) {
+    // The live stream itself first, on the playback lane (it runs before the
+    // next open), briefly: a provider allowing one connection can then hand
+    // it to the next channel. The reports follow in the background.
+    http::Request close = toHttp(steps.back(), "emby.close", http::Priority::Playback);
+    close.timeoutMs = 1500;
+    pool.submit(std::move(close), nullptr);
+    steps.pop_back();
+  }
   pool.post(
       [steps, &pool] {
         for (const sources::Request& r : steps) pool.fetchNow(toHttp(r, "emby.close", http::Priority::Background));
@@ -2739,6 +2776,26 @@ void Store::publishListings() {
   listings_ = out;
 }
 
+time::Seconds Store::channelLifetime() const {
+  const Impl& m = *impl_;
+  time::Seconds now = time::now();
+  if (eventsOpen_ > 0) return kChannelLifetime;
+  if (m.eventsUsedAt && now - m.eventsUsedAt < kGamesMatterFor) return kChannelLifetime;
+  for (const sports::LiveReminder& r : m.ev.reminders.items())
+    if (r.start > now - kGamesMatterFor && r.start < now + kGamesMatterFor) return kChannelLifetime;
+  return kChannelLifetimeQuiet;
+}
+
+void Store::liveEventsOpened() {
+  Impl& m = *impl_;
+  m.eventsUsedAt = time::now();
+  // New games show up as renamed event slots: a list older than a few
+  // minutes is read again (cheap when only names changed).
+  if (m.channelsLoadedAt && time::now() - m.channelsLoadedAt > kChannelFreshForEvents && !m.loading &&
+      !*m.playingFull && !m.channels->empty())
+    load(false);
+}
+
 bool Store::tick(uint32_t ms) {
   Impl& m = *impl_;
   releaseMemoryWhenIdle(ms);
@@ -2771,7 +2828,7 @@ bool Store::tick(uint32_t ms) {
       wantListings(m.recentlyRequested);
     }
     if (m.catalogUnsaved && !m.loading && time::now() - m.catalogSavedAt >= kRenamedSaveEvery) saveCatalog();
-    if (m.channelsLoadedAt && time::now() - m.channelsLoadedAt > kChannelLifetime && !m.loading && !*m.playingFull) {
+    if (m.channelsLoadedAt && time::now() - m.channelsLoadedAt > channelLifetime() && !m.loading && !*m.playingFull) {
       m.channelsLoadedAt = time::now();  // one attempt per lifetime
       load(true);
     }
