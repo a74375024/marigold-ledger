@@ -17,6 +17,7 @@ namespace marigold::app {
 
 class GuideScreen : public Screen {
  public:
+  bool holdsOk() const override { return true; }
   explicit GuideScreen(App& app);
 
   bool key(const KeyEvent& e) override;

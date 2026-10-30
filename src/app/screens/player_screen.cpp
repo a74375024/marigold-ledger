@@ -202,7 +202,8 @@ class PlayerScreen : public Screen {
       bannerUntil_ = std::max(bannerUntil_, ms + 1500);
     }
     if (const auto& b = p.backupNotice(); b && ms - b->at > kBackOnMs) p.dismissBackupNotice();
-    if (!digits_.empty() && ms - digitsAt_ >= kDigitsMs) {
+    if (!digits_.empty() &&
+        (ms - digitsAt_ >= kDigitsMs || engine::views::digitsSettled(digits_, *app_.store().channels()))) {
       int n = std::atoi(digits_.c_str());
       digits_.clear();
       std::string target;

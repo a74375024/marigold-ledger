@@ -398,3 +398,14 @@ The app knows real US channels by their other names, language and closing. After
 |---|---|---|
 | Emby quick start | With the switch on, tune an Emby channel twice | The first try says "quick start · refused by the server; normal open from now on" and plays the normal way at once (no 5 s detour); after that it isn't tried on that server again |
 | College names | Live Events › Soccer / Volleyball | "Cal State San Marcos", "Cal State Dominguez Hills" (the saved schedule is fetched again once) |
+
+## Smoother starts (Build 105)
+
+| Area | How to check | Pass |
+|---|---|---|
+| Start-up buffering | Change channels on LG, then Help › playback log | No "stall" logged in the first two seconds after the picture for ordinary starts; a start that really hangs still shows "Buffering…" and logs "stall · at the start" |
+| Network error | A copy that fails with "300 Network Error" | The retry starts at once (no 3 s wait) |
+| Fire TV | Change channels | The picture comes up about a second sooner than before |
+| Apple TV | Change channels | Slightly sooner (half a second of buffer instead of one) |
+| Typed numbers | Type a channel number that no longer number starts with (e.g. 702 when there's no 7020) | It tunes at once; 7 alone still waits for the next digit if 70-something exists |
+| OK | Menus, Options, the player | OK acts as you press it; in the guide, Live Events and panels with a hold menu it still waits to tell a press from a hold |

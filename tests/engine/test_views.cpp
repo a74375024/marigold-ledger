@@ -259,3 +259,23 @@ TEST_CASE("events: the tile's top line names the sport and the competition") {
   d2.leagueShort = "D2WVB";
   CHECK(tileCompetition(&d2, "VOLLEYBALL", "") == "Women's Division II");
 }
+
+TEST_CASE("views: typed digits tune at once when no longer channel number starts with them") {
+  using marigold::engine::Channels;
+  using marigold::engine::GuideChannel;
+  Channels ch;
+  for (int n : {5, 7, 50, 702, 7020}) {
+    GuideChannel g;
+    g.number = n;
+    ch.all.push_back(g);
+  }
+  using marigold::engine::views::digitsSettled;
+  CHECK_FALSE(digitsSettled("", ch));
+  CHECK_FALSE(digitsSettled("5", ch));    // 50 could follow
+  CHECK(digitsSettled("50", ch));
+  CHECK_FALSE(digitsSettled("7", ch));    // 702, 7020
+  CHECK_FALSE(digitsSettled("702", ch));  // 7020
+  CHECK(digitsSettled("7020", ch));
+  CHECK(digitsSettled("9", ch));          // nothing starts with 9: "No channel 9" at once
+  CHECK(digitsSettled("1234", ch));       // four digits is the most
+}

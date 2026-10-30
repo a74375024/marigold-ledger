@@ -19,6 +19,7 @@ import androidx.media3.common.Player;
 import androidx.media3.common.Tracks;
 import androidx.media3.common.VideoSize;
 import androidx.media3.datasource.DefaultHttpDataSource;
+import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
@@ -81,7 +82,18 @@ final class Video {
           .setReadTimeoutMs(20000);
       sources = new DefaultMediaSourceFactory(context).setDataSourceFactory(http);
       DefaultRenderersFactory renderers = new DefaultRenderersFactory(context).setEnableDecoderFallback(true);
-      player = new ExoPlayer.Builder(context, renderers).setMediaSourceFactory(sources).build();
+      // Live TV starts after 1 s of video, not ExoPlayer's 2.5 s (2 s after a
+      // stall), and keeps at most ~20 MB ahead (its default could hold about
+      // 50 MB of live TS, a lot on a 1-1.5 GB Fire TV).
+      DefaultLoadControl load = new DefaultLoadControl.Builder()
+          .setBufferDurationsMs(15000, 30000, 1000, 2000)
+          .setTargetBufferBytes(20 * 1024 * 1024)
+          .setPrioritizeTimeOverSizeThresholds(false)
+          .build();
+      player = new ExoPlayer.Builder(context, renderers)
+          .setMediaSourceFactory(sources)
+          .setLoadControl(load)
+          .build();
       // Audio focus: another app's sound (or the voice assistant) ducks or
       // pauses this one, and it comes back after.
       AudioAttributes audio = new AudioAttributes.Builder()

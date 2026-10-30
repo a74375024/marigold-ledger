@@ -204,7 +204,8 @@ Actions Recovery::bufferingStarted(Ms now) {
   Actions out;
   // Before the first picture this is just the start; startup has its own timer.
   if (!playing() || !sawFirstFrame_) return out;
-  beginTrouble(now, "stall", kStallTimeoutMs, out);
+  bool settling = firstFrameAt_ && now - *firstFrameAt_ < kStartupBufferingMs;
+  beginTrouble(now, "stall", kStallTimeoutMs, out, settling);
   return out;
 }
 
@@ -226,6 +227,11 @@ Actions Recovery::playerError(Ms now, std::string_view message) {
   } else if (cannotPlayHere(text)) {
     // No grace and no retries: this version won't play on this TV.
     startupFailed(now, "this TV can't play this version (" + text + ")", out, true);
+  } else if (isDirect(feeds_[index_].kind) && rx::test("network error", text, true)) {
+    // Marigold: webOS "300 Network Error" before a picture doesn't clear by
+    // itself (the playback log: every one played on the retry), so the
+    // retry comes now rather than after the error grace.
+    startupFailed(now, "error: " + text, out);
   } else if (feeds_[index_].retryOnce && startupRetries_[feeds_[index_].id] == 0) {
     // A quick start the server refused: straight to the normal open.
     startupFailed(now, "error: " + text, out);
@@ -303,6 +309,8 @@ Actions Recovery::tick(Ms now) {
   if (trouble_) {
     if (!trouble_->noted && now >= trouble_->noteAt) {
       trouble_->noted = true;
+      // Start-up buffering that lasts this long is a stall after all.
+      if (trouble_->quiet) log(out, "stall", "at the start");
       setNote("Buffering…", out);
     }
     if (now >= trouble_->deadline) {
@@ -371,14 +379,15 @@ void Recovery::playerStarted(Ms now, Actions& out) {
 // reported, the stream "ending"). Engines often get over these by
 // themselves, so wait `grace`; only if it has not started playing again by
 // then does recovery step in.
-void Recovery::beginTrouble(Ms since, std::string cause, Ms grace, Actions& out) {
+void Recovery::beginTrouble(Ms since, std::string cause, Ms grace, Actions& out, bool quiet) {
   if (trouble_) {
     // Already waiting: keep the earlier deadline, note the latest cause.
     trouble_->cause = std::move(cause);
     return;
   }
-  if (cause == "stall") log(out, "stall");
+  if (cause == "stall" && !quiet) log(out, "stall");
   Trouble t;
+  t.quiet = quiet;
   t.since = since;
   t.grace = grace;
   t.noteAt = since + std::min(kStallNoteDelayMs, grace);
@@ -390,9 +399,10 @@ void Recovery::beginTrouble(Ms since, std::string cause, Ms grace, Actions& out)
 void Recovery::recoveredByItself(Ms now, Actions& out) {
   if (!trouble_) return;
   std::string detail = oneDecimal(static_cast<double>(now - trouble_->since) / 1000.0) + "s after " + trouble_->cause;
+  bool quiet = trouble_->quiet && !trouble_->noted;
   trouble_.reset();
   setNote({}, out);
-  log(out, "recovered by itself", detail);
+  if (!quiet) log(out, "recovered by itself", detail);
 }
 
 // An error before the first picture: give the engine a moment too. Unlike

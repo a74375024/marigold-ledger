@@ -42,6 +42,7 @@ uint32_t parseHex(const std::optional<std::string>& hex, uint32_t fallback) {
 
 class CameraPanelScreen : public Screen {
  public:
+  bool holdsOk() const override { return true; }
   explicit CameraPanelScreen(App& app) : Screen(app) {
     event_ = app_.playback().entry();
     rebuild(true);

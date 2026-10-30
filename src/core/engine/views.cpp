@@ -208,4 +208,16 @@ std::vector<EventLine> eventGuide(const EventsBoard& board, size_t row) {
   return out;
 }
 
+bool digitsSettled(const std::string& typed, const Channels& ch) {
+  if (typed.empty()) return false;
+  if (typed.size() >= 4) return true;
+  for (const GuideChannel& g : ch.all) {
+    if (!g.number || *g.number < 0) continue;
+    std::string n = std::to_string(*g.number);
+    // A longer number starts with what was typed: wait for the next digit.
+    if (n.size() > typed.size() && n.compare(0, typed.size(), typed) == 0) return false;
+  }
+  return true;
+}
+
 }  // namespace marigold::engine::views

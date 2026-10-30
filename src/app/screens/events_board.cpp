@@ -45,6 +45,7 @@ const char* kTabs[] = {"My Lineup", "Favorites", "Recent", "Live Events"};
 
 class EventsBoardScreen : public Screen {
  public:
+  bool holdsOk() const override { return true; }
   EventsBoardScreen(App& app, std::function<void(int)> pickTab) : Screen(app), pickTab_(std::move(pickTab)) {
     app_.store().eventsOpen(true);
     // The guide's channel preview doesn't carry over into the board.

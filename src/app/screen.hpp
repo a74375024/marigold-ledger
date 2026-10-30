@@ -46,6 +46,9 @@ class Screen {
   // Every event before the app's own handling (the webOS key test screen
   // reads its native SDL event). True when used.
   virtual bool rawEvent(const platform::Event& /*e*/) { return false; }
+  // OK held does something here (a hold menu): OK then acts on release, to
+  // tell a press from a hold. Elsewhere it acts as it is pressed.
+  virtual bool holdsOk() const { return false; }
 
  protected:
   App& app_;

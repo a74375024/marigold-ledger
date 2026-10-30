@@ -490,3 +490,19 @@ TEST_CASE("an Emby quick start the server refuses falls back to the normal open 
   CHECK(first(open, Kind::Reconnect));
   CHECK(t.now - failed <= marigold::playback::kSettleMs);
 }
+
+TEST_CASE("a network error before the picture on a direct feed is retried at once") {
+  Rig t;
+  t.tune({xt("a"), xt("b")});
+  t.untilOpen();
+  t.hand();
+  Actions err = t.take(t.r.playerError(t.now, "300 Network Error"));
+  CHECK(logged(err, "start failed"));
+  CHECK(logged(err, "retry"));
+  // Other errors still get the grace.
+  Rig u;
+  u.tune({xt("a")});
+  u.untilOpen();
+  u.hand();
+  CHECK_FALSE(logged(u.take(u.r.playerError(u.now, "100 Playing error")), "start failed"));
+}

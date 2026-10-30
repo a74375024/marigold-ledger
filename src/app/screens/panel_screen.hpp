@@ -12,6 +12,7 @@ namespace marigold::app {
 
 class PanelScreen : public Screen {
  public:
+  bool holdsOk() const override { return true; }
   enum class Side { Leading, Trailing, Center };
   PanelScreen(App& app, Side side, float width, std::function<void(ui::ListPanel&)> build);
 

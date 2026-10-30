@@ -10,6 +10,7 @@
 #include "app/screens/screens.hpp"
 #include "app/screens/top_bar.hpp"
 #include "app/store/store.hpp"
+#include "core/engine/views.hpp"
 #include "core/input/hints.hpp"
 #include "core/model/channel.hpp"
 
@@ -854,8 +855,9 @@ bool GuideScreen::tick(uint32_t ms) {
     refresh();
     app_.invalidate();
   }
-  // Number keys tune after a pause.
-  if (!digits_.empty() && ms - digitsAt_ >= kDigitsMs) {
+  // Number keys tune after a pause, or at once when no longer number
+  // starts with them.
+  if (!digits_.empty() && (ms - digitsAt_ >= kDigitsMs || engine::views::digitsSettled(digits_, *ch_))) {
     int n = std::atoi(digits_.c_str());
     digits_.clear();
     std::string target;

@@ -317,3 +317,34 @@ TEST_CASE("a healthy run over 120 s earns a fresh set of reconnects") {
   CHECK(logDetail(r, "reconnect").find("attempt 1 of 2") != std::string::npos);
   CHECK_FALSE(has(r, Kind::RecordFeed));
 }
+
+TEST_CASE("buffering right after the first picture is the start, not a stall") {
+  Rig t;
+  t.tune({xt("a")});
+  t.untilOpen();
+  t.hand();
+  t.take(t.r.firstFrame(t.now));
+  t.wait(300);
+  Actions b = t.take(t.r.bufferingStarted(t.now));
+  CHECK_FALSE(logged(b, "stall"));
+  t.wait(400);
+  Actions e = t.take(t.r.bufferingEnded(t.now));
+  CHECK_FALSE(logged(e, "recovered by itself"));
+  // One that lasts long enough to show "Buffering…" is logged as a stall.
+  Rig u;
+  u.tune({xt("a")});
+  u.untilOpen();
+  u.hand();
+  u.take(u.r.firstFrame(u.now));
+  u.wait(300);
+  u.take(u.r.bufferingStarted(u.now));
+  CHECK(logged(u.wait(4000), "stall"));
+  // Later buffering is a stall as before.
+  Rig v;
+  v.tune({xt("a")});
+  v.untilOpen();
+  v.hand();
+  v.take(v.r.firstFrame(v.now));
+  v.wait(5000);
+  CHECK(logged(v.take(v.r.bufferingStarted(v.now)), "stall"));
+}

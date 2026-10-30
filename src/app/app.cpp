@@ -141,6 +141,12 @@ void App::handle(const platform::Event& e) {
       if (keys_.saw(key)) dirty_ = true;  // its hints appear
       if (pointerShown_ && key != Key::Ok) pointerShown_ = false;  // arrows take over
       if (key == Key::Ok) {
+        Screen* top = nav_.top();
+        if (!top || !top->holdsOk()) {
+          // No hold menu here: act now, not on release.
+          if (!e.repeat) dispatch({Key::Ok, false, false});
+          break;
+        }
         if (!e.repeat) {
           okDown_ = true;
           okLongSent_ = false;

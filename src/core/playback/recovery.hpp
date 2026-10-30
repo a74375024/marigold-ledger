@@ -49,6 +49,11 @@ inline constexpr Ms kXtreamStartupTimeoutMs = 10000;
 // at all this long is retried at once (the retry usually plays in ~3 s),
 // rather than waiting the full timeout.
 inline constexpr Ms kNoDataMs = 6000;
+// Marigold: webOS reports the picture when the decoder announces itself,
+// then fills its start-up buffer (bufferingStart / bufferingEnd) before it
+// plays. Buffering this soon after the picture is that start, not a stall:
+// it isn't logged as one (it still recovers if it hangs).
+inline constexpr Ms kStartupBufferingMs = 2000;
 inline constexpr Ms kStallNoteDelayMs = 3000;     // stallNoteDelay: "Buffering…"
 inline constexpr Ms kStallTimeoutMs = 10000;      // stallTimeout
 inline constexpr int kMaxRecoveries = 6;          // maxRecoveries
@@ -209,13 +214,14 @@ class Recovery {
     Ms since = 0, noteAt = 0, deadline = 0, grace = 0;
     std::string cause;
     bool noted = false;
+    bool quiet = false;  // start-up buffering: not a stall in the log
   };
 
   void startTune(Ms now, size_t feed, Ms delay, bool inPlace, bool reconnect, bool newRound,
                  std::string_view reason, Actions& out, Ms settle = 0);
   void startNow(Ms now, size_t feed, bool reconnect, Actions& out);
   void playerStarted(Ms now, Actions& out);
-  void beginTrouble(Ms since, std::string cause, Ms grace, Actions& out);
+  void beginTrouble(Ms since, std::string cause, Ms grace, Actions& out, bool quiet = false);
   void recoveredByItself(Ms now, Actions& out);
   void scheduleStartupFailure(Ms now, std::string reason);
   void startupFailed(Ms now, const std::string& reason, Actions& out, bool unplayable = false);

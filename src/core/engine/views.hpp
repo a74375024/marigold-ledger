@@ -99,4 +99,8 @@ struct EventLine {
 };
 std::vector<EventLine> eventGuide(const EventsBoard& board, size_t row);
 
+// Typed channel digits can't become a longer channel number ("702" when no
+// channel is 7020-7029, or 4 digits): tune now rather than wait for more.
+bool digitsSettled(const std::string& typed, const Channels& ch);
+
 }  // namespace marigold::engine::views

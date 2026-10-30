@@ -174,6 +174,8 @@ NSArray<NSString*>* optionsFor(const std::string& headers) {
   }
   [out addObject:[@":http-user-agent=" stringByAppendingString:@(agent.c_str())]];
   [out addObject:@":http-reconnect"];
+  // Live TV: start after half a second of video (VLC waits a full second).
+  [out addObject:@":network-caching=500"];
   return out;
 }
 
