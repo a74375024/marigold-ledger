@@ -187,6 +187,11 @@ TEST_CASE("venues in guide descriptions; generic sports titles") {
   CHECK_FALSE(isGenericSportsTitle("Evening News"));
   CHECK(isStudioShow("NFL Countdown"));
   CHECK_FALSE(isStudioShow("Countdown: Team A vs Team B"));
+  // TSN's SportsCentre, by name and as "SC".
+  CHECK(isStudioShow("SPORTSCENTRE B"));
+  CHECK(isStudioShow("SC with Jay Onrait D"));
+  CHECK(isStudioShow("SC: Top Characters in Sports A"));
+  CHECK_FALSE(isStudioShow("SC Freiburg vs Union Berlin"));
   CHECK(shortLeague("College Football") == "NCAAF");
   CHECK(shortLeague("") == "EVENT");
   CHECK(shortLeague("Golf") == "GOLF");
@@ -580,6 +585,11 @@ TEST_CASE("feeds that aren't events: shows and replays of team sports, fight car
   }
   CHECK(out->stats.shows == 7);
   CHECK(out->stats.pastCards == 1);
+  // Each left-out feed says why (the Live Events report).
+  CHECK(out->stats.hidden.at("x|1") == "a show: a team sport with no matchup");
+  CHECK(out->stats.hidden.at("x|5") == "a replay, classic or highlights");
+  CHECK(out->stats.hidden.at("x|10") == "a fight card that's over");
+  CHECK_FALSE(out->stats.hidden.count("x|7"));
 }
 
 TEST_CASE("titles with no day: leftovers of a feed dated before today, and the rest of their group") {
@@ -786,4 +796,21 @@ TEST_CASE("a feed of no known sport: the schools' game at the feed's time") {
   CHECK(std::any_of(out->events.begin(), out->events.end(), [](const SportsEvent& e) {
     return e.game && e.game->id == "NCAAWV|2" && !e.sources.empty();
   }));
+}
+
+TEST_CASE("a high-school feed named only by a school is left out") {
+  Fixture f;
+  BuildInput in = f.input();
+  Seconds at = f.now + 1800;
+  ProviderEvent school = provider("hs1", "CARROLLTON", "", at, {"hs|1"});
+  ProviderEvent game = provider("hs2", "Carrollton vs Swan Valley", "", at, {"hs|2"});
+  ProviderEvent named = provider("hs3", "GHSA Softball State Championship", "", at, {"hs|3"});
+  school.highSchool = game.highSchool = named.highSchool = true;
+  in.events = {school, game, named};
+  auto out = build(in);
+  REQUIRE(out);
+  CHECK_FALSE(find(out->events, "hs1"));
+  CHECK(out->stats.hidden.at("hs|1") == "a school's name alone: no sport or opponent");
+  CHECK(find(out->events, "hs2"));
+  CHECK(find(out->events, "hs3"));
 }

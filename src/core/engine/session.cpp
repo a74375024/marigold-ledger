@@ -331,6 +331,7 @@ bool Session::tick(uint32_t now) {
     if (memoryAt_) logMemory();
     memoryAt_ = now + kMemoryEveryMs;
   }
+  for (std::string& note : store_.takeEventsLog()) log_.add(wallMs(), "live events", 0, {}, {}, {}, note);
   saveLog(now);
   if (entry_.empty()) return false;
   PlayerState s = player_->state();
@@ -351,6 +352,9 @@ bool Session::tick(uint32_t now) {
     if (auto retry = player_->retryAnotherWay()) {
       logEvent(retry->event, retry->detail);
       sawFailed_ = sawEnded_ = false;
+      // The direct try gets its own start-up time (it was cut at 6 s from
+      // the relay's start).
+      rec_.restartedAnotherWay(now);
       return true;
     }
   }
@@ -362,6 +366,7 @@ bool Session::tick(uint32_t now) {
     sawEnded_ = true;
     apply(rec_.ended(now));
   }
+  if (auto n = player_->note()) logEvent(n->event, n->detail);
   if (sawPicture_) apply(rec_.position(now, s.position, s.bufferEnd));
   else if (s.reportsLoading) rec_.loading(s.loaded);
   apply(rec_.tick(now));

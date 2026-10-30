@@ -94,6 +94,9 @@ std::optional<std::string> listingsDue(Seconds changedAt, Seconds pendingSince,
 // Provider events as matcher input: Spanish when the provider marks it so
 // or the title says so; `guessed` from the event, else from its feed's raw
 // slot text (lists saved by older builds).
+// A provider group of high-school games ("US| NFHS PPV").
+bool highSchoolFamily(std::string_view family);
+
 std::vector<matcher::ProviderEvent> providerEvents(
     const std::vector<catalog::LiveEvent>& events,
     const std::unordered_map<std::string, catalog::ChannelTraits>& traits, Seconds now);

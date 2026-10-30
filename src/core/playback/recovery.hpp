@@ -187,7 +187,13 @@ class Recovery {
   Actions bufferingStarted(Ms now);
   Actions bufferingEnded(Ms now);
   Actions playerError(Ms now, std::string_view message);
+  // A live stream that ends after its picture has frozen on its last
+  // frame: it is reconnected at once (no grace).
   Actions ended(Ms now);
+  // The player tried the same stream another way before any picture (webOS:
+  // without its relay): the start-up timers count from now, as for a new
+  // attempt.
+  void restartedAnotherWay(Ms now);
   // A pause by the viewer never counts as a stall.
   Actions setPaused(Ms now, bool paused);
 

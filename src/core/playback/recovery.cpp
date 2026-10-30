@@ -246,11 +246,21 @@ Actions Recovery::ended(Ms now) {
   if (!playing()) return out;
   log(out, "stream ended");
   if (sawFirstFrame_) {
-    beginTrouble(now, "the stream ended", kErrorGraceMs, out);
+    // Marigold: the playback log (HLN) shows a live stream that "ends" never
+    // plays on by itself; waiting the grace only froze the picture longer.
+    recover(now, "the stream ended", out);
   } else {
     scheduleStartupFailure(now, "ended before a picture");
   }
   return out;
+}
+
+void Recovery::restartedAnotherWay(Ms now) {
+  if (!playing() || sawFirstFrame_) return;
+  handedAt_ = now;
+  reportsLoading_ = loaded_ = false;
+  startupErrorAt_.reset();
+  startupErrorReason_.clear();
 }
 
 Actions Recovery::setPaused(Ms now, bool paused) {

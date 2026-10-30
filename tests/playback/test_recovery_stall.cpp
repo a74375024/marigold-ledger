@@ -198,14 +198,13 @@ TEST_CASE("an error while playing gets 6 s to clear by itself") {
   }
 }
 
-TEST_CASE("the stream ending while playing reconnects after 6 s") {
+TEST_CASE("the stream ending while playing reconnects at once") {
   Rig t;
   t.tune({emby("a"), emby("b")});
   t.playNext();
   Actions e = t.take(t.r.ended(t.now));
   CHECK(logged(e, "stream ended"));
-  Actions r = t.wait(kErrorGraceMs);
-  CHECK(logDetail(r, "reconnect").rfind("the stream ended, not recovered after 6s", 0) == 0);
+  CHECK(logDetail(e, "reconnect").rfind("the stream ended; attempt 1", 0) == 0);
 }
 
 TEST_CASE("a second problem keeps the first deadline and the latest cause") {

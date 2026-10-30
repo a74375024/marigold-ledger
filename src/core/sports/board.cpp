@@ -1117,7 +1117,16 @@ Board build(const Input& in) {
   // Placeholder slots ("No Match Scheduled") aren't events.
   std::vector<SportsEvent> withLive;
   for (const SportsEvent& e : in.events) {
-    if (cameras.count(e.id) || isPlaceholder(e)) continue;
+    if (cameras.count(e.id) || isPlaceholder(e)) {
+      board.left[e.id] = cameras.count(e.id) ? "a driver camera (on its race's cameras)" : "a placeholder slot";
+      continue;
+    }
+    // High-school games only when picked in My Sports: their feeds often
+    // don't start, and their titles are often a school's name alone.
+    if (e.highSchool && !highSchoolOn(in.prefs)) {
+      board.left[e.id] = "high school (off in My Sports)";
+      continue;
+    }
     SportsEvent copy = e;
     // Where each game stands, from the live scoreboard.
     if (e.game) {
@@ -1218,11 +1227,28 @@ Board build(const Input& in) {
     std::vector<SportsEvent> events;
     std::vector<Bucket> buckets;
   };
+  // Only feeds from groups that keep failing to start.
+  auto failing = [&](const SportsEvent& e) {
+    if (!in.feedFails || e.sources.empty()) return false;
+    return std::all_of(e.sources.begin(), e.sources.end(), [&](const EventSource& s) {
+      return s.kind == EventSource::Kind::provider && in.feedFails(s.channelID);
+    });
+  };
+  // No schedule game, and only on other countries' feeds in other languages
+  // (a Seychelles league match on a German feed).
+  auto abroad = [&](const SportsEvent& e) {
+    if (e.game || !in.feedAbroad || e.sources.empty()) return false;
+    return std::all_of(e.sources.begin(), e.sources.end(), [&](const EventSource& s) {
+      return s.kind == EventSource::Kind::provider && in.feedAbroad(s.channelID);
+    });
+  };
   auto grouped = [&](const std::vector<SportsEvent>& list) {
     std::vector<std::pair<Bucket, SportsEvent>> keyed;
     for (const SportsEvent& e : list) keyed.emplace_back(bucket(e), e);
-    std::stable_sort(keyed.begin(), keyed.end(), [](const auto& a, const auto& b) {
+    std::stable_sort(keyed.begin(), keyed.end(), [&](const auto& a, const auto& b) {
       if (a.first.order != b.first.order) return a.first.order < b.first.order;
+      bool fa = failing(a.second), fb = failing(b.second);
+      if (fa != fb) return fb;
       Seconds x = a.second.start.value_or(INT64_MAX), y = b.second.start.value_or(INT64_MAX);
       return x != y ? x < y : a.second.id < b.second.id;
     });
@@ -1268,16 +1294,16 @@ Board build(const Input& in) {
       drafts.push_back({"teams", "Your teams", g.events, g.buckets, liveWatchable(mine), true});
     }
   }
-  // High-school games are in Live now only when My Sports has them.
-  const bool highSchoolLive = highSchoolOn(in.prefs);
   std::vector<SportsEvent> live;
   for (const SportsEvent& e : all) {
-    if (e.highSchool && !highSchoolLive) continue;
+    if (abroad(e)) continue;
     if (isLive(e) && !e.sources.empty() && (!picked || picked->count(e.league) || e.highSchool)) live.push_back(e);
   }
-  std::stable_sort(live.begin(), live.end(), [](const SportsEvent& a, const SportsEvent& b) {
+  std::stable_sort(live.begin(), live.end(), [&](const SportsEvent& a, const SportsEvent& b) {
     bool wa = str::startsWith(a.id, "whip|"), wb = str::startsWith(b.id, "whip|");
     if (wa != wb) return wa;
+    bool fa = failing(a), fb = failing(b);
+    if (fa != fb) return fb;
     Seconds x = a.start.value_or(INT64_MAX), y = b.start.value_or(INT64_MAX);
     return x != y ? x < y : a.id < b.id;
   });
@@ -1291,6 +1317,10 @@ Board build(const Input& in) {
     std::string group = e.league.empty() ? "Other" : e.league;
     // High-school games are a row of their own, whatever the sport.
     if (e.highSchool) group = kHighSchoolRow;
+    if (abroad(e)) {
+      more.push_back(e);
+      continue;
+    }
     if (picked && !picked->count(group) && group != kHighSchoolRow) {
       // Other sports fold into "More events" (only what you can watch).
       if (!e.sources.empty()) more.push_back(e);
@@ -1347,6 +1377,18 @@ Board build(const Input& in) {
       places.emplace(e.id, std::move(place));
       board.events.emplace(e.id, e);
     }
+  }
+  // Why the rest isn't on the board (the Live Events report).
+  for (const SportsEvent& e : all) {
+    if (board.events.count(e.id) || board.left.count(e.id)) continue;
+    State state = stateOf(e);
+    const char* why = "not in your sports (My Sports)";
+    if (board.studio.count(e.id)) why = "a studio show";
+    else if (state == State::finished || (state == State::live && e.dayOver)) why = "over";
+    else if (e.sources.empty()) why = "not on your channels";
+    else if (!e.start) why = "no time listed";
+    else if (*e.start >= horizon) why = "more than a week away";
+    board.left[e.id] = why;
   }
   for (RowDraft& draft : drafts) {
     Row row;

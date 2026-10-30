@@ -419,4 +419,37 @@ Title read(std::string_view title, std::string_view league) {
   return out;
 }
 
+std::string inEnglish(std::string_view title) {
+  // Danish, Norwegian, Swedish, German, Dutch, Italian, Portuguese, Spanish
+  // and French round names, longest first.
+  static const std::pair<const char*, const char*> kWords[] = {
+      {"\\b(?:kvartfinalerna|kvartfinaler|kvartsfinaler|quarti di finale|quartas de final|cuartos de final|"
+       "kwartfinales|quarts de finale)\\b",
+       "Quarterfinals"},
+      {"\\b(?:kvartfinalen|kvartfinale|kvartsfinal|quarto di finale|viertelfinale|viertelfinal|kwartfinale|"
+       "quart de finale)\\b",
+       "Quarterfinal"},
+      {"\\b(?:semifinalerna|semifinaler|semifinali|semifinais|semifinales|halve finales|demi-finales)\\b",
+       "Semifinals"},
+      {"\\b(?:semifinalen|semifinale|halbfinale|halbfinal|halve finale|demi-finale)\\b", "Semifinal"},
+      {"\\b(?:finalerna|finaler|finali|finais|finales)\\b", "Finals"},
+      {"\\b(?:finalen|finale)\\b", "Final"},
+      {"\\b(?:dag|giorno|dia|d\xc3\xad" "a|tag|jour)\\s+(\\d{1,2})\\b", "Day $1"},
+      {"\\b(?:giornata|jornada|spieltag|journ\xc3\xa9" "e|speelronde|rodada)\\s+(\\d{1,2})\\b", "Matchday $1"},
+      {"\\b(?:runde|omgang|omg\\.|ronda|rundi)\\s+(\\d{1,2})\\b", "Round $1"},
+      {"\\b(?:kvalifisering|kvalifikation|kvalificering|qualifiche|qualifikation|qualifica\xc3\xa7\xc3\xa3o|"
+       "clasificaci\xc3\xb3n)\\b",
+       "Qualifying"},
+      {"\\b(?:herrer|herrar|herren|masculino|maschile|hommes)\\b", "Men's"},
+      {"\\b(?:damer|damen|feminino|femminile|femmes|femenino)\\b", "Women's"},
+      {"\\b(\\w+)-touren\\b", "$1 Tour"},
+      {"\\bjud\xc3\xb4\\b", "Judo"},
+  };
+  std::string out(title);
+  for (const auto& [pattern, english] : kWords) out = rx::replace(out, pattern, english, true);
+  // "Dag 2 Dag 2" (the round named twice) once.
+  out = rx::replace(out, "\\b((?:Day|Matchday|Round) \\d{1,2})(?:\\s+\\1\\b)+", "$1");
+  return out;
+}
+
 }  // namespace marigold::sports::titles

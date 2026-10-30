@@ -32,6 +32,7 @@ constexpr size_t kTokenBytes = 16;
 constexpr std::string_view kCsvType = "text/csv; charset=utf-8";
 constexpr std::string_view kChannelsFile = "marigold-channels.csv";
 constexpr std::string_view kPlaybackLogFile = "marigold-playback-log.csv";
+constexpr std::string_view kLiveEventsFile = "marigold-live-events.csv";
 
 // True once `buffered` holds a whole request head ("\r\n\r\n").
 bool headComplete(std::string_view buffered);

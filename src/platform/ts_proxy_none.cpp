@@ -14,6 +14,7 @@ std::string TsProxy::localUrl(const std::string&, const std::string&, bool) { re
 unsigned TsProxy::session() const { return 0; }
 void TsProxy::setTap(Tap*) {}
 bool TsProxy::redirected() const { return false; }
+TsProxy::Source TsProxy::source() const { return {}; }
 void TsProxy::setPreferredHeight(int) {}
 
 bool TsProxy::candidate(const std::string& source) {

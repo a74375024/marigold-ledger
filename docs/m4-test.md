@@ -448,3 +448,20 @@ Off until turned on; then on for every channel that has them until turned off. M
 | Sets | Tennis, volleyball | Sets in columns, the set on now bold |
 | Races and cards | A race weekend, a UFC card | Title with a track of the sessions or card parts: done parts dim, the current one bold (filling red while live) |
 | Scores off | Options › Show scores off | Same layout, no numbers, sets, podiums or game detail |
+
+## Live Events audit, filters, steadier relay (Build 109)
+
+| Area | How to check | Pass |
+|---|---|---|
+| HLN and other drops (LG) | Watch HLN through the app for 20 minutes, then export the playback log | "relay · the source closed; reopened it (N times)" where it used to say "stream ended"; no 10 s freezes |
+| A stream that does end | A channel whose stream ends while watching | It reconnects at once ("reconnect · the stream ended"), not after 6 s |
+| Relay failure detail | After a "proxy failed · playing directly" line | It says what the source answered ("HTTP 403 with no video", "didn't answer") |
+| Direct after the relay | The same case | The direct try gets its own 6 s (no "no data after 6s" right after the switch) |
+| Old board | Open Live Events after a few hours away | "Updating…" by the top buttons until the fresh board is in (a minute at most); the log says "live events · opened; the board is from 9 h ago; updating" |
+| Log lines | Export the playback log after opening Live Events | "live events" lines: opened, rebuilt (with what was hidden), the board's size |
+| Report | Options › Help › Export Live Events Report | A spreadsheet of every event slot: what it was read as, the tile and rows it's on, or why it was left out |
+| High school | Live Events | No High School row and none in Live now; My Sports › High School brings both back |
+| TSN+ shows | Live Events with TSN+ groups | No "SC with…", "Sportscentre" or "SC: Top Characters" tiles |
+| Other languages | Danish, Italian, Brazilian event feeds | "Quarterfinals", "Day 2", "Finals" in place of Kvartfinaler, Giorno 2, Finais |
+| Other countries | A match only on another country's foreign-language feeds | Not in Live now; under More events |
+| Failing groups | A group whose feeds keep failing to start this week | Its tiles after the others in their row (the report's group_starts says "1 of 4 started") |

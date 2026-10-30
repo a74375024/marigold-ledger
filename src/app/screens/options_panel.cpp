@@ -427,6 +427,10 @@ std::unique_ptr<Screen> makeOptions(App& app) {
     log.detail = "What happened when channels were tuned";
     log.select = [&app] { app.nav().push(makeExport(app, ExportKind::PlaybackLog)); };
     p.items.push_back(log);
+    ui::PanelItem events{ui::PanelItem::Kind::Chevron, "Export Live Events Report"};
+    events.detail = "Why each event is on the board, or left out";
+    events.select = [&app] { app.nav().push(makeExport(app, ExportKind::LiveEvents)); };
+    p.items.push_back(events);
     ui::PanelItem diag{ui::PanelItem::Kind::Chevron, diagnosticsTitle()};
     diag.select = [&app] { app.nav().push(makeDiagnostics(app)); };
     p.items.push_back(diag);

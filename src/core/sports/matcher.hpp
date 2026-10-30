@@ -113,6 +113,9 @@ struct Stats {
   // Fight feeds for a card the promotion's schedule doesn't have: a card
   // that's over, or a replay of one (hidden).
   int pastCards = 0;
+  // Marigold: why each provider feed no tile took was left out, by raw feed
+  // id (the Live Events report; never in the log).
+  std::map<std::string, std::string> hidden;
   std::vector<std::string> offsets;
   std::map<std::string, int> milliseconds;
   std::optional<std::string> aborted;

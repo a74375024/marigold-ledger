@@ -119,6 +119,13 @@ struct Input {
   // particular race).
   std::function<bool(std::string_view)> isCameraName;
   std::function<std::optional<std::string>(std::string_view)> cameraRace;
+  // Marigold: a provider feed whose group keeps failing to start: a tile
+  // with only such feeds goes after the others of its group.
+  std::function<bool(const std::string& channelID)> feedFails;
+  // Marigold: a provider feed from another country, in another language,
+  // than the viewer's: an event no schedule has that's only on such feeds
+  // isn't in Live now, and goes to More events.
+  std::function<bool(const std::string& channelID)> feedAbroad;
   // A finished session's top three (RaceData.top3: race_data::RaceData::podiumHook).
   std::function<std::vector<PodiumDriver>(const std::string& kind, Seconds start)> podium;
 };
@@ -296,6 +303,9 @@ struct Board {
   // weekend sessions), in order.
   std::map<std::string, std::vector<SportsEvent>> cards;
   std::set<std::string> studio;
+  // Marigold: why each event that isn't a tile was left off, by event id
+  // (the Live Events report).
+  std::map<std::string, std::string> left;
   // Race weekends you can watch (race_data::refreshForBoard).
   std::vector<std::string> watchableRaceWeekends;
   Seconds now = 0;

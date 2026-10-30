@@ -74,6 +74,21 @@ struct EventsState {
   uint32_t boardBuiltMs = 0;
   bool boardDirty = true;
 
+  // When the events shown were made (a rebuild, or the saved list's time;
+  // 0: none). Opened with older ones, the board says "Updating" until the
+  // fresh channel list, schedule and rebuild are in (a minute at most).
+  time::Seconds eventsBuiltAt = 0;
+  bool updating = false, checkedSinceOpen = false;
+  uint32_t updatingUntilMs = 0, rebuildStartMs = 0;
+  // The last rebuild's reasons for the feeds no tile took (raw feed id ->
+  // why), for the Live Events report.
+  std::map<std::string, std::string> hidden;
+  // Lines for the playback log (Store::takeEventsLog); the board's line is
+  // said when it changes after an open or a rebuild.
+  std::vector<std::string> logNotes;
+  std::string lastBoardNote;
+  bool noteBoard = false;
+
   // The game being watched and its source, remembered on leaving.
   std::string watchingEvent, watchingFeed;
   bool watchingSawPicture = false;
@@ -121,6 +136,13 @@ struct Store::Impl {
   // time unless one is pinned.
   std::map<std::string, std::string> lastFeed;
   std::map<std::string, std::vector<int>> reliability;  // source tag -> {worked, failed}
+  // Starts of event feeds by provider group ("grp:us| nfhs ppv"), counted
+  // afresh after a quiet week: a group that keeps failing goes last.
+  struct GroupStarts {
+    int worked = 0, failed = 0;
+    time::Seconds at = 0;
+  };
+  std::map<std::string, GroupStarts> groupStarts;
   // Raw channel id -> when this TV last couldn't play it (playback
   // cannotPlayHere): tried after the channel's other versions for a while.
   std::map<std::string, time::Seconds> unplayable;

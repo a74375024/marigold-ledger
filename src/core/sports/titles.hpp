@@ -29,6 +29,12 @@ struct Title {
 // `league` is the row the catalog gave it ("Rugby", "Fighting", "Other").
 Title read(std::string_view title, std::string_view league);
 
+// A title from another country's feed, its round and stage words in English
+// ("Kvartfinaler, Wien" -> "Quarterfinals, Wien", "Giorno 2" -> "Day 2",
+// "Grand Slam De Judô: Finais" -> "Grand Slam De Judo: Finals"), so it
+// reads like the rest and meets the same event's English feed.
+std::string inEnglish(std::string_view title);
+
 // The stage named in a piece of a title ("Round 2", "3rd ODI", "Semi-final"),
 // or nullopt.
 std::optional<std::string> stageIn(std::string_view text);

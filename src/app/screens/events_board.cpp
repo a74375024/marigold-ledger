@@ -81,7 +81,7 @@ class EventsBoardScreen : public Screen {
       app_.invalidate();
     }
     bool pulse = skeletonShown_ && ui::skeletonMoved(ms, pulseStep_);
-    return previewTick(ms) || pulse || promptAt_ != 0;
+    return previewTick(ms) || pulse || promptAt_ != 0 || board_->updating;
   }
 
   bool key(const KeyEvent& e) override {
@@ -628,6 +628,14 @@ class EventsBoardScreen : public Screen {
     if (filtered()) {
       ui::chip(c, "\xe2\x97\x8f " + filterTitle() + "  \xc3\x97", x + 10, kTabsY + 14, 19,
                theme::hex(theme::kNowLine, 0.3f), theme::white());
+    }
+    if (board_->updating) {
+      // An old board while the fresh one is made (never a count).
+      const char* text = "Updating\xe2\x80\xa6";
+      float right = gfx::kLayoutWidth - 80 - 60 - 2 * 76 - 28;
+      float tw = ui::textWidth(c, text, Weight::Medium, 22);
+      ui::label(c, text, right - tw, kTabsY + 16, Weight::Medium, 22, theme::white(0.6f));
+      ui::spinner(c, right - tw - 22, kTabsY + 30, 11);
     }
     top_bar::buttons(c, buttons_ ? button_ : -1, filtered(), kHitButton);
   }

@@ -204,3 +204,17 @@ TEST_CASE("titles: high-school associations and classes keep their capitals; see
   CHECK(titles::read("2026 DISTRICT 6C TOURNAMENT", "Other").name == "2026 District 6C Tournament");
   CHECK(titles::read("AHSAA 5A VOLLEYBALL CHAMPIONSHIP FINALS", "Volleyball").name.find("AHSAA 5A") == 0);
 }
+
+TEST_CASE("titles: another country's round words in English") {
+  CHECK(titles::inEnglish("ATP: Kvartfinaler, Wien") == "ATP: Quarterfinals, Wien");
+  CHECK(titles::inEnglish("Badminton: Kvartfinaler, Hylo Open") == "Badminton: Quarterfinals, Hylo Open");
+  CHECK(titles::inEnglish("Grand Slam De Jud\xc3\xb4: Finais - Abu Dhabi") == "Grand Slam De Judo: Finals - Abu Dhabi");
+  CHECK(titles::inEnglish("VidantaWorld Mexico Open | Giorno 2 | PGA Tour") == "VidantaWorld Mexico Open | Day 2 | PGA Tour");
+  CHECK(titles::inEnglish("VidantaWorld Mexico Open | Dag 2 Dag 2 | PGA-touren") ==
+        "VidantaWorld Mexico Open | Day 2 | PGA Tour");
+  CHECK(titles::inEnglish("Serie A: Giornata 10") == "Serie A: Matchday 10");
+  CHECK(titles::inEnglish("Halbfinale Damen") == "Semifinal Women's");
+  // Nothing to change.
+  CHECK(titles::inEnglish("Harbor vs Valley") == "Harbor vs Valley");
+  CHECK(titles::inEnglish("Tag Team Turmoil") == "Tag Team Turmoil");
+}

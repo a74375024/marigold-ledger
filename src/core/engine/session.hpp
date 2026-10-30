@@ -66,6 +66,9 @@ class Player {
     std::string event, detail;
   };
   virtual std::optional<Retry> retryAnotherWay() { return std::nullopt; }
+  // Something the platform did by itself since the last call, for the log
+  // (webOS: its relay reopened a source that closed mid-stream). Every frame.
+  virtual std::optional<Retry> note() { return std::nullopt; }
   // The provider stream was closed (a relay serving it can stop).
   virtual void streamClosed() {}
   virtual void stop() = 0;

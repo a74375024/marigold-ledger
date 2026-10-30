@@ -4,11 +4,13 @@
 // feeds (on a worker); the board snapshot; feeds for a game in automatic
 // backup order, starting on the source used last time (6 hours); reminders.
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 
 #include "core/engine/store.hpp"
 #include "core/engine/store_impl.hpp"
 #include "core/catalog/catalog.hpp"
+#include "core/report/live_events_report.hpp"
 #include "core/sports/leagues.hpp"
 #include "core/sports/my_sports.hpp"
 #include "core/sports/network_map.hpp"
@@ -64,6 +66,16 @@ constexpr const char* kSeenFile = "sport-feeds.json";
 constexpr const char* kResultFile = "live-events.json";
 constexpr uint32_t kCheckMs = 15000;       // rebuild / listings check while open
 constexpr uint32_t kBoardRefreshMs = 30000;  // clock texts ("in 25 m")
+// Opened with events older than this: "Updating" until the fresh ones are in.
+constexpr time::Seconds kBoardStaleAfter = 30 * 60;
+constexpr uint32_t kUpdatingAtMostMs = 60000;
+
+// "4 min", "9 h", "2 days": how old the board is, for the log.
+std::string ageText(time::Seconds s) {
+  if (s < 3600) return std::to_string(std::max<time::Seconds>(1, s / 60)) + " min";
+  if (s < 2 * 86400) return std::to_string(s / 3600) + " h";
+  return std::to_string(s / 86400) + " days";
+}
 
 http::Request toHttp(const sources::Request& r, std::string tag) {
   http::Request q;
@@ -256,6 +268,18 @@ void Store::eventsOpen(bool open) {
   if (!open && eventsOpen_ == 0) impl_->eventsUsedAt = time::now();
   if (open && before == 0) {
     liveEventsOpened();
+    // An old board (saved last time, or built hours ago) says it's updating.
+    time::Seconds now = time::now();
+    e.checkedSinceOpen = false;
+    e.noteBoard = true;
+    if (e.events.empty() || !e.eventsBuiltAt) {
+      e.logNotes.push_back("opened; no board yet");
+    } else {
+      time::Seconds age = std::max<time::Seconds>(0, now - e.eventsBuiltAt);
+      e.updating = age > kBoardStaleAfter;
+      e.updatingUntilMs = host_.ms() + kUpdatingAtMostMs;
+      e.logNotes.push_back("opened; the board is from " + ageText(age) + " ago" + (e.updating ? "; updating" : ""));
+    }
     // Opened: new sport feeds seen, the schedule if due, scores, listings.
     if (sports::noteSportFeeds(e.seen, e.seenCheckedAt, impl_->catalog->events, time::now()))
       e.schedule.leaguesChanged(scheduleContext());
@@ -415,7 +439,10 @@ void Store::rebuildEvents() {
   fp.enabled = settings_.scheduleEnabled;
   fp.schools = pub.schools.size();
   std::string key = ss::fingerprint(fp, now);
-  if (key == e.lastFingerprint) return;
+  if (key == e.lastFingerprint) {
+    e.checkedSinceOpen = true;  // nothing new to build from
+    return;
+  }
   e.lastFingerprint = key;
   needInfos();
 
@@ -455,6 +482,7 @@ void Store::rebuildEvents() {
     return std::nullopt;
   };
   e.rebuilding = true;
+  e.rebuildStartMs = host_.ms();
   auto out = std::make_shared<std::optional<ss::RebuildResult>>();
   uint64_t gen = m.generation;
   host_.pool.post([in, out] { *out = ss::rebuild(*in); },
@@ -465,7 +493,21 @@ void Store::rebuildEvents() {
                      ev.events = std::move((*out)->events);
                      ev.schedule.noteWatchable((*out)->watchableLeagues, time::now());
                      ev.boardDirty = true;
+                     ev.eventsBuiltAt = time::now();
+                     ev.checkedSinceOpen = true;
+                     ev.noteBoard = true;
+                     const sports::matcher::Stats& st = (*out)->stats;
+                     ev.hidden = st.hidden;
                      MLOG_I("events", "rebuilt: %zu events", ev.events.size());
+                     uint32_t took = host_.ms() - ev.rebuildStartMs;
+                     char secs[16];
+                     std::snprintf(secs, sizeof secs, "%.1f", took / 1000.0);
+                     auto n = [](int v) { return std::to_string(v); };
+                     ev.logNotes.push_back(
+                         "rebuilt in " + std::string(secs) + " s; " + std::to_string(ev.events.size()) + " events from " +
+                         n(st.events) + " feed titles and " + n(st.games) + " scheduled games; hidden: " +
+                         n(st.shows) + " shows, " + n(st.replays) + " replays, " + n(st.stale) + " leftovers, " +
+                         n(st.pastCards) + " past fight cards; " + n(st.mergedPlain) + " duplicate feeds merged");
                      // Saved for an instant board next launch.
                      std::vector<sports::matcher::GuideListing> listings = ev.listings;
                      if (auto saved = ss::resultToSave(ev.events, impl_->catalog->events, listings, true, time::now(),
@@ -521,6 +563,13 @@ void Store::buildBoard() {
                                      [&](const catalog::EventFamily& f) { return wrestling(f.league); }),
                       in.families.end());
   }
+  if (!sports::highSchoolOn(e.mySports)) {
+    // High-school games only when picked in My Sports (the board leaves out
+    // their games; their provider groups go too).
+    in.families.erase(std::remove_if(in.families.begin(), in.families.end(),
+                                     [](const catalog::EventFamily& f) { return sports::store::highSchoolFamily(f.id); }),
+                      in.families.end());
+  }
   in.prefs = e.mySports;
   in.statuses = e.scores.statuses();
   in.finalSeen = e.scores.finalSeen();
@@ -533,6 +582,22 @@ void Store::buildBoard() {
   in.channelFor = makeChannelFor(*this, m, channels_);
   in.isCameraName = sports::special_feeds::isCameraName;
   in.cameraRace = sports::special_feeds::cameraRace;
+  std::set<std::string> failing;
+  for (const auto& [family, starts] : m.groupStarts)
+    if (groupKeepsFailing(family)) failing.insert(family);
+  if (!failing.empty()) {
+    in.feedFails = [&m, &failing](const std::string& id) {
+      auto t = m.catalog->traits.find(id);
+      return t != m.catalog->traits.end() && t->second.familyKey && failing.count(*t->second.familyKey) > 0;
+    };
+  }
+  in.feedAbroad = [&m](const std::string& id) {
+    static const std::set<std::string> kEnglish = {"US", "UK", "CA", "AU", "IE", "NZ"};
+    auto t = m.catalog->traits.find(id);
+    if (t == m.catalog->traits.end() || !t->second.market) return false;
+    const std::string& market = *t->second.market;
+    return !kEnglish.count(market) && !m.prefs.includes(market);
+  };
   in.podium = e.race.podiumHook();
   e.raceSeen = e.race.revision();
   e.board = sb::build(in);
@@ -546,6 +611,7 @@ void Store::buildBoard() {
   auto out = std::make_shared<EventsBoard>();
   out->version = events_->version + 1;
   out->loading = e.schedule.fetching() && e.events.empty();
+  out->updating = e.updating && !out->loading;
   out->scoresOn = settings_.showScores;
   for (const sb::Row& r : e.board.rows) {
     EventRow row;
@@ -590,6 +656,78 @@ void Store::buildBoard() {
     if (!row.groups.empty()) out->rows.push_back(std::move(row));
   }
   events_ = out;
+  if (e.noteBoard && eventsOpen_ > 0) {
+    // The board's size after an open or a rebuild, when it changed.
+    e.noteBoard = false;
+    int rows = 0, live = 0;
+    for (const sb::Row& r : e.board.rows) {
+      if (r.id == "families") continue;
+      ++rows;
+      if (r.id == "live") live = r.count;
+    }
+    std::string note = "board: " + std::to_string(e.board.events.size()) + " games in " + std::to_string(rows) +
+                       " rows, " + std::to_string(live) + " live now" + (out->updating ? "; updating" : "");
+    if (note != e.lastBoardNote) {
+      e.lastBoardNote = note;
+      e.logNotes.push_back(std::move(note));
+    }
+  }
+}
+
+void Store::buildLiveEventsReport(std::function<void(std::shared_ptr<std::string>)> done) {
+  const Impl& m = *impl_;
+  const EventsState& e = m.ev;
+  // Copies of what the report reads; the worker owns them.
+  struct Job {
+    std::shared_ptr<const CatalogResult> catalog;
+    std::vector<sports::SportsEvent> events;
+    std::map<std::string, std::string> hidden;
+    sb::Board board;
+    std::map<std::string, std::string> starts;
+    std::set<std::string> failing;
+    bool wrestling = false;
+    time::Seconds now = 0;
+    time::Zone zone = time::Zone::device();
+  };
+  auto job = std::make_shared<Job>();
+  job->catalog = m.catalog;
+  job->events = e.events;
+  job->hidden = e.hidden;
+  job->board = e.board;
+  for (const auto& [family, g] : m.groupStarts) {
+    std::string text = groupStartsText(family);
+    if (text.empty()) continue;
+    job->starts[family] = text;
+    if (groupKeepsFailing(family)) job->failing.insert(family);
+  }
+  job->wrestling = sports::proWrestlingOn(e.mySports);
+  job->now = time::now();
+  job->zone = host_.zone();
+  auto out = std::make_shared<std::string>();
+  host_.pool.post(
+      [job, out] {
+        report::LiveEventsReportInput in;
+        in.catalog = job->catalog.get();
+        in.events = &job->events;
+        in.hidden = &job->hidden;
+        in.board = &job->board;
+        in.groupStarts = [job](const std::string& f) {
+          auto it = job->starts.find(f);
+          return it == job->starts.end() ? std::string() : it->second;
+        };
+        in.groupFails = [job](const std::string& f) { return job->failing.count(f) > 0; };
+        in.proWrestlingOn = job->wrestling;
+        in.now = job->now;
+        in.zone = job->zone;
+        *out = report::liveEventsCsv(in);
+      },
+      [out, done] { done(out->empty() ? nullptr : out); }, http::Priority::Normal);
+}
+
+std::vector<std::string> Store::takeEventsLog() {
+  std::vector<std::string> out;
+  out.swap(impl_->ev.logNotes);
+  return out;
 }
 
 void Store::eventsTick(uint32_t ms) {
@@ -621,6 +759,13 @@ void Store::eventsTick(uint32_t ms) {
           e.events = std::move(r->events);
           if (e.listings.empty()) e.listings = std::move(r->listings);
           e.boardDirty = true;
+          e.eventsBuiltAt = saved->savedAt;
+          time::Seconds age = std::max<time::Seconds>(0, time::now() - saved->savedAt);
+          if (eventsOpen_ > 0 && age > kBoardStaleAfter && !e.updating) {
+            e.updating = true;
+            e.updatingUntilMs = host_.ms() + kUpdatingAtMostMs;
+          }
+          e.logNotes.push_back("saved board from " + ageText(age) + " ago shown until the rebuild");
         }
       }
     }
@@ -628,6 +773,14 @@ void Store::eventsTick(uint32_t ms) {
   if (ms >= e.nextCheckMs) {
     e.nextCheckMs = ms + kCheckMs;
     rebuildEvents();
+  }
+  // "Updating" ends once the channel list, the schedule and a rebuild from
+  // them are in (or after a minute).
+  if (m.loading || e.schedule.fetching() || e.rebuilding) e.checkedSinceOpen = false;
+  if (e.updating && (e.checkedSinceOpen || ms >= e.updatingUntilMs)) {
+    e.updating = false;
+    e.boardDirty = true;
+    e.noteBoard = true;
   }
   if (e.boardDirty || (eventsOpen_ > 0 && ms - e.boardBuiltMs > kBoardRefreshMs) ||
       e.scores.revision() != e.statusesRevision)

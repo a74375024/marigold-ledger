@@ -506,3 +506,20 @@ TEST_CASE("a network error before the picture on a direct feed is retried at onc
   u.hand();
   CHECK_FALSE(logged(u.take(u.r.playerError(u.now, "100 Playing error")), "start failed"));
 }
+
+TEST_CASE("a start tried another way gets its own start-up time") {
+  Rig t;
+  t.tune({xt("a"), xt("b")});
+  t.untilOpen();
+  t.hand();
+  Ms handed = t.now;
+  t.r.loading(false);
+  t.until(handed + 5000);
+  // webOS: the relay's attempt ended; the same feed now plays directly.
+  t.r.restartedAnotherWay(t.now);
+  Ms again = t.now;
+  t.r.loading(false);
+  CHECK_FALSE(logged(t.until(handed + marigold::playback::kNoDataMs + 500), "start failed"));
+  t.r.loading(false);
+  CHECK(logDetail(t.until(again + marigold::playback::kNoDataMs), "start failed") == "no data after 6s");
+}

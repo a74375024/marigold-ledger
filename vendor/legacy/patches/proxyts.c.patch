@@ -92,7 +92,7 @@
  #define PX_BLOCO (188U * 256)
  struct PxFluxo {
    pthread_mutex_t trava;
-@@ -230,6 +233,10 @@
+@@ -230,10 +233,21 @@
    time_t semLeitorDesde;
    char lista[4096];
    char cabs[512];                   // os do addon, para playlist e segmentos
@@ -100,10 +100,21 @@
 +  int continuo;                     // marigold: a fonte e .ts continua, passada adiante
 +  size_t tam;                       // marigold: o tamanho do ring (PX_BUFFER ou PX_BUFFER_VIVO)
 +  uint64_t espiado;                 // marigold: ate onde o espiao ja leu
++  int http;                         // marigold: o ultimo HTTP da fonte (0 = sem resposta)
++  int reaberturas;                  // marigold: vezes que a .ts continua foi reaberta
    PxConexao produtor;
  };
  static PxFluxo *fluxoAtual;
-@@ -284,7 +291,8 @@
+ static uint64_t pxCursorInicio(const PxFluxo *f);
++// marigold: o que a fonte da ultima ingestao encerrada respondeu, para
++// proxyts_fonte depois do fim (protegido pela trava global).
++static unsigned fonteSessao;
++static int fonteHttp, fonteReaberturas;
++static long long fonteBytes;
+ 
+ static void pxFluxoDestruir(PxFluxo *f) {
+   pthread_cond_destroy(&f->chegou);
+@@ -284,7 +298,8 @@
  // controle, que os aceita mas nao diz o endereco final: a base dos segmentos
  // e o endereco pedido. O redirecionamento da FONTE ja foi resolvido uma vez em
  // pxAtender (rede_url_final_cab), e e esse endereco que chega aqui.
@@ -113,7 +124,7 @@
    char atual[NV_MEDIA_URL_MAX];
    int volta;
    snprintf(atual, sizeof atual, "%s", url);
-@@ -308,7 +316,7 @@
+@@ -308,7 +323,7 @@
        b = rede_baixar_trecho_st(atual, 8, 0, 1048575, &n, &st, &er, fin, sizeof fin);
      if (!b || n <= 0) { free(b); return 0; }
      if (fin[0]) snprintf(atual, sizeof atual, "%s", fin);
@@ -122,7 +133,7 @@
      free(b);
      if (!l->mestre) { snprintf(final, nf, "%s", atual); return 1; }
      snprintf(atual, sizeof atual, "%s", l->uri[0]);
-@@ -330,7 +338,7 @@
+@@ -330,7 +345,7 @@
      uint64_t limite;
      struct timespec prazo;
      pthread_mutex_lock(&f->trava);
@@ -131,7 +142,7 @@
      clock_gettime(CLOCK_REALTIME, &prazo); prazo.tv_nsec += 250000000;
      if (prazo.tv_nsec >= 1000000000) { prazo.tv_nsec -= 1000000000; prazo.tv_sec++; }
      for (;;) {
-@@ -353,12 +361,12 @@
+@@ -353,12 +368,12 @@
        }
      }
      if (f->encerrado) { pthread_mutex_unlock(&f->trava); return 0; }
@@ -147,7 +158,7 @@
      pthread_cond_broadcast(&f->chegou);
      pthread_mutex_unlock(&f->trava);
      p += guardar; n -= guardar;
-@@ -366,7 +374,7 @@
+@@ -366,7 +381,7 @@
    return 1;
  }
  
@@ -156,7 +167,7 @@
    PxLista *lp = malloc(sizeof *lp);
    PxTabelas tab;
    char base[NV_MEDIA_URL_MAX];
-@@ -378,7 +386,7 @@
+@@ -378,7 +393,7 @@
  #define l (*lp)
    while (pxViva(c)) {
      int i, novos = 0;
@@ -165,7 +176,7 @@
        if (++falhas >= PX_FALHAS_MAX) { printf("[proxy-ts] playlist falhou %d vezes: fim\n", falhas); break; }
        pxDormir(c, 1000);
        continue;
-@@ -463,9 +471,29 @@
+@@ -463,17 +478,71 @@
    fflush(stdout);
  }
  
@@ -176,16 +187,45 @@
 +  return pxViva(c) && pxEntregar(c, d, n);
 +}
 +
++// marigold: a fonte que fecha a .ts no meio (o log do HLN: "stream ended" a
++// cada 1..5 min, ~10 s de imagem parada ate o app reconectar) e reaberta
++// aqui, sem o player ver o fim. A que falha antes do primeiro byte (a conta
++// de 1 tela ainda presa no canal anterior) e tentada de novo apos uma pausa.
++#define PX_VIVO_REABRIR    6      // reaberturas seguidas, sem 30 s de fluxo entre elas
++#define PX_VIVO_VAZIAS     2      // novas tentativas antes do primeiro byte
++#define PX_VIVO_PAUSA_MS   1500   // pausa antes de tentar de novo sem nada recebido
++
 +static void pxContinuo(PxConexao *c, const char *url, const char *cabs) {
-+  char copia[512];
-+  const char *v[8];
-+  int st = 0, ok;
-+  snprintf(copia, sizeof copia, "%s", cabs ? cabs : "");
-+  pthread_mutex_lock(&trava); cancelarEmCurso = &c->cancelar; pthread_mutex_unlock(&trava);
-+  ok = rede_baixar_fluxo_vivo(url, pxVetor(copia, v), pxReceberVivo, c, &c->cancelar, &st);
-+  pthread_mutex_lock(&trava); if (cancelarEmCurso == &c->cancelar) cancelarEmCurso = NULL; pthread_mutex_unlock(&trava);
-+  printf("[proxy-ts] sessao %u: .ts continua %s (HTTP %d)\n", c->sessao, ok ? "encerrada" : "falhou", st);
-+  fflush(stdout);
++  PxFluxo *f = c->fluxo;
++  int seguidas = 0, vazias = 0;
++  for (;;) {
++    char copia[512];
++    const char *v[8];
++    int st = 0, ok;
++    uint64_t antes, veio;
++    time_t t0 = time(NULL);
++    snprintf(copia, sizeof copia, "%s", cabs ? cabs : "");
++    pthread_mutex_lock(&f->trava); antes = f->fim; pthread_mutex_unlock(&f->trava);
++    pthread_mutex_lock(&trava); cancelarEmCurso = &c->cancelar; pthread_mutex_unlock(&trava);
++    ok = rede_baixar_fluxo_vivo(url, pxVetor(copia, v), pxReceberVivo, c, &c->cancelar, &st);
++    pthread_mutex_lock(&trava); if (cancelarEmCurso == &c->cancelar) cancelarEmCurso = NULL; pthread_mutex_unlock(&trava);
++    pthread_mutex_lock(&f->trava); veio = f->fim - antes; f->http = st; pthread_mutex_unlock(&f->trava);
++    printf("[proxy-ts] sessao %u: .ts continua %s (HTTP %d, %llu KB em %ld s)\n", c->sessao,
++           ok ? "encerrada" : "falhou", st, (unsigned long long)(veio / 1024), (long)(time(NULL) - t0));
++    fflush(stdout);
++    if (!pxViva(c)) break;
++    if (time(NULL) - t0 >= 30) seguidas = 0;
++    if (!antes && !veio) {
++      if (++vazias > PX_VIVO_VAZIAS) break;
++    } else if (++seguidas > PX_VIVO_REABRIR) {
++      break;
++    }
++    pxDormir(c, veio ? 200 : PX_VIVO_PAUSA_MS);
++    if (!pxViva(c)) break;
++    pthread_mutex_lock(&f->trava); f->reaberturas++; pthread_mutex_unlock(&f->trava);
++    printf("[proxy-ts] sessao %u: reabrindo a fonte\n", c->sessao);
++    fflush(stdout);
++  }
 +}
 +
  static void *pxProduzir(void *u) {
@@ -193,10 +233,14 @@
 -  pxHls(&f->produtor, f->lista, f->cabs);
 +  if (f->continuo) pxContinuo(&f->produtor, f->lista, f->cabs);
 +  else pxHls(&f->produtor, f->lista, f->cabs, f->resolucao);
++  pthread_mutex_lock(&trava);
    pthread_mutex_lock(&f->trava);
    f->encerrado = 1; pthread_cond_broadcast(&f->chegou);
++  fonteSessao = f->produtor.sessao; fonteHttp = f->http;
++  fonteBytes = (long long)f->fim; fonteReaberturas = f->reaberturas;
    pthread_mutex_unlock(&f->trava);
-@@ -473,7 +501,8 @@
++  pthread_mutex_unlock(&trava);
+   pxFluxoSoltar(f);
    return NULL;
  }
  
@@ -206,7 +250,7 @@
    PxFluxo *f;
    pthread_t t;
    pthread_mutex_lock(&trava);
-@@ -486,7 +515,7 @@
+@@ -486,7 +555,7 @@
    }
    if (!f && lista) {
      f = calloc(1, sizeof *f);
@@ -215,7 +259,7 @@
      if (!f || !f->buffer) { if (f) free(f); pthread_mutex_unlock(&trava); return NULL; }
      if (pthread_mutex_init(&f->trava, NULL) != 0) {
        free(f->buffer); free(f); pthread_mutex_unlock(&trava); return NULL;
-@@ -499,6 +528,8 @@
+@@ -499,6 +568,8 @@
      f->produtor.s = -1; f->produtor.sessao = c->sessao; f->produtor.fluxo = f;
      snprintf(f->lista, sizeof f->lista, "%s", lista);
      snprintf(f->cabs, sizeof f->cabs, "%s", cabs ? cabs : "");
@@ -224,7 +268,7 @@
      fluxoAtual = f;
      if (pthread_create(&t, NULL, pxProduzir, f) != 0) {
        fluxoAtual = NULL; pxFluxoDestruir(f); pthread_mutex_unlock(&trava); return NULL;
-@@ -560,8 +591,8 @@
+@@ -560,8 +631,8 @@
        continue;
      }
      n = f->fim - pos > PX_BLOCO ? PX_BLOCO : (size_t)(f->fim - pos);
@@ -235,7 +279,7 @@
      memcpy(b, f->buffer + off, primeira);
      memcpy(b + primeira, f->buffer, n - primeira);
      if (reporTabelas) { tab = f->tabelas; reporTabelas = 0; }
-@@ -572,6 +603,12 @@
+@@ -572,6 +643,12 @@
      if (!pxEnviar(c->s, b, n)) break;
      pthread_mutex_lock(&f->trava);
      c->pos = pos; c->proteger = 1;
@@ -248,7 +292,7 @@
      pthread_cond_broadcast(&f->chegou);
      pthread_mutex_unlock(&f->trava);
    }
-@@ -580,9 +617,11 @@
+@@ -580,9 +657,11 @@
  
  static void *pxAtender(void *u) {
    PxConexao *c = u;
@@ -261,7 +305,7 @@
    const char *q;
    // O PEDIDO: so a primeira linha interessa (GET /live.ts?s=N).
    while (tot < (ssize_t)sizeof req - 1) {
-@@ -598,6 +637,8 @@
+@@ -598,6 +677,8 @@
    if (s && s == atomic_load(&sessaoAtual)) snprintf(c->fonte, sizeof c->fonte, "%s", fonteAtual);
    else c->fonte[0] = 0;
    snprintf(cabs, sizeof cabs, "%s", c->fonte[0] ? cabsAtual : "");
@@ -270,7 +314,7 @@
    pthread_mutex_unlock(&trava);
    c->sessao = s;
    if (!c->fonte[0] || strncmp(req, "GET ", 4)) {
-@@ -620,11 +661,21 @@
+@@ -620,11 +701,21 @@
      printf("[proxy-ts] sessao %u: GET (Range %s)\n", c->sessao, range);
      fflush(stdout); }
    // Uma conexao da mesma sessao usa a ingestao que ja esta em andamento.
@@ -293,7 +337,7 @@
    // O QUE A FONTE E: um trecho do comeco decide entre TS continuo e playlist.
    { long n = 0;
      int st = 0, er = 0;
-@@ -652,7 +703,7 @@
+@@ -652,7 +743,7 @@
        b = rede_baixar_trecho_st(c->fonte, 8, 0, 65535, &n, &st, &er, fin, sizeof fin);
      if (b && n >= 7 && !strncmp(b, "#EXTM3U", 7) && (!st || (st >= 200 && st < 300))) {
        free(b);
@@ -302,7 +346,7 @@
        if (c->fluxo) {
          printf("[proxy-ts] sessao %u: a fonte e playlist HLS; entregando TS continuo\n", c->sessao);
          fflush(stdout); pxServirFluxo(c);
-@@ -737,12 +788,42 @@
+@@ -737,12 +828,63 @@
  
  int proxyts_disponivel(void) { return 1; }
  
@@ -342,10 +386,31 @@
 +
 +unsigned proxyts_sessao(void) { return atomic_load(&sessaoAtual); }
 +
++int proxyts_fonte(unsigned sessao, int *http, long long *bytes, int *reaberturas) {
++  int achou = 0;
++  pthread_mutex_lock(&trava);
++  if (fluxoAtual && fluxoAtual->produtor.sessao == sessao) {
++    PxFluxo *f = fluxoAtual;
++    pthread_mutex_lock(&f->trava);
++    if (http) *http = f->http;
++    if (bytes) *bytes = (long long)f->fim;
++    if (reaberturas) *reaberturas = f->reaberturas;
++    pthread_mutex_unlock(&f->trava);
++    achou = 1;
++  } else if (sessao && fonteSessao == sessao) {
++    if (http) *http = fonteHttp;
++    if (bytes) *bytes = fonteBytes;
++    if (reaberturas) *reaberturas = fonteReaberturas;
++    achou = 1;
++  }
++  pthread_mutex_unlock(&trava);
++  return achou;
++}
++
  int proxyts_redirecionou(void) {
    unsigned s = atomic_load(&sessaoAtual);
    return s && atomic_load(&sessaoRedirecionada) == s;
-@@ -757,6 +838,8 @@
+@@ -757,6 +899,8 @@
    pxFluxoParar();
    snprintf(fonteAtual, sizeof fonteAtual, "%s", fonte);
    snprintf(cabsAtual, sizeof cabsAtual, "%s", cabsPendentes);
@@ -354,7 +419,7 @@
    s = atomic_fetch_add(&sessaoAtual, 1) + 1;
    pthread_mutex_unlock(&trava);
    snprintf(saida, n, "http://127.0.0.1:%d/live.ts?s=%u", porta, s);
-@@ -777,13 +860,4 @@
+@@ -777,13 +921,4 @@
    return url && !strncmp(url, "http://127.0.0.1:", 17) && strstr(url, "/live.ts?s=");
  }
  

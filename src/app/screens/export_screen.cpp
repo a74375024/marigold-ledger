@@ -1,4 +1,5 @@
-// Options › Help › Export Channel Report / Export Playback Log (tvOS
+// Options › Help › Export Channel Report / Export Playback Log / Export Live
+// Events Report (tvOS
 // LiveTVExportView). The TV serves the file on the home network for 10
 // minutes: a QR code and a link to open on a phone or computer on the same
 // Wi-Fi. The link is shown on screen only, never logged.
@@ -70,13 +71,16 @@ class ExportScreen : public Screen {
     Rect card{(gfx::kLayoutWidth - 1240) * 0.5f, 150, 1240, 780};
     c.g.fill(card, theme::hex(0x1C1F25, 0.98f), 34);
     float x = card.x + 60, y = card.y + 50, w = card.w - 120;
-    bool log = kind_ == ExportKind::PlaybackLog;
-    ui::label(c, log ? "Export Playback Log" : "Export Channel Report", x, y, Weight::Bold, 40, theme::white(), w);
+    bool log = kind_ == ExportKind::PlaybackLog, events = kind_ == ExportKind::LiveEvents;
+    ui::label(c, log ? "Export Playback Log" : events ? "Export Live Events Report" : "Export Channel Report", x, y,
+              Weight::Bold, 40, theme::white(), w);
     y += 64;
     std::string about = log ? "What happened each time a channel was tuned: feeds tried, stalls, reconnects and errors "
                               "(no stream links). " + std::to_string(app_.playback().log().size()) + " events."
-                            : "A spreadsheet of every channel: how it was sorted, its feeds, and where its listings come "
-                              "from. No passwords, links or server addresses.";
+                        : events ? "A spreadsheet of every event in your provider's event channels: what it was read "
+                                   "as, and the tile it's on or why it was left out. No links or server addresses."
+                                 : "A spreadsheet of every channel: how it was sorted, its feeds, and where its listings "
+                                   "come from. No passwords, links or server addresses.";
     y += ui::paragraph(c, about, x, y, w, Weight::Regular, 22, theme::white(0.7f), 3) + 24;
 
     using State = platform::LanShare::State;
@@ -163,7 +167,7 @@ class ExportScreen : public Screen {
     }
     building_ = true;
     std::weak_ptr<bool> alive = alive_;
-    app_.store().buildChannelReport([this, alive](std::shared_ptr<std::string> csv) {
+    auto built = [this, alive](std::shared_ptr<std::string> csv) {
       if (alive.expired()) return;
       building_ = false;
       if (!csv) {
@@ -171,12 +175,16 @@ class ExportScreen : public Screen {
         return;
       }
       serve(std::move(*csv));
-    });
+    };
+    if (kind_ == ExportKind::LiveEvents) app_.store().buildLiveEventsReport(built);
+    else app_.store().buildChannelReport(built);
   }
 
   void serve(std::string body) {
     platform::LanShare::Options opts;
-    opts.filename = std::string(kind_ == ExportKind::PlaybackLog ? report::share::kPlaybackLogFile : report::share::kChannelsFile);
+    opts.filename = std::string(kind_ == ExportKind::PlaybackLog  ? report::share::kPlaybackLogFile
+                                : kind_ == ExportKind::LiveEvents ? report::share::kLiveEventsFile
+                                                                  : report::share::kChannelsFile);
     size_t bytes = body.size();
     status_ = share_.start(std::move(body), opts);
     sharedOnce_ = true;

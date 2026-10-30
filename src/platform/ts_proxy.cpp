@@ -101,6 +101,12 @@ std::string TsProxy::localUrl(const std::string& source, const std::string& head
 
 bool TsProxy::redirected() const { return started_ && proxyts_redirecionou() != 0; }
 
+TsProxy::Source TsProxy::source() const {
+  Source s;
+  if (started_) s.known = proxyts_fonte(proxyts_sessao(), &s.http, &s.bytes, &s.reopened) != 0;
+  return s;
+}
+
 void TsProxy::setPreferredHeight(int height) { proxyts_definir_resolucao(nv_res_altura_opcao(height)); }
 
 }  // namespace marigold::platform

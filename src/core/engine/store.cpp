@@ -91,6 +91,8 @@ constexpr time::Seconds kChannelLifetime = 30 * 60;  // channel list re-read
 constexpr time::Seconds kChannelLifetimeQuiet = 2 * 3600;
 constexpr time::Seconds kGamesMatterFor = 3 * 3600;
 constexpr time::Seconds kChannelFreshForEvents = 10 * 60;
+// A provider group's starts count from its last one a week ago at most.
+constexpr time::Seconds kGroupStartsFor = 7 * 86400;
 // A list where only event names changed is saved at most this often (the
 // next launch's download renames them again within seconds).
 constexpr time::Seconds kRenamedSaveEvery = 6 * 3600;
@@ -342,6 +344,9 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
       m.captionChannels = stringSet((*v)["captionChannels"]);
       for (const auto& [k, x] : (*v)["reliability"].fields())
         m.reliability[k] = {static_cast<int>(x[size_t(0)].asInt()), static_cast<int>(x[size_t(1)].asInt())};
+      for (const auto& [k, x] : (*v)["groupStarts"].fields())
+        m.groupStarts[k] = {static_cast<int>(x[size_t(0)].asInt()), static_cast<int>(x[size_t(1)].asInt()),
+                            x[size_t(2)].asInt()};
     }
   }
   if (auto text = st.read(kLineupFile)) {
@@ -414,6 +419,15 @@ void Store::saveLists() {
     rel.set(k, pair);
   }
   v.set("reliability", rel);
+  json::Value groups = json::Value::object();
+  for (const auto& [k, g] : m.groupStarts) {
+    json::Value row = json::Value::array();
+    row.push(g.worked);
+    row.push(g.failed);
+    row.push(g.at);
+    groups.set(k, row);
+  }
+  if (!m.groupStarts.empty()) v.set("groupStarts", groups);
   host_.files.write(kListsFile, json::write(v));
 }
 
@@ -2659,7 +2673,27 @@ void Store::recordFeed(const std::string& channelId, bool worked) {
   auto& counts = m.reliability[tag];
   if (counts.size() < 2) counts = {0, 0};
   ++counts[worked ? 0 : 1];
+  if (t != m.catalog->traits.end() && t->second.familyKey) {
+    Impl::GroupStarts& g = m.groupStarts[*t->second.familyKey];
+    time::Seconds now = time::now();
+    if (now - g.at > kGroupStartsFor) g = {};
+    ++(worked ? g.worked : g.failed);
+    g.at = now;
+  }
   saveLists();
+}
+
+bool Store::groupKeepsFailing(const std::string& familyKey) const {
+  auto it = impl_->groupStarts.find(familyKey);
+  if (it == impl_->groupStarts.end() || time::now() - it->second.at > kGroupStartsFor) return false;
+  return it->second.failed >= 3 && it->second.failed > 2 * it->second.worked;
+}
+
+std::string Store::groupStartsText(const std::string& familyKey) const {
+  auto it = impl_->groupStarts.find(familyKey);
+  if (it == impl_->groupStarts.end() || time::now() - it->second.at > kGroupStartsFor) return {};
+  const Impl::GroupStarts& g = it->second;
+  return std::to_string(g.worked) + " of " + std::to_string(g.worked + g.failed) + " started";
 }
 
 void Store::markUnplayable(const std::string& channelId) {

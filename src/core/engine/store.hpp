@@ -225,6 +225,11 @@ class Store {
   void closeStream(bool first = false);
   // Feed outcomes move reliable sources up.
   void recordFeed(const std::string& channelId, bool worked);
+  // An event group ("grp:us| nfhs ppv") whose feeds mostly failed to start
+  // this week: its tiles go after the others. The count for the report
+  // ("1 of 4 started"; "" when none this week).
+  bool groupKeepsFailing(const std::string& familyKey) const;
+  std::string groupStartsText(const std::string& familyKey) const;
   // This TV couldn't play that version (playback::cannotPlayHere): it is
   // tried after the channel's other versions for kUnplayableFor.
   void markUnplayable(const std::string& channelId);
@@ -336,6 +341,12 @@ class Store {
   // Options › Help › Export Channel Report: the CSV, built on a worker.
   // `done` runs on the UI thread (null on failure).
   void buildChannelReport(std::function<void(std::shared_ptr<std::string>)> done);
+  // Help › Export Live Events Report: every event slot of the provider's
+  // groups, what it was read as and what became of it (a tile, or why not).
+  void buildLiveEventsReport(std::function<void(std::shared_ptr<std::string>)> done);
+  // Live Events lines for the playback log since the last call (opened,
+  // rebuilt, the board's size). Counts only, never titles or links.
+  std::vector<std::string> takeEventsLog();
 
   const Settings& settings() const { return settings_; }
   void setSettings(const Settings& s);

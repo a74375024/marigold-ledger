@@ -57,7 +57,7 @@ std::unique_ptr<Screen> makeCameraPanel(App& app);
 // first-run setup's Sports and Teams steps, which end on the summary.
 std::unique_ptr<Screen> makeMySports(App& app, bool onboarding = false);
 // Options › Help: share a file with a phone on the home network.
-enum class ExportKind { ChannelReport, PlaybackLog };
+enum class ExportKind { ChannelReport, PlaybackLog, LiveEvents };
 std::unique_ptr<Screen> makeExport(App& app, ExportKind kind);
 // The platform's diagnostics screen (Options › Help): the key and video
 // test on webOS, the system and video state on Android.

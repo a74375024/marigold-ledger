@@ -8,6 +8,7 @@
 
 #include "core/catalog/catalog.hpp"
 #include "core/sports/text.hpp"
+#include "core/sports/titles.hpp"
 #include "core/util/json.hpp"
 
 namespace marigold::sports::store {
@@ -138,6 +139,10 @@ std::optional<std::string> listingsDue(Seconds changedAt, Seconds pendingSince, 
 
 // MARK: Rebuild
 
+bool highSchoolFamily(std::string_view family) {
+  return rx::test("\\bnfhs\\b|high ?school", std::string(family), true);
+}
+
 std::vector<matcher::ProviderEvent> providerEvents(
     const std::vector<catalog::LiveEvent>& events,
     const std::unordered_map<std::string, catalog::ChannelTraits>& traits, Seconds now) {
@@ -149,6 +154,10 @@ std::vector<matcher::ProviderEvent> providerEvents(
     matcher::ProviderEvent p;
     p.id = event.id;
     p.title = event.title;
+    // Another country's feed: its round and stage words in English (US
+    // Spanish stays as sent: it's picked for its language).
+    static const std::set<std::string> kAsSent = {"US", "US-ES", "UK", "CA", "AU", "IE", "NZ"};
+    if (event.market && !kAsSent.count(*event.market)) p.title = titles::inEnglish(p.title);
     p.league = event.league;
     p.start = event.start;
     p.feeds = event.feeds;
@@ -163,7 +172,7 @@ std::vector<matcher::ProviderEvent> providerEvents(
     }
     if (boards.size() >= 2) p.boards = static_cast<int>(boards.size());
     // High-school feeds: by the provider's group, else the title's words.
-    p.highSchool = rx::test("\\bnfhs\\b|high ?school", event.family, true) ||
+    p.highSchool = highSchoolFamily(event.family) ||
                    rx::test("\\bhigh school\\b|\\bvarsity\\b|\\b[a-z]{1,5}(hsaa|hsa|hsl)\\b", event.title, true);
     if (p.highSchool) {
       // "2026 KSHSAA 4A Girls Volleyball Championship 3 vs 6": the year goes,

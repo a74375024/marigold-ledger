@@ -1,5 +1,6 @@
 #include "app/playback.hpp"
 
+#include <algorithm>
 #include <functional>
 #include <memory>
 #include <set>
@@ -29,6 +30,16 @@ std::string channelLanguage(App& app) {
   return g && g->section == "Spanish" ? "Espa\xc3\xb1ol" : "English";
 }
 
+// What the relay's source answered, for the log ("; the source answered
+// HTTP 403 with no video").
+std::string sourceAnswer(const platform::TsProxy::Source& s) {
+  if (!s.known) return {};
+  if (s.http == 0 && s.bytes == 0) return "; the source didn't answer";
+  std::string http = s.http ? "HTTP " + std::to_string(s.http) : std::string("no HTTP status");
+  if (s.bytes == 0) return "; the source answered " + http + " with no video";
+  return "; the source sent " + std::to_string(std::max(1LL, s.bytes / 1024)) + " KB (" + http + ")";
+}
+
 // The platform's video player, with the TS proxy in front of HLS feeds where
 // the platform wants it (webOS). Continuous TS feeds go through it too
 // (Options › Play through the app, or with subtitles on), so their captions
@@ -47,6 +58,7 @@ class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
 
   void attempt() override {
     viaProxy_ = false;
+    reopenedSeen_ = 0;
     app_.video().setWindow(window_());
   }
 
@@ -75,13 +87,28 @@ class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
     if (!viaProxy_) return std::nullopt;
     viaProxy_ = false;
     bool redirected = proxy_.redirected();
+    std::string answered = sourceAnswer(proxy_.source());
     proxyFailed_.insert(feed_.channelId);
     proxy_.stop();
     if (redirected) return std::nullopt;
     MLOG_I("play", "proxy didn't start this feed; playing it directly");
     app_.playback().subtitlesBegin(0, false);
     app_.video().play(feed_.url, feed_.headers, feed_.loadMode);
-    return Retry{"proxy failed", "playing directly"};
+    return Retry{"proxy failed", "playing directly" + answered};
+  }
+
+  // The relay reopened a source that closed mid-stream (the player kept
+  // playing): said in the log once each time.
+  std::optional<Retry> note() override {
+    if (!viaProxy_) return std::nullopt;
+    uint32_t now = app_.ms();
+    if (now - noteCheckedAt_ < 1000) return std::nullopt;
+    noteCheckedAt_ = now;
+    platform::TsProxy::Source s = proxy_.source();
+    if (!s.known || s.reopened <= reopenedSeen_) return std::nullopt;
+    reopenedSeen_ = s.reopened;
+    return Retry{"relay", "the source closed; reopened it (" + std::to_string(s.reopened) +
+                              (s.reopened == 1 ? " time)" : " times)")};
   }
 
   void streamClosed() override { proxy_.stop(); }
@@ -119,6 +146,8 @@ class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
   // the proxy failed on play directly for the rest of this tune.
   bool viaProxy_ = false;
   std::set<std::string> proxyFailed_;
+  int reopenedSeen_ = 0;
+  uint32_t noteCheckedAt_ = 0;
 };
 
 engine::Host sessionHost(App& app) {

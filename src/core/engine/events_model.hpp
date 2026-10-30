@@ -125,6 +125,8 @@ struct EventsBoard {
   uint64_t version = 0;
   std::vector<EventRow> rows;
   bool loading = false;   // the schedule is still coming
+  // An old board (from last time) shown while the fresh one is made.
+  bool updating = false;
   bool scoresOn = true;
 };
 

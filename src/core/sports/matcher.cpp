@@ -305,6 +305,9 @@ std::optional<BuildResult> build(const BuildInput& in) {
     stats.milliseconds[step] = static_cast<int>(elapsedMs(clock));
     clock = std::chrono::steady_clock::now();
   };
+  auto hide = [&](const ProviderEvent& event, const char* why) {
+    for (const std::string& feed : event.feeds) stats.hidden.emplace(feed, why);
+  };
   auto stop = [&]() -> bool {
     if (!in.shouldStop) return false;
     if (auto reason = in.shouldStop()) {
@@ -782,6 +785,7 @@ std::optional<BuildResult> build(const BuildInput& in) {
         continue;
       }
       stats.replays += 1;
+      hide(event, "a replay: its game is on another day");
       continue;
     }
     size_t g = static_cast<size_t>(*chosen);
@@ -912,27 +916,38 @@ std::optional<BuildResult> build(const BuildInput& in) {
   std::set<std::string> scheduledOrgs;
   for (const auto& [card, indices] : cards) scheduledOrgs.insert(text::components(card, "|").front());
   auto notAnEvent = [&](const ProviderEvent& event) {
+    // "LIVE | CARROLLTON | Fri 09:30": a school's name alone, no sport or
+    // opponent (a high-school feed with nothing to show for it).
+    if (event.highSchool && !looksLikeGame(event.title) && isTeamSportShow(event.title, "Football") &&
+        str::split(str::trim(event.title), ' ').size() <= 3) {
+      hide(event, "a school's name alone: no sport or opponent");
+      return true;
+    }
     // "2024 Round 5: Detroit", "Harbor vs Valley 9 Feb": an old race or game
     // shown again.
     if (namesPastYear(event.title, now) || namesPastDate(event.title, now)) {
       stats.replays += 1;
+      hide(event, "a replay: names a past year or date");
       return true;
     }
     bool old = excluded(normalized(event.title));
     if (profile(event.league).gamesOnly && !board::whipNamed(event.title)) {
       if (old || !looksLikeGame(event.title)) {
         stats.shows += 1;
+        hide(event, old ? "a replay, classic or highlights" : "a show: a team sport with no matchup");
         return true;
       }
     }
     if (event.league == "Fighting") {
       if (old) {
         stats.shows += 1;
+        hide(event, "a replay, classic or highlights");
         return true;
       }
       auto key = fightKey(event.title);
       if (key && scheduledOrgs.count(key->org)) {
         stats.pastCards += 1;
+        hide(event, "a fight card that's over");
         return true;
       }
     }
@@ -963,6 +978,7 @@ std::optional<BuildResult> build(const BuildInput& in) {
     if ((event.guessed && !event.family.empty() && staleCount >= 3 && staleCount > 3 * freshCount) ||
         leftover(event) || collegeLeftover(event) || collegeGroup) {
       stats.stale += 1;
+      hide(event, "a leftover: yesterday's game or an old slot name");
       continue;
     }
     std::optional<std::string> key = pairKey(event.title);
@@ -993,6 +1009,7 @@ std::optional<BuildResult> build(const BuildInput& in) {
     if (notAnEvent(original)) continue;
     if (leftover(original)) {
       stats.stale += 1;
+      hide(original, "a leftover: yesterday's game or an old slot name");
       continue;
     }
     ProviderEvent event = corrected(original);
@@ -1092,6 +1109,9 @@ std::optional<BuildResult> build(const BuildInput& in) {
       if (complete.count(hit.league->group)) {
         hidden.insert(position);
         stats.stale += 1;
+        for (const EventSource& source : event.sources)
+          if (source.kind == EventSource::Kind::provider)
+            stats.hidden.emplace(source.channelID, "two teams with no game between them: a replay or old slot name");
         continue;
       }
       SportsEvent copy = unknown ? event.retitled(hit.league->group, hit.league->shortName) : event;
@@ -1533,12 +1553,13 @@ bool isStudioShow(std::string_view title) {
       " post show ",  " prerace ",    " postrace ",   " post fight ", " pre fight ",  " fight conference ",
       " qualifying replay ", " radio ",    " podcast ",    " tonight ",    " talk ",      " hour ",
       " insider ",    " insiders ",   " report ",     " daily ",      " roundtable ", " magazine ",
-      " weekly ",     " race day live ", " center ",  " show ",       " auction "};
+      " weekly ",     " race day live ", " center ",  " show ",       " auction ",    " sportscentre "};
   std::string t = normalized(title);
   for (const char* w : kStudio) {
     if (has(t, w)) return true;
   }
-  return false;
+  // TSN's SportsCentre: "SC with Jay Onrait", "SC: Top Characters in Sports".
+  return rx::test("^\\W*SC(?:\\s*:|\\s+with\\b)", title);
 }
 
 bool isTeamSportShow(std::string_view title, std::string_view league) {

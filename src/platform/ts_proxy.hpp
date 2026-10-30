@@ -59,6 +59,17 @@ class TsProxy {
   // (it was not an HLS playlist): playing the same source directly would
   // repeat the same attempt.
   bool redirected() const;
+  // What the source of the current session answered so far (or at its
+  // end): the last HTTP status (0: no answer yet), the bytes received, and
+  // how often the proxy reopened a continuous source that closed mid-stream.
+  // `known` is false when the session didn't pass the stream through.
+  struct Source {
+    bool known = false;
+    int http = 0;
+    long long bytes = 0;
+    int reopened = 0;
+  };
+  Source source() const;
 
   // The variant picked from a master playlist for the next sessions: the
   // nearest to `height` (2160, 1080, 720, 480), or the highest with 0.

@@ -966,7 +966,7 @@ TEST_CASE("cricket on the board: a match at stumps isn't live, a break is") {
   CHECK(between);
 }
 
-TEST_CASE("high school: a row of its own, in Live now only when picked; darts boards on the tile") {
+TEST_CASE("high school: only when picked, then a row of its own and in Live now; darts boards on the tile") {
   SportsEvent hs = plainEvent("hs", "KSHSAA 4A Girls Volleyball Championship _ Seeds #3 and #6", "Volleyball", kNow - 1800,
                               {feed("xt|1")});
   hs.highSchool = true;
@@ -981,9 +981,9 @@ TEST_CASE("high school: a row of its own, in Live now only when picked; darts bo
     for (const Tile& t : g.tiles) ids.push_back(t.id);
   CHECK(std::find(ids.begin(), ids.end(), "hs") == ids.end());
   CHECK(std::find(ids.begin(), ids.end(), "darts") != ids.end());  // a floor event runs all afternoon
-  CHECK(row(b, "sport|High School").title == "High School");
+  for (const Row& r : b.rows) CHECK(r.id != "sport|High School");
   CHECK(tile(b, "darts").detail == "5 boards");
-  // Picked in My Sports: in Live now too.
+  // Picked in My Sports: its row and Live now.
   in.prefs.leagues = {kHighSchoolPick};
   in.prefs.configured = true;
   Board picked = build(in);
@@ -991,4 +991,38 @@ TEST_CASE("high school: a row of its own, in Live now only when picked; darts bo
   for (const Group& g : row(picked, "live").groups)
     for (const Tile& t : g.tiles) ids.push_back(t.id);
   CHECK(std::find(ids.begin(), ids.end(), "hs") != ids.end());
+  CHECK(row(picked, "sport|High School").title == "High School");
+}
+
+TEST_CASE("an event only on other countries' feeds goes to More events, and failing groups go last") {
+  // A league no schedule has, on a German feed only; a match on a US feed.
+  SportsEvent abroad = plainEvent("sey", "Real Maldive FC vs Bel Air FC", "Soccer", kNow - 1800, {feed("xt|de1")});
+  SportsEvent home = plainEvent("usl", "Harbor FC vs Valley FC", "Soccer", kNow - 1800, {feed("xt|us1")});
+  SportsEvent dead = plainEvent("dead", "Coast FC vs Bay FC", "Soccer", kNow - 1800, {feed("xt|dead")});
+  Input in = baseInput({abroad, home, dead});
+  in.feedAbroad = [](const std::string& id) { return id == "xt|de1"; };
+  in.feedFails = [](const std::string& id) { return id == "xt|dead"; };
+  Board b = build(in);
+  std::vector<std::string> live;
+  for (const Group& g : row(b, "live").groups)
+    for (const Tile& t : g.tiles) live.push_back(t.id);
+  CHECK(live == std::vector<std::string>{"usl", "dead"});  // the failing group's tile after the other
+  std::vector<std::string> more;
+  for (const Group& g : row(b, "more").groups)
+    for (const Tile& t : g.tiles) more.push_back(t.id);
+  CHECK(more == std::vector<std::string>{"sey"});
+  for (const Group& g : row(b, "sport|Soccer").groups)
+    for (const Tile& t : g.tiles) CHECK(t.id != "sey");
+}
+
+TEST_CASE("the board says why an event isn't a tile") {
+  SportsEvent hs = plainEvent("hs", "Harbor vs Valley", "Football", kNow - 1800, {feed("xt|1")});
+  hs.highSchool = true;
+  SportsEvent over = plainEvent("over", "Coast FC vs Bay FC", "Soccer", kNow - 3 * 86400, {feed("xt|2")});
+  SportsEvent far = plainEvent("far", "Harbor FC vs Bay FC", "Soccer", kNow + 10 * 86400, {feed("xt|3")});
+  Board b = build(baseInput({hs, over, far}));
+  CHECK(b.left.at("hs") == "high school (off in My Sports)");
+  CHECK(b.left.at("over") == "over");
+  CHECK(b.left.at("far") == "more than a week away");
+  CHECK_FALSE(b.left.count("missing"));
 }

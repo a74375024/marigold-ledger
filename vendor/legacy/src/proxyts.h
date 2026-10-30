@@ -58,6 +58,11 @@ void proxyts_definir_passagem(int sim);
 void proxyts_definir_espiao(void (*f)(const unsigned char *, size_t, unsigned, void *), void *u);
 // marigold: a sessao em curso (a ultima aberta por proxyts_url).
 unsigned proxyts_sessao(void);
+// marigold: o que a fonte da sessao `sessao` respondeu ate agora (ou no fim
+// dela): o ultimo HTTP (0 = nenhuma resposta ainda), os bytes recebidos e
+// quantas vezes o proxy reabriu a .ts continua que a fonte fechou. 0 = a
+// sessao nao passou o fluxo pelo proxy (redirecionou, ou ja e outra).
+int proxyts_fonte(unsigned sessao, int *http, long long *bytes, int *reaberturas);
 // 1 se `url` (sem o prefixo) e candidata ao proxy num canal de addon: http(s)
 // e nao arquivo progressivo (.mp4/.mkv). Puro, testavel em qualquer alvo.
 int  proxyts_candidata(const char *url, int mp4);
