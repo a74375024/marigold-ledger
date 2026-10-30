@@ -665,12 +665,12 @@ class EventsBoardScreen : public Screen {
     c.g.popClip();
   }
 
-  // Two rows of tile-shaped placeholders while the week's games load.
+  // Rows of tile-shaped placeholders down the board while the week's games load.
   void drawLoadingRows(ui::Ctx& c) {
     skeletonShown_ = true;
     ui::Color block = ui::skeleton(c);
     float y = kBoardTop;
-    for (int r = 0; r < 2; ++r) {
+    while (y + kRowHeader < kBoardBottom) {
       c.g.fill({kLeft, y + 4, 220, 22}, block, 11);
       float tileY = y + kRowHeader;
       for (float x = kLeft; x < gfx::kLayoutWidth; x += events_ui::kTileW + kTileGap)

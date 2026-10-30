@@ -1,6 +1,7 @@
 #include "app/screens/events_ui.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <vector>
 
@@ -96,58 +97,117 @@ float flags(ui::Ctx& c, const EventSide& s, float x, float y, bool focused) {
   return pair ? step * 2 - 2 : size - 2;
 }
 
-void sideLine(ui::Ctx& c, const EventSide& s, Rect r, bool focused) {
-  Color ink = focused ? theme::black() : theme::white();
+// The rows inside a tile.
+constexpr float kRowH = 34;   // a team, player or golf line
+constexpr float kLineGap = 4;
+constexpr float kMarkW = 16;  // the winner's caret or possession, after the score
+
+// A team (or player) row, 34 tall: badge, rank, name, and the score at the
+// right; tennis and volleyball sets in columns. `dim`: this side trails
+// (live) or lost (final).
+void sideLine(ui::Ctx& c, const EventSide& s, Rect r, bool focused, float alpha, bool dim, bool winner, bool live) {
+  Color ink = focused ? theme::black(alpha) : theme::white(alpha);
+  Color soft = ink.withAlpha(ink.a * (dim ? 0.5f : 1.0f));
   float x = r.x;
   if (!s.flags.empty()) {
-    x += flags(c, s, x, r.y, focused) + 11;
+    x += flags(c, s, x, r.y - 3, focused) + 10;
   } else if (!s.country.empty()) {
-    countryChip(c, s.country, x, r.y + 9, focused);
-    x += 43;
+    countryChip(c, s.country, x, r.y + 6, focused);
+    x += 42;
   } else {
-    badge(c, s, x, r.y + 4, 32, focused);
-    x += 43;
+    badge(c, s, x, r.y + 3, 28, focused);
+    x += 38;
   }
-  if (!s.rank.empty()) x += ui::label(c, s.rank, x, r.y + 9, Weight::Bold, 18, ink.withAlpha(0.55f)) + 6;
-  float scoreW = s.score.empty() ? 0 : ui::textWidth(c, s.score, Weight::Bold, 27) + 8;
-  std::string pens = s.pens.empty() || s.score.empty() ? std::string() : "(" + s.pens + ")";
-  float pensW = pens.empty() ? 0 : ui::textWidth(c, pens, Weight::Bold, 19) + 8;
-  float right = r.x + r.w - scoreW - pensW - (s.ball ? 18 : 0);
-  float nameW = ui::label(c, s.name, x, r.y + 6, Weight::Bold, 23, ink, right - x - (s.home ? 50 : 0));
-  if (s.home) ui::label(c, "home", x + nameW + 8, r.y + 12, Weight::Regular, 16, ink.withAlpha(0.5f));
+  if (!s.rank.empty()) x += ui::label(c, s.rank, x, r.y + 8, Weight::Bold, 15, ink.withAlpha(ink.a * 0.55f)) + 6;
+  float right = r.x + r.w;
+  float scoreLeft = right;
   if (!s.score.empty()) {
-    if (s.ball) {
-      // Possession: a small left-pointing triangle.
-      float bx = r.x + r.w - scoreW - 14, by = r.y + 20;
-      for (int i = 0; i < 5; ++i)
-        c.g.fill({bx + static_cast<float>(i) * 1.6f, by - static_cast<float>(i), 1.8f, static_cast<float>(i) * 2.0f + 1}, ink.withAlpha(0.85f));
+    right -= kMarkW;
+    if (s.score.find(' ') != std::string::npos) {
+      // Sets: one column each, the set on now bold.
+      std::vector<std::string> sets;
+      for (size_t i = 0; i < s.score.size();) {
+        size_t j = s.score.find(' ', i);
+        if (j == std::string::npos) j = s.score.size();
+        if (j > i) sets.push_back(s.score.substr(i, j - i));
+        i = j + 1;
+      }
+      float cx = right + kMarkW;
+      for (size_t k = sets.size(); k-- > 0;) {
+        bool now = live && k + 1 == sets.size();
+        ui::label(c, sets[k], cx - 26, r.y + 4, now ? Weight::Bold : Weight::Medium, 21,
+                  now ? soft : soft.withAlpha(soft.a * 0.6f), 26, Align::Right);
+        cx -= 32;
+      }
+      scoreLeft = cx + 6;
+    } else {
+      float w = ui::textWidth(c, s.score, Weight::Bold, 25);
+      ui::label(c, s.score, right - w, r.y + 2, Weight::Bold, 25, soft, w + 2);
+      scoreLeft = right - w;
+      if (!s.pens.empty()) {
+        std::string pens = "(" + s.pens + ")";
+        float pw = ui::textWidth(c, pens, Weight::Bold, 16);
+        ui::label(c, pens, scoreLeft - pw - 8, r.y + 7, Weight::Bold, 16, soft.withAlpha(soft.a * 0.85f));
+        scoreLeft -= pw + 8;
+      }
+      // After the score: the winner's caret, or who has the ball.
+      if (winner || (live && s.ball)) {
+        // A small left-pointing triangle, in one-pixel columns.
+        int half = winner ? 6 : 4;
+        float bx = right + 5, by = r.y + 17;
+        for (int i = 0; i <= half; ++i)
+          c.g.fill({bx + static_cast<float>(i), by - static_cast<float>(i), 1.2f, 2.0f * static_cast<float>(i) + 1},
+                   ink.withAlpha(ink.a * 0.85f));
+      }
     }
-    ui::label(c, s.score, r.x + r.w - scoreW, r.y + 2, Weight::Bold, 27, ink.withAlpha(s.trails ? 0.55f : 1.0f), scoreW,
-              Align::Right);
-    if (!pens.empty())
-      ui::label(c, pens, r.x + r.w - scoreW - pensW, r.y + 9, Weight::Bold, 19, ink.withAlpha(s.trails ? 0.5f : 0.85f));
   }
+  float nameW = ui::label(c, s.name, x, r.y + 5, Weight::Bold, 21, soft, scoreLeft - x - 10 - (s.home ? 50 : 0));
+  if (s.home) ui::label(c, "home", x + nameW + 8, r.y + 10, Weight::Regular, 15, ink.withAlpha(ink.a * 0.5f));
 }
 
-// A golf leaderboard line: position, flag, name, holes played, score to
-// par (the second line's score dimmed).
-void leaderLine(ui::Ctx& c, const EventLeader& l, Rect r, bool focused, bool dim) {
-  Color ink = focused ? theme::black() : theme::white();
+// A golf leaderboard line, 34 tall: position, flag, name, holes played and
+// the score to par (the second line's dimmed).
+void leaderLine(ui::Ctx& c, const EventLeader& l, Rect r, bool focused, float alpha, bool dim) {
+  Color ink = focused ? theme::black(alpha) : theme::white(alpha);
   float x = r.x;
-  ui::label(c, l.pos, x, r.y + 9, Weight::Bold, 18, ink.withAlpha(0.55f), 26);
-  x += 30;
+  ui::label(c, l.pos, x, r.y + 8, Weight::Bold, 15, ink.withAlpha(ink.a * 0.55f), 24);
+  x += 26;
   logos::Texture tex;
   if (c.logos && !l.flagUrl.empty()) tex = c.logos->get(l.flagUrl);
-  if (tex.id) c.g.image(tex.id, {x, r.y + 5, 30, 30});  // square, the flag across its middle
-  else c.g.fill({x + 1, r.y + 10.5f, 28, 19}, focused ? theme::black(0.1f) : theme::white(0.16f), 2);
-  x += 40;
-  float scoreW = ui::textWidth(c, l.score, Weight::Bold, 27) + 8;
+  if (tex.id) c.g.image(tex.id, {x, r.y + 3, 28, 28});  // square, the flag across its middle
+  else c.g.fill({x + 1, r.y + 8, 26, 17}, focused ? theme::black(0.1f) : theme::white(0.16f), 2);
+  x += 38;
+  float scoreW = ui::textWidth(c, l.score, Weight::Bold, 25);
+  float right = r.x + r.w - kMarkW;
   std::string thru = l.thru.empty() ? std::string() : l.thru == "F" ? std::string("F") : "thru " + l.thru;
-  float thruW = thru.empty() ? 0 : ui::textWidth(c, thru, Weight::Medium, 16) + 10;
-  float right = r.x + r.w - scoreW - thruW;
-  ui::label(c, l.name, x, r.y + 6, Weight::Bold, 23, ink, right - x);
-  if (!thru.empty()) ui::label(c, thru, right, r.y + 12, Weight::Medium, 16, ink.withAlpha(0.6f));
-  ui::label(c, l.score, r.x + r.w - scoreW, r.y + 2, Weight::Bold, 27, ink.withAlpha(dim ? 0.55f : 1.0f), scoreW, Align::Right);
+  float thruW = thru.empty() ? 0 : ui::textWidth(c, thru, Weight::Medium, 14) + 12;
+  ui::label(c, l.name, x, r.y + 5, Weight::Bold, 21, ink, right - scoreW - thruW - x - 6);
+  if (!thru.empty()) ui::label(c, thru, right - scoreW - thruW, r.y + 10, Weight::Medium, 14, ink.withAlpha(ink.a * 0.6f));
+  ui::label(c, l.score, right - scoreW, r.y + 2, Weight::Bold, 25, ink.withAlpha(ink.a * (dim ? 0.55f : 1.0f)), scoreW + 2);
+}
+
+// A card's or race weekend's parts as a track: each part a short bar with
+// its name under it. Done parts dim, the one on now filled (red while
+// live), the rest empty; the current one's name bold.
+void timeline(ui::Ctx& c, const std::vector<EventPart>& parts, Rect r, bool focused, float alpha, bool live) {
+  Color ink = focused ? theme::black(alpha) : theme::white(alpha);
+  Color red = focused ? theme::hex(0xD32F2F, alpha) : theme::hex(theme::kWatching, alpha);
+  constexpr float kGap = 6;
+  float n = static_cast<float>(parts.size());
+  float w = (r.w - kGap * (n - 1)) / n;
+  float x = r.x;
+  for (const EventPart& p : parts) {
+    Rect bar{x, r.y + 2, w, 5};
+    c.g.fill(bar, ink.withAlpha(ink.a * 0.14f), 2.5f);
+    double fill = std::clamp(p.fill, 0.0, 1.0);
+    if (fill > 0) {
+      Color col = p.current ? (live ? red : ink) : ink.withAlpha(ink.a * 0.45f);
+      c.g.fill({x, bar.y, std::max(5.0f, w * static_cast<float>(fill)), 5}, col, 2.5f);
+    }
+    ui::label(c, p.label, x, r.y + 12, p.current ? Weight::Bold : Weight::Medium, 14,
+              ink.withAlpha(ink.a * (p.current ? 1.0f : 0.55f)), w);
+    x += w + kGap;
+  }
 }
 
 }  // namespace
@@ -203,7 +263,7 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool mixed) {
   if (focused) {
     // Scale 1.04 with a shadow.
     float dw = r.w * 0.02f, dh = r.h * 0.02f;
-    c.g.fill({r.x - dw + 4, r.y - dh + 14, r.w + 2 * dw - 8, r.h + 2 * dh}, theme::black(0.35f), 20);
+    c.g.fill({r.x - dw + 4, r.y - dh + 12, r.w + 2 * dw - 8, r.h + 2 * dh}, theme::black(0.35f), 20);
     r = {r.x - dw, r.y - dh, r.w + 2 * dw, r.h + 2 * dh};
   }
   float alpha = t.watchable || focused ? 1.0f : 0.6f;
@@ -211,147 +271,158 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool mixed) {
   c.g.fill(r, fill, 16);
   Color ink = focused ? theme::black(alpha) : theme::white(alpha);
   float x = r.x + 16, w = r.w - 32;
+  bool live = t.pill == EventTile::Pill::Live || t.pill == EventTile::Pill::LiveOutline;
 
-  // Top line: the sport's icon and name, then the competition ("CRICKET ·
-  // 3rd Test"); in a sport's own row, the competition alone. A sport the
-  // app doesn't know is "LIVE EVENT" by a dashed ring, never a guess.
-  float ey = r.y + 14;
+  // Top line: the sport's icon (red while live: it is the live mark), the
+  // state, and at the right the competition, an alert and the star.
+  float ty = r.y + 14;
+  Color red = t.pill == EventTile::Pill::LiveOutline ? theme::hex(theme::kWatching, 0.6f)
+              : focused                            ? theme::hex(0xD32F2F)
+                                                   : theme::hex(theme::kWatching);
+  Color mark = live ? red : ink;
+  Rect ib{x, ty, 21, 21};
+  if (t.sport.empty() && !t.highSchool) {
+    // A sport the app doesn't know: a dashed ring, never a guess.
+    for (int i = 0; i < 8; ++i) {
+      float a = static_cast<float>(i) * 0.785398f;
+      c.g.fill({ib.x + 10.5f + 8 * std::cos(a) - 1.5f, ib.y + 10.5f + 8 * std::sin(a) - 1.5f, 3, 3}, mark, 1.5f);
+    }
+  } else if (unsigned icon = c.icons ? c.icons->get(t.icon) : 0) {
+    c.g.textureAlpha(icon, ib, mark);
+  } else {
+    ui::labelIn(c, t.symbol.empty() ? "\xe2\x97\x8f" : t.symbol, ib, Weight::Bold, 14, mark, Align::Center);
+  }
+  float px = x + 30;
+  constexpr int kStatusPx = 17;
+  if (live) {
+    px += ui::label(c, t.status.empty() ? std::string("LIVE") : t.status, px, ty + 1, Weight::Bold, kStatusPx, red);
+  } else if (t.pill == EventTile::Pill::Final) {
+    px += ui::label(c, t.pillText.empty() ? std::string("Final") : t.pillText, px, ty + 1, Weight::Bold, kStatusPx, ink);
+  } else {
+    float pw = pill(c, t, px, ty - 2, focused);
+    if (pw > 0) px += pw + 8;
+    if (!t.status.empty()) {
+      bool bold = t.statusBold || pw == 0;
+      px += ui::label(c, t.status, px, ty + 1, bold ? Weight::Bold : Weight::Medium, kStatusPx,
+                      ink.withAlpha(ink.a * (bold ? 1.0f : 0.7f)), x + w - px);
+    }
+    if (!t.statusExtra.empty()) {
+      Color extra = t.soon ? (focused ? theme::hex(0x9A5B00) : theme::hex(kDelayed)) : ink.withAlpha(ink.a * 0.7f);
+      px += ui::label(c, " \xc2\xb7 " + t.statusExtra, px, ty + 1, t.soon ? Weight::Bold : Weight::Regular, kStatusPx, extra,
+                      x + w - px);
+    }
+  }
   float right = x + w;
   if (t.favorite) {
-    ui::label(c, "\xe2\x98\x85", right - 18, ey - 2, Weight::Bold, 18, theme::hex(theme::kStar));
-    right -= 26;
+    ui::label(c, "\xe2\x98\x85", right - 17, ty - 1, Weight::Bold, 17, theme::hex(theme::kStar));
+    right -= 25;
   }
   if (t.tagAlert && !t.tag.empty()) {
     // "RED ZONE", "WHIP-AROUND": an alert, at the right.
-    float tw = std::min(ui::textWidth(c, t.tag, Weight::Bold, 14) + 12, w * 0.45f);
-    Rect tr{right - tw, ey - 2, tw, 22};
+    float tw = std::min(ui::textWidth(c, t.tag, Weight::Bold, 13) + 12, w * 0.4f);
+    Rect tr{right - tw, ty - 1, tw, 22};
     c.g.fill(tr, theme::hex(0xC62828), 5);
-    ui::labelIn(c, t.tag, {tr.x + 6, tr.y, tr.w - 12, tr.h}, Weight::Bold, 14, theme::white(), Align::Center);
+    ui::labelIn(c, t.tag, {tr.x + 6, tr.y, tr.w - 12, tr.h}, Weight::Bold, 13, theme::white(), Align::Center);
     right -= tw + 8;
   }
-  float ex = x;
   std::string comp = t.competition;
-  if (mixed) {
-    Rect ib{ex, ey - 1, 20, 20};
-    if (t.sport.empty()) {
-      // A dashed ring: eight dots round a circle.
-      for (int i = 0; i < 8; ++i) {
-        float a = static_cast<float>(i) * 0.785398f;
-        c.g.fill({ib.x + 10 + 8 * std::cos(a) - 1.5f, ib.y + 10 + 8 * std::sin(a) - 1.5f, 3, 3}, ink.withAlpha(0.7f), 1.5f);
-      }
-    } else if (unsigned icon = c.icons ? c.icons->get(t.icon) : 0) {
-      c.g.textureAlpha(icon, ib, ink);
-    } else {
-      ui::labelIn(c, t.symbol.empty() ? "\xe2\x97\x8f" : t.symbol, ib, Weight::Bold, 14, ink, Align::Center);
-    }
-    ex += 28;
-    std::string word = !t.sport.empty() ? t.sport : t.highSchool ? "HIGH SCHOOL" : "LIVE EVENT";
-    if (t.highSchool && !t.sport.empty()) comp = comp.empty() ? "HIGH SCHOOL" : "HIGH SCHOOL \xc2\xb7 " + comp;
-    ex += ui::label(c, word, ex, ey, Weight::Bold, 16, ink, right - ex);
-    if (!comp.empty()) comp = " \xc2\xb7 " + comp;
-  } else if (t.highSchool) {
-    comp = comp.empty() ? "HIGH SCHOOL" : "HIGH SCHOOL \xc2\xb7 " + comp;
-  }
-  if (!comp.empty() && ex < right) ui::label(c, comp, ex, ey, Weight::Medium, 16, ink.withAlpha(0.6f), right - ex);
+  if (comp.empty()) comp = !t.sport.empty() && mixed ? t.sport : t.sport.empty() && !t.highSchool ? "LIVE EVENT" : "";
+  if (t.highSchool) comp = comp.empty() ? "HIGH SCHOOL" : "HIGH SCHOOL \xc2\xb7 " + comp;
+  float room = right - px - 14;
+  if (!comp.empty() && room > 40)
+    ui::label(c, comp, right - room, ty + 3, Weight::Medium, 14, ink.withAlpha(ink.a * 0.55f), room, Align::Right);
 
-  // Status line: a red dot and LIVE, then the clock; other states keep
-  // their pill (Final, DELAYED, BREAK, Not live...).
-  float sy = r.y + 42;
-  float px = x;
-  if (t.pill == EventTile::Pill::Live || t.pill == EventTile::Pill::LiveOutline) {
-    // Not in your channels: the same, dimmer.
-    Color red = t.pill == EventTile::Pill::Live ? (focused ? theme::hex(0xD32F2F) : theme::hex(theme::kWatching))
-                                               : theme::hex(theme::kWatching, 0.6f);
-    c.g.fill({px, sy + 8, 11, 11}, red, 5.5f);
-    px += 17;
-    px += ui::label(c, "LIVE", px, sy + 2, Weight::Bold, 19, red) + 10;
-  } else {
-    float pw = pill(c, t, px, sy + 1, focused);
-    if (pw > 0) px += pw + 10;
-  }
-  if (!t.status.empty()) {
-    bool bold = t.statusBold || t.pill == EventTile::Pill::Live || t.pill == EventTile::Pill::LiveOutline;
-    float tw = ui::label(c, t.status, px, sy + 2, bold ? Weight::Bold : Weight::Medium, 19,
-                         ink.withAlpha((bold ? 1.0f : 0.8f) * alpha), x + w - px);
-    if (!t.statusExtra.empty() && px + tw + 8 < x + w) {
-      Color extra = t.soon ? (focused ? theme::hex(0x9A5B00) : theme::hex(kDelayed)) : ink.withAlpha(0.7f * alpha);
-      ui::label(c, t.statusExtra, px + tw + 8, sy + 2, t.soon ? Weight::Bold : Weight::Regular, 19, extra,
-                x + w - px - tw - 8);
-    }
-  }
-
-  // Middle.
-  float my = r.y + 72;
-  if (!t.parts.empty()) {
-    ui::label(c, t.title, x, my, Weight::Bold, 24, ink, w);
-    if (!t.subtitle.empty()) ui::label(c, t.subtitle, x, my + 34, Weight::Regular, 18, ink.withAlpha(0.7f * alpha), w);
-    float pw = (w - 8 * static_cast<float>(t.parts.size() - 1)) / static_cast<float>(t.parts.size());
-    float bx = x;
-    for (const EventPart& p : t.parts) {
-      Rect bar{bx, my + 68, pw, 6};
-      c.g.fill(bar, ink.withAlpha(0.14f), 3);
-      if (p.fill > 0) c.g.fill({bx, bar.y, std::max(6.0f, pw * static_cast<float>(p.fill)), 6}, ink.withAlpha(p.current ? 1 : 0.4f), 3);
-      ui::label(c, p.label, bx, my + 80, p.current ? Weight::Bold : Weight::Regular, 16, ink.withAlpha(p.current ? 1 : 0.65f), pw);
-      bx += pw + 8;
-    }
+  // The middle, centred under the top line: team rows, golf leaders, or a
+  // title with its subtitle, podium or the event's timeline; then the
+  // game's own detail when there is one.
+  enum class Part : uint8_t { Side0, Side1, Leader0, Leader1, Title0, Title1, Subtitle, Podium, Timeline, Detail };
+  struct Item {
+    Part part;
+    float h;
+  };
+  std::array<Item, 8> items{};
+  size_t n = 0;
+  std::vector<std::string> titleLines;
+  if (t.sides.size() == 2) {
+    items[n++] = {Part::Side0, kRowH};
+    items[n++] = {Part::Side1, kRowH};
   } else if (!t.leaders.empty()) {
-    for (size_t i = 0; i < t.leaders.size() && i < 2; ++i)
-      leaderLine(c, t.leaders[i], {x, my - 4 + 42 * static_cast<float>(i), w, 40}, focused, i > 0);
-  } else if (t.sides.size() == 2) {
-    sideLine(c, t.sides[0], {x, my - 4, w, 40}, focused);
-    sideLine(c, t.sides[1], {x, my + 38, w, 40}, focused);
+    items[n++] = {Part::Leader0, kRowH};
+    if (t.leaders.size() > 1) items[n++] = {Part::Leader1, kRowH};
   } else {
-    Rect box{x, my + 6, 52, 52};
-    c.g.fill(box, ink.withAlpha(focused ? 0.08f : 0.12f), 12);
-    // The sport's icon in the ink colour; its glyph if the file is missing.
-    if (unsigned icon = c.icons ? c.icons->get(t.icon) : 0) {
-      c.g.textureAlpha(icon, {box.x + 11, box.y + 11, 30, 30}, ink);
-    } else {
-      std::string glyph = t.symbol.empty() ? "\xe2\x97\x8f" : t.symbol;
-      ui::labelIn(c, glyph, box, Weight::Bold, 22, ink, Align::Center);
-    }
-    std::vector<std::string> lines = c.t.wrap(t.title, Weight::Bold, 24, w - 66, t.subtitle.empty() ? 2 : 1);
-    float ty = my + (lines.size() > 1 || !t.subtitle.empty() ? 4 : 18);
-    for (const std::string& line : lines) {
-      ui::label(c, line, x + 66, ty, Weight::Bold, 24, ink);
-      ty += 30;
-    }
-    if (!t.subtitle.empty()) {
-      ui::label(c, t.subtitle, x + 66, ty, Weight::Regular, 18, ink.withAlpha(0.7f * alpha), w - 66);
-      ty += 26;
-    }
-    // A finished session's top three: "1 VER  2 NOR  3 LEC" in team colours.
-    float podX = x + 66;
-    for (size_t i = 0; i < t.podium.size(); ++i) {
-      std::string place = std::to_string(i + 1);
-      podX += ui::label(c, place, podX, ty + 2, Weight::Bold, 16, ink.withAlpha(0.55f * alpha)) + 4;
-      c.g.fill({podX, ty + 4, 4, 18}, theme::hex(t.podium[i].color, alpha), 2);
-      podX += 8;
-      podX += ui::label(c, t.podium[i].code, podX, ty, Weight::Bold, 19, ink) + 14;
-    }
+    bool alone = t.subtitle.empty() && t.podium.empty() && t.parts.empty();
+    titleLines = c.t.wrap(t.title, Weight::Bold, 22, w, alone ? 2 : 1);
+    if (!titleLines.empty()) items[n++] = {Part::Title0, 30};
+    if (titleLines.size() > 1) items[n++] = {Part::Title1, 30};
+    if (!t.podium.empty()) items[n++] = {Part::Podium, 28};
+    else if (!t.parts.empty()) items[n++] = {Part::Timeline, 32};
+    else if (!t.subtitle.empty()) items[n++] = {Part::Subtitle, 24};
   }
-
-  // Bottom line: the game's own detail (runners, the chase, down and
-  // distance, the court, "5 boards"); nothing about where it plays.
-  float fy = r.y + r.h - 15 - 28;
-  float fx = x;
-  if (t.bases.size() == 3) {
-    bases(c, t.bases, fx, fy + 2, ink.withAlpha(0.95f * alpha));
-    fx += 30 + 10;
-  }
-  if (!t.situation.empty()) {
-    Color sc = t.redZone ? (focused ? theme::hex(0xBF1A26) : theme::hex(theme::kWatching)) : ink.withAlpha(0.85f * alpha);
-    ui::label(c, t.situation, fx, fy + 3, Weight::Bold, 18, sc, x + w - fx);
-  } else if (!t.detail.empty()) {
-    ui::label(c, t.detail, fx, fy + 3, Weight::Regular, 18, ink.withAlpha(0.75f * alpha), x + w - fx);
+  bool hasDetail = !t.situation.empty() || !t.detail.empty() || t.bases.size() == 3;
+  if (hasDetail && n < items.size()) items[n++] = {Part::Detail, 22};
+  float total = 0;
+  for (size_t i = 0; i < n; ++i) total += items[i].h + (i ? kLineGap : 0);
+  float top = r.y + 44, bottom = r.y + r.h - 14;
+  float y = top + std::max(0.0f, (bottom - top - total) * 0.5f);
+  for (size_t i = 0; i < n; ++i) {
+    const Item& it = items[i];
+    Rect row{x, y, w, it.h};
+    switch (it.part) {
+      case Part::Side0:
+      case Part::Side1: {
+        const EventSide& s = t.sides[it.part == Part::Side0 ? 0 : 1];
+        sideLine(c, s, row, focused, alpha, s.trails && (live || t.finished), t.finished && s.leads, live);
+        break;
+      }
+      case Part::Leader0:
+      case Part::Leader1:
+        leaderLine(c, t.leaders[it.part == Part::Leader0 ? 0 : 1], row, focused, alpha, it.part == Part::Leader1);
+        break;
+      case Part::Title0:
+      case Part::Title1:
+        ui::label(c, titleLines[it.part == Part::Title0 ? 0 : 1], x, y + 2, Weight::Bold, 22, ink, w);
+        break;
+      case Part::Subtitle:
+        ui::label(c, t.subtitle, x, y + 2, Weight::Regular, 16, ink.withAlpha(ink.a * 0.7f), w);
+        break;
+      case Part::Podium: {
+        // A finished session's top three: "1 VER  2 NOR  3 LEC" in team colours.
+        float podX = x;
+        for (size_t k = 0; k < t.podium.size(); ++k) {
+          podX += ui::label(c, std::to_string(k + 1), podX, y + 5, Weight::Bold, 15, ink.withAlpha(ink.a * 0.55f)) + 4;
+          c.g.fill({podX, y + 6, 4, 17}, theme::hex(t.podium[k].color, alpha), 2);
+          podX += 9;
+          podX += ui::label(c, t.podium[k].code, podX, y + 3, Weight::Bold, 18, ink) + 16;
+        }
+        break;
+      }
+      case Part::Timeline:
+        timeline(c, t.parts, row, focused, alpha, live);
+        break;
+      case Part::Detail: {
+        // The game's own detail: runners, the chase, down and distance,
+        // the court, "5 boards"; never where it plays.
+        float fx = x;
+        if (t.bases.size() == 3) {
+          bases(c, t.bases, fx, y - 1, ink.withAlpha(ink.a * 0.95f));
+          fx += 30 + 8;
+        }
+        const std::string& line = !t.situation.empty() ? t.situation : t.detail;
+        Color sc = t.redZone && !t.situation.empty() ? (focused ? theme::hex(0xBF1A26) : theme::hex(0xFF6B61))
+                                                     : ink.withAlpha(ink.a * 0.75f);
+        if (!line.empty()) ui::label(c, line, fx, y + 2, Weight::Bold, 15, sc, x + w - fx);
+        break;
+      }
+    }
+    y += it.h + kLineGap;
   }
 
   // Live progress along the bottom edge.
   if (t.progress >= 0) {
     c.g.pushClip(r);
-    Rect strip{r.x, r.y + r.h - 6, r.w, 6};
+    Rect strip{r.x, r.y + r.h - 5, r.w, 5};
     c.g.fill(strip, focused ? theme::black(0.12f) : theme::white(0.15f));
-    c.g.fill({r.x, strip.y, r.w * static_cast<float>(std::clamp(t.progress, 0.0, 1.0)), 6},
+    c.g.fill({r.x, strip.y, r.w * static_cast<float>(std::clamp(t.progress, 0.0, 1.0)), 5},
              focused ? theme::black() : theme::white(0.75f));
     c.g.popClip();
   }

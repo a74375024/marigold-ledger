@@ -435,3 +435,16 @@ Off until turned on; then on for every channel that has them until turned off. M
 | Panels | Sources, Subtitles, Options, the cameras panel | Floating cards inset from the edges, no fades |
 | Mini guide | Left in the player | A 600-wide card; Left again adds the categories beside it and the card widens; it narrows again when they close |
 | Live Events rail | Left while watching a game | 600 wide; Left again for sports (a red dot where something is live); Right does nothing (other ways to watch are under Sources) |
+
+## Live Events tiles: scoreboard rows (Build 108)
+
+| Area | How to check | Pass |
+|---|---|---|
+| Size | Live Events | Tiles are shorter (360×156); more of the next row shows |
+| Top line | Any tile | The sport's icon, then the state (clock, start time with "· in 25 m", Final, or a pill); the league or round at the right; the icon is red while the game is live (no separate dot) |
+| Spacing | Upcoming and final games | The teams sit centred under the top line; no empty band at the bottom |
+| Scores | Live and final games | Scores line up at the right; the trailing or losing side is dimmed; the winner has a small ◀ after a final; possession shows the same way while live |
+| Detail | A live football or baseball game | Down and distance (red in the red zone) or runners and count under the teams |
+| Sets | Tennis, volleyball | Sets in columns, the set on now bold |
+| Races and cards | A race weekend, a UFC card | Title with a track of the sessions or card parts: done parts dim, the current one bold (filling red while live) |
+| Scores off | Options › Show scores off | Same layout, no numbers, sets, podiums or game detail |

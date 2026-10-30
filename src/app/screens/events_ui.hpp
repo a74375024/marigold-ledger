@@ -1,4 +1,4 @@
-// Drawing shared by the Live Events screens: the 360x230 tile, team badges,
+// Drawing shared by the Live Events screens: the 360x156 tile, team badges,
 // status pills and the hero backdrop (LiveEventTile, TeamBadge in tvOS).
 #pragma once
 
@@ -8,7 +8,7 @@
 namespace marigold::app::events_ui {
 
 constexpr float kTileW = 360;
-constexpr float kTileH = 230;
+constexpr float kTileH = 156;
 
 // A team badge: the logo when it has loaded, else a colour circle with the
 // abbreviation. `size` is the diameter.
