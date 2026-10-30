@@ -63,9 +63,14 @@ void Navigator::draw(ui::Ctx& c) {
   for (size_t i = first; i < stack_.size(); ++i) {
     // Only the top screen registers pointer targets.
     std::vector<ui::HitRegion>* hits = c.hits;
-    if (i + 1 != stack_.size()) c.hits = nullptr;
+    bool covered = c.covered;
+    if (i + 1 != stack_.size()) {
+      c.hits = nullptr;
+      c.covered = true;
+    }
     stack_[i]->draw(c);
     c.hits = hits;
+    c.covered = covered;
   }
 }
 

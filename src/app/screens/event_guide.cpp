@@ -104,6 +104,9 @@ class EventGuide : public Screen {
           app_.nav().pop();
         }
         return true;
+      case Key::Guide:
+        app_.nav().pop();
+        return true;
       default:
         return e.key != Key::Back;
     }

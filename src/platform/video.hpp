@@ -66,9 +66,13 @@ class Video {
   // when they change.
   std::vector<std::string> textLines(uint64_t* version) const;
   // The player draws the text over the picture itself (tvOS: VLC), in this
-  // size (0..2) and look (0 box, 1 outline, 2 shadow) where it can.
+  // size (0..3) and look (0 box, 1 outline, 2 shadow) where it can.
   static bool drawsText();
   void setTextStyle(int size, int look);
+  // The system's own captions switch (Android: Accessibility › Captions;
+  // Apple TV: Accessibility › Subtitles and Captioning): 1 on, 0 off, -1
+  // when the platform has none (webOS).
+  static int systemCaptions();
 
  private:
   bool started_ = false;

@@ -465,3 +465,32 @@ Off until turned on; then on for every channel that has them until turned off. M
 | Other languages | Danish, Italian, Brazilian event feeds | "Quarterfinals", "Day 2", "Finals" in place of Kvartfinaler, Giorno 2, Finais |
 | Other countries | A match only on another country's foreign-language feeds | Not in Live now; under More events |
 | Failing groups | A group whose feeds keep failing to start this week | Its tiles after the others in their row (the report's group_starts says "1 of 4 started") |
+
+## Player controls and the guide in the player (Build 110)
+
+| Area | How to check | Pass |
+|---|---|---|
+| Flipping | Up, pause a second, then Down, on every remote | Down always goes back down; it never opens buttons. The banner shows where Up and Down go (their numbers) |
+| CH keys | CH+ on LG (or a remote with CH keys) | Goes to the next higher number; Up goes to the channel above (Options › Watching › Up arrow goes to higher numbers flips Up) |
+| Controls | OK while watching | The banner with buttons: Subtitles first (highlighted), Aa, Sources, Guide, Back to…, Favorite, More. Up/Down still flip and close them |
+| Subtitles | OK, then OK again (a moment later) | Subtitles switch on or off; a large notice says so and how to undo. Two quick OKs do nothing |
+| Subtitle button | With subtitles on | It shows the language ("English ✓"), "On · waiting…" before captions arrive, or "no Español here" when the picked one is missing |
+| Aa | OK on Aa, or hold OK on Subtitles | Languages and style in one panel; Size has Extra large |
+| Languages | Español on a Spanish channel, then an English channel | The English channel keeps its own setting (Options › Watching › Subtitles has a switch for each) |
+| LG Green / CC key | Press it while watching | Subtitles on or off in one press, with the notice |
+| Fire TV system captions | Settings › Accessibility › Captions on, back to the app | Subtitles turn on within a few seconds (and off when it's turned off) |
+| One layer | Banner up, then Left | Only the guide shows; no banner under it. Back from Sources/Options returns to the plain picture |
+| Back | Back with the banner up, then on a clear picture | Hides the banner; on a clear picture "Press Back again to leave · ▶ Back to …"; a second Back leaves |
+| Back to | Watch A for 15 s, flip through B and C quickly, press Right | Goes to A, not C; Right again goes back to where you were |
+| Exit (LG) | Exit while the controls are up | Everything clears, the channel keeps playing |
+| Numbers | Type 2, 0, 6 and press OK | Tunes 206 at once |
+| Play/pause | Press it while watching | "Live TV can't be paused" |
+| Android Guide / Info | Press Guide, then Info | Guide opens the guide; Info shows the banner |
+| Reminder while watching | Let a reminder fire, press OK | Tunes in place; Back once leaves the player |
+| Pointer (LG) | Wave the remote | The controls show with nothing highlighted; a click on the picture closes them; the wheel over a button doesn't flip |
+| Apple TV swipes | Controls up, swipe along the buttons at a slant | Moves along the buttons; no channel change |
+| Guide | Left while watching | A full-height grid on the left, the game playing on the right: 2½ hours, the playing channel marked WATCHING, tabs Now / Tonight / Tomorrow and the categories (Up from the top row) |
+| Guide time | Right to the edge, then Back | The window slides later; Back returns to now; Back again closes |
+| Guide OK | OK on a show on now; OK on a later show; hold OK on a later show | Tunes and closes; opens details (Watch tunes in place); sets a reminder with a notice |
+| Guide numbers | Type a channel number in the guide | Jumps to that row without tuning |
+| Guide pointer | Click a show, the ▶ arrow, a tab, and beside the guide | Focuses or opens it; the window slides; the tab applies; the guide closes |

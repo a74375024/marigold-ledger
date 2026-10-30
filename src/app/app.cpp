@@ -81,9 +81,12 @@ void App::dispatch(const KeyEvent& k) {
     if (k.key == Key::Ok) {
       std::string id = due->channelId;
       store_->dismissReminder();
+      // Already watching full screen: the player tunes in place (no second
+      // player on top of it).
+      bool watching = playback_->active() && playback_->full();
       if (playback_->tune(id)) {
         playback_->setFull();
-        nav_.push(makePlayer(*this));
+        if (!watching) nav_.push(makePlayer(*this));
       }
       return;
     }
@@ -98,7 +101,8 @@ void App::dispatch(const KeyEvent& k) {
     if (nav_.size() > 1) nav_.pop();
     else window_.leave();
   }
-  if (k.key == Key::Exit) quit_ = true;
+  // Exit quits, unless the screen used it (the player clears its overlays).
+  if (k.key == Key::Exit && !used) quit_ = true;
 }
 
 void App::handle(const platform::Event& e) {
@@ -154,7 +158,9 @@ void App::handle(const platform::Event& e) {
         }
         break;  // reported on release or after the hold time (frame())
       }
-      dispatch({key, e.repeat, false});
+      KeyEvent k{key, e.repeat, false};
+      k.swipe = e.swipe;
+      dispatch(k);
       break;
     }
     case Type::KeyUp: {
@@ -179,19 +185,34 @@ void App::handle(const platform::Event& e) {
       }
       break;
     }
-    case Type::PointerDown:
-      okDown_ = true;
-      okLongSent_ = false;
-      okDownAt_ = window_.ticks();
+    case Type::PointerDown: {
+      // A click is OK. Only where OK has a hold menu does a slow click count
+      // as holding it; elsewhere it clicks on release, however slow.
+      Screen* top = nav_.top();
+      if (top && top->holdsOk()) {
+        okDown_ = true;
+        okLongSent_ = false;
+        okDownAt_ = window_.ticks();
+      } else {
+        clickDown_ = true;
+      }
       break;
+    }
     case Type::PointerUp:
       if (okDown_) {
         okDown_ = false;
         if (!okLongSent_) dispatch({Key::Ok, false, false});
+      } else if (clickDown_) {
+        clickDown_ = false;
+        dispatch({Key::Ok, false, false});
       }
       break;
     case Type::Wheel:
-      if (e.wheel != 0) dispatch({e.wheel > 0 ? Key::Up : Key::Down, false, false});
+      if (e.wheel != 0) {
+        KeyEvent k{e.wheel > 0 ? Key::Up : Key::Down, false, false};
+        k.wheel = true;
+        dispatch(k);
+      }
       break;
     default:
       break;

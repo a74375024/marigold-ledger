@@ -185,6 +185,8 @@ class Session {
   Hooks hooks_;
   playback::Recovery rec_;
   std::string entry_, previous_, lastWatched_;
+  uint32_t watchedAt_ = 0;  // when lastWatched_ began
+  bool bouncing_ = false;   // this tune is previous()
   std::vector<std::string> flip_;
   std::vector<Feed> feeds_;
   bool full_ = false;

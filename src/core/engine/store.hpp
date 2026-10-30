@@ -143,18 +143,38 @@ struct Settings {
   bool clock24 = false;
   bool playerTipsShown = false;  // the one-time "Getting around" card in the player
   // Subtitles: off until turned on, then on for every channel that has them
-  // until turned off.
+  // until turned off. English-language channels and Spanish-language ones
+  // each keep their own choice (subtitleChoice()).
   bool subtitles = false;
   std::string subtitleLanguage;  // the language picked last ("" = each channel's own)
-  int subtitleSize = 1;          // 0 small, 1 medium, 2 large
+  bool subtitlesEs = false;      // the same, for Spanish-language channels
+  std::string subtitleLanguageEs;
+  int subtitleSize = 1;          // 0 small, 1 medium, 2 large, 3 extra large
   int subtitleLook = 0;          // 0 box, 1 outline, 2 shadow
   bool subtitleSentenceCase = false;
   bool subtitleTop = false;
   // webOS: every channel goes through the app's local relay (captions can
   // be read on the way); off plays continuous TS feeds directly again.
   bool playThroughApp = true;
+  // The player's Up arrow goes to the channel above in the list (lower
+  // numbers), as the guide does; on, it goes to higher numbers, as CH+ does.
+  bool upGoesHigher = false;
+  // The system's captions switch when last seen (Android, Apple TV): -1 not
+  // read yet. Turning it on or off there turns subtitles on or off here.
+  int systemCaptions = -1;
   std::set<std::string> guideShards;  // outside listings to use; empty = the defaults
 };
+
+// The subtitles choice for a channel's language: on/off and the language
+// picked last ("" = the channel's own).
+struct SubtitleChoice {
+  bool on = false;
+  std::string language;
+};
+SubtitleChoice subtitleChoice(const Settings& s, bool spanishChannel);
+void setSubtitleChoice(Settings& s, bool spanishChannel, const SubtitleChoice& c);
+// Subtitles are on for either kind of channel.
+inline bool anySubtitles(const Settings& s) { return s.subtitles || s.subtitlesEs; }
 
 // How long a version this TV couldn't play is tried after the others.
 inline constexpr time::Seconds kUnplayableFor = 7 * 24 * 3600;

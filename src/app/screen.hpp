@@ -18,6 +18,8 @@ struct KeyEvent {
   Key key = Key::Unknown;
   bool repeat = false;     // held down (arrows auto-repeat)
   bool longPress = false;  // OK held for 700 ms
+  bool wheel = false;      // Up/Down from the pointer's wheel (LG)
+  bool swipe = false;      // an arrow from a clickpad swipe (Apple TV)
 };
 
 class Screen {

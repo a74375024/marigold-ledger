@@ -31,7 +31,8 @@ TEST_CASE("hints: the LG remote keeps its colour keys") {
   CHECK(playerOptions(RemoteKeys::lg()));
   auto tips = gettingAround(RemoteKeys::lg());
   REQUIRE(tips.size() == 6);
-  CHECK(tips[4].key.colour == Colour::Red);
+  CHECK(tips[3].title == "Subtitles & more");
+  CHECK(tips[4].key.colour == Colour::Green);
   CHECK(tips[5].title == "Number keys");
 }
 
@@ -47,15 +48,14 @@ TEST_CASE("hints: a Fire TV remote gets Menu, play/pause and rewind/fast forward
   Bar e = eventsBoard(k);
   CHECK(labels(e) == "Where to Watch | Guide");
   CHECK(e.keys[1].icons == std::vector<std::string>{"key-playpause"});
-  CHECK(playerSources(k).icons == std::vector<std::string>{"key-menu"});
+  CHECK(playerSources(k).cap == "OK");  // a button in the controls
   CHECK_FALSE(playerOptions(k));
   REQUIRE(pickAnotherSource(k));
   CHECK(pickAnotherSource(k)->icons == std::vector<std::string>{"key-menu"});
   auto tips = gettingAround(k);
-  REQUIRE(tips.size() == 6);
-  CHECK(tips[2].detail == "Up or Down");
-  CHECK(tips[4].key.icons == std::vector<std::string>{"key-menu"});
-  CHECK(tips[5].title == "Back");
+  REQUIRE(tips.size() == 5);
+  CHECK(tips[2].detail == "Up or Down, always");
+  CHECK(tips[4].title == "Back");
 }
 
 TEST_CASE("hints: any other remote is shown only what every remote has") {
@@ -68,9 +68,9 @@ TEST_CASE("hints: any other remote is shown only what every remote has") {
   Bar e = eventsBoard(k);
   REQUIRE(e.keys.size() == 1);
   CHECK(e.keys[0].cap == "Back");
-  CHECK(playerSources(k).cap == "\xe2\x96\xbc");  // the action row opens on Sources
+  CHECK(playerSources(k).cap == "OK");
   CHECK_FALSE(pickAnotherSource(k));
-  CHECK(gettingAround(k)[4].detail == "Down, then OK: another feed of this channel");
+  CHECK(gettingAround(k)[4].detail == "Closes what's on screen; again to leave");
 
   // Pressing Menu once shows that it has one.
   k.saw(marigold::Key::Menu);
@@ -88,8 +88,9 @@ TEST_CASE("hints: the Siri Remote gets hold OK and play/pause") {
   Bar e = eventsBoard(k);
   CHECK(labels(e) == "Guide");
   CHECK(e.keys[0].icons == std::vector<std::string>{"key-playpause"});
-  CHECK(playerSources(k).cap == "\xe2\x96\xbc");
+  CHECK(playerSources(k).cap == "Click");
   CHECK_FALSE(pickAnotherSource(k));
+  CHECK(gettingAround(k)[3].key.cap == "Click");
 }
 
 TEST_CASE("hints: setup screens use each remote's own keys") {

@@ -241,7 +241,11 @@ static MGViewController* gController;
                       : swipe.direction == UISwipeGestureRecognizerDirectionDown ? marigold::Key::Down
                       : swipe.direction == UISwipeGestureRecognizerDirectionLeft ? marigold::Key::Left
                                                                                  : marigold::Key::Right;
-  marigold::tvos::push(keyEvent(key, true, false));
+  // Marked as a swipe: the player only takes them sideways while its
+  // controls are up (a slanted swipe along the buttons isn't a flip).
+  marigold::platform::Event down = keyEvent(key, true, false);
+  down.swipe = true;
+  marigold::tvos::push(down);
   marigold::tvos::push(keyEvent(key, false, false));
 }
 

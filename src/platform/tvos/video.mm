@@ -90,8 +90,8 @@ TextState gText;  // guarded by gMu
     look = gText.look;
     gText.tracks.clear();
   }
-  static const int kScale[] = {80, 100, 130};
-  [media addOption:[NSString stringWithFormat:@":sub-text-scale=%d", kScale[std::clamp(size, 0, 2)]]];
+  static const int kScale[] = {80, 100, 130, 170};  // small, medium, large, extra large
+  [media addOption:[NSString stringWithFormat:@":sub-text-scale=%d", kScale[std::clamp(size, 0, 3)]]];
   [media addOption:[NSString stringWithFormat:@":freetype-background-opacity=%d", look == 0 ? 200 : 0]];
   [media addOption:[NSString stringWithFormat:@":freetype-outline-thickness=%d", look == 1 ? 6 : 0]];
   [media addOption:[NSString stringWithFormat:@":freetype-shadow-opacity=%d", look == 2 ? 200 : 0]];
@@ -314,6 +314,8 @@ std::vector<std::string> Video::textLines(uint64_t* version) const {
 }
 
 bool Video::drawsText() { return true; }
+
+int Video::systemCaptions() { return UIAccessibilityIsClosedCaptioningEnabled() ? 1 : 0; }
 
 void Video::setTextStyle(int size, int look) {
   std::lock_guard<std::mutex> lock(gMu);

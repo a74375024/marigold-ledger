@@ -32,6 +32,7 @@ struct Event {
   Type type = Type::None;
   Key key = Key::Unknown;
   bool repeat = false;  // a held key repeating
+  bool swipe = false;   // KeyDown: an arrow from a clickpad swipe (tvOS)
   float x = 0, y = 0;   // pointer, in drawable pixels
   int wheel = 0;
   // Text: the whole field value; `done` when the keyboard closed, with

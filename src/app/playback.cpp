@@ -68,7 +68,7 @@ class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
     bool hls = looksHls(url);
     const Settings& set = app_.store().settings();
     unsigned relay = 0;
-    if (!asGiven && (hls || set.subtitles || set.playThroughApp) && !proxyFailed_.count(f.channelId)) {
+    if (!asGiven && (hls || anySubtitles(set) || set.playThroughApp) && !proxyFailed_.count(f.channelId)) {
       std::string local = proxy_.localUrl(url, headers, !hls);
       if (!local.empty()) {
         url = local;
@@ -240,15 +240,72 @@ void Playback::subtitlesChanged() {
   app_.video().setTextStyle(set.subtitleSize, set.subtitleLook);
   // webOS: captions are read on the way through the relay, which a
   // continuous TS feed only takes with subtitles on; play it again that way.
-  if (set.subtitles && relayPossible_ && active() && !failed() && !subtitles_->fromStream())
+  if (subtitleChoice().on && relayPossible_ && active() && !failed() && !subtitles_->fromStream())
     restart("subtitles on");
   app_.invalidate();
 }
 
+bool Playback::spanishChannel() const { return channelLanguage(app_) != "English"; }
+
+SubtitleChoice Playback::subtitleChoice() const {
+  return engine::subtitleChoice(app_.store().settings(), spanishChannel());
+}
+
+void Playback::setSubtitleChoice(const SubtitleChoice& c) {
+  Settings s = app_.store().settings();
+  engine::setSubtitleChoice(s, spanishChannel(), c);
+  app_.store().setSettings(s);
+  subtitlesChanged();
+}
+
+bool Playback::toggleSubtitles() {
+  SubtitleChoice c = subtitleChoice();
+  c.on = !c.on;
+  setSubtitleChoice(c);
+  return c.on;
+}
+
+Playback::SubtitleStatus Playback::subtitleStatus() const {
+  SubtitleStatus st;
+  SubtitleChoice c = subtitleChoice();
+  st.on = c.on;
+  if (!c.on) {
+    st.label = "Off";
+    return st;
+  }
+  std::string shown = subtitles_->selectedLabel();
+  if (shown.empty()) {
+    st.label = c.language.empty() ? std::string("On") : c.language;
+    st.detail = "waiting\xe2\x80\xa6";
+    return st;
+  }
+  st.label = shown;
+  if (!c.language.empty() && c.language != shown) st.detail = "no " + c.language + " here";
+  return st;
+}
+
 void Playback::tickSubtitles(uint32_t ms) {
   engine::Subtitles& s = *subtitles_;
+  // The system's captions switch, every few seconds: turned on or off
+  // there, subtitles follow here (both languages). The first reading only
+  // turns them on, never off.
+  if (ms >= systemCheckAt_) {
+    systemCheckAt_ = ms + 5000;
+    int sys = platform::Video::systemCaptions();
+    const Settings& now = app_.store().settings();
+    if (sys >= 0 && sys != now.systemCaptions) {
+      Settings next = now;
+      if (now.systemCaptions >= 0 || sys == 1) next.subtitles = next.subtitlesEs = sys == 1;
+      next.systemCaptions = sys;
+      bool changed = next.subtitles != now.subtitles || next.subtitlesEs != now.subtitlesEs;
+      app_.store().setSettings(next);
+      if (changed) {
+        logNote("captions", sys == 1 ? "turned on in the system settings" : "turned off in the system settings");
+        subtitlesChanged();
+      }
+    }
+  }
   if (!active()) return;
-  const Settings& set = app_.store().settings();
   platform::Video& video = app_.video();
   std::string language = channelLanguage(app_);
   if (!s.fromStream()) {
@@ -272,10 +329,11 @@ void Playback::tickSubtitles(uint32_t ms) {
     }
   }
   // On: the language picked last (or the channel's own); off: none.
-  std::string want = set.subtitles ? s.pick(set.subtitleLanguage) : std::string();
+  SubtitleChoice choice = subtitleChoice();
+  std::string want = choice.on ? s.pick(choice.language) : std::string();
   if (want != s.selected()) {
     s.select(want);
-    if (!s.fromStream()) video.selectText(want, set.subtitles);
+    if (!s.fromStream()) video.selectText(want, choice.on);
   }
   int64_t lead = -1;
   if (s.fromStream()) {
@@ -292,7 +350,7 @@ void Playback::tickSubtitles(uint32_t ms) {
     std::string names;
     for (const engine::CaptionTrack& t : s.tracks()) names += (names.empty() ? "" : ", ") + t.label;
     logNote("captions", "in the stream" + (names.empty() ? std::string() : " (" + names + ")"));
-  } else if (!s.present() && !noneLogged_ && pictureAt_ && ms - pictureAt_ > 60000 && (s.fromStream() || set.subtitles)) {
+  } else if (!s.present() && !noneLogged_ && pictureAt_ && ms - pictureAt_ > 60000 && (s.fromStream() || choice.on)) {
     noneLogged_ = true;
     logNote("captions", "none after a minute");
   }

@@ -75,6 +75,9 @@ struct Ctx {
   std::vector<HitRegion>* hits = nullptr;
   bool pointerActive = false;
   bool clock24 = false;  // Options › Clock
+  // A panel or card is drawn over this screen: it draws only what belongs
+  // under panels (the player: the picture and captions, not its banner).
+  bool covered = false;
 
   void hit(Rect r, int id) const {
     if (hits) hits->push_back({r, id});

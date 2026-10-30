@@ -1,12 +1,16 @@
-// Full screen playback (LiveTVOverlay): the info banner, which also carries
-// every load state (tuning, reconnecting, another feed, still trying, not
-// playing) in one quiet line, with what's on and later on the channel; its
-// key guide; the action row (Sources, Subtitles, Guide, last channel,
-// Favorite, More); the subtitles, lifted over the banner while it shows;
-// the one-time "Getting around" card; channel flipping (the banner shows the
-// channel at once, the one stopped on tunes), previous channel and number
-// keys. With the Magic Remote pointer the row and two edge buttons (Guide,
-// last channel) are clickable.
+// Full screen playback (LiveTVOverlay). Up/Down (and CH, and swipes)
+// always change channel: the banner after a flip only shows information
+// (what's on, later on this channel, where Up and Down go, the keys). OK
+// brings up the controls on the banner, Subtitles first (OK again turns
+// them on or off; Aa or holding OK opens languages and style), then
+// Sources, the guide, the last channel, Favorite, More; Up/Down still flip
+// from there. Changes that stick (subtitles, favorites) say so in a large
+// notice with how to undo them. Back closes what's on top, then asks once
+// before leaving. Under a panel the player draws only the picture and its
+// captions. Also: the one-time "Getting around" card, number keys (OK tunes
+// at once), LG's Green as a CC key, Exit clearing the screen, and the Magic
+// Remote pointer (the controls with nothing highlighted, a click on the
+// picture opening or closing them, two edge buttons for Guide and Last).
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -30,8 +34,12 @@ using ui::Rect;
 using ui::Weight;
 namespace theme = ui::theme;
 
-constexpr uint32_t kBannerMs = 6000;       // after the picture comes up
-constexpr uint32_t kRowIdleMs = 10000;  // the action row hides after this long untouched
+constexpr uint32_t kBannerMs = 5000;       // after the picture comes up
+constexpr uint32_t kRowIdleMs = 12000;  // the controls hide after this long untouched
+constexpr uint32_t kDoubleOkMs = 600;   // an OK this soon after the controls opened is a double press
+constexpr uint32_t kWheelAfterClickMs = 300;  // the wheel turned by pressing it isn't a flip
+constexpr uint32_t kBackAgainMs = 2500;  // "Press Back again to leave"
+constexpr uint32_t kNoticeMs = 3500;     // "Subtitles on", "Added to Favorites"
 constexpr uint32_t kFlipSettleMs = 500;    // channel keys: the channel stopped on tunes
 constexpr uint32_t kStillTryingMs = 7000;  // a first tune without a picture yet
 constexpr uint32_t kBackOnMs = 2000;       // "Back on CNN" after a backup took over
@@ -48,9 +56,10 @@ constexpr int kHitPill = 1;      // + pill index
 constexpr int kHitGuide = 50, kHitLast = 51;
 constexpr int kHitFail = 60;     // + button index
 constexpr int kHitTips = 70;
+constexpr int kHitPicture = 80;  // the picture itself (under everything)
 
 class PlayerScreen : public Screen {
-  bool cameras_ = false;  // the race on screen has cameras (Down opens them)
+  bool cameras_ = false;  // the race on screen has cameras (a Cameras button)
 
  public:
   explicit PlayerScreen(App& app) : Screen(app) { bannerFrom_ = app.ms(); }
@@ -62,11 +71,23 @@ class PlayerScreen : public Screen {
     if (p.active() && p.full()) p.stop();
   }
 
+  // Holding OK on the Subtitles button opens languages and style.
+  bool holdsOk() const override {
+    return zone_ == Zone::Row && pill_ >= 0 && static_cast<size_t>(pill_) < pills_.size() &&
+           pills_[static_cast<size_t>(pill_)] == Pill::Subtitles;
+  }
+
   bool key(const KeyEvent& e) override {
     Playback& p = app_.playback();
+    if (e.key == Key::Ok) lastOkAt_ = app_.ms();
     if (tips_) {
       // "Getting around": OK or Back closes it; other keys wait.
       if (e.key == Key::Ok || e.key == Key::Back) closeTips();
+      return true;
+    }
+    if (e.key == Key::Exit) {
+      // LG Exit: clears the screen, stays on the channel.
+      clearScreen();
       return true;
     }
     if (p.failed()) return failedKey(e);
@@ -88,52 +109,58 @@ class PlayerScreen : public Screen {
       digitsAt_ = app_.ms();
       return true;
     }
+    // OK while a number is typed: tune it now (a cable box's Enter).
+    if (e.key == Key::Ok && !digits_.empty()) {
+      commitDigits();
+      return true;
+    }
     switch (e.key) {
       case Key::Up:
-      case Key::ChannelUp:
-        flipBy(-1);
-        return true;
       case Key::Down:
-        // The banner is up: Down goes to its action row.
-        if (bannerVisible() && p.ready() && pendingFlip_.empty()) {
-          focusRow();
-          return true;
-        }
-        // A race with cameras: Down opens them (channel keys still flip).
-        if (cameras_ && pendingFlip_.empty()) {
-          app_.nav().push(makeCameraPanel(app_));
-          return true;
-        }
-        flipBy(1);
+        // Up/Down always change channel. The pointer's wheel waits a moment
+        // after a click (pressing the wheel turns it a notch).
+        if (e.wheel && app_.ms() - lastOkAt_ < kWheelAfterClickMs) return true;
+        flipBy(arrowStep(e.key));
         return true;
+      case Key::ChannelUp:
       case Key::ChannelDown:
-        flipBy(1);
+        flipBy(e.key == Key::ChannelUp ? 1 : -1);
         return true;
       case Key::Right:
+      case Key::Rewind:  // Fire TV: the key a cable remote's Last sits on
         goPrevious();
         return true;
       case Key::Left:
+      case Key::Guide:
         openGuide();
         return true;
-      case Key::Info:
       case Key::Ok:
-        if (bannerVisible()) bannerUntil_ = 0;
+      case Key::Menu:
+        // The controls, Subtitles first. With the pointer, nothing is
+        // highlighted until it's over a button.
+        openControls(!pointer_);
+        return true;
+      case Key::Info:
+        if (bannerVisible()) bannerUntil_ = app_.ms();
         else showBanner();
         return true;
+      case Key::Green:
+      case Key::Captions:
+        quickSubtitles();
+        return true;
       case Key::Red:
-      case Key::Menu:  // a remote without colour keys (Fire TV)
         openSources();
         return true;
       case Key::Blue:
         app_.nav().push(makeOptions(app_));
         return true;
-      case Key::Back:
-        if (!digits_.empty()) {
-          digits_.clear();
-          return true;
-        }
-        app_.nav().pop();
+      case Key::PlayPause:
+      case Key::Play:
+      case Key::Pause:
+        notice("Live TV can\xe2\x80\x99t be paused", "", 2500);
         return true;
+      case Key::Back:
+        return backKey();
       default:
         return false;
     }
@@ -144,6 +171,11 @@ class PlayerScreen : public Screen {
       zone_ = Zone::Row;
       pill_ = id - kHitPill;
       touch();
+    } else if (id == kHitPicture) {
+      // Over the picture: nothing highlighted, a click opens or closes the
+      // controls.
+      if (zone_ == Zone::Row) pill_ = -1;
+      else if (zone_ != Zone::None) zone_ = Zone::None;
     } else if (id == kHitGuide) {
       zone_ = Zone::EdgeGuide;
     } else if (id == kHitLast) {
@@ -172,10 +204,10 @@ class PlayerScreen : public Screen {
       bannerFrom_ = bannerUntil_ = ms;
       wasReady_ = pictureSeen_ = false;
       noSubtitlesSaid_ = false;
-      zone_ = Zone::None;
+      if (zone_ != Zone::Row) zone_ = Zone::None;
       prefetch(shownEntry_);
       cameras_ = app_.store().isEvent(shownEntry_) && app_.store().hasCameras(shownEntry_);
-      if (cameras_) say("Press Down for onboard cameras", 5000);
+      if (cameras_) say("Onboard cameras: OK, then Cameras", 5000);
     }
     // The first picture ever: the one-time "Getting around" card.
     if (p.ready() && !p.failed() && !tips_ && !app_.store().settings().playerTipsShown) {
@@ -184,7 +216,7 @@ class PlayerScreen : public Screen {
       s.playerTipsShown = true;
       app_.store().setSettings(s);
     }
-    if (zone_ == Zone::Row && ms - rowTouched_ > kRowIdleMs) {
+    if (zone_ == Zone::Row && ms - rowTouched_ > kRowIdleMs && !pointer_) {
       zone_ = Zone::None;
       bannerUntil_ = ms;
     }
@@ -201,9 +233,9 @@ class PlayerScreen : public Screen {
     }
     // Subtitles on and none here: said once, quietly, while the banner is
     // still up from tuning in.
-    if (pictureSeen_ && !noSubtitlesSaid_ && ms - pictureAt_ > 4500 && app_.store().settings().subtitles) {
+    if (pictureSeen_ && !noSubtitlesSaid_ && ms - pictureAt_ > 4500 && p.subtitleChoice().on) {
       noSubtitlesSaid_ = true;
-      if (!offersSubtitles() && bannerVisible()) say("No subtitles on this channel", 2500);
+      if (!offersSubtitles() && bannerVisible()) say("No subtitles on this channel so far", 3000);
     }
     wasReady_ = p.ready();
     if (p.ready()) pictureFeed_ = p.feedIndex();
@@ -214,29 +246,14 @@ class PlayerScreen : public Screen {
     }
     if (const auto& b = p.backupNotice(); b && ms - b->at > kBackOnMs) p.dismissBackupNotice();
     if (!digits_.empty() &&
-        (ms - digitsAt_ >= kDigitsMs || engine::views::digitsSettled(digits_, *app_.store().channels()))) {
-      int n = std::atoi(digits_.c_str());
-      digits_.clear();
-      std::string target;
-      auto ch = app_.store().channels();
-      for (const GuideChannel& g : ch->all) {
-        if (g.number && *g.number == n) {
-          target = g.id;
-          break;
-        }
-      }
-      // A number with no channel: said where the number was typed.
-      if (target.empty()) {
-        missed_ = std::to_string(n);
-        missedUntil_ = ms + 2500;
-      }
-      else flipped(p.tune(target) ? target : std::string());
-    }
+        (ms - digitsAt_ >= kDigitsMs || engine::views::digitsSettled(digits_, *app_.store().channels())))
+      commitDigits();
     bool bannerAnim = ms < bannerUntil_ + 50;
     bool note = !p.note().empty();
     if (!missed_.empty() && ms >= missedUntil_) missed_.clear();
+    bool noticeUp = !notice_.empty() && ms < noticeUntil_ + 50;
     return opening || bannerAnim || note || !digits_.empty() || !missed_.empty() || p.backupNotice().has_value() ||
-           zone_ == Zone::Row || !pendingFlip_.empty();
+           zone_ == Zone::Row || !pendingFlip_.empty() || noticeUp;
   }
 
   void draw(ui::Ctx& c) override {
@@ -248,7 +265,6 @@ class PlayerScreen : public Screen {
       // A game: show the channel it plays on.
       if (!p.feeds().empty()) g = ch->find(app_.store().entryOfChannel(p.feeds()[std::min(p.feedIndex(), p.feeds().size() - 1)].channelId));
     }
-    pointer_ = c.pointerActive;
     Rect screen{0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight};
     bool picture = p.ready() && !pending && !p.failed();
     // No loading screen: the banner carries it. Behind it, the picture (or
@@ -260,17 +276,28 @@ class PlayerScreen : public Screen {
       c.g.fill(screen, theme::black());
       if (!p.failed()) ui::spinner(c, gfx::kLayoutWidth * 0.5f, 400, 26);
     }
+    // Under a panel (the guide, Sources, Options): the picture and its
+    // captions only, never the banner beside the panel.
+    if (c.covered) {
+      if (picture) drawSubtitles(c, false);
+      return;
+    }
+    // The pointer appearing brings up the controls, nothing highlighted.
+    if (c.pointerActive && !pointer_ && !p.failed()) openControls(false);
+    pointer_ = c.pointerActive;
+    c.hit(screen, kHitPicture);
+    bool controls = zone_ == Zone::Row && picture;
     if (p.failed() && !pending) {
       drawScrim(c);
       drawBanner(c, g, true);
       drawFailButtons(c);
-    } else if (bannerVisible() || zone_ == Zone::Row || pointer_) {
+    } else if (bannerVisible() || controls) {
       drawScrim(c);
       drawBanner(c, g, false);
-      if ((zone_ == Zone::Row || pointer_) && picture) drawPills(c, g);
+      if (controls) drawPills(c, g);
       else drawKeyGuide(c, g);
     }
-    if (picture) drawSubtitles(c, bannerVisible() || zone_ == Zone::Row || pointer_);
+    if (picture) drawSubtitles(c, bannerVisible() || controls);
     if (pointer_ && picture) drawEdges(c);
     if (!digits_.empty()) {
       Rect r{gfx::kLayoutWidth - 80 - 220, 60, 220, 90};
@@ -279,20 +306,21 @@ class PlayerScreen : public Screen {
     } else if (!missed_.empty() && app_.ms() < missedUntil_) {
       // The number typed, struck through, and that there's no such channel.
       std::string line = "No channel " + missed_;
-      float w = std::max(220.0f, ui::textWidth(c, line, Weight::Medium, 22) + 60);
+      float w = std::max(220.0f, ui::textWidth(c, line, Weight::Medium, 24) + 60);
       Rect r{gfx::kLayoutWidth - 80 - w, 60, w, 128};
       c.g.fill(r, theme::black(0.8f), 20);
       ui::labelIn(c, missed_, {r.x, r.y + 8, r.w, 70}, Weight::Bold, 54, theme::white(0.45f), Align::Center);
       float sw = ui::textWidth(c, missed_, Weight::Bold, 54);
       c.g.fill({r.x + (r.w - sw) * 0.5f - 6, r.y + 44, sw + 12, 4}, theme::hex(kRed, 0.9f), 2);
-      ui::labelIn(c, line, {r.x, r.y + 80, r.w, 34}, Weight::Medium, 22, theme::white(0.85f), Align::Center);
+      ui::labelIn(c, line, {r.x, r.y + 80, r.w, 34}, Weight::Medium, 24, theme::white(0.85f), Align::Center);
     }
+    drawNotice(c);
     if (tips_) drawTips(c);
   }
 
  private:
   enum class Zone { None, Row, EdgeGuide, EdgeLast };
-  enum class Pill { Cameras, Sources, Subtitles, Coast, Guide, Last, Favorite, More };
+  enum class Pill { Cameras, Subtitles, Style, Sources, Coast, Guide, Last, Favorite, More };
 
   // ---------------------------------------------------------- actions
   // A message while watching: in the banner's status line (brought up for
@@ -304,12 +332,25 @@ class PlayerScreen : public Screen {
     if (!bannerVisible()) bannerFrom_ = app_.ms();
     bannerUntil_ = std::max(bannerUntil_, messageUntil_);
   }
+  // A change that sticks (subtitles, favorites) or a key that does nothing
+  // here: a large card at the top, saying how to undo it.
+  void notice(std::string title, std::string detail, uint32_t forMs) {
+    notice_ = std::move(title);
+    noticeDetail_ = std::move(detail);
+    noticeUntil_ = app_.ms() + forMs;
+  }
   // While it loads (or a channel key is pending) the banner stays up.
   bool loading() const {
     const Playback& p = app_.playback();
     return !pendingFlip_.empty() || !p.ready() || p.failed();
   }
   bool bannerVisible() const { return loading() || (app_.ms() >= bannerFrom_ && app_.ms() < bannerUntil_); }
+  // Up/Down: Up is the channel above in the list (lower numbers) unless
+  // Options says Up goes to higher numbers, as CH+ does.
+  int arrowStep(Key k) const {
+    int up = app_.store().settings().upGoesHigher ? 1 : -1;
+    return k == Key::Up ? up : -up;
+  }
   // Channel keys: the banner shows the channel at once; the one stopped on
   // tunes after a moment (zapping past a channel doesn't open it).
   void flipBy(int step) {
@@ -318,6 +359,7 @@ class PlayerScreen : public Screen {
     if (target.empty()) return;
     zone_ = Zone::None;
     failButton_ = 0;
+    backAskUntil_ = 0;
     pendingFlip_ = target;
     flipAt_ = app_.ms() + kFlipSettleMs;
     prefetch(target);
@@ -343,53 +385,159 @@ class PlayerScreen : public Screen {
     bannerFrom_ = app_.ms();
     bannerUntil_ = bannerFrom_ + kRowIdleMs;
   }
-  void focusRow() {
+  // The banner with its buttons. `focus`: Subtitles highlighted (keys);
+  // without, nothing is until the pointer is over a button.
+  void openControls(bool focus) {
+    if (!app_.playback().ready()) {
+      // Still tuning in: the banner shows what's coming; no buttons yet.
+      showBanner();
+      return;
+    }
     buildPills();
     zone_ = Zone::Row;
-    pill_ = 0;
-    for (size_t i = 0; i < pills_.size(); ++i)
-      if (pills_[i] == Pill::Sources) pill_ = static_cast<int>(i);
-    if (!pills_.empty() && pills_.front() == Pill::Cameras) pill_ = 0;
+    pill_ = -1;
+    if (focus)
+      for (size_t i = 0; i < pills_.size(); ++i)
+        if (pills_[i] == Pill::Subtitles) pill_ = static_cast<int>(i);
+    controlsAt_ = app_.ms();
+    backAskUntil_ = 0;
     touch();
+  }
+  void closeControls() {
+    zone_ = Zone::None;
+    bannerUntil_ = app_.ms();
+  }
+  // Exit (LG): the controls, the banner and any message go; the channel stays.
+  void clearScreen() {
+    zone_ = Zone::None;
+    bannerUntil_ = app_.ms();
+    digits_.clear();
+    missed_.clear();
+    notice_.clear();
+    message_.clear();
+    backAskUntil_ = 0;
+  }
+  // Back on a clear picture asks once before leaving the player; with the
+  // banner up it only hides it.
+  bool backKey() {
+    if (!digits_.empty()) {
+      digits_.clear();
+      return true;
+    }
+    uint32_t ms = app_.ms();
+    if (bannerVisible() && !loading()) {
+      bannerUntil_ = ms;
+      return true;
+    }
+    if (ms < backAskUntil_) {
+      app_.nav().pop();
+      return true;
+    }
+    backAskUntil_ = ms + kBackAgainMs;
+    const std::string& prev = app_.playback().previousEntry();
+    std::string detail = app_.store().channels()->find(prev) ? "\xe2\x96\xb6 Back to " + nameOf(prev) : std::string();
+    notice("Press Back again to leave", detail, kBackAgainMs);
+    return true;
+  }
+  // Green / CC: subtitles on or off in one press, from anywhere.
+  void quickSubtitles() {
+    Playback& p = app_.playback();
+    bool on = p.toggleSubtitles();
+    subtitlesNotice(on, "Press again to turn them " + std::string(on ? "off" : "on"));
+  }
+  void subtitlesNotice(bool on, const std::string& how) {
+    Playback& p = app_.playback();
+    if (!on) {
+      notice("Subtitles off", how, kNoticeMs);
+      return;
+    }
+    Playback::SubtitleStatus st = p.subtitleStatus();
+    std::string title = st.label == "On" ? std::string("Subtitles on") : "Subtitles on \xc2\xb7 " + st.label;
+    std::string where = p.spanishChannel() ? "On for every Spanish-language channel that has them"
+                                           : "On for every channel that has them";
+    notice(title, where + " \xc2\xb7 " + how, kNoticeMs);
   }
   void buildPills() {
     Playback& p = app_.playback();
     pills_.clear();
     if (cameras_) pills_.push_back(Pill::Cameras);
+    pills_.push_back(Pill::Subtitles);
+    pills_.push_back(Pill::Style);
     pills_.push_back(Pill::Sources);
-    if (offersSubtitles()) pills_.push_back(Pill::Subtitles);
     if (!otherCoast().empty()) pills_.push_back(Pill::Coast);
     pills_.push_back(Pill::Guide);
     if (app_.store().channels()->find(p.previousEntry())) pills_.push_back(Pill::Last);
     if (app_.store().channels()->find(p.entry())) pills_.push_back(Pill::Favorite);
     pills_.push_back(Pill::More);
-    pill_ = std::clamp(pill_, 0, static_cast<int>(pills_.size()) - 1);
+    pill_ = std::clamp(pill_, -1, static_cast<int>(pills_.size()) - 1);
   }
   bool rowKey(const KeyEvent& e) {
     touch();
+    int d = digitOf(e.key);
+    if (d >= 0) {
+      // Typing a number: the controls go, the number shows.
+      closeControls();
+      digits_ = std::string(1, static_cast<char>('0' + d));
+      digitsAt_ = app_.ms();
+      return true;
+    }
     switch (e.key) {
       case Key::Left:
-        if (pill_ > 0) --pill_;
+        pill_ = pill_ < 0 ? 0 : std::max(0, pill_ - 1);
         return true;
       case Key::Right:
-        if (pill_ + 1 < static_cast<int>(pills_.size())) ++pill_;
+        pill_ = pill_ < 0 ? 0 : std::min(static_cast<int>(pills_.size()) - 1, pill_ + 1);
         return true;
       case Key::Up:
-      case Key::Back:
-        zone_ = Zone::None;
-        bannerUntil_ = app_.ms() + 3000;
-        return true;
-      case Key::Ok:
-        activate(pills_[static_cast<size_t>(pill_)]);
-        return true;
-      case Key::Red:
-      case Key::Menu:
-        openSources();
+      case Key::Down:
+        // A swipe along the buttons that slants isn't a flip; nor is the
+        // wheel turning while the pointer is on a button.
+        if (e.swipe) return true;
+        if (e.wheel && (pill_ >= 0 || app_.ms() - lastOkAt_ < kWheelAfterClickMs)) return true;
+        flipBy(arrowStep(e.key));
         return true;
       case Key::ChannelUp:
       case Key::ChannelDown:
-        zone_ = Zone::None;
-        flipBy(e.key == Key::ChannelUp ? -1 : 1);
+        flipBy(e.key == Key::ChannelUp ? 1 : -1);
+        return true;
+      case Key::Ok:
+        // A second OK right after the first is a double press: ignored.
+        if (app_.ms() - controlsAt_ < kDoubleOkMs) return true;
+        if (pill_ < 0) {
+          closeControls();  // a click on the picture
+          return true;
+        }
+        if (e.longPress && pills_[static_cast<size_t>(pill_)] == Pill::Subtitles) {
+          activate(Pill::Style);
+          return true;
+        }
+        activate(pills_[static_cast<size_t>(pill_)]);
+        return true;
+      case Key::Back:
+      case Key::Menu:
+      case Key::Info:
+        closeControls();
+        return true;
+      case Key::Green:
+      case Key::Captions:
+        quickSubtitles();
+        return true;
+      case Key::Red:
+        closeControls();
+        openSources();
+        return true;
+      case Key::Guide:
+        closeControls();
+        openGuide();
+        return true;
+      case Key::Rewind:
+        closeControls();
+        goPrevious();
+        return true;
+      case Key::PlayPause:
+      case Key::Play:
+      case Key::Pause:
+        notice("Live TV can\xe2\x80\x99t be paused", "", 2500);
         return true;
       default:
         return true;
@@ -397,10 +545,24 @@ class PlayerScreen : public Screen {
   }
   void activate(Pill pill) {
     Playback& p = app_.playback();
+    // A panel opens over the plain picture: back from it, the controls
+    // are gone too.
+    auto panel = [this](std::unique_ptr<Screen> s) {
+      closeControls();
+      app_.nav().push(std::move(s));
+    };
     switch (pill) {
-      case Pill::Cameras: zone_ = Zone::None; app_.nav().push(makeCameraPanel(app_)); break;
-      case Pill::Sources: openSources(); break;
-      case Pill::Subtitles: app_.nav().push(makeSubtitles(app_)); break;
+      case Pill::Cameras: panel(makeCameraPanel(app_)); break;
+      case Pill::Subtitles: {
+        bool on = p.toggleSubtitles();
+        subtitlesNotice(on, std::string("OK again turns them ") + (on ? "off" : "on"));
+        break;
+      }
+      case Pill::Style: panel(makeSubtitles(app_)); break;
+      case Pill::Sources:
+        closeControls();
+        openSources();
+        break;
       case Pill::Coast: {
         // The other version, in place (Last goes back).
         std::string other = otherCoast();
@@ -412,16 +574,22 @@ class PlayerScreen : public Screen {
         flipped(other);
         break;
       }
-      case Pill::Guide: zone_ = Zone::None; openGuide(); break;
-      case Pill::Last: zone_ = Zone::None; goPrevious(); break;
+      case Pill::Guide:
+        closeControls();
+        openGuide();
+        break;
+      case Pill::Last:
+        closeControls();
+        goPrevious();
+        break;
       case Pill::Favorite: {
         bool was = false;
         if (const GuideChannel* g = app_.store().channels()->find(p.entry())) was = g->favorite;
         app_.store().toggleFavorite(p.entry());
-        say(was ? "Removed from Favorites" : "Added to Favorites", 2500, !was);
+        notice(was ? "Removed from Favorites" : "Added to Favorites", "OK again to undo", kNoticeMs);
         break;
       }
-      case Pill::More: app_.nav().push(makeOptions(app_)); break;
+      case Pill::More: panel(makeOptions(app_)); break;
     }
   }
   // The other version of the channel playing, when it has both.
@@ -438,11 +606,14 @@ class PlayerScreen : public Screen {
   void openGuide() {
     Playback& p = app_.playback();
     if (p.failed()) return;
+    zone_ = Zone::None;
+    bannerUntil_ = app_.ms();
     // Watching a game from Live Events: the event guide.
     app_.nav().push(app_.store().isEvent(p.entry()) ? makeEventGuide(app_) : makeMiniGuide(app_));
   }
   void goPrevious() {
     Playback& p = app_.playback();
+    backAskUntil_ = 0;
     std::string prev = p.previousEntry();
     if (prev.empty()) {
       showBanner();
@@ -454,6 +625,27 @@ class PlayerScreen : public Screen {
   void closeTips() {
     tips_ = false;
     showBanner();
+  }
+  // The channel number typed: tuned (or said that there's none).
+  void commitDigits() {
+    int n = std::atoi(digits_.c_str());
+    digits_.clear();
+    std::string target;
+    auto ch = app_.store().channels();
+    for (const GuideChannel& g : ch->all) {
+      if (g.number && *g.number == n) {
+        target = g.id;
+        break;
+      }
+    }
+    // A number with no channel: said where the number was typed.
+    if (target.empty()) {
+      missed_ = std::to_string(n);
+      missedUntil_ = app_.ms() + 2500;
+      return;
+    }
+    Playback& p = app_.playback();
+    flipped(p.tune(target) ? target : std::string());
   }
 
   // ---------------------------------------------------------- failed
@@ -490,12 +682,12 @@ class PlayerScreen : public Screen {
       case Key::Red:
       case Key::Menu: openSources(); return true;
       case Key::Up:
-      case Key::ChannelUp:
-        flipBy(-1);
-        return true;
       case Key::Down:
+        flipBy(arrowStep(e.key));
+        return true;
+      case Key::ChannelUp:
       case Key::ChannelDown:
-        flipBy(1);
+        flipBy(e.key == Key::ChannelUp ? 1 : -1);
         return true;
       case Key::Back: app_.nav().pop(); return true;
       default: return true;
@@ -540,11 +732,13 @@ class PlayerScreen : public Screen {
     return std::max(0, static_cast<int>(app_.playback().feeds().size()) - 1);
   }
   float keyCap(ui::Ctx& c, float x, float y, const char* glyph) {
-    Rect r{x, y, 40, 40};
+    // A word ("Click") gets a wider cap.
+    float w = std::max(40.0f, ui::textWidth(c, glyph, Weight::Bold, 17) + 20);
+    Rect r{x, y, w, 40};
     c.g.fill(r, theme::hex(0x14161B, 0.75f), 10);
     c.g.stroke(r, theme::white(0.28f), 10, 1);
     ui::labelIn(c, glyph, r, Weight::Bold, 17, theme::white(), Align::Center);
-    return 40;
+    return w;
   }
   // A key from the hints: the player's colour dot, or a cap with symbols or
   // text. Returns the width it took.
@@ -588,8 +782,8 @@ class PlayerScreen : public Screen {
     const std::vector<captions::Line>& lines = subs.lines();
     if (lines.empty()) return;
     const Settings& set = app_.store().settings();
-    static const int kPx[] = {36, 44, 56};
-    int px = kPx[std::clamp(set.subtitleSize, 0, 2)];
+    static const int kPx[] = {36, 44, 56, 72};
+    int px = kPx[std::clamp(set.subtitleSize, 0, 3)];
     float lineH = std::round(static_cast<float>(px) * 1.36f);
     float pad = std::round(static_cast<float>(px) * 0.4f);
     float total = lineH * static_cast<float>(lines.size());
@@ -788,96 +982,155 @@ class PlayerScreen : public Screen {
     }
   }
 
-  // 1A: the keys, under the banner (fades with it).
+  // The keys under the banner, in plain words: the channels Up and Down go
+  // to, the guide, the last channel, the controls, and LG's Green for CC.
   void drawKeyGuide(ui::Ctx& c, const GuideChannel* g) {
-    float x = kLeft, y = kRowY + 10;
+    (void)g;
+    Playback& p = app_.playback();
+    const RemoteKeys& keys = app_.remoteKeys();
+    float x = kLeft, y = kRowY + 8;
     c.g.fill({kLeft, kRowY - 8, gfx::kLayoutWidth - 2 * kLeft, 1}, theme::white(0.14f));
     auto item = [&](float glyphW, const std::string& title, const std::string& extra) {
       x += glyphW + 12;
-      x += shadowed(c, title, x, y + 8, Weight::Bold, 22, theme::white());
-      if (!extra.empty()) x += 8 + shadowed(c, extra, x + 8, y + 8, Weight::Medium, 22, theme::white(0.78f));
-      x += 34;
+      x += shadowed(c, title, x, y + 6, Weight::Bold, 26, theme::white());
+      if (!extra.empty()) x += 8 + shadowed(c, extra, x + 8, y + 6, Weight::Medium, 26, theme::white(0.85f), 240);
+      x += 32;
     };
-    Playback& p = app_.playback();
+    // Where Up and Down go: their numbers (or names), so the direction is
+    // never a guess.
+    std::string from = pendingFlip_.empty() ? p.entry() : pendingFlip_;
+    auto near = [&](Key k) {
+      std::string id = p.flipTarget(from, arrowStep(k));
+      const GuideChannel* n = id.empty() || id == from ? nullptr : app_.store().channels()->find(id);
+      if (!n) return std::string();
+      return n->number ? std::to_string(*n->number) : n->name;
+    };
+    std::string up = near(Key::Up), down = near(Key::Down);
+    if (!up.empty() || !down.empty()) {
+      keyCap(c, x, y, "\xe2\x96\xb2");
+      x += 40 + 10;
+      x += shadowed(c, up, x, y + 6, Weight::Bold, 26, theme::white(), 200) + 18;
+      keyCap(c, x, y, "\xe2\x96\xbc");
+      x += 40 + 10;
+      x += shadowed(c, down, x, y + 6, Weight::Bold, 26, theme::white(), 200) + 32;
+    }
     keyCap(c, x, y, "\xe2\x97\x80");
     item(40, app_.store().isEvent(p.entry()) ? "Games" : "Guide", "");
     if (app_.store().channels()->find(p.previousEntry())) {
       keyCap(c, x, y, "\xe2\x96\xb6");
-      item(40, "Last channel", nameOf(p.previousEntry()));
+      item(40, "Back to", nameOf(p.previousEntry()));
     }
-    const RemoteKeys& keys = app_.remoteKeys();
-    hints::Hint sources = hints::playerSources(keys);
-    int b = backups();
-    std::string backupsLine = b > 0 ? std::to_string(b) + (b == 1 ? " backup" : " backups") : std::string();
-    // Without a colour key or Menu, Sources is the row's first pill: one ▼.
-    bool sourcesInRow = sources.colour == hints::Colour::None && sources.icons.empty();
-    keyCap(c, x, y, "\xe2\x96\xbc");
-    if (sourcesInRow) item(40, cameras_ ? "Cameras, Sources & more" : "Sources & more", backupsLine);
-    else item(40, cameras_ ? "Cameras & more" : "More", "");
-    keyCap(c, x, y, "OK");
-    item(40, "Info", "");
-    if (!sourcesInRow) item(hintKey(c, x, y, sources), sources.label, backupsLine);
-    if (auto options = hints::playerOptions(keys)) item(hintKey(c, x, y, *options), options->label, "");
-    if (zone_ != Zone::None || x > gfx::kLayoutWidth - kLeft - 360) return;
+    float okW = keyCap(c, x, y, keys.clickpad ? "Click" : "OK");
+    item(okW, "Subtitles & more", "");
+    if (keys.colour) item(dot(c, x, y, kGreen), "CC", "");
+    if (zone_ != Zone::None || x > gfx::kLayoutWidth - kLeft - 300) return;
     // The load states, quietly, where "Hides in" sits once it plays.
     Status st = status(g);
     float right = gfx::kLayoutWidth - kLeft;
     if (st.text.empty()) {
       int left = static_cast<int>((bannerUntil_ > app_.ms() ? bannerUntil_ - app_.ms() : 0) / 1000) + 1;
-      ui::label(c, "Hides in " + std::to_string(std::min(left, 6)) + " s", right, y + 10, Weight::Regular, 18,
-                theme::white(0.62f), 300, Align::Right);
+      ui::label(c, "Hides in " + std::to_string(std::min(left, static_cast<int>(kBannerMs / 1000))) + " s", right,
+                y + 10, Weight::Regular, 22, theme::white(0.75f), 300, Align::Right);
       return;
     }
-    float tw = ui::textWidth(c, st.text, Weight::Medium, 19);
+    float tw = ui::textWidth(c, st.text, Weight::Medium, 22);
     float tx = right - tw;
-    ui::label(c, st.text, tx, y + 9, Weight::Medium, 19, theme::white(0.8f));
-    if (st.busy) ui::spinner(c, tx - 20, y + 21, 9);
-    if (st.done) ui::labelIn(c, "\xe2\x9c\x93", {tx - 32, y + 8, 22, 26}, Weight::Bold, 19, theme::hex(kGreen), Align::Center);
+    ui::label(c, st.text, tx, y + 9, Weight::Medium, 22, theme::white(0.88f));
+    if (st.busy) ui::spinner(c, tx - 22, y + 22, 10);
+    if (st.done) ui::labelIn(c, "\xe2\x9c\x93", {tx - 34, y + 8, 24, 28}, Weight::Bold, 22, theme::hex(kGreen), Align::Center);
   }
 
-  // 2A / 3D: the action row.
+  // The controls: Subtitles first (with its language), Aa for languages
+  // and style, then Sources, the guide, the last channel, Favorite, More.
   void drawPills(ui::Ctx& c, const GuideChannel* g) {
     buildPills();
     Playback& p = app_.playback();
-    float x = kLeft, y = kRowY;
-    for (size_t i = 0; i < pills_.size(); ++i) {
+    struct Item {
       std::string title, extra;
-      switch (pills_[i]) {
-        case Pill::Cameras: title = "Cameras"; break;
-        case Pill::Sources: title = "Sources"; extra = feedLine(); break;
+    };
+    std::vector<Item> items;
+    for (Pill pill : pills_) {
+      Item it;
+      switch (pill) {
+        case Pill::Cameras: it.title = "Cameras"; break;
         case Pill::Subtitles: {
-          title = "Subtitles";
-          std::string label = p.subtitles().selectedLabel();
-          extra = !app_.store().settings().subtitles ? "Off" : label.empty() ? "On" : label;
+          Playback::SubtitleStatus st = p.subtitleStatus();
+          if (!st.on) {
+            it.title = "Subtitles";
+            it.extra = "Off";
+          } else if (st.label == "On") {
+            it.title = "Subtitles";
+            it.extra = "On \xc2\xb7 " + st.detail;
+          } else {
+            it.title = st.label + " \xe2\x9c\x93";
+            it.extra = st.detail;
+          }
           break;
         }
-        case Pill::Coast: title = g && g->west ? "Watch East \xe2\x86\x94" : "Watch West \xe2\x86\x94"; break;
-        case Pill::Guide: title = app_.store().isEvent(p.entry()) ? "Games" : "Guide"; break;
-        case Pill::Last: title = "Back to " + nameOf(p.previousEntry()); break;
-        case Pill::Favorite: title = g && g->favorite ? "Unfavorite" : "Favorite"; break;
-        case Pill::More: title = "More"; break;
+        case Pill::Style: it.title = "Aa"; break;
+        case Pill::Sources: it.title = "Sources"; it.extra = backups() > 0 ? feedLine() : std::string(); break;
+        case Pill::Coast: it.title = g && g->west ? "Watch East \xe2\x86\x94" : "Watch West \xe2\x86\x94"; break;
+        case Pill::Guide: it.title = app_.store().isEvent(p.entry()) ? "Games" : "Guide"; break;
+        case Pill::Last: it.title = "Back to " + nameOf(p.previousEntry()); break;
+        case Pill::Favorite: it.title = g && g->favorite ? "Unfavorite" : "Favorite"; break;
+        case Pill::More: it.title = "More"; break;
       }
-      float w = ui::textWidth(c, title, Weight::Bold, 24) + 60;
-      if (!extra.empty()) w += ui::textWidth(c, extra, Weight::Medium, 22) + 14;
-      Rect r{x, y, w, 72};
+      items.push_back(std::move(it));
+    }
+    const float gap = 14, height = 80, room = gfx::kLayoutWidth - 2 * kLeft;
+    auto widthOf = [&](const Item& it) {
+      float w = ui::textWidth(c, it.title, Weight::Bold, 28) + 56;
+      if (!it.extra.empty()) w += ui::textWidth(c, it.extra, Weight::Medium, 24) + 14;
+      return w;
+    };
+    // Too many to fit: the second words go, Sources' first, then the rest.
+    float total = 0;
+    for (const Item& it : items) total += widthOf(it) + gap;
+    for (size_t i = 0; i < items.size() && total > room; ++i) {
+      if (pills_[i] == Pill::Subtitles || items[i].extra.empty()) continue;
+      total -= widthOf(items[i]);
+      items[i].extra.clear();
+      total += widthOf(items[i]);
+    }
+    float x = kLeft, y = kRowY - 6;
+    for (size_t i = 0; i < items.size(); ++i) {
+      const Item& it = items[i];
+      float w = widthOf(it);
+      if (x + w > kLeft + room) break;
+      Rect r{x, y, w, height};
       c.hit(r, kHitPill + static_cast<int>(i));
-      bool f = zone_ == Zone::Row && static_cast<int>(i) == pill_;
+      bool f = static_cast<int>(i) == pill_;
       if (f) {
         Rect big{r.x - r.w * 0.02f, r.y - 1.5f, r.w * 1.04f, r.h + 3};
-        c.g.fill(big, theme::white(), 37);
+        c.g.fill(big, theme::white(), height * 0.5f + 2);
+        c.g.stroke({big.x - 4, big.y - 4, big.w + 8, big.h + 8}, theme::black(0.85f), height * 0.5f + 6, 3);
       } else {
-        c.g.fill(r, theme::hex(0x14161B, 0.75f), 36);
-        c.g.stroke(r, theme::white(0.22f), 36, 1);
+        c.g.fill(r, theme::hex(0x14161B, 0.85f), height * 0.5f);
+        c.g.stroke(r, theme::white(0.3f), height * 0.5f, 1.5f);
       }
       Color ink = f ? theme::black() : theme::white();
-      float tx = r.x + 30;
-      tx += ui::label(c, title, tx, r.y + 22, Weight::Bold, 24, ink);
-      if (!extra.empty()) ui::label(c, extra, tx + 14, r.y + 24, Weight::Medium, 22, f ? theme::black(0.6f) : theme::white(0.6f));
-      x += w + 16;
+      float tx = r.x + 28;
+      tx += ui::label(c, it.title, tx, r.y + 22, Weight::Bold, 28, ink);
+      if (!it.extra.empty())
+        ui::label(c, it.extra, tx + 14, r.y + 25, Weight::Medium, 24, f ? theme::black(0.7f) : theme::white(0.75f));
+      x += w + gap;
     }
-    if (zone_ == Zone::Row)
-      ui::label(c, "Up hides it", gfx::kLayoutWidth - kLeft, y + 24, Weight::Regular, 19, theme::white(0.5f), 300,
-                Align::Right);
+  }
+
+  // A change that sticks, or "Press Back again to leave": large, at the top.
+  void drawNotice(ui::Ctx& c) {
+    if (notice_.empty() || app_.ms() >= noticeUntil_) return;
+    float tw = ui::textWidth(c, notice_, Weight::Bold, 40);
+    float dw = noticeDetail_.empty() ? 0 : ui::textWidth(c, noticeDetail_, Weight::Medium, 26);
+    float w = std::min(1500.0f, std::max(tw, dw) + 88);
+    float h = noticeDetail_.empty() ? 96 : 140;
+    Rect r{(gfx::kLayoutWidth - w) * 0.5f, 64, w, h};
+    c.g.fill(r, theme::hex(0x0C0E12, 0.94f), 26);
+    c.g.stroke(r, theme::white(0.18f), 26, 2);
+    ui::labelIn(c, notice_, {r.x + 44, r.y + 18, r.w - 88, 56}, Weight::Bold, 40, theme::white(), Align::Center);
+    if (!noticeDetail_.empty())
+      ui::labelIn(c, noticeDetail_, {r.x + 44, r.y + 78, r.w - 88, 40}, Weight::Medium, 26, theme::white(0.88f),
+                  Align::Center);
   }
 
   // 3D: Guide on the left edge, the last channel on the right.
@@ -944,6 +1197,11 @@ class PlayerScreen : public Screen {
   int failButton_ = 0;
   bool tips_ = false;
   bool pointer_ = false;
+  uint32_t controlsAt_ = 0;    // when the controls last opened
+  uint32_t lastOkAt_ = 0;      // the last OK (or click)
+  uint32_t backAskUntil_ = 0;  // "Press Back again to leave" is up
+  std::string notice_, noticeDetail_;  // the large card at the top
+  uint32_t noticeUntil_ = 0;
   std::string shownEntry_;
   std::string digits_;
   uint32_t digitsAt_ = 0;

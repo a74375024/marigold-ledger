@@ -285,3 +285,24 @@ TEST_CASE("session: a version this TV can't play is left at once and tried last 
   r.store->recordFeed(feeds[0].channelId, true);
   CHECK(r.store->feeds(ids[0]).back().channelId != feeds[0].channelId);
 }
+
+TEST_CASE("session: Back to is the last channel stayed on, and previous() swaps the two") {
+  Rig r;
+  auto ids = r.entries(1);
+  REQUIRE(ids.size() >= 4);
+  r.session->setShowingFull(true);
+  REQUIRE(r.session->tune(ids[0]));
+  r.run(11000);  // watched for a while
+  REQUIRE(r.session->tune(ids[1]));
+  CHECK(r.session->previousEntry() == ids[0]);
+  r.run(2000);   // a quick flip past ids[1]...
+  REQUIRE(r.session->tune(ids[2]));
+  r.run(2000);   // ...and ids[2]
+  REQUIRE(r.session->tune(ids[3]));
+  CHECK(r.session->previousEntry() == ids[0]);  // still the game you started from
+  CHECK(r.session->previous() == ids[0]);
+  CHECK(r.session->previousEntry() == ids[3]);  // bouncing swaps at once
+  r.run(1000);
+  CHECK(r.session->previous() == ids[3]);
+  CHECK(r.session->previousEntry() == ids[0]);
+}

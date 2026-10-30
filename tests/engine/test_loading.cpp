@@ -344,3 +344,35 @@ TEST_CASE("loading: the full saved list is gzipped, the first-screen one plain")
   REQUIRE(again.channels());
   CHECK(again.channels()->all.size() > 50);
 }
+
+TEST_CASE("loading: the player's settings come back next launch; one old subtitles switch covers both languages") {
+  fake::Tv tv;
+  {
+    Store store(tv.host());
+    marigold::engine::Settings s = store.settings();
+    s.subtitles = true;
+    s.subtitlesEs = false;
+    s.subtitleLanguageEs = "English";
+    s.subtitleSize = 3;  // extra large
+    s.upGoesHigher = true;
+    s.systemCaptions = 1;
+    store.setSettings(s);
+  }
+  {
+    Store again(tv.host());
+    const marigold::engine::Settings& s = again.settings();
+    CHECK(s.subtitles);
+    CHECK_FALSE(s.subtitlesEs);
+    CHECK(s.subtitleLanguageEs == "English");
+    CHECK(s.subtitleSize == 3);
+    CHECK(s.upGoesHigher);
+    CHECK(s.systemCaptions == 1);
+  }
+  // A settings file from before the two choices: its one switch is both.
+  tv.files.write("settings.json", R"({"subtitles": true, "subtitleSize": 2})", false);
+  Store old(tv.host());
+  CHECK(old.settings().subtitles);
+  CHECK(old.settings().subtitlesEs);
+  CHECK_FALSE(old.settings().upGoesHigher);
+  CHECK(old.settings().systemCaptions == -1);
+}

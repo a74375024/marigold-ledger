@@ -142,6 +142,15 @@ std::vector<std::string> Video::textLines(uint64_t* version) const {
 }
 
 bool Video::drawsText() { return false; }
+
+int Video::systemCaptions() {
+  JNIEnv* e = android::env();
+  if (!e) return -1;
+  static jmethodID id = android::method("systemCaptions", "()I");
+  jint on = e->CallStaticIntMethod(android::bridge(), id);
+  if (android::caught(e, "systemCaptions")) return -1;
+  return static_cast<int>(on);
+}
 void Video::setTextStyle(int, int) {}
 
 }  // namespace marigold::platform

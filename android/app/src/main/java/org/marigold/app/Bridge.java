@@ -132,6 +132,17 @@ final class Bridge {
     return utf8(Video.textLines(version));
   }
 
+  // The system's captions switch (Settings > Accessibility > Captions; Fire
+  // TV: Accessibility > Captions): 1 on, 0 off, -1 unknown.
+  static int systemCaptions() {
+    MarigoldActivity a = activity;
+    if (a == null) return -1;
+    android.view.accessibility.CaptioningManager cm =
+        (android.view.accessibility.CaptioningManager) a.getSystemService(android.content.Context.CAPTIONING_SERVICE);
+    if (cm == null) return -1;
+    return cm.isEnabled() ? 1 : 0;
+  }
+
   // ---- The keyboard and the app (the app thread) ----
 
   static void keyboardOpen(byte[] value) {

@@ -51,6 +51,9 @@ TEST_CASE("Fire TV and Android TV remotes") {
   CHECK(keyFromAndroid(90) == Key::FastForward);
   CHECK(keyFromAndroid(166) == Key::ChannelUp);
   CHECK(keyFromAndroid(167) == Key::ChannelDown);
+  CHECK(keyFromAndroid(165) == Key::Info);      // the info banner
+  CHECK(keyFromAndroid(172) == Key::Guide);     // the in-player guide
+  CHECK(keyFromAndroid(175) == Key::Captions);  // CC: subtitles on or off
   CHECK(keyFromAndroid(183) == Key::Red);
   CHECK(keyFromAndroid(186) == Key::Blue);
   CHECK(keyFromAndroid(7) == Key::Digit0);

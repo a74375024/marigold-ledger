@@ -107,6 +107,7 @@ class App {
   bool okDown_ = false;
   bool okLongSent_ = false;
   uint32_t okDownAt_ = 0;
+  bool clickDown_ = false;  // a pointer click on a screen without a hold menu
 
   RemoteKeys keys_;
 

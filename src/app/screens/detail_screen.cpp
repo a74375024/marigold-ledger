@@ -144,9 +144,12 @@ class DetailScreen : public Screen {
   void watch() {
     app_.nav().pop();
     Playback& p = app_.playback();
+    // From the guide in the player: tunes there (the guide closes itself),
+    // no second player.
+    bool watching = p.active() && p.full();
     if (p.tune(entry_)) {
       p.setFull();
-      app_.nav().push(makePlayer(app_));
+      if (!watching) app_.nav().push(makePlayer(app_));
     } else {
       app_.toast("This channel has no working feed right now");
     }

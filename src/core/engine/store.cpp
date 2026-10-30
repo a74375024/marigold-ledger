@@ -323,11 +323,16 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
       settings_.playerTipsShown = (*v)["playerTipsShown"].asBool(false);
       settings_.subtitles = (*v)["subtitles"].asBool(false);
       settings_.subtitleLanguage = (*v)["subtitleLanguage"].asString();
-      settings_.subtitleSize = std::clamp(static_cast<int>((*v)["subtitleSize"].asNumber(1)), 0, 2);
+      // Before the two choices there was one, for every channel.
+      settings_.subtitlesEs = (*v)["subtitlesEs"].asBool(settings_.subtitles);
+      settings_.subtitleLanguageEs = (*v)["subtitleLanguageEs"].asString();
+      settings_.subtitleSize = std::clamp(static_cast<int>((*v)["subtitleSize"].asNumber(1)), 0, 3);
       settings_.subtitleLook = std::clamp(static_cast<int>((*v)["subtitleLook"].asNumber(0)), 0, 2);
       settings_.subtitleSentenceCase = (*v)["subtitleSentenceCase"].asBool(false);
       settings_.subtitleTop = (*v)["subtitleTop"].asBool(false);
       settings_.playThroughApp = (*v)["playThroughApp"].asBool(true);
+      settings_.upGoesHigher = (*v)["upGoesHigher"].asBool(false);
+      settings_.systemCaptions = static_cast<int>((*v)["systemCaptions"].asNumber(-1));
       settings_.guideShards = stringSet((*v)["guideShards"]);
     }
   }
@@ -470,6 +475,16 @@ void Store::saveM3uStreams() {
       nullptr, http::Priority::Background);
 }
 
+SubtitleChoice subtitleChoice(const Settings& s, bool spanishChannel) {
+  return spanishChannel ? SubtitleChoice{s.subtitlesEs, s.subtitleLanguageEs}
+                        : SubtitleChoice{s.subtitles, s.subtitleLanguage};
+}
+
+void setSubtitleChoice(Settings& s, bool spanishChannel, const SubtitleChoice& c) {
+  (spanishChannel ? s.subtitlesEs : s.subtitles) = c.on;
+  (spanishChannel ? s.subtitleLanguageEs : s.subtitleLanguage) = c.language;
+}
+
 void Store::setSettings(const Settings& s) {
   bool tsChanged = s.preferTS != settings_.preferTS;
   bool fillChanged = s.fillMissingListings != settings_.fillMissingListings;
@@ -478,11 +493,15 @@ void Store::setSettings(const Settings& s) {
   Settings same = s;
   same.subtitles = settings_.subtitles;
   same.subtitleLanguage = settings_.subtitleLanguage;
+  same.subtitlesEs = settings_.subtitlesEs;
+  same.subtitleLanguageEs = settings_.subtitleLanguageEs;
   same.subtitleSize = settings_.subtitleSize;
   same.subtitleLook = settings_.subtitleLook;
   same.subtitleSentenceCase = settings_.subtitleSentenceCase;
   same.subtitleTop = settings_.subtitleTop;
   same.playThroughApp = settings_.playThroughApp;
+  same.upGoesHigher = settings_.upGoesHigher;
+  same.systemCaptions = settings_.systemCaptions;
   bool boardChanged = !(same.previewChannels == settings_.previewChannels && same.scheduleEnabled == settings_.scheduleEnabled &&
                         same.showUnwatchable == settings_.showUnwatchable && same.showScores == settings_.showScores &&
                         same.clock24 == settings_.clock24 && same.allChannelsTab == settings_.allChannelsTab &&
@@ -503,11 +522,15 @@ void Store::setSettings(const Settings& s) {
   v.set("playerTipsShown", s.playerTipsShown);
   v.set("subtitles", s.subtitles);
   if (!s.subtitleLanguage.empty()) v.set("subtitleLanguage", s.subtitleLanguage);
+  v.set("subtitlesEs", s.subtitlesEs);
+  if (!s.subtitleLanguageEs.empty()) v.set("subtitleLanguageEs", s.subtitleLanguageEs);
   v.set("subtitleSize", s.subtitleSize);
   v.set("subtitleLook", s.subtitleLook);
   v.set("subtitleSentenceCase", s.subtitleSentenceCase);
   v.set("subtitleTop", s.subtitleTop);
   v.set("playThroughApp", s.playThroughApp);
+  v.set("upGoesHigher", s.upGoesHigher);
+  if (s.systemCaptions >= 0) v.set("systemCaptions", s.systemCaptions);
   if (!s.guideShards.empty())
     v.set("guideShards", stringArray(std::vector<std::string>(s.guideShards.begin(), s.guideShards.end())));
   if (boardChanged) impl_->ev.boardDirty = true;

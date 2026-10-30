@@ -45,10 +45,10 @@ Bar eventsBoard(const RemoteKeys& k);
 // swipes instead).
 Bar setup(const RemoteKeys& k, bool letters);
 
-// The player: the Sources key (the action row, which opens on Sources, is
-// the way in without a colour key or Menu), Options (only a colour key), and
-// "pick another source" while a feed opens (nothing without either: the row
-// isn't there yet).
+// The player: the Sources key (Red on LG; elsewhere a button in the
+// controls OK brings up), Options (only a colour key), and "pick another
+// source" while a feed opens (nothing without either: the controls aren't
+// there yet).
 Hint playerSources(const RemoteKeys& k);
 std::optional<Hint> playerOptions(const RemoteKeys& k);
 std::optional<Hint> pickAnotherSource(const RemoteKeys& k);

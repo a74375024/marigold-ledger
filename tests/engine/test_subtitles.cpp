@@ -1,6 +1,7 @@
 // What the player shows of a stream's captions (engine::Subtitles).
 #include <doctest.h>
 
+#include "core/engine/store.hpp"
 #include "core/engine/subtitles.hpp"
 
 using namespace marigold::engine;
@@ -61,4 +62,20 @@ TEST_CASE("subtitles: a new stream forgets the last one") {
   CHECK(s.lines().empty());
   CHECK(s.tracks().empty());
   CHECK_FALSE(s.fromStream());
+}
+
+TEST_CASE("subtitles: English-language and Spanish-language channels keep their own choice") {
+  Settings s;
+  CHECK_FALSE(subtitleChoice(s, false).on);
+  CHECK_FALSE(anySubtitles(s));
+  setSubtitleChoice(s, true, {true, "Espa\xc3\xb1ol"});
+  CHECK(subtitleChoice(s, true).on);
+  CHECK(subtitleChoice(s, true).language == "Espa\xc3\xb1ol");
+  CHECK_FALSE(subtitleChoice(s, false).on);  // ESPN stays without
+  CHECK(anySubtitles(s));
+  setSubtitleChoice(s, false, {true, ""});
+  setSubtitleChoice(s, true, {false, "Espa\xc3\xb1ol"});
+  CHECK(subtitleChoice(s, false).on);
+  CHECK_FALSE(subtitleChoice(s, true).on);
+  CHECK(subtitleChoice(s, true).language == "Espa\xc3\xb1ol");  // kept for next time
 }

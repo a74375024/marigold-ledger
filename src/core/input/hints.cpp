@@ -80,8 +80,8 @@ Bar setup(const RemoteKeys& k, bool letters) {
 
 Hint playerSources(const RemoteKeys& k) {
   if (k.colour) return colour(Colour::Red, "Sources");
-  if (k.menu) return icons({"key-menu"}, "Sources");
-  return cap(kDown, "Sources");
+  // Elsewhere Sources is a button in the controls (OK, or Menu).
+  return cap(k.clickpad ? "Click" : "OK", "Sources");
 }
 
 std::optional<Hint> playerOptions(const RemoteKeys& k) {
@@ -96,20 +96,17 @@ std::optional<Hint> pickAnotherSource(const RemoteKeys& k) {
 }
 
 std::vector<Tip> gettingAround(const RemoteKeys& k) {
+  std::string ok = k.clickpad ? "Click" : "OK";
   std::vector<Tip> tips = {
-      {cap(kLeft, ""), "Guide", "What's on, without leaving"},
-      {cap(kRight, ""), "Last channel", "Jump back and forth"},
+      {cap(kLeft, ""), "Guide", "What's on now and later, without leaving"},
+      {cap(kRight, ""), "Last channel", "Back to the one you watched before"},
       {cap(std::string(kUp) + kDown, ""), "Channels",
-       k.channel ? "Up, or CH + / CH \xe2\x88\x92" : "Up or Down"},
-      {cap("OK", ""), "Info", std::string("What's on now and next; ") + kDown + " for more"},
+       k.channel ? "Up/Down or CH + / CH \xe2\x88\x92, always" : "Up or Down, always"},
+      {cap(ok, ""), "Subtitles & more", "Subtitles, Sources, Favorite and more"},
   };
-  Hint sources = playerSources(k);
-  sources.label.clear();
-  tips.push_back({sources, "Sources",
-                  k.colour || k.menu ? "Pick another feed of this channel"
-                                     : "Down, then OK: another feed of this channel"});
+  if (k.colour) tips.push_back({colour(Colour::Green, ""), "Subtitles", "On or off in one press"});
   if (k.digits) tips.push_back({cap("123", ""), "Number keys", "Go straight to a channel"});
-  else tips.push_back({cap("Back", ""), "Back", "To the guide"});
+  else tips.push_back({cap("Back", ""), "Back", "Closes what's on screen; again to leave"});
   return tips;
 }
 

@@ -20,6 +20,8 @@ enum class Key : uint8_t {
   Play, Pause, PlayPause, Stop, Rewind, FastForward,
   Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9,
   Info, Menu,
+  Guide,     // a remote's Guide button (Android TV, Fire TV Edition)
+  Captions,  // a remote's CC button (Android KEYCODE_CAPTIONS)
   CursorShown, CursorHidden,
 };
 

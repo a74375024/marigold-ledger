@@ -24,7 +24,7 @@ constexpr int kSpace = 62, kEnter = 66, kDel = 67, kMenu = 82, kPlayPause = 85, 
 constexpr int kPrevious = 88, kRewind = 89, kFastForward = 90, kPageUp = 92, kPageDown = 93;
 constexpr int kButtonA = 96, kButtonB = 97, kEscape = 111, kPlay = 126, kPause = 127;
 constexpr int kNumpad0 = 144, kNumpad9 = 153, kNumpadEnter = 160, kInfo = 165, kChannelUp = 166;
-constexpr int kChannelDown = 167, kGuide = 172, kRed = 183, kGreen = 184, kYellow = 185, kBlue = 186;
+constexpr int kChannelDown = 167, kGuide = 172, kCaptions = 175, kRed = 183, kGreen = 184, kYellow = 185, kBlue = 186;
 }  // namespace android
 
 // SDL_Keycode values that only desktop keyboards send.
@@ -108,8 +108,9 @@ Key keyFromAndroid(int keycode) {
     case kFastForward:
     case kNext: return Key::FastForward;
     case kMenu: return Key::Menu;
-    case kInfo:
-    case kGuide: return Key::Info;
+    case kInfo: return Key::Info;
+    case kGuide: return Key::Guide;
+    case kCaptions: return Key::Captions;
     case kRed: return Key::Red;
     case kGreen: return Key::Green;
     case kYellow: return Key::Yellow;
@@ -220,6 +221,8 @@ const char* keyName(Key key) {
     case Key::Digit9: return "9";
     case Key::Info: return "Info";
     case Key::Menu: return "Menu";
+    case Key::Guide: return "Guide";
+    case Key::Captions: return "CC";
     case Key::CursorShown: return "Cursor shown";
     case Key::CursorHidden: return "Cursor hidden";
   }

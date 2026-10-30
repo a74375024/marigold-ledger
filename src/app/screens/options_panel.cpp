@@ -356,10 +356,13 @@ std::unique_ptr<Screen> makeOptions(App& app) {
 
     p.items.push_back(ui::PanelItem::header("WATCHING"));
     ui::PanelItem subtitles{ui::PanelItem::Kind::Chevron, "Subtitles"};
-    subtitles.detail = set.subtitles ? "On when a channel has them" : "Off until you turn them on";
+    subtitles.detail = anySubtitles(set) ? "On when a channel has them" : "Off until you turn them on";
     subtitles.value = subtitleSummary(app);
     subtitles.select = [&app] { app.nav().push(makeSubtitleSettings(app)); };
     p.items.push_back(subtitles);
+    p.items.push_back(settingToggle(app, "Up arrow goes to higher numbers",
+                                    "Off: Up goes to the channel above in the list, as in the guide. CH+ always goes higher",
+                                    &Settings::upGoesHigher));
 
     p.items.push_back(ui::PanelItem::header("GUIDE"));
     p.items.push_back(settingToggle(app, "Preview channels", "Rest on a channel to hear it in the corner",

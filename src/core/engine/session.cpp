@@ -22,6 +22,8 @@ playback::FeedKind kindOf(const Feed& f) {
 constexpr const char* kLogFile = "playback-log.json";
 constexpr uint32_t kLogSaveMs = 10000;
 constexpr uint32_t kMemoryEveryMs = 5 * 60 * 1000;
+// Watched this long, a channel becomes the one "Back to" goes to.
+constexpr uint32_t kStayedMs = 10000;
 
 // Wall clock in ms, for the log's times.
 int64_t wallMs() {
@@ -294,8 +296,14 @@ void Session::playFeed(size_t index, uint64_t token) {
 
 void Session::watched() {
   if (entry_.empty() || entry_ == lastWatched_) return;
-  if (!lastWatched_.empty()) previous_ = lastWatched_;
+  // The last channel: the one stayed on for a while, so a run of quick
+  // flips doesn't lose the game you started from. Jumping back and forth
+  // with previous() always swaps the two.
+  if (!lastWatched_.empty() && (bouncing_ || previous_.empty() || ms() - watchedAt_ >= kStayedMs))
+    previous_ = lastWatched_;
+  bouncing_ = false;
   lastWatched_ = entry_;
+  watchedAt_ = ms();
   store_.noteWatched(entry_);
 }
 
@@ -317,6 +325,7 @@ std::string Session::flip(int step) {
 std::string Session::previous() {
   if (previous_.empty()) return {};
   std::string target = previous_;
+  bouncing_ = true;
   tune(target);
   return target;
 }

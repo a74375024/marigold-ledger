@@ -89,6 +89,7 @@ std::vector<std::string> Video::textLines(uint64_t* version) const {
   return {};
 }
 bool Video::drawsText() { return false; }
+int Video::systemCaptions() { return -1; }
 void Video::setTextStyle(int, int) {}
 
 }  // namespace marigold::platform
