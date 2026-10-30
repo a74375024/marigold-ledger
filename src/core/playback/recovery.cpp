@@ -226,6 +226,9 @@ Actions Recovery::playerError(Ms now, std::string_view message) {
   } else if (cannotPlayHere(text)) {
     // No grace and no retries: this version won't play on this TV.
     startupFailed(now, "this TV can't play this version (" + text + ")", out, true);
+  } else if (feeds_[index_].retryOnce && startupRetries_[feeds_[index_].id] == 0) {
+    // A quick start the server refused: straight to the normal open.
+    startupFailed(now, "error: " + text, out);
   } else {
     scheduleStartupFailure(now, "error: " + text);
   }
@@ -424,10 +427,13 @@ void Recovery::startupFailed(Ms now, const std::string& reason, Actions& out, bo
     }
     setNote("Retrying…", out);
     log(out, "retry",
-        "same feed in " + seconds(kXtreamRetryDelayMs) + " (attempt " + std::to_string(retries + 1) + " of " +
+        "same feed in " + seconds(isDirect(feed.kind) ? kXtreamRetryDelayMs : 0) + " (attempt " +
+            std::to_string(retries + 1) + " of " +
             std::to_string(isDirect(feed.kind) ? kXtreamStartRetries : 1) + ")",
         index_);
-    startTune(now, index_, kXtreamRetryDelayMs, true, true, false, reason, out);
+    // A direct feed waits for the provider to let go of the last stream; a
+    // quick start falls back to the normal open at once.
+    startTune(now, index_, isDirect(feed.kind) ? kXtreamRetryDelayMs : 0, true, true, false, reason, out);
     return;
   }
   out.push_back({Action::Kind::RecordFeed, index_, 0, false, reason, {}});

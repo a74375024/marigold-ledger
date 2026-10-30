@@ -121,6 +121,7 @@ bool Session::begin(const std::string& entryId, std::vector<Feed> feeds, const s
   if (full_) watched();
   std::vector<playback::FeedInfo> infos;
   quickTried_.clear();
+  quickPending_.clear();
   bool quick = store_.settings().embyQuickStart;
   for (const Feed& f : feeds_) infos.push_back({f.channelId, kindOf(f), quick && f.needsOpen});
   logEvent("tune", std::to_string(feeds_.size()) + (feeds_.size() == 1 ? " feed" : " feeds"));
@@ -232,8 +233,17 @@ void Session::playFeed(size_t index, uint64_t token) {
   MLOG_I("play", "feed %zu of %zu (%s)", index + 1, feeds_.size(), f.label.c_str());
   // Experimental Emby quick start: the direct link first, no open step; a
   // failed start falls back to the normal open (FeedInfo::retryOnce).
-  if (f.needsOpen && store_.settings().embyQuickStart && quickTried_.insert(f.channelId).second) {
+  // A quick start that didn't show a picture before this attempt: that
+  // server refuses them; it isn't tried there again.
+  if (!quickPending_.empty()) {
+    store_.quickStartRefused(quickPending_);
+    logEvent("quick start", "refused by the server; normal open from now on");
+    quickPending_.clear();
+  }
+  if (f.needsOpen && store_.settings().embyQuickStart && !store_.quickStartRefusedBy(f.channelId) &&
+      quickTried_.insert(f.channelId).second) {
     if (std::optional<Feed> q = store_.quickOpen(f)) {
+      quickPending_ = f.channelId;
       logEvent("quick start", "the server's direct link");
       feeds_[index] = *q;
       feeds_[index].needsOpen = true;  // a retry goes through the normal open
@@ -311,6 +321,7 @@ bool Session::tick(uint32_t now) {
   PlayerState s = player_->state();
   // Report changes of the player's flags only.
   if (s.picture && !sawPicture_) {
+    quickPending_.clear();  // a quick start that worked
     sawPicture_ = true;
     hadPicture_ = true;
     pictureAt_ = now;

@@ -36,7 +36,8 @@ constexpr int kTimeoutSeconds = 20;
 constexpr int kRequestSpacingMs = 700;
 // Which fields the saved games have: an older schedule is fetched again
 // once, even on the same day. 2: team colors, ranks, game tags, countries.
-constexpr int kSchema = 2;
+// 3: college names written out again (Cal State, Dominguez).
+constexpr int kSchema = 3;
 // A schedule fetched today and younger than this isn't fetched again.
 constexpr Seconds kFreshFor = 20 * 3600;
 // Finished games stay published a day and a half: a leftover feed naming

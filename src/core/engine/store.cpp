@@ -331,6 +331,7 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
       for (const auto& [k, x] : (*v)["pinned"].fields()) m.pinned[k] = x.asString();
       for (const auto& [k, x] : (*v)["lastFeed"].fields()) m.lastFeed[k] = x.asString();
       for (const auto& [k, x] : (*v)["unplayable"].fields()) m.unplayable[k] = x.asInt();
+      m.quickStartRefused = stringSet((*v)["quickStartRefused"]);
       for (const auto& [k, x] : (*v)["reliability"].fields())
         m.reliability[k] = {static_cast<int>(x[size_t(0)].asInt()), static_cast<int>(x[size_t(1)].asInt())};
     }
@@ -392,6 +393,8 @@ void Store::saveLists() {
   json::Value unplayable = json::Value::object();
   for (const auto& [k, at] : m.unplayable) unplayable.set(k, static_cast<int64_t>(at));
   v.set("unplayable", unplayable);
+  v.set("quickStartRefused",
+        stringArray(std::vector<std::string>(m.quickStartRefused.begin(), m.quickStartRefused.end())));
   json::Value rel = json::Value::object();
   for (const auto& [k, x] : m.reliability) {
     json::Value pair = json::Value::array();
@@ -2547,6 +2550,19 @@ void Store::open(const Feed& feed, std::function<void(std::optional<Feed>)> done
     host_.pool.submit(toHttp(cl->reportPlayingRequest(**stream), "emby.playing"), nullptr);
     done(f);
   });
+}
+
+void Store::quickStartRefused(const std::string& channelId) {
+  Impl& m = *impl_;
+  auto ci = m.indexByID.find(channelId);
+  if (ci == m.indexByID.end()) return;
+  if (m.quickStartRefused.insert((*m.channels)[ci->second].serverId).second) saveLists();
+}
+
+bool Store::quickStartRefusedBy(const std::string& channelId) const {
+  const Impl& m = *impl_;
+  auto ci = m.indexByID.find(channelId);
+  return ci != m.indexByID.end() && m.quickStartRefused.count((*m.channels)[ci->second].serverId) > 0;
 }
 
 std::optional<Feed> Store::quickOpen(const Feed& feed) {

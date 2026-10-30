@@ -201,6 +201,10 @@ class Store {
   // Settings::embyQuickStart: the feed with the server's direct link, no
   // open step (closes what is open first); nullopt if it can't be made.
   std::optional<Feed> quickOpen(const Feed& feed);
+  // The server of that channel refused a quick start: normal opens there
+  // from now on (saved).
+  void quickStartRefused(const std::string& channelId);
+  bool quickStartRefusedBy(const std::string& channelId) const;
   // `first`: the server's stream is closed before the next open (on the
   // playback lane, briefly), the rest in the background.
   void closeStream(bool first = false);

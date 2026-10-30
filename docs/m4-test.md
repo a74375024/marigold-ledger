@@ -391,3 +391,10 @@ The app knows real US channels by their other names, language and closing. After
 | Relaunch | Open the app | The splash's flower stays in place, breathes in and unfurls; the petals light in a quick sweep; it flashes, blooms out and fades while the guide comes in top to bottom; no text |
 | Slow start | First setup, or a provider that's slow | After 1.5 s a line under the flower says what's happening (GETTING YOUR CHANNELS, SORTING YOUR LINEUP…); petals light only as it gets there; never a number |
 | Hand-off | Any start | No jump from the splash; no "No channels" or loading screen before the guide |
+
+## Log review fixes (Build 104)
+
+| Area | How to check | Pass |
+|---|---|---|
+| Emby quick start | With the switch on, tune an Emby channel twice | The first try says "quick start · refused by the server; normal open from now on" and plays the normal way at once (no 5 s detour); after that it isn't tried on that server again |
+| College names | Live Events › Soccer / Volleyball | "Cal State San Marcos", "Cal State Dominguez Hills" (the saved schedule is fetched again once) |

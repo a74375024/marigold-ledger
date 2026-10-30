@@ -127,6 +127,7 @@ struct Store::Impl {
   // Raw channel id -> when it last failed to play (this run only): a
   // direct version that failed lately lets a server one that played lead.
   std::map<std::string, time::Seconds> failedAt;
+  std::set<std::string> quickStartRefused;  // server ids (Settings::embyQuickStart)
   std::set<std::string> hiddenGroups;  // provider groups left out of All Channels
   catalog::LineupPrefs prefs;
 

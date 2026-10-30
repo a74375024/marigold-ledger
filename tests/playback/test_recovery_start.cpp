@@ -464,7 +464,7 @@ TEST_CASE("an Emby quick start that fails gets one more try on the same feed (th
   t.hand();
   Actions fail = t.until(t.now + kStartupTimeoutMs);
   CHECK(logged(fail, "retry"));
-  CHECK(logDetail(fail, "retry") == "same feed in 2s (attempt 1 of 1)");
+  CHECK(logDetail(fail, "retry") == "same feed in 0s (attempt 1 of 1)");
   Actions open = t.untilOpen();
   const Action* re = first(open, Kind::Reconnect);
   REQUIRE(re);
@@ -473,4 +473,20 @@ TEST_CASE("an Emby quick start that fails gets one more try on the same feed (th
   t.hand();
   Actions again = t.until(t.now + kStartupTimeoutMs);
   CHECK(logged(again, "switch"));
+}
+
+TEST_CASE("an Emby quick start the server refuses falls back to the normal open at once") {
+  Rig t;
+  marigold::playback::FeedInfo a{"a", marigold::playback::FeedKind::Emby, true};
+  t.tune({a});
+  t.untilOpen();
+  t.hand();
+  // "300 Network Error" a moment after the hand-over: no grace, no pause.
+  Actions err = t.take(t.r.playerError(t.now, "300 Network Error"));
+  CHECK(logged(err, "start failed"));
+  CHECK(logDetail(err, "retry") == "same feed in 0s (attempt 1 of 1)");
+  Ms failed = t.now;
+  Actions open = t.untilOpen();
+  CHECK(first(open, Kind::Reconnect));
+  CHECK(t.now - failed <= marigold::playback::kSettleMs);
 }

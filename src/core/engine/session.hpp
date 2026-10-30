@@ -180,6 +180,7 @@ class Session {
   bool full_ = false;
   std::string failMessage_;
   std::set<std::string> quickTried_;  // Emby quick starts tried this tune
+  std::string quickPending_;          // a quick start not yet shown a picture
   uint32_t tunedAt_ = 0;
   // Player flags seen last tick, to report changes only.
   bool sawPicture_ = false, sawBuffering_ = false, sawFailed_ = false, sawEnded_ = false;
