@@ -325,6 +325,7 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
       settings_.subtitleLook = std::clamp(static_cast<int>((*v)["subtitleLook"].asNumber(0)), 0, 2);
       settings_.subtitleSentenceCase = (*v)["subtitleSentenceCase"].asBool(false);
       settings_.subtitleTop = (*v)["subtitleTop"].asBool(false);
+      settings_.playThroughApp = (*v)["playThroughApp"].asBool(true);
       settings_.guideShards = stringSet((*v)["guideShards"]);
     }
   }
@@ -467,6 +468,7 @@ void Store::setSettings(const Settings& s) {
   same.subtitleLook = settings_.subtitleLook;
   same.subtitleSentenceCase = settings_.subtitleSentenceCase;
   same.subtitleTop = settings_.subtitleTop;
+  same.playThroughApp = settings_.playThroughApp;
   bool boardChanged = !(same.previewChannels == settings_.previewChannels && same.scheduleEnabled == settings_.scheduleEnabled &&
                         same.showUnwatchable == settings_.showUnwatchable && same.showScores == settings_.showScores &&
                         same.clock24 == settings_.clock24 && same.allChannelsTab == settings_.allChannelsTab &&
@@ -491,6 +493,7 @@ void Store::setSettings(const Settings& s) {
   v.set("subtitleLook", s.subtitleLook);
   v.set("subtitleSentenceCase", s.subtitleSentenceCase);
   v.set("subtitleTop", s.subtitleTop);
+  v.set("playThroughApp", s.playThroughApp);
   if (!s.guideShards.empty())
     v.set("guideShards", stringArray(std::vector<std::string>(s.guideShards.begin(), s.guideShards.end())));
   if (boardChanged) impl_->ev.boardDirty = true;

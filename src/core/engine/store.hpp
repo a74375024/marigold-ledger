@@ -150,6 +150,9 @@ struct Settings {
   int subtitleLook = 0;          // 0 box, 1 outline, 2 shadow
   bool subtitleSentenceCase = false;
   bool subtitleTop = false;
+  // webOS: every channel goes through the app's local relay (captions can
+  // be read on the way); off plays continuous TS feeds directly again.
+  bool playThroughApp = true;
   std::set<std::string> guideShards;  // outside listings to use; empty = the defaults
 };
 

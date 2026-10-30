@@ -424,3 +424,14 @@ Off until turned on; then on for every channel that has them until turned off. M
 | None | Subtitles on, a channel without them | "No subtitles on this channel" once in the banner; no pill, no CC |
 | Style | Subtitles › Caption style | Size, Box / Outline / Shadow, Sentence case and Top change the captions on screen at once (Apple TV: size and look from the next channel) |
 | Playback log | Help › playback log | "captions · in the stream (English…)" when a stream has them; "captions · none after a minute" when it doesn't |
+
+## Through the app, floating panels, narrow rails (Build 107)
+
+| Area | How to check | Pass |
+|---|---|---|
+| Through the app (LG) | Watch normally for a day, then export the playback log | Each start says "route · through the app"; start times and failures no worse than Build 105 (Options › Playback › Play through the app off goes back to "direct") |
+| Subtitles on LG | Turn subtitles on while watching | They appear without the channel restarting |
+| Banner | Press OK in the player | The banner sits on a rounded, translucent card; no dark fade over the picture |
+| Panels | Sources, Subtitles, Options, the cameras panel | Floating cards inset from the edges, no fades |
+| Mini guide | Left in the player | A 600-wide card; Left again adds the categories beside it and the card widens; it narrows again when they close |
+| Live Events rail | Left while watching a game | 600 wide; Left again for sports (a red dot where something is live); Right does nothing (other ways to watch are under Sources) |

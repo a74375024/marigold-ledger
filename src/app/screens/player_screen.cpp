@@ -40,6 +40,7 @@ constexpr float kLeft = 96;
 constexpr float kBannerBottom = 870;  // the banner's lower edge
 constexpr float kRowY = 952;          // the key guide or the action row
 constexpr float kStripW = 500;        // "Later on this channel"
+constexpr float kCardTop = 656;       // the banner's card
 constexpr uint32_t kRed = 0xE5372B, kBlue = 0x3D7BFF, kGreen = 0x34C759;
 
 // Pointer targets.
@@ -592,7 +593,7 @@ class PlayerScreen : public Screen {
     float lineH = std::round(static_cast<float>(px) * 1.36f);
     float pad = std::round(static_cast<float>(px) * 0.4f);
     float total = lineH * static_cast<float>(lines.size());
-    float y = set.subtitleTop ? 70.0f : (banner ? kBannerBottom - 150 - 52 : gfx::kLayoutHeight - 70.0f) - total;
+    float y = set.subtitleTop ? 70.0f : (banner ? kCardTop - 20 : gfx::kLayoutHeight - 70.0f) - total;
     bool sentences = set.subtitleSentenceCase;  // mixed-case text is left as it is
     bool startsSentence = true;
     for (const captions::Line& l : lines) {
@@ -622,21 +623,8 @@ class PlayerScreen : public Screen {
     }
   }
 
-  void drawScrim(ui::Ctx& c) {
-    // Darkens the bottom of the picture under the banner: already about two
-    // thirds dark at the title, so white text reads on a bright frame (snow,
-    // a pitch, a studio); the top half of the picture is left alone.
-    static const float kStops[][2] = {{0.0f, 0.0f}, {0.2f, 0.30f}, {0.4f, 0.66f}, {0.6f, 0.84f}, {1.0f, 0.88f}};
-    float top = gfx::kLayoutHeight - 540;
-    for (int i = 0; i < 27; ++i) {
-      float t = static_cast<float>(i) / 26.0f;
-      size_t k = 1;
-      while (k + 1 < std::size(kStops) && t > kStops[k][0]) ++k;
-      float f = (t - kStops[k - 1][0]) / (kStops[k][0] - kStops[k - 1][0]);
-      float a = kStops[k - 1][1] + (kStops[k][1] - kStops[k - 1][1]) * std::clamp(f, 0.0f, 1.0f);
-      c.g.fill({0, top + 20.0f * static_cast<float>(i), gfx::kLayoutWidth, 20}, theme::black(a));
-    }
-  }
+  // The banner and its row on one floating card (no fade over the picture).
+  void drawScrim(ui::Ctx& c) { ui::floatingCard(c, {48, kCardTop, gfx::kLayoutWidth - 96, gfx::kLayoutHeight - 28 - kCardTop}); }
 
   void drawBanner(ui::Ctx& c, const GuideChannel* g, bool failed) {
     Playback& p = app_.playback();

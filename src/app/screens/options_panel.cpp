@@ -10,6 +10,7 @@
 #include "core/sports/my_sports.hpp"
 #include "core/util/memory.hpp"
 #include "core/util/strings.hpp"
+#include "platform/ts_proxy.hpp"
 
 namespace marigold::app {
 namespace {
@@ -404,7 +405,12 @@ std::unique_ptr<Screen> makeOptions(App& app) {
       anyXtream = anyXtream || a.kind == "Xtream";
       anyEmby = anyEmby || a.kind == "Emby / Jellyfin";
     }
-    if (anyXtream || anyEmby) p.items.push_back(ui::PanelItem::header("PLAYBACK"));
+    bool relay = platform::TsProxy::wanted();
+    if (anyXtream || anyEmby || relay) p.items.push_back(ui::PanelItem::header("PLAYBACK"));
+    if (relay)
+      p.items.push_back(settingToggle(app, "Play through the app",
+                                      "Subtitles turn on at once. Turn off if channels start worse; it applies from the next channel",
+                                      &Settings::playThroughApp));
     if (anyXtream)
       p.items.push_back(settingToggle(app, "Use MPEG-TS for Xtream", "Try this if Xtream channels stutter", &Settings::preferTS));
     if (anyEmby)

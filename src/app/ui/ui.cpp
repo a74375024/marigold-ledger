@@ -165,24 +165,15 @@ void spinner(Ctx& c, float x, float y, float radius, Color col) {
   }
 }
 
+void floatingCard(Ctx& c, Rect r) {
+  c.g.fill(r, theme::hex(0x181A20, 0.88f), 30);
+  c.g.stroke(r, theme::white(0.07f), 30, 1);
+}
+
 void sidePanel(Ctx& c, Rect r, bool leading) {
-  // No blur on these GPUs: a dark fill with a soft ramp on the open edge.
-  float ramp = std::round(r.w * 0.16f);
-  constexpr int kSteps = 12;
-  if (leading) {
-    c.g.fill({r.x, r.y, r.w - ramp, r.h}, theme::black(0.82f));
-    for (int i = 0; i < kSteps; ++i) {
-      float a = 0.82f * (1.0f - static_cast<float>(i + 1) / (kSteps + 1));
-      c.g.fill({r.x + r.w - ramp + ramp * static_cast<float>(i) / kSteps, r.y, ramp / kSteps + 1, r.h},
-               theme::black(a));
-    }
-  } else {
-    c.g.fill({r.x + ramp, r.y, r.w - ramp, r.h}, theme::black(0.82f));
-    for (int i = 0; i < kSteps; ++i) {
-      float a = 0.82f * static_cast<float>(i + 1) / (kSteps + 1);
-      c.g.fill({r.x + ramp * static_cast<float>(i) / kSteps, r.y, ramp / kSteps + 1, r.h}, theme::black(a));
-    }
-  }
+  // A card inset from the screen's edges, on the side it opens from.
+  Rect card{leading ? r.x + kCardInset : r.x, r.y + kCardInset, r.w - kCardInset, r.h - 2 * kCardInset};
+  floatingCard(c, card);
 }
 
 void scrim(Ctx& c, float alpha) {

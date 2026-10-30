@@ -114,12 +114,8 @@ class CameraPanelScreen : public Screen {
 
   void draw(ui::Ctx& c) override {
     float top = gfx::kLayoutHeight - kPanelH;
-    // A dark band rising over the picture.
-    for (int i = 0; i < 12; ++i) {
-      float t = static_cast<float>(i) / 12.0f;
-      c.g.fill({0, top - 60 + t * 60, gfx::kLayoutWidth, 5}, theme::black(0.85f * t));
-    }
-    c.g.fill({0, top, gfx::kLayoutWidth, kPanelH}, theme::black(0.85f));
+    // A floating card over the picture, like the banner's.
+    ui::floatingCard(c, {48, top, gfx::kLayoutWidth - 96, kPanelH - 28});
     float x = kLeft, y = top + 34, w = gfx::kLayoutWidth - 2 * kLeft;
     float lx = x + ui::chip(c, panel_.header.live, x, y + 4, 17, theme::hex(theme::kLive), theme::white()) + 14;
     ui::label(c, panel_.header.title, lx, y, Weight::Bold, 32, theme::white(), w * 0.6f);

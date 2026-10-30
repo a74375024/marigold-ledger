@@ -130,9 +130,14 @@ Color skeleton(const Ctx& c);
 // screen's tick returns it while placeholders are on screen.
 bool skeletonMoved(uint32_t ms, uint32_t& step);
 
-// The frosted side panel background (55% black over the UI, fading on the
-// open edge). `leading` panels open from the left.
+// A side panel's background in `r`: a floating card inset from the screen's
+// top, bottom and outer edge. `leading` panels open from the left.
 void sidePanel(Ctx& c, Rect r, bool leading);
+// The floating card side panels and the player's banner sit on: one
+// translucent colour, rounded, with a faint edge (no gradient).
+void floatingCard(Ctx& c, Rect r);
+// How far a side panel's card sits in from the screen's edges.
+constexpr float kCardInset = 24;
 // Full screen scrim.
 void scrim(Ctx& c, float alpha);
 

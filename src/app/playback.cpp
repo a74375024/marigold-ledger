@@ -30,8 +30,9 @@ std::string channelLanguage(App& app) {
 }
 
 // The platform's video player, with the TS proxy in front of HLS feeds where
-// the platform wants it (webOS). With subtitles on, continuous TS feeds go
-// through it too, so their captions can be read on the way to the player.
+// the platform wants it (webOS). Continuous TS feeds go through it too
+// (Options › Play through the app, or with subtitles on), so their captions
+// can be read on the way to the player.
 class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
  public:
   TvPlayer(App& app, std::function<gfx::Rect()> window, std::shared_ptr<engine::Subtitles> subtitles)
@@ -53,9 +54,9 @@ class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
     feed_ = f;
     std::string url = f.url, headers = f.headers;
     bool hls = looksHls(url);
-    bool subtitles = app_.store().settings().subtitles;
+    const Settings& set = app_.store().settings();
     unsigned relay = 0;
-    if (!asGiven && (hls || subtitles) && !proxyFailed_.count(f.channelId)) {
+    if (!asGiven && (hls || set.subtitles || set.playThroughApp) && !proxyFailed_.count(f.channelId)) {
       std::string local = proxy_.localUrl(url, headers, !hls);
       if (!local.empty()) {
         url = local;
@@ -194,6 +195,9 @@ bool Playback::playerDrawsSubtitles() { return platform::Video::drawsText(); }
 void Playback::subtitlesBegin(unsigned relaySession, bool relayPossible) {
   subtitles_->begin(relaySession, channelLanguage(app_));
   relayPossible_ = relayPossible;
+  // Which way the stream goes (webOS), to compare the two in the log.
+  if (relaySession) logNote("route", "through the app");
+  else if (relayPossible) logNote("route", "direct");
   captionsLogged_ = noneLogged_ = false;
   textVersion_ = 0;
   textTracksAt_ = 0;

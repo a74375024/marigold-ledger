@@ -216,6 +216,8 @@ typedef struct PxConexao {
 // segunda conexao nao pode fechar a primeira: isso virava endOfStream depois
 // de 10..20s na C4. Uma ingestao HLS alimenta todos os leitores locais.
 #define PX_BUFFER ((16U << 20) / 188 * 188)
+// marigold: a .ts continua chega em tempo real; 4 MiB (~8 s a 4 Mbps) bastam.
+#define PX_BUFFER_VIVO ((4U << 20) / 188 * 188)
 #define PX_BLOCO (188U * 256)
 struct PxFluxo {
   pthread_mutex_t trava;
@@ -233,6 +235,7 @@ struct PxFluxo {
   char cabs[512];                   // os do addon, para playlist e segmentos
   int resolucao;                    // marigold: opcao da sessao, para a mestre
   int continuo;                     // marigold: a fonte e .ts continua, passada adiante
+  size_t tam;                       // marigold: o tamanho do ring (PX_BUFFER ou PX_BUFFER_VIVO)
   uint64_t espiado;                 // marigold: ate onde o espiao ja leu
   PxConexao produtor;
 };
@@ -335,7 +338,7 @@ static int pxEntregar(PxConexao *c, const void *b, size_t n) {
     uint64_t limite;
     struct timespec prazo;
     pthread_mutex_lock(&f->trava);
-    limite = f->fim + guardar > PX_BUFFER ? f->fim + guardar - PX_BUFFER : 0;
+    limite = f->fim + guardar > f->tam ? f->fim + guardar - f->tam : 0;
     clock_gettime(CLOCK_REALTIME, &prazo); prazo.tv_nsec += 250000000;
     if (prazo.tv_nsec >= 1000000000) { prazo.tv_nsec -= 1000000000; prazo.tv_sec++; }
     for (;;) {
@@ -358,12 +361,12 @@ static int pxEntregar(PxConexao *c, const void *b, size_t n) {
       }
     }
     if (f->encerrado) { pthread_mutex_unlock(&f->trava); return 0; }
-    off = (size_t)(f->fim % PX_BUFFER);
-    primeira = guardar < PX_BUFFER - off ? guardar : PX_BUFFER - off;
+    off = (size_t)(f->fim % f->tam);
+    primeira = guardar < f->tam - off ? guardar : f->tam - off;
     memcpy(f->buffer + off, p, primeira);
     memcpy(f->buffer, p + primeira, guardar - primeira);
     f->fim += guardar;
-    if (f->fim - f->inicio > PX_BUFFER) f->inicio = f->fim - PX_BUFFER;
+    if (f->fim - f->inicio > f->tam) f->inicio = f->fim - f->tam;
     pthread_cond_broadcast(&f->chegou);
     pthread_mutex_unlock(&f->trava);
     p += guardar; n -= guardar;
@@ -512,7 +515,7 @@ static PxFluxo *pxFluxoPegar(PxConexao *c, const char *lista, const char *cabs, 
   }
   if (!f && lista) {
     f = calloc(1, sizeof *f);
-    if (f) f->buffer = malloc(PX_BUFFER);
+    if (f) { f->tam = continuo ? PX_BUFFER_VIVO : PX_BUFFER; f->buffer = malloc(f->tam); }
     if (!f || !f->buffer) { if (f) free(f); pthread_mutex_unlock(&trava); return NULL; }
     if (pthread_mutex_init(&f->trava, NULL) != 0) {
       free(f->buffer); free(f); pthread_mutex_unlock(&trava); return NULL;
@@ -588,8 +591,8 @@ static void pxServirFluxo(PxConexao *c) {
       continue;
     }
     n = f->fim - pos > PX_BLOCO ? PX_BLOCO : (size_t)(f->fim - pos);
-    off = (size_t)(pos % PX_BUFFER);
-    primeira = n < PX_BUFFER - off ? n : PX_BUFFER - off;
+    off = (size_t)(pos % f->tam);
+    primeira = n < f->tam - off ? n : f->tam - off;
     memcpy(b, f->buffer + off, primeira);
     memcpy(b + primeira, f->buffer, n - primeira);
     if (reporTabelas) { tab = f->tabelas; reporTabelas = 0; }

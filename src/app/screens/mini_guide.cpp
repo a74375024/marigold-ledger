@@ -18,9 +18,11 @@ using ui::Rect;
 using ui::Weight;
 namespace theme = ui::theme;
 
-constexpr float kListW = 980;
-constexpr float kHoodW = 320;
-constexpr float kRowH = 96;
+// The rail is just wide enough for a logo, the show and what's next; the
+// neighborhoods column widens it while it's open.
+constexpr float kRailW = 600;
+constexpr float kHoodW = 270;
+constexpr float kRowH = 88;
 constexpr float kHeaderH = 40;
 constexpr float kTop = 120;
 constexpr size_t kGuideRows = 300;  // listings asked for on open
@@ -118,10 +120,10 @@ class MiniGuide : public Screen {
 
   void draw(ui::Ctx& c) override {
     auto li = app_.store().listings();
-    float panelW = kListW + (hoods_ ? kHoodW : 0);
-    ui::sidePanel(c, {0, 0, panelW + 120, gfx::kLayoutHeight}, true);
-    float x = 70 + (hoods_ ? kHoodW : 0);
-    ui::label(c, "LIVE TV \xc2\xb7 " + ui::clock(c, c.now), x, 60, Weight::Bold, 20, theme::white(0.6f));
+    float cardW = kRailW + (hoods_ ? kHoodW : 0);
+    ui::sidePanel(c, {0, 0, cardW + ui::kCardInset, gfx::kLayoutHeight}, true);
+    float x = ui::kCardInset + 38 + (hoods_ ? kHoodW : 0);
+    ui::label(c, "LIVE TV \xc2\xb7 " + ui::clock(c, c.now), x, 58, Weight::Bold, 19, theme::white(0.6f));
     if (hoods_) drawHoods(c);
 
     // Keep the focus in view.
@@ -129,7 +131,7 @@ class MiniGuide : public Screen {
     float focusY = focus_ >= 0 ? lines_[static_cast<size_t>(focus_)].y : 0;
     if (focusY - kRowH < scroll_) scroll_ = std::max(0.0f, focusY - kRowH);
     if (focusY + 2 * kRowH > scroll_ + visible) scroll_ = focusY + 2 * kRowH - visible;
-    c.g.pushClip({0, kTop, panelW + 40, visible});
+    c.g.pushClip({ui::kCardInset, kTop, cardW, visible});
     const std::string& playing = app_.playback().entry();
     for (size_t i = 0; i < lines_.size(); ++i) {
       const Line& l = lines_[i];
@@ -141,23 +143,23 @@ class MiniGuide : public Screen {
       }
       const GuideChannel& g = ch_->all[static_cast<size_t>(l.channel)];
       bool f = static_cast<int>(i) == focus_ && !hoods_;
-      Rect r{x - 14, y, kListW - 60, kRowH - 6};
+      Rect r{x - 14, y, kRailW - 72, kRowH - 6};
       c.hit(r, kHitRow + static_cast<int>(i));
       if (f) c.g.fill(r, theme::white(), theme::kRowRadius);
       ui::Color fg = f ? theme::black() : theme::white();
       ui::Color sub = f ? theme::black(0.6f) : theme::white(0.6f);
-      ui::logo(c, g.logoUrl, g.name, {r.x + 14, r.y + 13, 136, 64}, f);
-      float tx = r.x + 170, tw = r.w - 190;
+      ui::logo(c, g.logoUrl, g.name, {r.x + 12, r.y + 15, 112, 52}, f);
+      float tx = r.x + 140, tw = r.w - 156;
       engine::views::NowNext on = engine::views::nowAndNext(*li, g.id, c.now);
       const Listing* now = on.now;
       const Listing* next = on.now ? on.next : nullptr;
       if (g.id == playing) {
-        c.g.fill({tx, r.y + 18, 10, 10}, theme::hex(theme::kWatching), 5);
-        ui::label(c, "WATCHING", tx + 18, r.y + 13, Weight::Bold, 15, f ? theme::black(0.7f) : theme::hex(theme::kWatching));
+        c.g.fill({tx, r.y + 16, 10, 10}, theme::hex(theme::kWatching), 5);
+        ui::label(c, "WATCHING", tx + 18, r.y + 11, Weight::Bold, 15, f ? theme::black(0.7f) : theme::hex(theme::kWatching));
         tx += 0;
       }
-      float titleY = g.id == playing ? r.y + 34 : r.y + 16;
-      ui::label(c, now ? now->title : g.name, tx, titleY, Weight::Bold, 25, fg, tw);
+      float titleY = g.id == playing ? r.y + 30 : r.y + 13;
+      ui::label(c, now ? now->title : g.name, tx, titleY, Weight::Bold, 23, fg, tw);
       std::string line;
       if (now) {
         line = "until " + ui::clock(c, now->end, false);
@@ -165,16 +167,18 @@ class MiniGuide : public Screen {
       } else {
         line = g.name;
       }
-      if (g.id != playing) ui::label(c, line, tx, r.y + 52, Weight::Medium, 19, sub, tw);
+      if (g.id != playing) ui::label(c, line, tx, r.y + 45, Weight::Medium, 17, sub, tw);
       if (now) {
         double frac = static_cast<double>(c.now - now->start) / static_cast<double>(std::max<time::Seconds>(1, now->end - now->start));
-        ui::progress(c, {tx, r.y + kRowH - 18, 280, 5}, frac, f ? theme::black(0.15f) : theme::white(0.18f),
+        ui::progress(c, {tx, r.y + kRowH - 18, 220, 4}, frac, f ? theme::black(0.15f) : theme::white(0.18f),
                      f ? theme::black() : theme::white());
       }
     }
     c.g.popClip();
-    ui::label(c, "\xe2\x96\xb2\xe2\x96\xbc browse \xc2\xb7 OK: watch \xc2\xb7 \xe2\x97\x80 neighborhoods \xc2\xb7 Back: close", x,
-              gfx::kLayoutHeight - 60, Weight::Regular, 18, theme::white(0.55f));
+    ui::label(c,
+              hoods_ ? "\xe2\x96\xb2\xe2\x96\xbc pick \xc2\xb7 OK: jump there \xc2\xb7 \xe2\x97\x80 or Back: close"
+                     : "\xe2\x96\xb2\xe2\x96\xbc browse \xc2\xb7 OK: watch \xc2\xb7 \xe2\x97\x80 categories",
+              x, gfx::kLayoutHeight - 62, Weight::Regular, 17, theme::white(0.55f), kRailW - 72);
   }
 
  private:
@@ -235,15 +239,15 @@ class MiniGuide : public Screen {
   void drawHoods(ui::Ctx& c) {
     float y = kTop;
     for (size_t i = 0; i < sections_.size(); ++i) {
-      Rect r{40, y, kHoodW - 30, 56};
+      Rect r{ui::kCardInset + 16, y, kHoodW - 30, 52};
       bool f = static_cast<int>(i) == hood_;
       c.hit(r, kHitHood + static_cast<int>(i));
       if (f) c.g.fill(r, theme::white(), 28);
       ui::labelIn(c, sections_[i].first, {r.x + 20, r.y, r.w - 40, r.h}, Weight::Bold, 22, f ? theme::black() : theme::white());
-      y += 62;
+      y += 58;
       if (y > gfx::kLayoutHeight - 120) break;
     }
-    c.g.fill({kHoodW + 30, kTop, 1, gfx::kLayoutHeight - kTop - 100}, theme::white(0.15f));
+    c.g.fill({ui::kCardInset + kHoodW, kTop, 1, gfx::kLayoutHeight - kTop - 100}, theme::white(0.15f));
   }
 
   std::shared_ptr<const Channels> ch_;
