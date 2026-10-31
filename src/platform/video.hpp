@@ -49,6 +49,9 @@ class Video {
   void setWindow(gfx::Rect r);
   // Applies `r` again even if it did not change.
   void reapplyWindow(gfx::Rect r);
+  // The picture without its sound (Search's corner preview), kept across
+  // streams until turned off. Off brings the sound back on the same stream.
+  void setMuted(bool muted);
   void shutdown();
 
   VideoState state() const;
@@ -76,6 +79,7 @@ class Video {
 
  private:
   bool started_ = false;
+  bool muted_ = false;
 };
 
 }  // namespace marigold::platform

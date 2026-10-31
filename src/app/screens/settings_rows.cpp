@@ -498,6 +498,10 @@ void guideRows(App& app, ui::ListPanel& p) {
   });
   clock.about = "Times everywhere: the guide, Live Events and the player.";
   p.items.push_back(clock);
+  p.items.push_back(settingToggle(app, "Recent searches", "What you picked in Search, under its keyboard",
+                                  &Settings::recentSearches,
+                                  "Search keeps the names of the last few things you picked from it, to pick again "
+                                  "in one press. Off forgets them and keeps no more."));
   p.items.push_back(settingToggle(app, "All Channels tab", "Every channel in your countries", &Settings::allChannelsTab,
                                   "A tab in the guide with every channel of your countries and languages, by the "
                                   "provider's groups."));

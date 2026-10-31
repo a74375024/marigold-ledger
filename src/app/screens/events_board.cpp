@@ -19,6 +19,7 @@
 #include "app/screens/top_bar.hpp"
 #include "app/store/store.hpp"
 #include "core/input/hints.hpp"
+#include "core/input/preview_pace.hpp"
 #include "core/sports/my_sports.hpp"
 
 namespace marigold::app {
@@ -582,16 +583,11 @@ class EventsBoardScreen : public Screen {
   }
 
   void openSearch() {
-    App& app = app_;
-    app_.nav().push(makeSearch(app_, [&app](const std::string& id) {
-      // A channel: straight to it, full screen (the board has no channel rows).
-      Playback& p = app.playback();
-      if (!p.tune(id)) {
-        app.toast("This channel has no working feed right now");
-        return;
-      }
-      p.setFull();
-      app.nav().push(makePlayer(app));
+    // Search plays what is picked itself; its strip and menu come back here.
+    stopPreview();
+    EventsBoardScreen* self = this;
+    app_.nav().push(makeSearch(app_, [self](rail::Item item) {
+      if (item != rail::Item::Search) self->open(item, true);
     }));
   }
 
@@ -612,22 +608,17 @@ class EventsBoardScreen : public Screen {
     const EventTile* t = focused();
     if (!t || !previewable(*t)) {
       if (p.active() && !p.full()) p.stop();
-      previewCandidate_.clear();
+      pace_.step("", false, ms);
       return false;
     }
-    if (previewCandidate_ != t->id) {
-      previewCandidate_ = t->id;
-      focusSince_ = ms;
+    switch (pace_.step(t->id, p.entry() == t->id, ms)) {
+      case preview::Pace::Step::Idle: return false;
+      case preview::Pace::Step::Wait: return true;  // waiting out the delay
+      case preview::Pace::Step::Tune: break;
     }
-    if (p.entry() == t->id || previewTried_ == t->id) return false;
-    if (ms - focusSince_ >= top_bar::kPreviewDelayMs && ms - lastPreviewAt_ >= top_bar::kPreviewGapMs) {
-      lastPreviewAt_ = ms;
-      previewTried_ = t->id;
-      p.setCorner(top_bar::kPreview);
-      if (!p.tune(t->id, app_.store().eventFlipList(t->id))) p.stop();
-      return false;
-    }
-    return true;  // waiting out the delay
+    p.setCorner(top_bar::kPreview);
+    if (!p.tune(t->id, app_.store().eventFlipList(t->id))) p.stop();
+    return false;
   }
 
   void stopPreview() {
@@ -846,8 +837,7 @@ class EventsBoardScreen : public Screen {
   std::string focusId_;
   bool filterFocus_ = false;  // on the filter button
   float rowScroll_ = 0;
-  std::string previewCandidate_, previewTried_;
-  uint32_t focusSince_ = 0, lastPreviewAt_ = 0;
+  preview::Pace pace_{true};  // the corner: after a rest, each game once
 };
 
 }  // namespace

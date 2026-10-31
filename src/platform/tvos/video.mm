@@ -43,6 +43,9 @@ struct TextState {
   int size = 1, look = 0;
 };
 TextState gText;  // guarded by gMu
+// Search's corner preview plays without sound (applied by the tick, since
+// VLC's audio output only exists once the stream plays).
+bool gMuted = false;  // guarded by gMu
 
 }  // namespace
 
@@ -170,6 +173,7 @@ TextState gText;  // guarded by gMu
     gText.tracks = std::move(tracks);
     if (p.currentVideoSubTitleIndex != want && (want >= 0 || p.currentVideoSubTitleIndex >= 0)) p.currentVideoSubTitleIndex = want;
   }
+  if (p.audio && p.audio.muted != gMuted) p.audio.muted = gMuted;
   bool waiting = !gState.picture || (!advancing && p.state != VLCMediaPlayerStatePaused);
   if (waiting && !gState.waiting) gState.waitingSince = std::chrono::steady_clock::now();
   gState.waiting = waiting && !gState.failed && !gState.ended;
@@ -267,6 +271,18 @@ void Video::stop() {
 }
 
 void Video::pump() {}
+
+void Video::setMuted(bool muted) {
+  if (muted == muted_) return;
+  muted_ = muted;
+  {
+    std::lock_guard<std::mutex> lock(gMu);
+    gMuted = muted;
+  }
+  // At once on the stream playing (the tick keeps it so).
+  if (started_) tvos::onMain([muted] { gPlayer.player.audio.muted = muted; });
+}
+
 void Video::setWindow(gfx::Rect r) { place(r); }
 void Video::reapplyWindow(gfx::Rect r) { place(r); }
 

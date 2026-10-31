@@ -24,8 +24,10 @@ std::unique_ptr<Screen> makePlayer(App& app);
 std::unique_ptr<Screen> makeMiniGuide(App& app);
 // Program detail card for a show that has not started.
 std::unique_ptr<Screen> makeProgramDetail(App& app, const std::string& entryId, const Listing& l);
-// Channel search; `pick` gets the chosen entry id.
-std::unique_ptr<Screen> makeSearch(App& app, std::function<void(const std::string&)> pick);
+// Search (Build 113), a section of the left rail over the guide or Live
+// Events: it plays what is picked itself. `go` gets what its strip or menu
+// picks once Search has closed.
+std::unique_ptr<Screen> makeSearch(App& app, std::function<void(rail::Item)> go);
 // Settings (settings_screen.cpp). Quick settings: the Blue key, the
 // player's Settings button and Blue on Live Events open a short side panel
 // for where you are (the picture or board still showing), ending with All

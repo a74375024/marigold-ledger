@@ -73,6 +73,39 @@ Bar eventsBoard(const RemoteKeys& k, Rail rail) {
   return b;
 }
 
+Bar search(const RemoteKeys& k, SearchPlace place, bool results, const SearchDigits& digits) {
+  Bar b;
+  const char* dot = " \xc2\xb7 ";
+  if (place == SearchPlace::Digits) {
+    if (!digits.team.empty()) {
+      // The digits also start a name ("49"): nothing tunes by itself.
+      b.keys = {cap("OK", "Watch channel " + digits.number), cap(kDown, "The " + digits.team),
+                cap("Letters", "Keep typing \xe2\x80\x9c" + digits.number + "\xe2\x80\xa6\xe2\x80\x9d")};
+      b.right = std::string("Doesn't tune by itself") + dot + "Back: Cancel";
+    } else {
+      b.keys = {cap("OK", "Watch now"), cap("0\xe2\x80\x93" "9", "More digits")};
+      b.right = std::string("Plays when the number is complete") + dot + "Back: Cancel";
+    }
+    return b;
+  }
+  if (k.colour) b.keys.push_back(colour(Colour::Red, "Clear text"));
+  if (k.digits) b.keys.push_back(cap("0\xe2\x80\x93" "9", "Channel"));
+  if (place == SearchPlace::Keyboard) {
+    // The Siri Remote: the ring or a swipe moves, only the centre click types.
+    if (k.clickpad) b.keys = {cap("Swipe or ring", "Move"), cap("Centre click", "Type")};
+    b.right = results ? std::string(kRight) + " Choose a result" + dot + "Back: Close" : std::string("Back: Close");
+    return b;
+  }
+  // In the results: ☰ is More on Fire TV; click and hold on Apple TV.
+  bool fire = k.menu && !k.colour;
+  if (k.clickpad) b.keys.push_back(cap("Click and hold", "More"));
+  else if (fire) b.keys.push_back(icons({"key-menu"}, "More"));
+  b.right = std::string(kLeft) + " Keyboard";
+  if (!k.clickpad && !fire) b.right += std::string(dot) + "Hold OK: more";
+  b.right += std::string(dot) + "Back: Keyboard";
+  return b;
+}
+
 Bar setup(const RemoteKeys& k, bool letters) {
   Bar b;
   b.keys.push_back(cap(k.clickpad ? "Click" : "OK", "Pick"));

@@ -53,6 +53,16 @@ bool Video::play(const std::string& url, const std::string& headers, int loadMod
 }
 
 void Video::stop() { call("videoStop"); }
+
+void Video::setMuted(bool muted) {
+  if (muted == muted_) return;
+  muted_ = muted;
+  JNIEnv* e = android::env();
+  if (!e) return;
+  static jmethodID id = android::method("videoMuted", "(Z)V");
+  e->CallStaticVoidMethod(android::bridge(), id, static_cast<jboolean>(muted));
+  android::caught(e, "videoMuted");
+}
 void Video::pump() {}
 void Video::setWindow(gfx::Rect r) { window(r, false); }
 void Video::reapplyWindow(gfx::Rect r) { window(r, true); }

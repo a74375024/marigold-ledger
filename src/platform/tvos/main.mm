@@ -1,7 +1,8 @@
 // The tvOS entry point: UIKit's app and scene. The scene's view controller
 // holds the views (the video under, the UI's Metal layer over it, fixed at
 // 1920x1080) and a hidden text field for the system keyboard. It turns the
-// remote's presses and swipes into key events and the scene's life into
+// remote's presses and swipes into key events (a long swipe glides several
+// steps, a flick coasts on) and the scene's life into
 // Shown, Hidden and Background, and starts the app thread once, which runs
 // the same app::run as webOS and Android.
 #import <Metal/Metal.h>
@@ -9,6 +10,7 @@
 #import <UIKit/UIKit.h>
 #include <os/log.h>
 
+#include <cmath>
 #include <condition_variable>
 #include <mutex>
 #include <string>
@@ -33,6 +35,34 @@ namespace {
 // Held arrows repeat as they do on the other remotes.
 constexpr NSTimeInterval kRepeatDelay = 0.40;
 constexpr NSTimeInterval kRepeatEvery = 0.08;
+
+// Swipes glide (panned:). Distances are fractions of the view along the
+// gesture's axis: the remote's touch surface maps onto the view.
+// A resting or wobbling thumb that moves less than this sends nothing.
+constexpr CGFloat kGlideDeadZone = 0.06;
+// One step per this much travel past the dead zone (the first at dead zone + one step).
+constexpr CGFloat kGlideStep = 1.0 / 3.0;
+// A release at least this fast (views per second) coasts on, after a step by distance.
+constexpr CGFloat kCoastSpeed = 2.0;
+// The release speed that gives the longest coast.
+constexpr CGFloat kCoastSpeedMost = 5.0;
+// Steps a coast adds, from the slowest flick to the fastest.
+constexpr int kCoastFewest = 2;
+constexpr int kCoastMost = 4;
+// The first coast step this long after release.
+constexpr NSTimeInterval kCoastFirst = 0.06;
+// Each later coast step waits this much longer than the one before (it slows down).
+constexpr double kCoastSlowing = 1.35;
+// How far apart UIKit may report a swipe and the pan of the same gesture.
+constexpr CFTimeInterval kSwipePanGap = 0.25;
+
+// Each swipe gesture's number (never 0: 0 is a move from no gesture). Main
+// thread only.
+uint32_t nextGlide() {
+  static uint32_t last = 0;
+  if (++last == 0) last = 1;
+  return last;
+}
 
 os_log_t logger() {
   static os_log_t l = os_log_create("org.marigold.app", "app");
@@ -111,13 +141,31 @@ marigold::platform::Event keyEvent(marigold::Key key, bool down, bool repeat) {
 }
 @end
 
-@interface MGViewController : UIViewController <UITextFieldDelegate>
+// The axis a glide is locked to once it leaves the dead zone.
+enum class GlideAxis : uint8_t { None, Sideways, UpDown };
+
+@interface MGViewController : UIViewController <UITextFieldDelegate, UIGestureRecognizerDelegate>
 @property(nonatomic, strong) UIView* videoView;
 @property(nonatomic, strong) MGUIView* uiView;
 @property(nonatomic, strong) MGHiddenField* field;
 @property(nonatomic) BOOL fieldConfirmed;
 @property(nonatomic, strong) NSTimer* repeatTimer;
 @property(nonatomic) marigold::Key repeatKey;
+// The current swipe gesture: its number, axis, direction (+1 right or down,
+// -1 left or up, 0 not yet) and the moves it sent.
+@property(nonatomic) uint32_t glideId;
+@property(nonatomic) GlideAxis glideAxis;
+@property(nonatomic) int glideDir;
+@property(nonatomic) int glideSent;
+// The pan itself travelled a step (a swipe recogniser's move alone never coasts).
+@property(nonatomic) BOOL glidePanned;
+@property(nonatomic) BOOL panTracking;
+@property(nonatomic) CFTimeInterval panEndedAt;
+// When a swipe came before its pan began (that pan keeps the swipe's gesture).
+@property(nonatomic) CFTimeInterval swipeLeadAt;
+@property(nonatomic, strong) NSTimer* coastTimer;
+@property(nonatomic) int coastLeft;
+@property(nonatomic) NSTimeInterval coastGap;
 @end
 
 static MGViewController* gController;
@@ -172,6 +220,17 @@ static MGViewController* gController;
     swipe.direction = d;
     [root addGestureRecognizer:swipe];
   }
+  // A pan on the same surface glides: a long swipe moves several steps and a
+  // flick coasts on. Indirect touches are the remote's; presses stay with
+  // pressesBegan. It runs alongside the swipes, which still give a quick
+  // short swipe its one move (swiped:).
+  UIPanGestureRecognizer* pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(panned:)];
+  pan.allowedTouchTypes = @[ @(UITouchTypeIndirect) ];
+  pan.allowedPressTypes = @[];
+  pan.delegate = self;
+  [root addGestureRecognizer:pan];
+  MLOG_I("remote", "touch surface: a step per %.2f of it, dead zone %.2f, flicks coast %d-%d",
+         static_cast<double>(kGlideStep), static_cast<double>(kGlideDeadZone), kCoastFewest, kCoastMost);
   self.view = root;
   // The 1920x1080 views fill a 4K screen the same way (tvOS lays out in points).
   [self layoutForScreen];
@@ -213,6 +272,8 @@ static MGViewController* gController;
     marigold::Key key = marigold::keyFromTvos(static_cast<int>(p.type));
     if (key == marigold::Key::Unknown) continue;
     used = YES;
+    // A press (Back among them) stops a coasting swipe.
+    if (down) [self stopCoast];
     marigold::tvos::push(keyEvent(key, down, false));
     if (key == marigold::Key::Up || key == marigold::Key::Down || key == marigold::Key::Left ||
         key == marigold::Key::Right) {
@@ -236,17 +297,149 @@ static MGViewController* gController;
   if (![self handlePresses:presses down:NO]) [super pressesCancelled:presses withEvent:event];
 }
 
+// ---- Swipes and glides ----
+
+// The pan and the swipes see the same touches.
+- (BOOL)gestureRecognizer:(UIGestureRecognizer*)gestureRecognizer
+    shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer*)otherGestureRecognizer {
+  return YES;
+}
+
+// A recognised swipe is the floor: a quick short swipe the pan hasn't
+// stepped for yet still moves once. One gesture never moves twice for it.
 - (void)swiped:(UISwipeGestureRecognizer*)swipe {
-  marigold::Key key = swipe.direction == UISwipeGestureRecognizerDirectionUp     ? marigold::Key::Up
-                      : swipe.direction == UISwipeGestureRecognizerDirectionDown ? marigold::Key::Down
-                      : swipe.direction == UISwipeGestureRecognizerDirectionLeft ? marigold::Key::Left
-                                                                                 : marigold::Key::Right;
-  // Marked as a swipe: the player only takes them sideways while its
-  // controls are up (a slanted swipe along the buttons isn't a flip).
+  // While the system keyboard is up it has the remote.
+  if (self.field.isFirstResponder) return;
+  CFTimeInterval now = CACurrentMediaTime();
+  if (!self.panTracking && now - self.panEndedAt > kSwipePanGap) {
+    // No pan for this swipe (yet): it starts its own gesture.
+    [self stopCoast];
+    [self newGlide];
+    self.swipeLeadAt = now;
+  }
+  if (self.glideSent > 0) return;
+  UISwipeGestureRecognizerDirection d = swipe.direction;
+  self.glideAxis = d == UISwipeGestureRecognizerDirectionUp || d == UISwipeGestureRecognizerDirectionDown
+                       ? GlideAxis::UpDown
+                       : GlideAxis::Sideways;
+  self.glideDir = d == UISwipeGestureRecognizerDirectionUp || d == UISwipeGestureRecognizerDirectionLeft ? -1 : 1;
+  [self glideMove];
+}
+
+- (void)panned:(UIPanGestureRecognizer*)pan {
+  UIGestureRecognizerState state = pan.state;
+  if (state == UIGestureRecognizerStateBegan) {
+    [self stopCoast];
+    self.panTracking = YES;
+    if (CACurrentMediaTime() - self.swipeLeadAt > kSwipePanGap) [self newGlide];
+    self.swipeLeadAt = 0;
+  }
+  if (state == UIGestureRecognizerStateBegan || state == UIGestureRecognizerStateChanged) {
+    if (!self.field.isFirstResponder) [self panMovedBy:[pan translationInView:pan.view]];
+    return;
+  }
+  if (state != UIGestureRecognizerStateEnded && state != UIGestureRecognizerStateCancelled &&
+      state != UIGestureRecognizerStateFailed)
+    return;
+  self.panTracking = NO;
+  self.panEndedAt = CACurrentMediaTime();
+  // A flick coasts on, the way it was going.
+  if (state != UIGestureRecognizerStateEnded || self.field.isFirstResponder || !self.glidePanned) return;
+  CGPoint v = [pan velocityInView:pan.view];
+  CGSize size = [self glideSurface];
+  CGFloat speed = (self.glideAxis == GlideAxis::Sideways ? v.x / size.width : v.y / size.height) * self.glideDir;
+  if (speed < kCoastSpeed) return;
+  CGFloat t = (speed - kCoastSpeed) / (kCoastSpeedMost - kCoastSpeed);
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  [self startCoast:kCoastFewest + static_cast<int>(std::lround(t * (kCoastMost - kCoastFewest)))];
+}
+
+// The pan's travel so far: locks the axis past the dead zone and the
+// direction at the first step, then sends a move per step.
+- (void)panMovedBy:(CGPoint)travel {
+  CGSize size = [self glideSurface];
+  CGFloat x = travel.x / size.width, y = travel.y / size.height;
+  if (self.glideAxis == GlideAxis::None) {
+    if (std::fabs(x) < kGlideDeadZone && std::fabs(y) < kGlideDeadZone) return;
+    self.glideAxis = std::fabs(x) >= std::fabs(y) ? GlideAxis::Sideways : GlideAxis::UpDown;
+  }
+  CGFloat along = self.glideAxis == GlideAxis::Sideways ? x : y;
+  if (self.glideDir == 0) {
+    if (std::fabs(along) < kGlideDeadZone + kGlideStep) return;
+    self.glideDir = along > 0 ? 1 : -1;
+  }
+  CGFloat past = along * self.glideDir - kGlideDeadZone;
+  if (past < kGlideStep) return;
+  self.glidePanned = YES;
+  int steps = static_cast<int>(past / kGlideStep);
+  while (self.glideSent < steps) [self glideMove];
+}
+
+// The remote's touch surface, as the view it maps onto.
+- (CGSize)glideSurface {
+  CGSize size = self.view.bounds.size;
+  if (size.width <= 0 || size.height <= 0) size = CGSizeMake(1920, 1080);
+  return size;
+}
+
+- (void)newGlide {
+  self.glideId = nextGlide();
+  self.glideAxis = GlideAxis::None;
+  self.glideDir = 0;
+  self.glideSent = 0;
+  self.glidePanned = NO;
+}
+
+// One move of the current gesture. Marked as a swipe: the player only takes
+// them sideways while its controls are up (a slanted swipe along the buttons
+// isn't a flip). The glide number lets a grid stop the glide at its edge.
+- (void)glideMove {
+  if (self.glideAxis == GlideAxis::None || self.glideDir == 0) return;
+  marigold::Key key = self.glideAxis == GlideAxis::Sideways
+                          ? (self.glideDir > 0 ? marigold::Key::Right : marigold::Key::Left)
+                          : (self.glideDir > 0 ? marigold::Key::Down : marigold::Key::Up);
   marigold::platform::Event down = keyEvent(key, true, false);
   down.swipe = true;
+  down.glide = self.glideId;
   marigold::tvos::push(down);
   marigold::tvos::push(keyEvent(key, false, false));
+  self.glideSent += 1;
+}
+
+- (void)startCoast:(int)steps {
+  [self stopCoast];
+  self.coastLeft = steps;
+  self.coastGap = kCoastFirst;
+  [self scheduleCoast];
+}
+
+- (void)scheduleCoast {
+  __weak MGViewController* weakSelf = self;
+  self.coastTimer = [NSTimer scheduledTimerWithTimeInterval:self.coastGap
+                                                    repeats:NO
+                                                      block:^(NSTimer*) {
+                                                        [weakSelf coastNow];
+                                                      }];
+}
+
+- (void)coastNow {
+  self.coastTimer = nil;
+  if (self.coastLeft <= 0 || self.field.isFirstResponder) {
+    [self stopCoast];
+    return;
+  }
+  self.coastLeft -= 1;
+  [self glideMove];
+  if (self.coastLeft > 0) {
+    self.coastGap *= kCoastSlowing;
+    [self scheduleCoast];
+  }
+}
+
+- (void)stopCoast {
+  [self.coastTimer invalidate];
+  self.coastTimer = nil;
+  self.coastLeft = 0;
 }
 
 - (void)startRepeat:(marigold::Key)key {
@@ -281,6 +474,7 @@ static MGViewController* gController;
 
 - (void)openKeyboard:(NSString*)value {
   [self stopRepeat];
+  [self stopCoast];
   self.fieldConfirmed = NO;
   self.field.text = value;
   if ([self.field becomeFirstResponder]) {
@@ -408,12 +602,14 @@ static MGViewController* gController;
 
 - (void)sceneWillResignActive:(UIScene*)scene {
   [gController stopRepeat];
+  [gController stopCoast];
   [self send:marigold::platform::Event::Type::Hidden];
 }
 
 - (void)sceneDidEnterBackground:(UIScene*)scene {
   // A few seconds for the app thread to stop the video and save before the
   // system suspends the process.
+  [gController stopCoast];
   __block UIBackgroundTaskIdentifier task = UIBackgroundTaskInvalid;
   task = [UIApplication.sharedApplication beginBackgroundTaskWithExpirationHandler:^{
     [UIApplication.sharedApplication endBackgroundTask:task];

@@ -160,6 +160,7 @@ void App::handle(const platform::Event& e) {
       }
       KeyEvent k{key, e.repeat, false};
       k.swipe = e.swipe;
+      k.glide = e.glide;
       dispatch(k);
       break;
     }

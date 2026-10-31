@@ -40,15 +40,18 @@ supported. Both 32-bit and 64-bit ARM are in the APK.
 
 The Fire TV remote has no colour, number or CH keys, so on a Fire TV the
 key hints on screen show the keys above (☰, ⏯, ⏪ ⏩) instead of the LG
-colour keys. Settings and Search are the icons at the top right of the
-guide (Up to the tabs, then Right). The LG app is unchanged.
+colour keys. Search and Settings are in the left rail's strip (◀ to the
+menu). Search has Marigold's own A–Z keyboard, the same as on LG; on
+Android TV its 🎤 Speak opens the system keyboard for the voice button
+(not on Fire TV until Amazon's keyboard is known to take dictation), and
+☰ is More on its results. The LG app is unchanged.
 
 ### Any other Android TV stick or box
 
 The app runs on any Android TV device (Android 7 or newer; Chromecast with
 Google TV, Nvidia Shield, Onn and Xiaomi boxes, TVs with Android TV
 built in). Their remotes differ, so the hints start with only what every
-remote has: hold OK for a channel's actions, Up for Live Events, Search
+remote has: hold OK for a channel's actions, ◀ to the menu for Search
 and Settings, Down then OK in the player for Sources, Back for the guide.
 Every action is reachable that way, with the D-pad alone.
 

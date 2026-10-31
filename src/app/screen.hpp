@@ -20,6 +20,9 @@ struct KeyEvent {
   bool longPress = false;  // OK held for 700 ms
   bool wheel = false;      // Up/Down from the pointer's wheel (LG)
   bool swipe = false;      // an arrow from a clickpad swipe (Apple TV)
+  // The swipe gesture this move belongs to (several moves from one long
+  // swipe share it; 0 otherwise). A grid stops a glide at its edge.
+  uint32_t glide = 0;
 };
 
 class Screen {

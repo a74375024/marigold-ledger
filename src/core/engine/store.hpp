@@ -20,6 +20,7 @@
 #include "core/engine/events_model.hpp"
 #include "core/engine/host.hpp"
 #include "core/engine/model.hpp"
+#include "core/engine/search.hpp"
 
 namespace marigold {
 struct Channel;
@@ -141,6 +142,9 @@ struct Settings {
   bool embyQuickStart = false;
   bool fillMissingListings = true;  // outside guides for channels without one
   bool clock24 = false;
+  // Search keeps the names of what was picked (Settings › Guide › Recent
+  // searches); off also clears them.
+  bool recentSearches = true;
   bool playerTipsShown = false;  // the one-time "Getting around" card in the player
   // Subtitles: off until turned on, then on for every channel that has them
   // until turned off. English-language channels and Spanish-language ones
@@ -345,9 +349,17 @@ class Store {
   bool toggleShowReminder(const std::string& entryId, const Listing& l);
   // The same show later on any channel with loaded listings.
   std::vector<ProgramHit> otherAirings(const std::string& entryId, const Listing& l) const;
-  // Search: games and shows on now and later (loaded listings).
-  std::vector<std::string> searchEvents(const std::string& query) const;
-  std::vector<ProgramHit> searchPrograms(const std::string& query) const;
+  // Search (store_search.cpp): what a query looks through, made again when
+  // the channels, listings, board or teams have changed.
+  std::shared_ptr<const search::Index> searchIndex() const;
+  // Recent searches, newest first (search::kRecentKept are kept).
+  const std::vector<search::Recent>& recentSearches() const;
+  void rememberSearch(const search::Recent& r);
+  void forgetSearch(const std::string& id);
+  void clearSearches();
+  // Follow or unfollow a team ("LEAGUE|id") from Search; true = now followed.
+  bool toggleFollowTeam(const std::string& key);
+  bool followsTeam(const std::string& key) const;
   // My Sports: asked once, the first time the board opens.
   bool shouldPromptMySports() const;
   void markMySportsPrompted();

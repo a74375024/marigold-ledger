@@ -16,6 +16,7 @@
 #include "core/engine/views.hpp"
 #include "core/input/hints.hpp"
 #include "core/input/left_rail.hpp"
+#include "core/input/preview_pace.hpp"
 
 namespace marigold::app {
 
@@ -182,8 +183,9 @@ class GuideScreen : public Screen {
   std::string digits_;
   uint32_t digitsAt_ = 0;
 
-  uint32_t focusSince_ = 0, lastPreviewAt_ = 0;
-  std::string previewCandidate_;
+  // The corner preview's rest and gap (a channel is tried again while
+  // focus stays on it).
+  preview::Pace pace_{false};
   uint32_t backAt_ = 0;
 };
 

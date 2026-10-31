@@ -326,6 +326,7 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
       settings_.showUnwatchable = (*v)["showUnwatchable"].asBool(true);
       settings_.showScores = (*v)["showScores"].asBool(true);
       settings_.clock24 = (*v)["clock24"].asBool(false);
+      settings_.recentSearches = (*v)["recentSearches"].asBool(true);
       settings_.playerTipsShown = (*v)["playerTipsShown"].asBool(false);
       settings_.subtitles = (*v)["subtitles"].asBool(false);
       settings_.subtitleLanguage = (*v)["subtitleLanguage"].asString();
@@ -348,6 +349,10 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
       m.hiddenGroups = stringSet((*v)["hiddenGroups"]);
       for (const json::Value& x : (*v)["recents"].items())
         if (x.isString()) m.recents.push_back(x.asString());
+      for (const json::Value& x : (*v)["searches"].items()) {
+        search::Recent r{x["name"].asString(), x["id"].asString()};
+        if (m.searches.size() < search::kRecentKept && !r.name.empty() && !r.id.empty()) m.searches.push_back(r);
+      }
       for (const auto& [k, x] : (*v)["pinned"].fields()) m.pinned[k] = x.asString();
       for (const auto& [k, x] : (*v)["lastFeed"].fields()) m.lastFeed[k] = x.asString();
       for (const auto& [k, x] : (*v)["unplayable"].fields()) m.unplayable[k] = x.asInt();
@@ -407,6 +412,17 @@ void Store::saveLists() {
   json::Value v = json::Value::object();
   v.set("favorites", stringArray(std::vector<std::string>(m.favorites.begin(), m.favorites.end())));
   v.set("recents", stringArray(m.recents));
+  if (!m.searches.empty()) {
+    // The names picked from Search and their ids, never what was typed.
+    json::Value searches = json::Value::array();
+    for (const search::Recent& r : m.searches) {
+      json::Value x = json::Value::object();
+      x.set("name", r.name);
+      x.set("id", r.id);
+      searches.push(x);
+    }
+    v.set("searches", searches);
+  }
   v.set("hiddenGroups", stringArray(std::vector<std::string>(m.hiddenGroups.begin(), m.hiddenGroups.end())));
   json::Value pinned = json::Value::object();
   for (const auto& [k, x] : m.pinned) pinned.set(k, x);
@@ -514,7 +530,13 @@ void Store::setSettings(const Settings& s) {
                         same.preferTS == settings_.preferTS && same.embyQuickStart == settings_.embyQuickStart &&
                         same.fillMissingListings == settings_.fillMissingListings &&
                         same.playerTipsShown == settings_.playerTipsShown && same.guideShards == settings_.guideShards);
+  bool searchesOff = settings_.recentSearches && !s.recentSearches;
   settings_ = s;
+  if (searchesOff && !impl_->searches.empty()) {
+    // Turning Recent searches off forgets them too.
+    impl_->searches.clear();
+    saveLists();
+  }
   json::Value v = json::Value::object();
   v.set("previewChannels", s.previewChannels);
   v.set("allChannelsTab", s.allChannelsTab);
@@ -525,6 +547,7 @@ void Store::setSettings(const Settings& s) {
   v.set("showUnwatchable", s.showUnwatchable);
   v.set("showScores", s.showScores);
   v.set("clock24", s.clock24);
+  v.set("recentSearches", s.recentSearches);
   v.set("playerTipsShown", s.playerTipsShown);
   v.set("subtitles", s.subtitles);
   if (!s.subtitleLanguage.empty()) v.set("subtitleLanguage", s.subtitleLanguage);

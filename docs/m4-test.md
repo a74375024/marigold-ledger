@@ -49,7 +49,7 @@ Requests: race drivers and results only for race weekends you can watch
 | Clock | Settings › Guide › Clock | 24-hour times in the guide and on Live Events tiles |
 | Home city | Settings › Live Events › Home city (two or more areas) | Its stations are listed first on games |
 | Remind Me | OK on a later show | Remind Me / Watch; other airings listed; a card when it starts |
-| Search | Search for a team or a show | Channels, Live Events, and Shows on now & later |
+| Search | Search for a team or a show | The top result, then Channels, Teams, Games and Shows (Build 113) |
 | My Sports | Open Live Events for the first time | My Sports setup opens once |
 
 ## Player
@@ -536,7 +536,7 @@ Off until turned on; then on for every channel that has them until turned off. M
 | Area | How to check | Pass |
 |---|---|---|
 | Strip | Open the guide, then Live Events | A narrow strip down the left in its own colour with a clear edge: Search, My Lineup, Favorites, Recent, Live Events (All Channels when that setting is on), then My Sports and Settings at the bottom. A bar marks the current section. No tab row and no round buttons |
-| No strip elsewhere | Open the player, the mini guide, the event guide, Search, setup and a side panel | No strip; each behaves as before |
+| No strip elsewhere | Open the player, the mini guide, the event guide, setup and a side panel | No strip; each behaves as before (Search has the strip from Build 113) |
 | Hero | Move around, open the column, open the menu | The title, description and preview corner never move (the hero starts right of the strip) |
 | More rows | Compare with Build 111 | The timeline and grid start right under the hero: about one more row |
 | Filter | Up from the first row, Right | A small filter button beside "Now ▼"; OK opens the filter. A set filter shows a red dot and its chip at the top right of the hero |
@@ -590,3 +590,50 @@ Off until turned on; then on for every channel that has them until turned off. M
 | Defaults | A fresh install | Preview on, 12-hour clock, All Channels off, subtitles off, Medium / Box, Channel above, Game schedule, scores and games not on my channels on, MPEG-TS, quick start off |
 | Old settings | Update over Build 111 | Every setting and My Lineup choice is kept |
 | No counts | The guide filter and Jump to, search, the lineup setup and its summary, first-run setup, Guide listings, Status, provider lines | No number of channels anywhere |
+
+## Search (Build 113)
+
+Search is a section of the left rail with its own keyboard, the same on every TV. Results show beside it as you type: the top result, then Channels, Teams, Games and Shows. No header or row shows a number of channels, and nothing in Search shows a score, whatever the Show scores setting.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Opening | Search in the strip or the menu | The strip stays with its bar on Search; the field ("Channel, show, movie or team"), 🎤 Speak, the 6×6 a–z / 1–0 grid and Delete · Space · Clear on the left; focus on "a"; the clock over the preview corner |
+| Zero state, a fan | Follow a team that is live (or starts within the hour) | YOUR TEAMS AND LEAGUES in the band beside the corner (at most two rows: LIVE and the state, or "in 40 min", never a score); then chips from y 330 (Games on now, your leagues by name, News, Movies, Kids, More), Recently watched (two across, with what's on now) and Recent searches |
+| Zero state, shared TV | No team followed, or none live within the hour | Recently watched in the band; News, Movies and Kids lead the chips. Someone else's team shows only while live or within the hour |
+| New user | A fresh install with a provider | A "Follow your teams" card (OK opens My Sports), the chips, Games on now and Starting soon rows |
+| Typing | Type "nb" | Results change with every letter; the top result has its type ("GAME · PBL · YOUR TEAM ★"); channel tiles say what's on now; later items show their time ("Tonight 10:00 PM", "in 20 min") |
+| Top result waits | Type a word quickly, stop | The band shows a placeholder until the shows are in (under half a second), then the top result; it never swaps after it shows |
+| Corner while typing | Focus on the keyboard with results | The corner shows the top result's card (logo, title, time), no video |
+| ▶ to results | ▶ from the grid's right column (or from Speak) | Focus on the top result; the keyboard dims. ◀ from a row's first item returns to the key you left |
+| Preview | Rest 2 s on a live channel, game or show on now, after moving once | It plays in the corner, muted, captioned "MUTED <channel> · <what's on>". Nothing plays on the first item focus lands on from the keyboard until you move |
+| Moving on | Move to another live item | The corner drops to its card at once and the old stream stops; the next tunes after 2 s (at least 3 s after the last start) |
+| OK on a preview | OK on the item playing in the corner | Full screen on the same stream, with sound, no re-tune |
+| Back from the player | Back within 2 minutes; then again after watching 3 minutes | First: the same row, the stream still playing muted in the corner. Later: Back behaves as from any channel and Search is gone |
+| Guide and Live Events corners | Rest on a channel in the guide, a game on the board | They play with sound, exactly as before |
+| Later items | OK on a show later, then OK again, then hold OK | "Reminder set ✓" on the row and the card; the second OK does nothing; hold OK › Cancel reminder |
+| Not in your channels | A game marked "Not in your channels" or "Streaming only" | Never the top result; OK opens Where to Watch; no reminder |
+| Teams | Type a team's city ("riverton") | TEAMS: the full name, its live game or "Next: Sat 7:30 PM …", the league; the top result is its first game you can watch. A team on a bye says "No game in the next week" |
+| Hold OK | Hold OK on a team, a game, a show, a channel and a recent search | Team: Follow / Unfollow, Where to Watch, Remind me. Game: Follow either team, Where to Watch, Remind me. Show: More about this show, Remind me, Channel. Channel: Watch, the other coast, My Lineup, Favorites, Choose Feed. Recent search: Remove this search |
+| Nicknames | "niners", "sixers", "man utd", "spurs", "habs" | The team; "spurs" lists both Spurs teams |
+| Matching | "law and ordr", "jepordy", "baking show great", "law & order", "office" | Law & Order (with "Showing Law & Order"), Jeopardy!, The Great British Baking Show, Law & Order, The Office |
+| Two letters | "nb" | Word starts and initials only (Northbridge Bulls, NBX), never inside a word |
+| Cleaner | "watch the bulls game", "news tonight", a show called "Lakers Tonight" | The Bulls; News tonight; the show itself (its title isn't cleaned) |
+| Did you mean | "nothbridge" | "Showing Northbridge Bulls"; "Search for “nothbridge” instead" first under the band; OK on it searches exactly |
+| Nothing | "lacrosse" (with no lacrosse anywhere) | "Nothing for “lacrosse”" and what to try, then the chips and recent searches. One letter never says nothing |
+| Numbers on the grid | "4", "206" on the grid | The channel band; ▶, OK plays it |
+| LG digits, complete | Empty field, 2 0 6 on the remote | The digit box in the corner and Sports Net 2 in the band; it plays when the number is complete |
+| LG digits, a name | Empty field, 4 9 | Channel 49 in the band and "OR DID YOU MEAN" the 49ers; nothing tunes by itself; OK watches channel 49, ▼ goes to the team, a grid letter (after moving) carries on "49…" |
+| LG digits with text | Type "sn", then 2 on the remote | "sn2" in the field |
+| Chips | OK on Games on now, a league, News | Its page in the results ("PBL ×" over the band): the top live game, Live now, Later today, This week (or the guide's News on now as channel tiles). Back or a click on × returns to the zero state |
+| Recent searches | Pick "Sports Net 2" after typing "sn2"; pick nine more things; search "lacrosse" | The chip says "Sports Net 2"; four show, eight are kept; nothing is saved for "lacrosse" |
+| Clear | Clear in Recent searches | Asks "Clear recent searches?" (Clear · Cancel) first. Red only clears the typed text |
+| Off switch | Settings › Guide › Recent searches off | The row is gone and the list forgotten; nothing is kept while off |
+| Reopen | Close Search with text in the field, reopen within 5 minutes, then after 6 | The query comes back the first time, not the second |
+| Finished games | Show scores on, then off; search a team that just played | On: the game says "Ended", comes last and is never the top result (a replay airing ranks above it). Off: not listed |
+| No scores | Search a live game's team with Show scores on | No score in the rows, the top result, the corner card or its caption; titles are the matchup |
+| Show scores off | Rest on a live game with Show scores off | The card only: live sports don't auto-preview |
+| Preview off | Settings › Guide › Preview channels off | The corner always shows the card |
+| Live Events data | Open Search for a few minutes with a live game followed | Its state (Q3, 2nd half) moves on as on the board |
+| Pointer (LG) | Point at keys, chips, results and the corner; click; park the pointer while rows change | Each is a click target; a click on a playing corner goes full screen; a parked pointer doesn't start a preview |
+| Key bar | Keyboard, results, the digit box | "Clear text · 0–9 Channel · ▶ Choose a result · Back: Close"; "◀ Keyboard · Hold OK: more · Back: Keyboard"; "Plays when the number is complete · Back: Cancel" |
+| Rail | ◀ from the grid's left column; pick Live Events, then My Lineup | The menu over Search; each closes Search and opens that section |

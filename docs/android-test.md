@@ -36,9 +36,9 @@ code. These rows are what is new on Android.
 
 | Area | How to check | Pass |
 |---|---|---|
-| Search | Search, then type | A one-line box over the app with the on-screen keyboard; results follow as you type |
-| Done | OK / Done on the keyboard | The box closes and the search runs |
-| Cancel | Back on the keyboard | The box closes; the field keeps what it had |
+| Search | Search, then type on its grid | Marigold's own keyboard (the same as on LG); results follow as you type. See Search (Build 113) below |
+| Speak (Android TV) | 🎤 Speak, then the remote's voice button | A one-line box with the system keyboard; what you say comes back into the field; the box closes and focus is on Speak |
+| Cancel | Back on the system keyboard | The box closes; the field keeps what it had |
 | Accounts | Add an account, fill each field | Each field opens the box with its current value |
 
 ## Playback
@@ -66,3 +66,18 @@ code. These rows are what is new on Android.
 | Share | Settings › Help & info › Send a report to your phone › Channel report | The QR code; a phone on the Wi-Fi gets the file |
 | Diagnostics | Settings › Help & info › Diagnostics | Android version, GPU, video state and the last log lines |
 | Logcat | `adb logcat -s marigold` | The app's log lines; no stream links in them |
+
+## Search (Build 113)
+
+Everything in `docs/m4-test.md` › Search (Build 113) applies; these rows are what differs on a Fire TV.
+
+| Area | How to check | Pass |
+|---|---|---|
+| No Speak | Open Search on a Fire TV | No 🎤 Speak pill; Up from the grid's top row stays there |
+| Voice into Amazon's keyboard | Try the remote's voice button with Search open | Note what happens (Alexa, or text into the field), for deciding whether Fire TV gets Speak |
+| Key bar | The keyboard, then the results | Nothing but "▶ Choose a result · Back: Close" on the keyboard; "☰ More" and "◀ Keyboard · Back: Keyboard" in the results |
+| ☰ | ☰ on the keyboard, then on a result | Nothing on the keyboard; on a result, its More panel (as hold OK) |
+| Numbers | 2 0 6 on the grid, ▶, OK | Sports Net 2 (or your channel 206) plays |
+| Muted corner | Rest 2 s on a live channel in the results, then OK | The corner plays without sound; full screen has sound at once, no re-tune |
+| Guide corner | The guide's preview after using Search | With sound, as before |
+| Back from the player | OK a result, Back within 2 minutes | The same row; the picture back in the corner, muted |

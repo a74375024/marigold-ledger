@@ -112,6 +112,10 @@ final class Bridge {
     Video.release();
   }
 
+  static void videoMuted(boolean muted) {
+    Video.muted(muted);
+  }
+
   static void videoWindow(int x, int y, int w, int h, boolean force) {
     Video.window(x, y, w, h, force);
   }

@@ -131,6 +131,7 @@ struct Store::Impl {
   std::vector<sources::Account> accounts;
   std::set<std::string> favorites;   // entry ids (Xtream and M3U have no favorites API)
   std::vector<std::string> recents;  // entry ids, newest first
+  std::vector<search::Recent> searches;  // names picked from Search, newest first
   std::map<std::string, std::string> pinned;  // entry id -> raw channel id
   // Entry id -> the version that last played on it: it starts first next
   // time unless one is pinned.
@@ -232,6 +233,9 @@ struct Store::Impl {
   std::shared_ptr<std::atomic<bool>> stopJobs = std::make_shared<std::atomic<bool>>(false);
 
   uint64_t publishVersion = 0;
+  // Search's index and what it was made from (store_search.cpp).
+  std::shared_ptr<const search::Index> searchIndex;
+  std::string searchKey;
   bool channelsDirty = false, listingsDirty = false;
   // A first list is sorted but its rows aren't on screen yet (the lineup
   // works them out on a worker): Ready only once they're published, so the

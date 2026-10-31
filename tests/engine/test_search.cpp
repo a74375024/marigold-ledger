@@ -1,0 +1,493 @@
+// Search (Build 113): the query cleaner, the matcher's rules and what each
+// group finds, numbers from an empty field, spoilers and recent searches.
+// Made-up channels and teams (and a few well-known team names).
+#include <doctest.h>
+
+#include <algorithm>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "core/engine/search.hpp"
+#include "core/engine/views.hpp"
+#include "core/sports/types.hpp"
+
+using namespace marigold;
+using namespace marigold::engine;
+namespace se = marigold::engine::search;
+
+namespace {
+
+constexpr time::Seconds kNow = 1'800'000'000;
+
+se::ChannelEntry channel(const std::string& id, const std::string& name, const std::string& number = "",
+                         bool lineup = false) {
+  se::ChannelEntry c;
+  c.id = id;
+  c.name = se::fold(name);
+  c.number = number;
+  c.inLineup = lineup;
+  return c;
+}
+
+se::TeamEntry team(const std::string& league, const std::string& id, const std::string& name, bool college = false) {
+  sports::SportsTeam t;
+  t.id = id;
+  t.name = name;
+  se::TeamEntry x;
+  x.key = league + "|" + id;
+  x.name = name;
+  x.league = league;
+  x.names = se::teamNames(t, college);
+  return x;
+}
+
+se::GameEntry game(const std::string& id, const std::string& title, std::vector<std::string> teams,
+                   se::GameEntry::State state, time::Seconds start, bool watchable = true) {
+  se::GameEntry g;
+  g.id = id;
+  g.title = title;
+  g.names = {se::fold(title)};
+  g.teams = std::move(teams);
+  g.state = state;
+  g.start = start;
+  g.watchable = watchable;
+  return g;
+}
+
+Listing show(const std::string& title, time::Seconds start, time::Seconds end) {
+  Listing l;
+  l.title = title;
+  l.start = start;
+  l.end = end;
+  return l;
+}
+
+// A small TV: channels, a league's teams with a live and an upcoming game,
+// and a guide.
+struct Tv {
+  se::Index index;
+  std::shared_ptr<Listings> listings = std::make_shared<Listings>();
+
+  Tv() {
+    using S = se::GameEntry::State;
+    index.channels = {channel("nbx", "NBX", "230", true), channel("nbxs", "NBX Sports", "231", true),
+                      channel("sn2", "Sports Net 2", "206", true), channel("sn2w", "Sports Net 2 West", "2061"),
+                      channel("goal", "Goal TV", "210"), channel("news", "City News 24", "24"),
+                      channel("c49", "Coast 49", "49"), channel("sun", "Sunburst Movies", "300")};
+    se::ChannelEntry local = channel("kbay", "Channel 4", "4");
+    local.network = "nbc";
+    local.channel = "4";
+    local.stations = {"kbay", "kbyx"};  // its call sign, and the one it had before
+    index.channels.push_back(local);
+    se::ChannelEntry abroad = channel("abroad", "Deportes Norte", "900");
+    abroad.browsable = false;
+    index.channels.push_back(abroad);
+
+    se::TeamEntry bulls = team("PBL", "1", "Northbridge Bulls");
+    bulls.followed = true;
+    bulls.liveGame = "g-live";
+    se::TeamEntry kings = team("PBL", "2", "Harbor Kings");
+    kings.liveGame = "g-live";
+    se::TeamEntry rams = team("PBL", "3", "Riverton Rams");
+    rams.nextGame = "g-sat";
+    se::TeamEntry peaks = team("PBL", "4", "Valley Peaks");
+    se::TeamEntry bye = team("PBL", "5", "Lakeside Owls");  // no game this week
+    index.teams = {bulls, kings, rams, peaks, bye,
+                   team("NFL", "sf", "San Francisco 49ers"), team("NBA", "phi", "Philadelphia 76ers"),
+                   team("EPL", "mu", "Manchester United"), team("EPL", "tot", "Tottenham Hotspur"),
+                   team("NBA", "sas", "San Antonio Spurs"), team("NHL", "mtl", "Montreal Canadiens"),
+                   team("PFL", "h49", "Harbor 49s")};
+    index.games = {game("g-live", "Bulls at Harbor Kings", {"PBL|1", "PBL|2"}, S::Live, kNow - 3600),
+                   game("g-sat", "Rams at Bulls", {"PBL|3", "PBL|1"}, S::Upcoming, kNow + 3 * 86400),
+                   game("g-stream", "Riverton Rams at Valley Peaks", {"PBL|3", "PBL|4"}, S::Upcoming,
+                        kNow + 86400, false),
+                   game("g-ended", "Comets at Blaze", {}, S::Ended, kNow - 4 * 3600)};
+    index.games[0].favorite = index.games[1].favorite = true;
+    for (int i = 0; i < 3; ++i) index.games[static_cast<size_t>(i)].league = "pbl";
+    index.games[2].streamingOnly = true;
+    se::LeagueEntry pbl;
+    pbl.id = "PBL";
+    pbl.title = "PBL";
+    pbl.names = {"pbl", "pro basketball league"};
+    pbl.followed = true;
+    se::LeagueEntry basketball;
+    basketball.id = "sport:basketball";
+    basketball.title = "Basketball";
+    basketball.names = {"basketball"};
+    basketball.sport = true;
+    index.leagues = {pbl, basketball};
+
+    put("nbx", {show("Courtside Kitchen", kNow - 600, kNow + 1200), show("NBX Nightly News", kNow + 4000, kNow + 5800),
+                show("NBX Nightly News", kNow + 40000, kNow + 41800)});
+    put("goal", {show("Law & Order", kNow - 600, kNow + 3000), show("Jeopardy!", kNow + 3000, kNow + 4800),
+                 show("The Great British Baking Show", kNow + 4800, kNow + 8400)});
+    put("news", {show("The Office", kNow - 300, kNow + 1500), show("Lakers Tonight", kNow + 1500, kNow + 3300),
+                 show("Comets at Blaze Replay", kNow + 3300, kNow + 6900)});
+    index.listings = listings;
+    for (const auto& [id, list] : listings->byChannel)
+      for (const Listing& l : *list) index.shows[se::fold(l.title)].push_back({id, &l});
+    index.finish();
+  }
+
+  void put(const std::string& id, std::vector<Listing> v) {
+    listings->byChannel[id] = std::make_shared<const std::vector<Listing>>(std::move(v));
+  }
+
+  se::Results find(const std::string& text, bool scores = true) const {
+    se::Options o;
+    o.now = kNow;
+    o.showScores = scores;
+    return se::run(index, se::parse(text, [this](const std::string& f) { return index.isTitle(f); }), o);
+  }
+};
+
+std::vector<std::string> ids(const std::vector<se::Item>& items) {
+  std::vector<std::string> out;
+  for (const se::Item& i : items) out.push_back(i.id);
+  return out;
+}
+
+bool has(const std::vector<se::Item>& items, const std::string& id) {
+  return std::any_of(items.begin(), items.end(), [&](const se::Item& i) { return i.id == id; });
+}
+
+}  // namespace
+
+TEST_CASE("search: folding, words and initials") {
+  CHECK(se::fold("Law & Order: SVU") == "law and order svu");
+  CHECK(se::fold("  Pacífico   TV ") == "pacifico tv");
+  CHECK(se::fold("sn2") == "sn 2");
+  CHECK(se::fold("49ers") == "49 ers");
+  CHECK(se::fold("Jeopardy!") == "jeopardy");
+  CHECK(se::fold("Grey's Anatomy") == "greys anatomy");
+  CHECK(se::initials(se::words("northbridge bulls")) == "nb");
+  CHECK(se::initials(se::words("sports net 2")) == "sn");
+}
+
+TEST_CASE("search: typos are counted per word, a swap is one edit") {
+  CHECK(se::typoAllowance(4) == 0);
+  CHECK(se::typoAllowance(5) == 1);
+  CHECK(se::typoAllowance(7) == 1);
+  CHECK(se::typoAllowance(8) == 2);
+  CHECK(se::editDistance("bulls", "bulsl", 1) == 1);  // a swap
+  CHECK(se::editDistance("jepordy", "jeopardy", 2) == 2);
+  CHECK(se::editDistance("abc", "xyz", 1) == 2);  // past the cap
+  se::Query q = se::parse("bulsl");
+  CHECK(se::match(q, "northbridge bulls") == se::Hit::Typo);
+  // Four letters: no typo allowed.
+  CHECK(se::match(se::parse("kngz"), "kngs") == se::Hit::None);
+  // Eight or more: two.
+  CHECK(se::match(se::parse("nothbrige"), "northbridge bulls") == se::Hit::Typo);
+  CHECK(se::match(se::parse("nthbrge"), "northbridge bulls") == se::Hit::None);
+  se::Query exact = se::parse("bulsl");
+  exact.exactOnly = true;
+  CHECK(se::match(exact, "northbridge bulls") == se::Hit::None);
+}
+
+TEST_CASE("search: the query cleaner, unless the whole query is a title") {
+  se::Query q = se::parse("watch the bulls game");
+  CHECK(q.text == "bulls");
+  CHECK(q.cleaned);
+  q = se::parse("news tonight");
+  CHECK(q.text == "news");
+  CHECK(q.when == se::When::Tonight);
+  q = se::parse("basketball on now");
+  CHECK(q.text == "basketball");
+  CHECK(q.when == se::When::Now);
+  q = se::parse("bulls vs kings");
+  CHECK(q.tokens == std::vector<std::string>{"bulls", "kings"});
+  // "Lakers Tonight" is a show: left as typed.
+  auto title = [](const std::string& f) { return f == "lakers tonight"; };
+  q = se::parse("Lakers Tonight", title);
+  CHECK(q.text == "lakers tonight");
+  CHECK(q.when == se::When::Any);
+  CHECK_FALSE(q.cleaned);
+  CHECK(se::parse("Lakers Tonight").when == se::When::Tonight);
+  // One word stays, filler or not.
+  CHECK(se::parse("the").text == "the");
+}
+
+TEST_CASE("search: numbers, spoken numbers and \"channel 4\"") {
+  se::Query q = se::parse("channel 4");
+  CHECK(q.digits);
+  CHECK(q.text == "4");
+  q = se::parse("two oh six");
+  CHECK(q.digits);
+  CHECK(q.text == "206");
+  CHECK(se::parse("206").digits);
+  CHECK_FALSE(se::parse("49ers").digits);
+  Tv tv;
+  se::Results r = tv.find("channel 4");
+  REQUIRE(r.top);
+  CHECK(r.top->id == "kbay");
+  CHECK(r.top->tier == 1);
+  // A local by network and number, and by its call signs (the old one too).
+  CHECK(tv.find("nbc 4").top->id == "kbay");
+  CHECK(tv.find("kbyx").top->id == "kbay");
+}
+
+TEST_CASE("search: & is and, and a leading \"the\" is optional") {
+  CHECK(se::match(se::parse("law & order"), se::fold("Law and Order")) == se::Hit::Exact);
+  CHECK(se::match(se::parse("law and order"), se::fold("Law & Order")) == se::Hit::Exact);
+  CHECK(se::match(se::parse("office"), se::fold("The Office")) == se::Hit::Exact);
+  CHECK(se::match(se::parse("the office"), se::fold("The Office")) == se::Hit::Exact);
+  Tv tv;
+  se::Results r = tv.find("the office");
+  REQUIRE(r.top);
+  CHECK(r.top->kind == se::Kind::Show);
+  CHECK(r.top->name == "The Office");
+  CHECK(r.top->tier == 4);  // an exact show title on now
+}
+
+TEST_CASE("search: tokens in any order, the last one a prefix") {
+  std::string bake = se::fold("The Great British Baking Show");
+  CHECK(se::match(se::parse("baking show great"), bake) == se::Hit::Tokens);
+  CHECK(se::match(se::parse("great baking sh"), bake) == se::Hit::Tokens);
+  // Only the last word may be unfinished.
+  CHECK(se::match(se::parse("bak show great"), bake) == se::Hit::None);
+  Tv tv;
+  se::Results r = tv.find("baking show great");
+  REQUIRE(r.top);
+  CHECK(r.top->name == "The Great British Baking Show");
+}
+
+TEST_CASE("search: two letters match only word starts and initials") {
+  CHECK(se::match(se::parse("nb"), "northbridge bulls") == se::Hit::Initials);
+  CHECK(se::match(se::parse("nb"), "nbx sports") == se::Hit::Start);
+  CHECK(se::match(se::parse("ne"), "city news 24") == se::Hit::Word);
+  CHECK(se::match(se::parse("nb"), "sunburst movies") == se::Hit::None);  // never inside a word
+  CHECK(se::match(se::parse("nbu"), "sunburst movies") == se::Hit::Inside);
+  CHECK(se::match(se::parse("sn2"), "sports net 2") == se::Hit::Initials);
+  // One character: starts only.
+  CHECK(se::match(se::parse("n"), "nbx") == se::Hit::Start);
+  CHECK(se::match(se::parse("n"), "city news 24") == se::Hit::None);
+}
+
+TEST_CASE("search: \"nb\" puts the followed team's live game on top") {
+  Tv tv;
+  se::Results r = tv.find("nb");
+  REQUIRE(r.top);
+  CHECK(r.top->kind == se::Kind::Game);
+  CHECK(r.top->id == "g-live");
+  CHECK(r.top->tier == 2);
+  CHECK(r.top->playable);
+  CHECK(ids(r.channels) == std::vector<std::string>{"nbx", "nbxs"});
+  CHECK(ids(r.teams) == std::vector<std::string>{"PBL|1"});
+  // The top result isn't repeated, and the team's game isn't listed again.
+  CHECK_FALSE(has(r.games, "g-live"));
+  // "nbx" is a channel's exact name: it leads, and the Bulls drop out.
+  r = tv.find("nbx");
+  CHECK(r.top->id == "nbx");
+  CHECK(r.teams.empty());
+  // One letter: channels that start with it and the team you follow, no
+  // games or shows.
+  r = tv.find("n");
+  CHECK(ids(r.teams) == std::vector<std::string>{"PBL|1"});
+  CHECK(r.games.empty());
+  CHECK(r.shows.empty());
+  CHECK_FALSE(r.nothing);
+}
+
+TEST_CASE("search: a team's top result is its first game you can watch") {
+  Tv tv;
+  se::Results r = tv.find("riverton");
+  REQUIRE(r.top);
+  CHECK(r.top->id == "g-sat");  // Rams at Bulls, in your channels
+  CHECK(ids(r.teams) == std::vector<std::string>{"PBL|3"});
+  // The streaming-only game is listed, never on top, and can't be played.
+  REQUIRE(has(r.games, "g-stream"));
+  for (const se::Item& g : r.games)
+    if (g.id == "g-stream") CHECK_FALSE(g.playable);
+  // A team with no game this week is still found.
+  r = tv.find("lakeside");
+  REQUIRE(r.top);
+  CHECK(r.top->kind == se::Kind::Team);
+  CHECK(r.top->id == "PBL|5");
+  // Two team words put their game first.
+  r = tv.find("bulls kings");
+  CHECK(r.top->id == "g-live");
+}
+
+TEST_CASE("search: team nicknames, and an ambiguous one finds every team") {
+  Tv tv;
+  se::Results r = tv.find("niners");
+  REQUIRE(r.top);
+  CHECK(r.top->id == "NFL|sf");
+  CHECK(tv.find("sixers").top->id == "NBA|phi");
+  CHECK(tv.find("man utd").top->id == "EPL|mu");
+  CHECK(tv.find("habs").top->id == "NHL|mtl");
+  r = tv.find("spurs");
+  std::vector<std::string> spurs = ids(r.teams);
+  if (r.top) spurs.push_back(r.top->id);
+  CHECK(std::count(spurs.begin(), spurs.end(), "EPL|tot") == 1);
+  CHECK(std::count(spurs.begin(), spurs.end(), "NBA|sas") == 1);
+  // "49ers" typed with letters finds the team.
+  CHECK(tv.find("49ers").top->id == "NFL|sf");
+  CHECK(se::nicknamesOf("manchester united") == std::vector<std::string>{"man u", "man united", "man utd"});
+}
+
+TEST_CASE("search: typos find shows and say so") {
+  Tv tv;
+  se::Results r = tv.find("law and ordr");
+  REQUIRE(r.top);
+  CHECK(r.top->name == "Law & Order");
+  CHECK(r.showing == "Law & Order");
+  r = tv.find("jepordy");
+  REQUIRE(r.top);
+  CHECK(r.top->name == "Jeopardy!");
+  CHECK(r.showing == "Jeopardy!");
+  // "Showing Northbridge Bulls": the team's name, not its game's.
+  r = tv.find("nothbridge");
+  REQUIRE(r.top);
+  CHECK(r.top->id == "g-live");
+  CHECK(r.showing == "Northbridge Bulls");
+  // "Search for … instead": exact only.
+  se::Query q = se::parse("nothbridge");
+  q.exactOnly = true;
+  se::Options o;
+  o.now = kNow;
+  CHECK(se::run(tv.index, q, o).nothing);
+  // An exact match never says "Showing".
+  CHECK(tv.find("goal tv").showing.empty());
+}
+
+TEST_CASE("search: genres, sports and leagues") {
+  Tv tv;
+  se::Results r = tv.find("news");
+  REQUIRE(r.top);
+  // "news" names a channel word too, but the genre leads (tier 5).
+  CHECK(r.top->id == "genre:news");
+  r = tv.find("basketball");
+  CHECK(r.top->id == "sport:basketball");
+  r = tv.find("pbl");
+  CHECK(r.top->id == "PBL");
+  CHECK(has(r.games, "g-sat"));  // the league lists its games
+  CHECK(has(tv.find("movi").genres, "genre:movies"));
+}
+
+TEST_CASE("search: finished games come last, never on top, only with scores on") {
+  Tv tv;
+  se::Results r = tv.find("comets");
+  // The replay airing ranks above the finished game.
+  REQUIRE(r.top);
+  CHECK(r.top->kind == se::Kind::Show);
+  CHECK(r.top->name == "Comets at Blaze Replay");
+  REQUIRE(has(r.games, "g-ended"));
+  CHECK(r.games.back().id == "g-ended");
+  // Show scores off: hidden.
+  r = tv.find("comets", false);
+  CHECK_FALSE(has(r.games, "g-ended"));
+  CHECK(se::showTag(se::fold("Comets at Blaze Replay")) == "REPLAY");
+  CHECK(se::showTag(se::fold("PBL Highlights")) == "HIGHLIGHTS");
+  CHECK(se::showTag(se::fold("Courtside Kitchen")).empty());
+}
+
+TEST_CASE("search: score text is never matched") {
+  EventTile t;
+  t.id = "g1";
+  t.title = "Bulls at Harbor Kings";
+  t.sides.resize(2);
+  t.sides[0].name = "Bulls";
+  t.sides[0].score = "21";
+  t.sides[1].name = "Harbor Kings";
+  t.sides[1].score = "14";
+  t.sides[1].home = true;
+  t.heroTitle = "Bulls 21 \xe2\x80\x93 14 Harbor Kings";
+  t.heroStatus = "Q3 4:12 \xc2\xb7 3rd & 7 at HK 35";
+  t.situation = "3rd & 7 at HK 35";
+  t.leaders.push_back({"1", "S. Harbor", "", "-12", "14"});
+  t.podium.push_back({"VER", 0});
+  t.pill = EventTile::Pill::Live;
+  t.watchable = true;
+  se::GameEntry g = se::gameEntry(t);
+  CHECK(g.title == "Bulls at Harbor Kings");
+  CHECK(g.state == se::GameEntry::State::Live);
+  for (const std::string& n : g.names) {
+    CHECK(n.find("21") == std::string::npos);
+    CHECK(n.find("14") == std::string::npos);
+    CHECK(n.find("3rd") == std::string::npos);
+    CHECK(n.find("harbor s") == std::string::npos);
+    CHECK(n.find("ver") == std::string::npos);
+  }
+  se::Index index;
+  index.games = {g};
+  index.finish();
+  se::Options o;
+  o.now = kNow;
+  CHECK(se::run(index, se::parse("21"), o).games.empty());
+  CHECK(se::run(index, se::parse("3rd and 7"), o).games.empty());
+  // The name it is shown and remembered by is the matchup.
+  se::Results r = se::run(index, se::parse("bulls"), o);
+  REQUIRE(r.top);
+  CHECK(r.top->name == "Bulls at Harbor Kings");
+}
+
+TEST_CASE("search: another country's sports channel only when named exactly") {
+  Tv tv;
+  CHECK_FALSE(has(tv.find("deportes").channels, "abroad"));
+  CHECK(tv.find("deportes norte").top->id == "abroad");
+}
+
+TEST_CASE("search: nothing found, and never for one character") {
+  Tv tv;
+  CHECK(tv.find("lacrosse").nothing);
+  CHECK_FALSE(tv.find("q").nothing);
+  CHECK_FALSE(tv.find("bulls").nothing);
+}
+
+TEST_CASE("search: LG's number keys from an empty field") {
+  Tv tv;
+  // "49" is a channel, and also starts a team's name: it waits for OK.
+  se::Digits d = se::digits(tv.index, "49");
+  CHECK(d.channel == "c49");
+  CHECK(d.waits);
+  CHECK(d.team == "San Francisco 49ers");
+  // "206" plays when the number is complete: here 2061 could follow, so it
+  // waits for the next digit (or the pause), never for OK.
+  d = se::digits(tv.index, "206");
+  CHECK(d.channel == "sn2");
+  CHECK_FALSE(d.waits);
+  CHECK(d.also == std::vector<std::string>{"sn2w"});
+  Channels ch;
+  GuideChannel a;
+  a.id = "sn2";
+  a.number = 206;
+  ch.all = {a};
+  CHECK(views::digitsSettled("206", ch));
+  GuideChannel b;
+  b.id = "sn2w";
+  b.number = 2061;
+  ch.all.push_back(b);
+  CHECK_FALSE(views::digitsSettled("206", ch));
+  // A number with no channel and no name.
+  d = se::digits(tv.index, "777");
+  CHECK(d.channel.empty());
+  CHECK_FALSE(d.waits);
+}
+
+TEST_CASE("search: recent searches keep the picked name, eight of them") {
+  std::vector<se::Recent> list;
+  // What was picked, by name: "Sports Net 2", not the "sn2" typed.
+  CHECK(se::remember(list, {"Sports Net 2", "sn2"}));
+  CHECK(list.front().name == "Sports Net 2");
+  // Nothing picked (a search that found nothing) is never kept.
+  CHECK_FALSE(se::remember(list, {"", "x"}));
+  CHECK_FALSE(se::remember(list, {"lacrosse", ""}));
+  CHECK(list.size() == 1);
+  for (int i = 0; i < 10; ++i) se::remember(list, {"Channel " + std::to_string(i), "c" + std::to_string(i)});
+  CHECK(list.size() == se::kRecentKept);
+  CHECK(list.front().name == "Channel 9");
+  // Picking one again moves it to the front, once.
+  se::remember(list, {"Channel 5", "c5"});
+  CHECK(list.front().id == "c5");
+  CHECK(std::count_if(list.begin(), list.end(), [](const se::Recent& r) { return r.id == "c5"; }) == 1);
+  CHECK(se::kRecentShown == 4);
+}
+
+TEST_CASE("search: placeholders aren't shows") {
+  CHECK(se::placeholderShow(show("To Be Announced", kNow, kNow + 3600), "Goal TV"));
+  CHECK(se::placeholderShow(show("Goal TV", kNow, kNow + 3600), "Goal TV"));
+  CHECK(se::placeholderShow(show("Highlights", kNow, kNow + 24 * 3600), "Goal TV"));
+  CHECK_FALSE(se::placeholderShow(show("Match Day Live", kNow, kNow + 3600), "Goal TV"));
+}

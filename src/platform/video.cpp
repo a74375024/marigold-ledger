@@ -8,6 +8,11 @@
 #include "video.h"
 
 namespace marigold::platform {
+namespace {
+// The volume was set on this stream's media (it can only be once the load
+// has answered with the media id).
+bool gMuteSent = false;
+}  // namespace
 
 bool Video::start() {
   if (started_) return true;
@@ -22,13 +27,32 @@ bool Video::play(const std::string& url, const std::string& headers, int loadMod
   video_definir_modo_live(loadMode);
   bool ok = video_tocar(url.c_str()) != 0;
   started_ = started_ || ok;
+  gMuteSent = false;
   MLOG_I("video", "play (mode %d): %s", loadMode, ok ? "load sent" : "refused");
   return ok;
 }
 
 void Video::stop() { video_parar(); }
 
-void Video::pump() { video_bombear(); }
+void Video::pump() {
+  video_bombear();
+  // The pipeline's volume can be set once the load has answered with the
+  // media id: a muted corner goes quiet as soon as it can.
+  if (muted_ && !gMuteSent && video_ativo()) {
+    video_volume(0);
+    gMuteSent = true;
+  }
+}
+
+void Video::setMuted(bool muted) {
+  if (muted == muted_) return;
+  muted_ = muted;
+  gMuteSent = false;
+  if (!video_ativo()) return;
+  // The same stream, its sound off or back (no new load).
+  video_volume(muted ? 0 : 100);
+  gMuteSent = muted;
+}
 
 void Video::setWindow(gfx::Rect r) {
   video_janela(static_cast<int>(std::lround(r.x)), static_cast<int>(std::lround(r.y)),

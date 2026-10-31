@@ -21,8 +21,12 @@ class Playback : public engine::Session {
  public:
   explicit Playback(App& app);
 
+  // Full screen (always with sound), or a corner. Search's corner is
+  // `muted`; the guide's and Live Events' play with sound. Either way it is
+  // the same stream: no re-tune.
   void setFull();
-  void setCorner(gfx::Rect r);
+  void setCorner(gfx::Rect r, bool muted = false);
+  bool muted() const { return muted_; }
 
   // UI thread, every loop: the session's rules, then the window re-applies.
   // True while something is pending.
@@ -72,6 +76,7 @@ class Playback : public engine::Session {
   uint32_t textTracksAt_ = 0;
   uint32_t pictureAt_ = 0;
   gfx::Rect corner_{};
+  bool muted_ = false;
   uint32_t reapplyAt_[3] = {0, 0, 0};
   bool reapplyOnReady_ = false;
 };

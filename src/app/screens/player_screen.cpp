@@ -89,6 +89,11 @@ class PlayerScreen : public Screen {
   bool key(const KeyEvent& e) override {
     Playback& p = app_.playback();
     if (e.key == Key::Ok) lastOkAt_ = app_.ms();
+    // One long swipe is one move here: one channel, one button.
+    if (e.glide) {
+      if (e.glide == glide_) return true;
+      glide_ = e.glide;
+    }
     if (tips_) {
       // "Getting around": OK or Back closes it; other keys wait.
       if (e.key == Key::Ok || e.key == Key::Back) closeTips();
@@ -1290,6 +1295,7 @@ class PlayerScreen : public Screen {
   bool pointer_ = false;
   uint32_t controlsAt_ = 0;    // when the controls last opened
   uint32_t lastOkAt_ = 0;      // the last OK (or click)
+  uint32_t glide_ = 0;         // the swipe that last moved (Apple TV)
   uint32_t backAskUntil_ = 0;  // "Press Back again to leave" is up
   std::string notice_, noticeDetail_;  // the large card at the top
   uint32_t noticeUntil_ = 0;

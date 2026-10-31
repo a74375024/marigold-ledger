@@ -25,15 +25,18 @@ tvOS 17 and newer is supported (Apple TV HD and every Apple TV 4K).
 
 | Siri Remote | Does |
 |---|---|
-| Clickpad ring or swipes | Move (held, the arrows repeat) |
+| Clickpad ring or swipes | Move (held, the arrows repeat; a long swipe moves several steps, a flick coasts a few more) |
 | Click | OK (hold for the long press: a channel's actions) |
 | Back | Back. On the guide, straight to the Apple TV Home screen (Apple's rule for an app's top screen: no "Press Back again") |
 | ⏯ | Guide: Live Events. Live Events: back to the guide. Player: play and pause |
 | TV | The system's (Home). The app stays in memory and opens where it was |
 
 The key hints show what the Siri Remote has: Hold OK for a channel's
-actions and ⏯ for Live Events. Settings and Search are the icons at the top
-right of the guide (Up to the tabs, then Right). A TV's own remote over HDMI
+actions and ⏯ for Live Events. Search and Settings are in the left rail's
+strip (◀ to the menu). Search has Marigold's own A–Z keyboard, the same as
+on LG and Fire TV: ring presses move one key, swipes move faster and stop
+at the grid's edge, and only the centre click types; 🎤 Speak hands over
+to Apple's keyboard (the hidden text field) for dictation. A TV's own remote over HDMI
 that has page, number or colour keys adds them to the hints the first time
 they are pressed, as on Android.
 

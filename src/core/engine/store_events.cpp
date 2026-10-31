@@ -54,6 +54,11 @@ std::string tileCompetition(const sports::SportsEvent* event, const std::string&
   return name.empty() ? rest : name + " \xc2\xb7 " + rest;
 }
 
+std::string matchup(const EventTile& t) {
+  if (t.sides.size() != 2) return t.title;
+  return t.sides[0].name + (t.sides[1].home && !t.sides[0].home ? " at " : " vs ") + t.sides[1].name;
+}
+
 namespace {
 
 namespace sb = sports::board;
@@ -145,13 +150,6 @@ std::string glyphFor(const std::string& icon) {
     if (icon == figure) return "\xe2\x98\x85";
   }
   return "\xe2\x97\x8f";
-}
-
-// "Rams at Seahawks" (never a score): "A at B" only with the second side at
-// home (not tennis, soccer's home first, or a "vs" title); else the title.
-std::string matchup(const EventTile& t) {
-  if (t.sides.size() != 2) return t.title;
-  return t.sides[0].name + (t.sides[1].home && !t.sides[0].home ? " at " : " vs ") + t.sides[1].name;
 }
 
 EventTile toTile(const sb::Tile& t, const sports::SportsEvent* event, const time::Zone& zone) {

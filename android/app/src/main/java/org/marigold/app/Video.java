@@ -62,6 +62,7 @@ final class Video {
 
   // The rectangle asked for, in 1920x1080 layout units.
   private static int wantX, wantY, wantW = 1920, wantH = 1080;
+  private static boolean muted;
 
   // What is playing (the link stays in memory only).
   private static String url = "";
@@ -118,6 +119,7 @@ final class Video {
           .build();
       player.setAudioAttributes(audio, true);
       player.addListener(listener);
+      player.setVolume(muted ? 0f : 1f);
     }
     player.setVideoSurfaceView(view);
     root.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> layout());
@@ -167,6 +169,14 @@ final class Video {
     ui.post(() -> {
       if (player != null) player.release();
       player = null;
+    });
+  }
+
+  /** Search's corner preview plays without sound; off brings it back on the same stream. */
+  static void muted(boolean on) {
+    ui.post(() -> {
+      muted = on;
+      if (player != null) player.setVolume(on ? 0f : 1f);
     });
   }
 

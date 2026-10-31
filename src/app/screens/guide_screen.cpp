@@ -47,7 +47,6 @@ constexpr time::Seconds kShift = 90 * 60;       // Right/Left past the edge
 constexpr time::Seconds kMaxAhead = 48 * 3600;  // how far later the grid goes
 constexpr uint32_t kIdleBackToNowMs = 120000;
 constexpr uint32_t kPreviewDelayMs = top_bar::kPreviewDelayMs;
-constexpr uint32_t kPreviewGapMs = top_bar::kPreviewGapMs;
 constexpr uint32_t kDigitsMs = 1500;
 constexpr uint32_t kBackExitMs = 2500;
 
@@ -750,21 +749,13 @@ void GuideScreen::openSources() {
 }
 
 void GuideScreen::openSearch() {
+  // Search is a section of the rail over the guide: it plays what is
+  // picked itself, and what its strip or menu picks comes back here.
+  closeRail();
+  area_ = Area::Grid;
   GuideScreen* self = this;
-  App& app = app_;
-  app_.nav().push(makeSearch(app_, [self, &app](const std::string& id) {
-    // Prefer the row in the current tab; else switch to all channels.
-    if (!self->focusChannel(id)) {
-      self->tab_ = app.store().settings().allChannelsTab ? Tab::All : Tab::Lineup;
-      self->nav_.setSection(itemOf(self->tab_));
-      self->filter_ = Filter::None;
-      self->rebuildLines();
-      if (!self->focusChannel(id)) {
-        self->watch(id);
-        return;
-      }
-    }
-    self->returnToNow();
+  app_.nav().push(makeSearch(app_, [self](rail::Item item) {
+    if (item != rail::Item::Search) self->open(item, true);
   }));
 }
 
@@ -1045,16 +1036,11 @@ bool GuideScreen::tick(uint32_t ms) {
   const GuideChannel* g = focusedChannel();
   bool onTop = app_.nav().top() == this;
   if (onTop && g && area_ == Area::Grid && nav_.mode() == rail::Mode::Content && s.settings().previewChannels) {
-    if (previewCandidate_ != g->id) {
-      previewCandidate_ = g->id;
-      focusSince_ = ms;
-    }
-    if (p.entry() != g->id && ms - focusSince_ >= kPreviewDelayMs && ms - lastPreviewAt_ >= kPreviewGapMs) {
-      lastPreviewAt_ = ms;
+    if (pace_.step(g->id, p.entry() == g->id, ms) == preview::Pace::Step::Tune) {
       p.setCorner(kPreview);
       p.tune(g->id, flipList());
     }
-    if (p.entry() != g->id) animating = animating || ms - focusSince_ < kPreviewDelayMs + 100;
+    if (p.entry() != g->id) animating = animating || ms - pace_.since() < kPreviewDelayMs + 100;
   }
   return animating;
 }

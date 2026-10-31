@@ -1,6 +1,6 @@
-// The store behind the Settings pages, show reminders and search (tvOS
+// The store behind the Settings pages and show reminders (tvOS
 // LiveTVOptionsPanel, LineupEditView, LiveTVGuideSourcesView, the program
-// detail card and LiveTVSearchView). UI thread only.
+// detail card). Search is store_search.cpp. UI thread only.
 #include <algorithm>
 #include <map>
 #include <set>
@@ -21,9 +21,7 @@
 namespace marigold::engine {
 namespace {
 
-constexpr size_t kMaxProgramHits = 60;
 constexpr size_t kMaxAirings = 4;
-constexpr size_t kMaxEventHits = 40;
 
 std::string fold(std::string_view s) { return str::lowerAscii(str::foldDiacritics(std::string(s))); }
 
@@ -41,8 +39,6 @@ std::string ago(time::Seconds t, time::Seconds now) {
 std::string count(int n, const char* one, const char* many) {
   return str::groupedThousands(n) + " " + (n == 1 ? one : many);
 }
-
-bool matches(const std::string& hay, const std::string& q) { return fold(hay).find(q) != std::string::npos; }
 
 }  // namespace
 
@@ -286,68 +282,6 @@ std::vector<ProgramHit> Store::otherAirings(const std::string& entryId, const Li
     return a.listing.start != b.listing.start ? a.listing.start < b.listing.start : a.entryId < b.entryId;
   });
   if (out.size() > kMaxAirings) out.resize(kMaxAirings);
-  return out;
-}
-
-// ------------------------------------------------------------ search
-
-std::vector<std::string> Store::searchEvents(const std::string& query) const {
-  std::string q = fold(str::trim(query));
-  std::vector<std::string> out;
-  if (q.size() < 2) return out;
-  std::set<std::string> seen;
-  for (const EventRow& row : events_->rows) {
-    if (row.families) continue;
-    for (const EventGroup& g : row.groups) {
-      for (const EventTile& t : g.tiles) {
-        if (seen.count(t.id)) continue;
-        bool hit = matches(t.title, q) || matches(t.heroTitle, q) || matches(t.league, q) || matches(t.leagueChip, q) ||
-                   matches(t.subtitle, q);
-        for (const EventSide& s : t.sides) hit = hit || matches(s.name, q) || fold(s.abbr) == q;
-        if (!hit) continue;
-        seen.insert(t.id);
-        out.push_back(t.id);
-        if (out.size() >= kMaxEventHits) return out;
-      }
-    }
-  }
-  return out;
-}
-
-std::vector<ProgramHit> Store::searchPrograms(const std::string& query) const {
-  std::string q = fold(str::trim(query));
-  std::vector<ProgramHit> out;
-  if (q.size() < 2) return out;
-  time::Seconds now = time::now();
-  struct Scored {
-    int score;
-    ProgramHit hit;
-  };
-  std::vector<Scored> found;
-  for (const auto& [id, list] : listings_->byChannel) {
-    const GuideChannel* g = channels_->find(id);
-    if (!list || !g) continue;
-    for (const Listing& l : *list) {
-      if (l.end <= now) continue;
-      std::string title = fold(l.title);
-      int score = 0;
-      if (title == q) score = 90;
-      else if (title.compare(0, q.size(), q) == 0) score = 75;
-      else if (title.find(q) != std::string::npos) score = 55;
-      else if (fold(l.episode).find(q) != std::string::npos) score = 35;
-      if (!score) continue;
-      if (l.isOn(now)) score += 8;
-      if (g->inLineup) score += 6;
-      if (g->favorite) score += 4;
-      found.push_back({score, {id, l}});
-    }
-  }
-  std::sort(found.begin(), found.end(), [](const Scored& a, const Scored& b) {
-    if (a.score != b.score) return a.score > b.score;
-    if (a.hit.listing.start != b.hit.listing.start) return a.hit.listing.start < b.hit.listing.start;
-    return a.hit.entryId < b.hit.entryId;
-  });
-  for (size_t i = 0; i < found.size() && i < kMaxProgramHits; ++i) out.push_back(std::move(found[i].hit));
   return out;
 }
 

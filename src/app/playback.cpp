@@ -190,13 +190,22 @@ void Playback::scheduleReapply() {
 void Playback::setFull() {
   bool changed = !full();
   setShowingFull(true);
+  if (muted_) {
+    // Sound comes with full screen.
+    muted_ = false;
+    app_.video().setMuted(false);
+  }
   app_.video().setWindow(window());
   if (changed) scheduleReapply();
 }
 
-void Playback::setCorner(gfx::Rect r) {
+void Playback::setCorner(gfx::Rect r, bool muted) {
   bool changed = full() || r.x != corner_.x || r.y != corner_.y || r.w != corner_.w || r.h != corner_.h;
   setShowingFull(false);
+  if (muted != muted_) {
+    muted_ = muted;
+    app_.video().setMuted(muted);
+  }
   corner_ = r;
   if (changed) {
     app_.video().setWindow(r);

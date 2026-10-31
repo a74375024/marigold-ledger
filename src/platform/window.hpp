@@ -33,6 +33,9 @@ struct Event {
   Key key = Key::Unknown;
   bool repeat = false;  // a held key repeating
   bool swipe = false;   // KeyDown: an arrow from a clickpad swipe (tvOS)
+  // KeyDown from a swipe: the gesture it came from (one long swipe sends
+  // several moves with the same number; 0 when not part of one).
+  uint32_t glide = 0;
   float x = 0, y = 0;   // pointer, in drawable pixels
   int wheel = 0;
   // Text: the whole field value; `done` when the keyboard closed, with

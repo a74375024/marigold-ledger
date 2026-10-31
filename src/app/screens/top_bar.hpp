@@ -7,6 +7,7 @@
 #include <string>
 
 #include "app/ui/ui.hpp"
+#include "core/input/preview_pace.hpp"
 
 namespace marigold::app {
 class Playback;
@@ -16,9 +17,10 @@ namespace marigold::app::top_bar {
 
 constexpr ui::Rect kPreview{1440, 80, 400, 225};
 // Focus rests this long before the preview tunes, and previews start at
-// most this often (scrolling past tiles or rows doesn't tune them).
-constexpr uint32_t kPreviewDelayMs = 2000;
-constexpr uint32_t kPreviewGapMs = 3000;
+// most this often (scrolling past tiles or rows doesn't tune them):
+// core/input/preview_pace.hpp.
+constexpr uint32_t kPreviewDelayMs = preview::kDelayMs;
+constexpr uint32_t kPreviewGapMs = preview::kGapMs;
 constexpr float kTabsY = 318;
 
 // The clock, right-aligned over the preview corner.

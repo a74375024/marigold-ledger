@@ -108,6 +108,10 @@ struct EventTile {
 std::string tileSport(const std::string& icon);
 std::string tileCompetition(const sports::SportsEvent* event, const std::string& sport, const std::string& tag);
 
+// "Rams at Seahawks" (never a score): "A at B" only with the second side at
+// home (not tennis, soccer's home first, or a "vs" title); else the title.
+std::string matchup(const EventTile& t);
+
 struct EventGroup {
   std::string title;  // "Live", "Later Today", "Sat"; empty for none
   std::vector<EventTile> tiles;
