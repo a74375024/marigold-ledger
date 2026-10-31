@@ -7,8 +7,17 @@
 // every platform; this only decides what is on screen now.
 //
 // Read from the stream, captions arrive as far ahead of the picture as the
-// player's buffer: tick() holds each one back by that lead, so it shows with
-// the frame it belongs to.
+// player's buffer: tick() holds each one back until the player's own clock
+// reaches its frame, so it shows with the picture it belongs to. The clock
+// is the player's playback position (webOS currentTime), carried on between
+// its reports while it plays and held while it waits for data, and mapped
+// onto the stream's media time where the first picture showed. Without a
+// position, the buffer's lead stands in: the newest picture read, less how
+// far the player's buffer runs ahead of what it shows.
+//
+// Caption timing (setDelay) moves them later, or earlier: as far as the
+// stream read so far allows here, and for a player's own lines (Android)
+// only later.
 #pragma once
 
 #include <cstdint>
@@ -35,6 +44,35 @@ std::string languageName(const std::string& codeOrName);
 // second one US stations send ("English" / "Español").
 std::string captionServiceLabel(int channel, const std::string& language);
 
+// Caption timing, ms (+ later): "On time", "0.5 s earlier", "1.5 s later".
+std::string captionTimingLabel(int ms);
+
+// What the player says of its clock, every frame (tick()).
+struct PlayerClock {
+  bool showing = false;        // the picture is up
+  bool running = false;        // playing: not paused, not waiting for data
+  int64_t positionMs = -1;     // its playback position (webOS currentTime); -1 unknown
+  int64_t positionAgeMs = 0;   // how long ago it said so
+  int64_t leadMs = -1;         // how far its buffer runs ahead of the picture; -1 unknown
+  // It says its position once the picture shows (webOS): until it does (2 s
+  // at most), captions wait rather than go by the buffer's lead.
+  bool reportsPosition = false;
+};
+
+// How captions were timed since the last look, for the playback log
+// (counts and ms only).
+struct CaptionTiming {
+  std::string clock;           // "currentTime", "buffer", "default" (from the stream); "player"
+  int samples = 0;             // half seconds with captions on
+  int64_t aheadMedian = 0, aheadMin = 0, aheadMax = 0;  // stream read ahead of the picture, ms
+  int64_t errorMs = -1;        // the player's reports against the clock carried on, median; -1 none
+  int jumps = 0;               // timeline jumps carried across
+  int delayMs = 0;             // the Caption timing applied
+};
+// The playback log's line: "clock currentTime; ahead median 2400 ms (min
+// 1800, max 3100); error ±120 ms; jumps 1; setting −1.0 s".
+std::string captionTimingLog(const CaptionTiming& t);
+
 class Subtitles {
  public:
   Subtitles();
@@ -58,10 +96,19 @@ class Subtitles {
   void playerTracks(std::vector<CaptionTrack> tracks, bool known);
   void playerLines(const std::vector<std::string>& lines);
 
-  // Every frame while playing (UI thread). `leadMs`: how far the player's
-  // buffer runs ahead of the picture (-1 unknown); `showing`: the picture is
-  // up. True when what is on screen changed.
+  // Every frame while playing (UI thread). True when what is on screen
+  // changed.
+  bool tick(int64_t nowMs, const PlayerClock& clock);
+  // The same with only the buffer's lead (-1 unknown), the player running.
   bool tick(int64_t nowMs, int64_t leadMs, bool showing);
+
+  // Caption timing, ms: + later, - earlier (kept across streams).
+  void setDelay(int ms) { delayMs_ = ms; }
+  // Since the last call; false when captions weren't on.
+  bool takeTiming(CaptionTiming& out);
+  // Once a stream's player clock is matched to its pictures: how its
+  // position counts ("from the first picture"); "" otherwise or after.
+  std::string takeAnchorNote();
 
   // The stream carries captions (text has been seen, or the player lists a
   // track).
@@ -81,19 +128,52 @@ class Subtitles {
   bool fromStream() const { return session_ != 0; }
 
  private:
-  mutable std::mutex mu_;  // the relay thread's side: ts_, queue_, newest_
+  enum class Source { None, Position, Buffer, Default };
+  bool streamClock(int64_t nowMs, const PlayerClock& c, int64_t newest, bool haveKey, int64_t keyMedia,
+                   int64_t firstPts, Source& source, int64_t& clock);
+  void sample(int64_t nowMs, Source source, int64_t ahead);
+
+  mutable std::mutex mu_;  // the relay thread's side: ts_ to keyMedia_
   std::unique_ptr<captions::TsCaptions> ts_;
   std::deque<captions::CcPair> queue_;
   std::vector<captions::CcPair> ready_;  // reused for each chunk
-  int64_t newest_ = -1;
+  bool haveMedia_ = false, haveKey_ = false;
+  int64_t newest_ = 0;                   // media ms of the newest picture read
+  int64_t keyMedia_ = 0, firstPts_ = 0;
+  int jumps_ = 0;
   bool sawData_ = false;
   unsigned session_ = 0;  // read on the relay thread under mu_
+
+  // The caption clock (media ms), UI thread.
+  int delayMs_ = 0;
+  bool haveClock_ = false;
+  int64_t clock_ = 0;
+  bool anchored_ = false;
+  int64_t offset_ = 0;                   // media = position + offset_
+  int64_t showingSince_ = -1;            // the picture is up since (waiting for a position)
+  std::string anchorNote_;
+  int64_t lastPos_ = -1, lastPosAt_ = 0;  // the player's last report, and when
+  bool ranSince_ = false;                // it played since that report
+  // The playback log's figures since takeTiming().
+  int64_t sampleAt_ = -1;
+  int sourceCount_[4] = {0, 0, 0, 0};
+  std::vector<int64_t> ahead_, errors_;
+  int jumpsSeen_ = 0, jumpsLogged_ = 0, positionJumps_ = 0;
+  int samples_ = 0;
+  // A player's own lines, held for the Caption timing: when each came.
+  struct Pending {
+    int64_t atMs;
+    std::vector<captions::Line> lines;
+  };
+  std::deque<Pending> pending_;
+  int64_t lastNow_ = 0;
 
   std::string language_ = "English";
   std::vector<captions::Cea608> cc_;  // CC1..CC4
   std::vector<CaptionTrack> playerTracks_;
   bool playerTracksKnown_ = false, sawPlayerText_ = false;
-  std::vector<captions::Line> playerLines_;
+  std::vector<captions::Line> playerLines_;  // as shown (after the Caption timing)
+  std::vector<captions::Line> playerLatest_; // as the player gave them last
   std::string selected_;
   std::vector<captions::Line> lines_;
 };

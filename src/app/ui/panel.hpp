@@ -28,6 +28,9 @@ struct PanelItem {
   std::vector<std::string> choices;  // Choice
   int choice = -1;                   // -1: none of them yet
   std::function<void(int)> pick;
+  // A Choice with too many choices to show at once: only the one picked,
+  // between ‹ and › (Left / Right step, no wrapping).
+  bool stepper = false;
   int coast = -1;  // an EAST (0) or WEST (1) tag after the title
   std::string tag;  // a small blue tag after the title ("NEW")
   // A row that can't be used is dimmed (never hidden, so rows stay put)

@@ -708,6 +708,26 @@ TEST_CASE("cameras and tennis: hooks for later milestones") {
   CHECK_FALSE(t.tiles.count("sev|ATP|80|2"));  // tennis only shows matches you can watch
 }
 
+TEST_CASE("tennis: tournament coverage in Where to Watch, the feed on the tile") {
+  SportsGame match = game("ATP", "Tennis", "81|1", team("p1", "Ann Player"), team("p2", "Bea Racket"), kNow - 600);
+  match.tennis = true;
+  match.venue = "Centre Court";
+  match.customTitle = "Racket vs Player";
+  EventSource coverage = source("e|tennis", EventSource::Kind::team, false, station_rank::lineup, "Tournament coverage");
+  SportsGame other = match;
+  other.id = "ATP|81|2";
+  Board b = build(baseInput({eventOf(match, {feed("xt|t"), coverage}), eventOf(other, {coverage})}));
+  // The tile names what plays first: the match's feed; the channel when it's all there is.
+  CHECK_FALSE(tile(b, "sev|ATP|81|1").channelName);
+  CHECK(tile(b, "sev|ATP|81|2").channelName == "Channel e|tennis");
+  WherePanel where = wherePanel(b, b.events.at("sev|ATP|81|1"), channels());
+  REQUIRE(where.sections.size() == 2);
+  CHECK(where.sections[0].title == "Your channels");
+  CHECK(where.sections[0].items[0].name == "Channel e|tennis");
+  CHECK(where.sections[0].items[0].detail == "Tournament coverage");
+  CHECK(where.sections[1].title == "Event feeds from your provider");
+}
+
 TEST_CASE("listings of every game of a day: only the games you can watch") {
   SportsGame mine = game("D3WSO", "Soccer", "1", team("h", "Harbor"), team("v", "Valley"), kNow + 3600);
   SportsGame other = game("D3WSO", "Soccer", "2", team("c", "Cove"), team("r", "Ridge"), kNow + 3600);

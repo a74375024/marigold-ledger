@@ -1,5 +1,7 @@
 #include "platform/ts_proxy.hpp"
 
+#include <algorithm>
+
 #include "core/util/log.hpp"
 #include "livetv_regras.h"
 #include "proxyts.h"
@@ -105,6 +107,19 @@ TsProxy::Source TsProxy::source() const {
   Source s;
   if (started_) s.known = proxyts_fonte(proxyts_sessao(), &s.http, &s.bytes, &s.reopened) != 0;
   return s;
+}
+
+int TsProxy::connections(int from, std::vector<Connection>& out) const {
+  out.clear();
+  if (!started_) return from;
+  long ms[PROXYTS_LIGACOES];
+  long long bytes[PROXYTS_LIGACOES];
+  int reopened[PROXYTS_LIGACOES];
+  int total = proxyts_ligacoes(proxyts_sessao(), from, ms, bytes, reopened, PROXYTS_LIGACOES);
+  // The proxy copies from the oldest it still keeps.
+  int first = std::max(from, total - PROXYTS_LIGACOES);
+  for (int i = 0; i < total - first && i < PROXYTS_LIGACOES; ++i) out.push_back({ms[i], bytes[i], reopened[i] != 0});
+  return std::max(from, total);
 }
 
 void TsProxy::setPreferredHeight(int height) { proxyts_definir_resolucao(nv_res_altura_opcao(height)); }

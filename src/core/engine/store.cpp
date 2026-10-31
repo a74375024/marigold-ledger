@@ -13,6 +13,7 @@
 #include <cmath>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <functional>
 #include <map>
@@ -337,6 +338,9 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
       settings_.subtitleLook = std::clamp(static_cast<int>((*v)["subtitleLook"].asNumber(0)), 0, 2);
       settings_.subtitleSentenceCase = (*v)["subtitleSentenceCase"].asBool(false);
       settings_.subtitleTop = (*v)["subtitleTop"].asBool(false);
+      settings_.captionTiming = clampCaptionTiming(static_cast<int>((*v)["captionTiming"].asNumber(0)));
+      for (const auto& [k, x] : (*v)["captionTimingByChannel"].fields())
+        if (!k.empty()) settings_.captionTimingByChannel[k] = clampCaptionTiming(static_cast<int>(x.asNumber(0)));
       settings_.playThroughApp = (*v)["playThroughApp"].asBool(true);
       settings_.upGoesHigher = (*v)["upGoesHigher"].asBool(false);
       settings_.systemCaptions = static_cast<int>((*v)["systemCaptions"].asNumber(-1));
@@ -356,6 +360,7 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
       for (const auto& [k, x] : (*v)["pinned"].fields()) m.pinned[k] = x.asString();
       for (const auto& [k, x] : (*v)["lastFeed"].fields()) m.lastFeed[k] = x.asString();
       for (const auto& [k, x] : (*v)["unplayable"].fields()) m.unplayable[k] = x.asInt();
+      for (const auto& [k, x] : (*v)["audioOnly"].fields()) m.audioOnly[k] = x.asInt();
       m.quickStartRefused = stringSet((*v)["quickStartRefused"]);
       m.captionChannels = stringSet((*v)["captionChannels"]);
       for (const auto& [k, x] : (*v)["reliability"].fields())
@@ -492,6 +497,13 @@ std::string Store::listsText() const {
   json::Value unplayable = json::Value::object();
   for (const auto& [k, at] : m.unplayable) unplayable.set(k, static_cast<int64_t>(at));
   v.set("unplayable", unplayable);
+  if (!m.audioOnly.empty()) {
+    json::Value audio = json::Value::object();
+    time::Seconds now = time::now();
+    for (const auto& [k, at] : m.audioOnly)
+      if (now - at < kAudioOnlyFor) audio.set(k, static_cast<int64_t>(at));
+    v.set("audioOnly", audio);
+  }
   v.set("quickStartRefused",
         stringArray(std::vector<std::string>(m.quickStartRefused.begin(), m.quickStartRefused.end())));
   if (!m.captionChannels.empty())
@@ -566,6 +578,27 @@ void setSubtitleChoice(Settings& s, bool spanishChannel, const SubtitleChoice& c
   (spanishChannel ? s.subtitleLanguageEs : s.subtitleLanguage) = c.language;
 }
 
+int clampCaptionTiming(int ms) {
+  int steps = (std::abs(ms) + kCaptionTimingStepMs / 2) / kCaptionTimingStepMs;
+  return std::clamp((ms < 0 ? -steps : steps) * kCaptionTimingStepMs, -kCaptionTimingMaxMs, kCaptionTimingMaxMs);
+}
+
+int captionTiming(const Settings& s, const std::string& entryId) {
+  auto it = s.captionTimingByChannel.find(entryId);
+  return it != s.captionTimingByChannel.end() ? it->second : s.captionTiming;
+}
+
+bool hasOwnCaptionTiming(const Settings& s, const std::string& entryId) {
+  return !entryId.empty() && s.captionTimingByChannel.count(entryId) > 0;
+}
+
+void setCaptionTiming(Settings& s, const std::string& entryId, int ms) {
+  if (entryId.empty()) s.captionTiming = clampCaptionTiming(ms);
+  else s.captionTimingByChannel[entryId] = clampCaptionTiming(ms);
+}
+
+void clearOwnCaptionTiming(Settings& s, const std::string& entryId) { s.captionTimingByChannel.erase(entryId); }
+
 void Store::setSettings(const Settings& s) {
   bool tsChanged = s.preferTS != settings_.preferTS;
   bool fillChanged = s.fillMissingListings != settings_.fillMissingListings;
@@ -580,6 +613,8 @@ void Store::setSettings(const Settings& s) {
   same.subtitleLook = settings_.subtitleLook;
   same.subtitleSentenceCase = settings_.subtitleSentenceCase;
   same.subtitleTop = settings_.subtitleTop;
+  same.captionTiming = settings_.captionTiming;
+  same.captionTimingByChannel = settings_.captionTimingByChannel;
   same.playThroughApp = settings_.playThroughApp;
   same.upGoesHigher = settings_.upGoesHigher;
   same.systemCaptions = settings_.systemCaptions;
@@ -616,6 +651,12 @@ void Store::setSettings(const Settings& s) {
   v.set("subtitleLook", s.subtitleLook);
   v.set("subtitleSentenceCase", s.subtitleSentenceCase);
   v.set("subtitleTop", s.subtitleTop);
+  if (s.captionTiming) v.set("captionTiming", s.captionTiming);
+  if (!s.captionTimingByChannel.empty()) {
+    json::Value own = json::Value::object();
+    for (const auto& [id, ms] : s.captionTimingByChannel) own.set(id, ms);
+    v.set("captionTimingByChannel", own);
+  }
   v.set("playThroughApp", s.playThroughApp);
   v.set("upGoesHigher", s.upGoesHigher);
   if (s.systemCaptions >= 0) v.set("systemCaptions", s.systemCaptions);
@@ -2816,6 +2857,17 @@ std::string Store::groupStartsText(const std::string& familyKey) const {
 void Store::markUnplayable(const std::string& channelId) {
   impl_->unplayable[channelId] = time::now();
   saveLists();
+}
+
+void Store::markAudioOnly(const std::string& id) {
+  if (id.empty()) return;
+  impl_->audioOnly[id] = time::now();
+  saveLists();
+}
+
+bool Store::audioOnly(const std::string& id) const {
+  auto it = impl_->audioOnly.find(id);
+  return it != impl_->audioOnly.end() && time::now() - it->second < kAudioOnlyFor;
 }
 
 void Store::lastIfUnplayable(std::vector<std::string>& ids, const std::optional<std::string>& pinned) const {

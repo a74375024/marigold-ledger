@@ -124,13 +124,14 @@ bool Session::begin(const std::string& entryId, std::vector<Feed> feeds, const s
   std::vector<playback::FeedInfo> infos;
   quickTried_.clear();
   quickPending_.clear();
-  bool quick = store_.settings().embyQuickStart;
-  for (const Feed& f : feeds_) infos.push_back({f.channelId, kindOf(f), quick && f.needsOpen});
+  noPicture_ = false;
+  infos = feedInfos(entryId);
   logEvent("tune", std::to_string(feeds_.size()) + (feeds_.size() == 1 ? " feed" : " feeds"));
   // Every caller has already waited (OK, a settled flip, a preview's dwell,
   // a typed number): no second settle.
   playback::TuneOptions options;
   options.settle = 0;
+  options.game = store_.isEvent(entryId);
   apply(rec_.tune(ms(), std::move(infos), options));
   return true;
 }
@@ -147,13 +148,12 @@ bool Session::tuneEventVia(const std::string& eventId, const std::string& via, c
 
 bool Session::restart(std::string_view why) {
   if (entry_.empty() || feeds_.empty() || camera_) return false;
-  std::vector<playback::FeedInfo> infos;
-  bool quick = store_.settings().embyQuickStart;
-  for (const Feed& f : feeds_) infos.push_back({f.channelId, kindOf(f), quick && f.needsOpen});
+  std::vector<playback::FeedInfo> infos = feedInfos(entry_);
   logEvent("restart", why);
   playback::TuneOptions options;
   options.start = std::min(rec_.feedIndex(), feeds_.size() - 1);
   options.settle = 0;
+  options.game = store_.isEvent(entry_);
   hadPicture_ = false;
   player_->beginTune();
   apply(rec_.tune(ms(), std::move(infos), options));
@@ -197,6 +197,11 @@ void Session::apply(const playback::Actions& actions) {
       case playback::Action::Kind::Note:
         if (hooks_.changed) hooks_.changed();
         break;
+      case playback::Action::Kind::NoPicture:
+        noPicture_ = true;
+        noPictureMessage_ = a.text;
+        if (hooks_.changed) hooks_.changed();
+        break;
       case playback::Action::Kind::Toast:
         // A backup's picture came up: the banner says "Back on" the channel
         // (no toast; on a first tune the banner already said it was trying).
@@ -216,6 +221,8 @@ void Session::apply(const playback::Actions& actions) {
                               std::to_string(playback::startupTimeout(rec_.feeds()[a.feed].kind) / 1000) + " s";
             if (a.unplayable) {
               why = "this TV can't play it";
+            } else if (!a.detail.empty()) {
+              why = a.detail;  // "black picture", "the source keeps closing"
             } else if (sawPicture_ && pictureAt_) {
               uint32_t ran = (ms() - pictureAt_) / 1000;
               why = ran >= 120 ? "stopped after " + std::to_string(ran / 60) + " min"
@@ -245,6 +252,7 @@ void Session::apply(const playback::Actions& actions) {
 void Session::playFeed(size_t index, uint64_t token) {
   if (index >= feeds_.size()) return;
   sawPicture_ = sawBuffering_ = sawFailed_ = sawEnded_ = false;
+  factsLogged_ = noPicture_ = false;
   player_->attempt();
   const Feed& f = feeds_[index];
   MLOG_I("play", "feed %zu of %zu (%s)", index + 1, feeds_.size(), f.label.c_str());
@@ -292,6 +300,73 @@ void Session::playFeed(size_t index, uint64_t token) {
   }
   player_->play(f, false);
   apply(rec_.streamHanded(ms(), token));
+}
+
+// The feeds' recovery facts: their kind, and whether each should show a
+// picture (not radio, not kept as sound only).
+std::vector<playback::FeedInfo> Session::feedInfos(const std::string& entryId) const {
+  std::vector<playback::FeedInfo> infos;
+  bool quick = store_.settings().embyQuickStart;
+  auto channels = store_.channels();
+  const GuideChannel* entry = channels->find(entryId);
+  bool entryAudio = (entry && entry->radio) || store_.audioOnly(entryId);
+  for (const Feed& f : feeds_) {
+    playback::FeedInfo info{f.channelId, kindOf(f), quick && f.needsOpen};
+    // A game's source is a guide channel's feed: that channel may be radio.
+    const GuideChannel* g = entry ? entry : channels->find(store_.entryOfChannel(f.channelId));
+    info.expectVideo = !entryAudio && !(g && g->radio) && !store_.audioOnly(f.channelId);
+    infos.push_back(std::move(info));
+  }
+  return infos;
+}
+
+bool Session::expectsVideo() const {
+  size_t i = rec_.feedIndex();
+  return i < rec_.feeds().size() && rec_.feeds()[i].expectVideo && !rec_.listening();
+}
+
+// What the picture check makes of the stream now, for recovery. The stream
+// itself (the relay) is the better witness: when it says the frames are
+// fine, a picture the TV doesn't show is never the source's fault.
+void Session::pictureCheck(uint32_t now, const PlayerState& s, bool picture) {
+  using media::Verdict;
+  Verdict v = Verdict::Unknown;
+  std::string detail = s.streamDetail;
+  bool streamSays = s.streamChecked && s.stream != Verdict::Unknown;
+  if (streamSays && s.stream != Verdict::Picture && s.stream != Verdict::Black && s.stream != Verdict::Static) {
+    v = s.stream;  // unsupported, scrambled, no video, tables only
+  } else if (s.videoUnsupported) {
+    v = Verdict::Unsupported;
+    detail = "the player can't decode its video";
+  } else if (s.videoTracks == 0 && !picture && !(streamSays && s.stream == Verdict::Picture)) {
+    // (The player's track list is only trusted when the relay hasn't seen
+    // real pictures in the same stream.)
+    v = Verdict::NoVideo;
+    detail = "the player lists none";
+  } else if (streamSays) {
+    v = s.stream;
+  } else if (s.framesStalled) {
+    v = Verdict::Frozen;
+    detail = "frames stopped while the sound plays";
+  } else if (picture) {
+    // Frames are drawn; with a relay reading the stream, wait for its word.
+    v = s.streamChecked ? Verdict::Unknown : Verdict::Picture;
+    detail.clear();
+  } else if (s.playing) {
+    v = Verdict::NoFrame;
+    detail.clear();
+  }
+  apply(rec_.videoCheck(now, v, detail));
+}
+
+void Session::keepListening() {
+  if (!noPicture_) return;
+  noPicture_ = false;
+  store_.markAudioOnly(entry_);
+  std::string channel = playingChannel();
+  if (!channel.empty()) store_.markAudioOnly(channel);
+  logEvent("keep listening", "sound only, no picture check, for a week");
+  if (hooks_.changed) hooks_.changed();
 }
 
 void Session::watched() {
@@ -344,8 +419,13 @@ bool Session::tick(uint32_t now) {
   saveLog(now);
   if (entry_.empty()) return false;
   PlayerState s = player_->state();
+  // A picture is a frame drawn. Radio (or a channel kept as sound only)
+  // plays when its clock runs; so does a stream whose frames the relay sees
+  // are fine while the TV shows none (the display is ours: never a flip).
+  bool expect = expectsVideo();
+  bool picture = s.picture || (s.playing && (!expect || (s.streamChecked && s.stream == media::Verdict::Picture)));
   // Report changes of the player's flags only.
-  if (s.picture && !sawPicture_) {
+  if (picture && !sawPicture_) {
     quickPending_.clear();  // a quick start that worked
     sawPicture_ = true;
     hadPicture_ = true;
@@ -376,7 +456,15 @@ bool Session::tick(uint32_t now) {
     apply(rec_.ended(now));
   }
   if (auto n = player_->note()) logEvent(n->event, n->detail);
-  if (sawPicture_) apply(rec_.position(now, s.position, s.bufferEnd));
+  for (const Player::SourceClosed& c : player_->sourceClosed())
+    apply(rec_.sourceClosed(now, c.lastedMs, c.bytes, c.reopened));
+  if (expect) pictureCheck(now, s, picture);
+  if (sawPicture_ && !factsLogged_ && !s.facts.empty()) {
+    factsLogged_ = true;
+    logEvent("video", s.facts);
+  }
+  // Sound only (no feed showed a picture): its clock is what plays.
+  if (sawPicture_ || rec_.listening()) apply(rec_.position(now, s.position, s.bufferEnd));
   else if (s.reportsLoading) rec_.loading(s.loaded);
   apply(rec_.tick(now));
   return (!ready() && !failed()) || !note().empty();

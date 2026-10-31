@@ -8,201 +8,14 @@
 #include <vector>
 
 #include "core/captions/ts_captions.hpp"
+#include "playback/ts_stream.hpp"
 
 using marigold::captions::CcPair;
 using marigold::captions::TsCaptions;
 
+using namespace tsgen;
+
 namespace {
-
-using Bytes = std::vector<uint8_t>;
-
-constexpr int kPmtPid = 0x1000;
-constexpr int kVideoPid = 0x100;
-constexpr int64_t kWrap = int64_t{1} << 33;
-
-void add(Bytes& to, const Bytes& more) { to.insert(to.end(), more.begin(), more.end()); }
-
-uint32_t crc32(const Bytes& b) {
-  uint32_t crc = 0xFFFFFFFFu;
-  for (uint8_t c : b) {
-    crc ^= static_cast<uint32_t>(c) << 24;
-    for (int i = 0; i < 8; ++i) crc = (crc & 0x80000000u) ? (crc << 1) ^ 0x04C11DB7u : crc << 1;
-  }
-  return crc;
-}
-
-void withCrc(Bytes& section) {
-  uint32_t crc = crc32(section);
-  for (int s = 24; s >= 0; s -= 8) section.push_back(static_cast<uint8_t>(crc >> s));
-}
-
-// Adds 00 00 03 wherever an encoder must.
-Bytes escape(const Bytes& rbsp) {
-  Bytes out;
-  int zeros = 0;
-  for (uint8_t c : rbsp) {
-    if (zeros >= 2 && c <= 3) {
-      out.push_back(3);
-      zeros = 0;
-    }
-    out.push_back(c);
-    zeros = c == 0 ? zeros + 1 : 0;
-  }
-  return out;
-}
-
-struct Triplet {
-  uint8_t head, b1, b2;
-};
-
-// A 608 pair on field 1 (or 2), as an encoder writes it.
-Triplet cc(uint8_t b1, uint8_t b2, int field = 0) {
-  return Triplet{static_cast<uint8_t>(0xFC | field), b1, b2};
-}
-
-Bytes ccData(const std::vector<Triplet>& triplets) {
-  Bytes d = {static_cast<uint8_t>(0x40 | triplets.size()), 0xFF};
-  for (const Triplet& t : triplets) add(d, {t.head, t.b1, t.b2});
-  d.push_back(0xFF);  // marker_bits
-  return d;
-}
-
-// SEI messages: an optional unrelated one that needs escaping, then GA94.
-Bytes seiRbsp(const std::vector<Triplet>& triplets, bool tricky) {
-  Bytes rbsp;
-  if (tricky) {
-    // user_data_unregistered with zero runs (UUID then 00 00 01 00 00 00 02)
-    Bytes m = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00};
-    add(m, {0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02});
-    rbsp.push_back(5);
-    rbsp.push_back(static_cast<uint8_t>(m.size()));
-    add(rbsp, m);
-  }
-  Bytes t35 = {0xB5, 0x00, 0x31, 'G', 'A', '9', '4', 0x03};
-  add(t35, ccData(triplets));
-  rbsp.push_back(4);
-  rbsp.push_back(static_cast<uint8_t>(t35.size()));
-  add(rbsp, t35);
-  rbsp.push_back(0x80);
-  return rbsp;
-}
-
-// Slice data with no start codes in it.
-Bytes sliceData(size_t n) {
-  Bytes b(n);
-  for (size_t i = 0; i < n; ++i) b[i] = static_cast<uint8_t>(0x40 + (i * 37) % 180);
-  return b;
-}
-
-// H.264 access unit: AUD, an optional filler (to move the SEI across packet
-// boundaries), SEI, IDR slice.
-Bytes h264(const std::vector<Triplet>& triplets, bool tricky = false, size_t filler = 0, size_t slice = 1500) {
-  Bytes au = {0, 0, 0, 1, 0x09, 0xF0};
-  if (filler) {
-    add(au, {0, 0, 1, 0x0C});
-    au.insert(au.end(), filler, 0xFF);
-    au.push_back(0x80);
-  }
-  add(au, {0, 0, 1, 0x06});
-  add(au, escape(seiRbsp(triplets, tricky)));
-  add(au, {0, 0, 1, 0x65, 0x88, 0x84});
-  add(au, sliceData(slice));
-  return au;
-}
-
-// HEVC access unit: AUD, prefix SEI, IDR slice.
-Bytes hevc(const std::vector<Triplet>& triplets) {
-  Bytes au = {0, 0, 0, 1, 0x46, 0x01, 0x50};
-  add(au, {0, 0, 1, 0x4E, 0x01});
-  add(au, escape(seiRbsp(triplets, true)));
-  add(au, {0, 0, 1, 0x26, 0x01, 0xAF});
-  add(au, sliceData(900));
-  return au;
-}
-
-// MPEG-2 picture: picture header, coding extension, GA94 user data, a slice.
-Bytes mpeg2(const std::vector<Triplet>& triplets) {
-  Bytes pic = {0, 0, 1, 0x00, 0x00, 0x0F, 0xFF, 0xF8};
-  add(pic, {0, 0, 1, 0xB5, 0x8F, 0xFF, 0xF3, 0x41, 0x80});
-  add(pic, {0, 0, 1, 0xB2, 'G', 'A', '9', '4', 0x03});
-  add(pic, ccData(triplets));
-  add(pic, {0, 0, 1, 0x01});
-  add(pic, sliceData(700));
-  return pic;
-}
-
-Bytes pes(int64_t pts90, const Bytes& es) {
-  uint64_t p = static_cast<uint64_t>(pts90) & (static_cast<uint64_t>(kWrap) - 1);
-  Bytes b = {0, 0, 1, 0xE0, 0, 0, 0x80, 0x80, 0x05,
-             static_cast<uint8_t>(0x21 | ((p >> 29) & 0x0E)), static_cast<uint8_t>(p >> 22),
-             static_cast<uint8_t>(((p >> 14) & 0xFE) | 1), static_cast<uint8_t>(p >> 7),
-             static_cast<uint8_t>(((p << 1) & 0xFE) | 1)};
-  add(b, es);
-  return b;
-}
-
-struct Ts {
-  Bytes out;
-  std::map<int, int> counters;
-
-  void packets(int pid, const Bytes& payload, bool psi) {
-    Bytes data;
-    if (psi) data.push_back(0);  // pointer_field
-    add(data, payload);
-    size_t at = 0;
-    bool first = true;
-    while (at < data.size() || first) {
-      size_t left = data.size() - at;
-      uint8_t pkt[188];
-      pkt[0] = 0x47;
-      pkt[1] = static_cast<uint8_t>((first ? 0x40 : 0) | (pid >> 8));
-      pkt[2] = static_cast<uint8_t>(pid);
-      int& c = counters[pid];
-      size_t off = 4;
-      if (left >= 184 || psi) {
-        pkt[3] = static_cast<uint8_t>(0x10 | c);
-        size_t n = std::min<size_t>(left, 184);
-        std::copy(data.begin() + static_cast<std::ptrdiff_t>(at), data.begin() + static_cast<std::ptrdiff_t>(at + n),
-                  pkt + off);
-        std::fill(pkt + off + n, pkt + 188, 0xFF);
-        at += n;
-      } else {
-        // Adaptation field stuffing fills the last packet.
-        pkt[3] = static_cast<uint8_t>(0x30 | c);
-        size_t stuff = 183 - left;
-        pkt[4] = static_cast<uint8_t>(stuff);
-        if (stuff > 0) {
-          pkt[5] = 0x00;
-          std::fill(pkt + 6, pkt + 5 + stuff, 0xFF);
-        }
-        off = 5 + stuff;
-        std::copy(data.begin() + static_cast<std::ptrdiff_t>(at), data.end(), pkt + off);
-        at = data.size();
-      }
-      c = (c + 1) & 0x0F;
-      out.insert(out.end(), pkt, pkt + 188);
-      first = false;
-    }
-  }
-
-  void tables(int streamType = 0x1B) {
-    Bytes pat = {0x00, 0xB0, 0x0D, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x00, 0x01,
-                 static_cast<uint8_t>(0xE0 | (kPmtPid >> 8)), static_cast<uint8_t>(kPmtPid & 0xFF)};
-    withCrc(pat);
-    packets(0, pat, true);
-    // An audio stream first: the video one must be picked.
-    Bytes pmt = {0x02, 0xB0, 0x00, 0x00, 0x01, 0xC1, 0x00, 0x00, static_cast<uint8_t>(0xE0 | (kVideoPid >> 8)),
-                 static_cast<uint8_t>(kVideoPid & 0xFF), 0xF0, 0x00};
-    add(pmt, {0x0F, 0xE1, 0x01, 0xF0, 0x00});
-    add(pmt, {static_cast<uint8_t>(streamType), static_cast<uint8_t>(0xE0 | (kVideoPid >> 8)),
-              static_cast<uint8_t>(kVideoPid & 0xFF), 0xF0, 0x00});
-    pmt[2] = static_cast<uint8_t>(pmt.size() - 3 + 4);
-    withCrc(pmt);
-    packets(kPmtPid, pmt, true);
-  }
-
-  void video(int64_t pts90, const Bytes& es) { packets(kVideoPid, pes(pts90, es), false); }
-};
 
 int64_t ms(int i) { return 90 * (1000 + 33 * static_cast<int64_t>(i)); }
 
@@ -438,4 +251,146 @@ TEST_CASE("captions ts: reset starts over") {
   std::vector<CcPair> buf = {CcPair{0, 0, 1, 2}};
   t.takeInto(buf);
   CHECK(buf.empty());
+}
+
+TEST_CASE("captions ts: HEVC hierarchical B-frames come out in presentation order, by decode time") {
+  // Two 16-picture GOPs at 30 fps, 7 B pictures between references, in
+  // decode order, with DTS 4 pictures before the first PTS. A fixed window
+  // lets the deep ones out too soon (B4 is 400 ms behind P16).
+  const int gop[] = {0,  16, 8,  4,  2,  1,  3,  6,  5,  7,  12, 10, 9,  11, 14, 13, 15,
+                     32, 24, 20, 18, 17, 19, 22, 21, 23, 28, 26, 25, 27, 30, 29, 31};
+  const int64_t frame = 3003;  // 90 kHz
+  Ts ts;
+  ts.tables(0x24);
+  int d = 0;
+  for (int p : gop) {
+    std::vector<Triplet> t = {cc(static_cast<uint8_t>('A' + p % 26), static_cast<uint8_t>('0' + p / 26))};
+    ts.video(90 * 1000 + frame * p, hevc(t, p == 0 ? 19 : 1), 90 * 1000 + frame * (d - 4));
+    ++d;
+  }
+  TsCaptions t;
+  std::vector<CcPair> got;
+  for (size_t at = 0; at < ts.out.size(); at += 188) {
+    t.feed(ts.out.data() + at, std::min<size_t>(188, ts.out.size() - at));
+    for (const CcPair& p : t.take()) got.push_back(p);
+  }
+  // Pictures went out as the stream came, not all at the end.
+  CHECK(got.size() >= 20);
+  t.flush();
+  for (const CcPair& p : t.take()) got.push_back(p);
+  REQUIRE(got.size() == 33);
+  for (size_t i = 0; i < got.size(); ++i) {
+    CAPTURE(i);
+    CHECK(got[i].b1 == 'A' + static_cast<int>(i % 26));
+    CHECK(got[i].b2 == '0' + static_cast<int>(i / 26));
+    CHECK(got[i].mediaMs == (frame * static_cast<int64_t>(i)) / 90);
+  }
+}
+
+TEST_CASE("captions ts: a decode time lets a picture go once every earlier one is in") {
+  // I0 P3 B1: P3 waits for the DTS to reach it; B1 (PTS = DTS) goes at once.
+  Ts ts;
+  ts.tables();
+  int64_t f = 90 * 33;
+  ts.video(90 * 1000, h264({cc('I', '0')}), 90 * 1000 - f);
+  ts.video(90 * 1000 + 3 * f, h264({cc('P', '3')}), 90 * 1000);
+  ts.video(90 * 1000 + f, h264({cc('B', '1')}), 90 * 1000 + f);
+  TsCaptions t;
+  t.feed(ts.out.data(), ts.out.size());
+  std::vector<CcPair> got = t.take();
+  REQUIRE(got.size() == 2);
+  CHECK(got[0].b1 == 'I');
+  CHECK(got[1].b1 == 'B');
+  Ts more;
+  more.counters = ts.counters;
+  more.video(90 * 1000 + 2 * f, h264({cc('B', '2')}), 90 * 1000 + 2 * f);
+  more.video(90 * 1000 + 6 * f, h264({cc('P', '6')}), 90 * 1000 + 3 * f);
+  t.feed(more.out.data(), more.out.size());
+  got = t.take();
+  REQUIRE(got.size() == 2);
+  CHECK(got[0].b2 == '2');
+  CHECK(got[1].b2 == '3');
+}
+
+TEST_CASE("captions ts: media time carries on across PTS jumps back and ahead") {
+  Ts ts;
+  ts.tables();
+  int64_t pts = 1000000;
+  for (int i = 0; i < 90; ++i) {
+    if (i == 30) pts -= 60000;  // the source reopened: back a minute
+    if (i == 60) pts += 30000;  // and ahead half a minute
+    ts.video(90 * pts, h264({cc(static_cast<uint8_t>('A' + i % 26), static_cast<uint8_t>('0' + i / 26))}));
+    pts += 33;
+  }
+  TsCaptions t;
+  std::vector<CcPair> got = run(ts.out, 188, &t);
+  REQUIRE(got.size() == 90);
+  for (size_t i = 0; i < got.size(); ++i) {
+    CAPTURE(i);
+    CHECK(got[i].b1 == 'A' + static_cast<int>(i % 26));
+    CHECK(got[i].b2 == '0' + static_cast<int>(i / 26));
+    CHECK(got[i].mediaMs == 33 * static_cast<int64_t>(i));  // one picture apart, jumps or not
+  }
+  CHECK(got[30].ptsMs == got[29].ptsMs + 33 - 60000);
+  CHECK(t.jumps() == 2);
+  CHECK(t.firstPtsMs() == 1000000);
+  CHECK(t.newestMediaMs() == 33 * 89);
+}
+
+TEST_CASE("captions ts: a TS discontinuity takes a smaller PTS jump as a new timeline") {
+  Ts ts;
+  ts.tables();
+  ts.video(90 * 100000, h264({cc('A', 'A')}));
+  ts.video(90 * 100033, h264({cc('B', 'B')}));
+  // The next picture's first packet says discontinuity; its PTS is 3 s back.
+  Ts jump;
+  jump.counters = ts.counters;
+  jump.video(90 * 97000, h264({cc('C', 'C')}));
+  // Room for the adaptation field: the payload moves on 2 bytes (the PES has
+  // no length, and the 2 bytes lost are slice data).
+  Bytes& o = jump.out;
+  o[3] = static_cast<uint8_t>((o[3] & 0x0F) | 0x30);
+  std::copy_backward(o.begin() + 4, o.begin() + 186, o.begin() + 188);
+  o[4] = 1;
+  o[5] = 0x80;
+  add(ts.out, o);
+  TsCaptions t;
+  std::vector<CcPair> got = run(ts.out, 188, &t);
+  REQUIRE(got.size() == 3);
+  CHECK(got[2].b1 == 'C');
+  CHECK(got[2].mediaMs == 66);
+  CHECK(t.jumps() == 1);
+}
+
+TEST_CASE("captions ts: the first picture a decoder can start on") {
+  // H.264: P, P, then an I slice that isn't an IDR (open GOP), then P.
+  const Bytes p = {0x41, 0x9A, 0x00};  // slice_type 5 (P)
+  const Bytes i = {0x41, 0x88, 0x84};  // slice_type 7 (I)
+  for (size_t filler = 120; filler < 150; ++filler) {
+    CAPTURE(filler);
+    Ts ts;
+    ts.tables();
+    ts.video(90 * 5000, h264({cc('A', 'A')}, false, 0, 1500, p));
+    ts.video(90 * 5033, h264({cc('B', 'B')}, false, filler, 1500, p));
+    ts.video(90 * 5066, h264({cc('C', 'C')}, false, filler, 1500, i));  // its slice header may span two packets
+    ts.video(90 * 5099, h264({cc('D', 'D')}, false, 0, 1500, p));
+    TsCaptions t;
+    CHECK(run(ts.out, 188, &t).size() == 4);
+    REQUIRE(t.haveKey());
+    CHECK(t.keyMediaMs() == 66);
+  }
+  // HEVC: a trailing picture, then a CRA.
+  Ts ts;
+  ts.tables(0x24);
+  ts.video(90 * 5000, hevc({cc('A', 'A')}, 1));
+  ts.video(90 * 5033, hevc({cc('B', 'B')}, 21));
+  TsCaptions t;
+  CHECK(run(ts.out, 188, &t).size() == 2);
+  REQUIRE(t.haveKey());
+  CHECK(t.keyMediaMs() == 33);
+  // MPEG-2: an I picture.
+  TsCaptions m;
+  CHECK(run(numbered(3, 0x02), 188, &m).size() == 3);
+  REQUIRE(m.haveKey());
+  CHECK(m.keyMediaMs() == 0);
 }

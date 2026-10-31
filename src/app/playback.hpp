@@ -41,6 +41,8 @@ class Playback : public engine::Session {
   void subtitlesChanged();
   // The channel playing is in Spanish (its own subtitles choice).
   bool spanishChannel() const;
+  // Caption timing for the channel playing, ms (+ later).
+  int captionTiming() const;
   // The subtitles choice for the channel playing, and switching it.
   SubtitleChoice subtitleChoice() const;
   void setSubtitleChoice(const SubtitleChoice& c);
@@ -75,6 +77,7 @@ class Playback : public engine::Session {
   uint64_t textVersion_ = 0;
   uint32_t textTracksAt_ = 0;
   uint32_t pictureAt_ = 0;
+  uint32_t timingLogAt_ = 0;
   gfx::Rect corner_{};
   bool muted_ = false;
   uint32_t reapplyAt_[3] = {0, 0, 0};

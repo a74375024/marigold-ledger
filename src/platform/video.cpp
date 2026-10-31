@@ -5,6 +5,7 @@
 
 #include "core/util/log.hpp"
 #include "core/util/redact.hpp"
+#include "core/util/strings.hpp"
 #include "video.h"
 
 namespace marigold::platform {
@@ -83,6 +84,7 @@ VideoState Video::state() const {
   s.audioUnsupported = video_audio_nao_suportado() != 0;
   s.bufferingMs = video_bufferando_ms();
   s.position = video_pos();
+  s.positionAgeMs = video_pos_idade_ms();
   s.bufferEnd = video_buffer_fim();
   s.width = video_largura();
   s.height = video_altura();
@@ -101,6 +103,16 @@ VideoState Video::state() const {
     }
     if (!codecs.empty()) s.error += " (audio: " + codecs + ")";
   }
+  // The picture check: the video tracks the source lists, and what plays
+  // ("1920x1080 · h264 · aac"; the relay's reading of the stream says more).
+  s.videoTracks = video_n_video();
+  if (s.decoderSeen && s.width > 0 && s.height > 0) {
+    s.facts = std::to_string(s.width) + "x" + std::to_string(s.height);
+    std::string codec = str::lowerAscii(video_codec_video());
+    if (!codec.empty()) s.facts += " \xc2\xb7 " + codec;
+    const VideoFaixa* a = video_n_audio() > 0 ? video_audio(0) : nullptr;
+    if (a && a->codec[0]) s.facts += " \xc2\xb7 " + str::lowerAscii(a->codec);
+  }
   return s;
 }
 
@@ -115,5 +127,6 @@ std::vector<std::string> Video::textLines(uint64_t* version) const {
 bool Video::drawsText() { return false; }
 int Video::systemCaptions() { return -1; }
 void Video::setTextStyle(int, int) {}
+void Video::setTextDelay(int) {}
 
 }  // namespace marigold::platform

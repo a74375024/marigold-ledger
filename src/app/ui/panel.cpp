@@ -82,6 +82,9 @@ bool ListPanel::key(Key k) {
                : k == Key::Right ? std::min(n - 1, it.choice + 1)
                : hovered >= 0 && hovered < n ? hovered  // a click on one of them
                                  : (it.choice + 1) % n;
+    // A stepper: a click on ‹ or ›; OK alone changes nothing.
+    if (it.stepper && k == Key::Ok)
+      next = hovered == 0 ? std::max(0, it.choice - 1) : hovered == 1 ? std::min(n - 1, it.choice + 1) : it.choice;
     if (next != it.choice && it.enabled) {
       it.choice = next;
       if (it.pick) it.pick(next);
@@ -201,6 +204,31 @@ void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
         right -= 34;
         break;
       case PanelItem::Kind::Choice: {
+        if (it.stepper) {
+          // ‹ the one picked ›, as wide as the widest so it doesn't move.
+          float valueW = 0;
+          for (const std::string& s : it.choices) valueW = std::max(valueW, textWidth(c, s, Weight::Bold, 18) + 28);
+          constexpr float kArrowW = 44;
+          Rect box{right - valueW - 2 * kArrowW - 8, row.y + (row.h - 44) * 0.5f, valueW + 2 * kArrowW + 8, 44};
+          c.g.fill(box, focused ? theme::black(0.08f) : theme::white(0.08f), 12);
+          int n = static_cast<int>(it.choices.size());
+          Rect less{box.x + 4, box.y + 4, kArrowW, 36};
+          Rect value{less.x + kArrowW, box.y + 4, valueW, 36};
+          Rect more{value.x + valueW, box.y + 4, kArrowW, 36};
+          if (it.enabled) {
+            c.hit({less.x, row.y, less.w, row.h}, hitBase + kChoiceHits + static_cast<int>(i * 8));
+            c.hit({more.x, row.y, more.w, row.h}, hitBase + kChoiceHits + static_cast<int>(i * 8 + 1));
+          }
+          Color arrow = focused ? theme::black(0.55f) : theme::white(0.6f);
+          Color spent = focused ? theme::black(0.15f) : theme::white(0.15f);
+          labelIn(c, "\xe2\x80\xb9", less, Weight::Bold, 26, it.choice > 0 ? arrow : spent, Align::Center);
+          labelIn(c, "\xe2\x80\xba", more, Weight::Bold, 26, it.choice < n - 1 ? arrow : spent, Align::Center);
+          c.g.fill(value, focused ? theme::black() : theme::white(0.22f), 9);
+          if (it.choice >= 0 && it.choice < n)
+            labelIn(c, it.choices[static_cast<size_t>(it.choice)], value, Weight::Bold, 18, theme::white(), Align::Center);
+          right = box.x - 16;
+          break;
+        }
         float segW = 0;
         for (const std::string& s : it.choices) segW += textWidth(c, s, Weight::Bold, 18) + 28;
         Rect box{right - segW - 8, row.y + (row.h - 44) * 0.5f, segW + 8, 44};

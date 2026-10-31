@@ -157,6 +157,10 @@ struct Settings {
   int subtitleLook = 0;          // 0 box, 1 outline, 2 shadow
   bool subtitleSentenceCase = false;
   bool subtitleTop = false;
+  // Caption timing, ms in half-second steps (+ later, - earlier): for every
+  // channel, and the channels given their own (guide entry id -> ms).
+  int captionTiming = 0;
+  std::map<std::string, int> captionTimingByChannel;
   // webOS: every channel goes through the app's local relay (captions can
   // be read on the way); off plays continuous TS feeds directly again.
   bool playThroughApp = true;
@@ -180,8 +184,23 @@ void setSubtitleChoice(Settings& s, bool spanishChannel, const SubtitleChoice& c
 // Subtitles are on for either kind of channel.
 inline bool anySubtitles(const Settings& s) { return s.subtitles || s.subtitlesEs; }
 
+// Caption timing: -3 s to +3 s in half seconds.
+inline constexpr int kCaptionTimingStepMs = 500;
+inline constexpr int kCaptionTimingMaxMs = 3000;
+int clampCaptionTiming(int ms);
+// A channel's Caption timing: its own when it has one, else every channel's.
+int captionTiming(const Settings& s, const std::string& entryId);
+bool hasOwnCaptionTiming(const Settings& s, const std::string& entryId);
+// Sets the channel's own (`entryId`), or every channel's ("").
+void setCaptionTiming(Settings& s, const std::string& entryId, int ms);
+// The channel follows every channel's again.
+void clearOwnCaptionTiming(Settings& s, const std::string& entryId);
+
 // How long a version this TV couldn't play is tried after the others.
 inline constexpr time::Seconds kUnplayableFor = 7 * 24 * 3600;
+// How long a channel the viewer keeps listening to (no picture anywhere)
+// plays as sound only, without the picture check.
+inline constexpr time::Seconds kAudioOnlyFor = 7 * 24 * 3600;
 // How long a failed direct (Xtream / M3U) version lets a server-opened one
 // that played last start first.
 inline constexpr time::Seconds kDirectFailedFor = 6 * 3600;
@@ -257,6 +276,10 @@ class Store {
   // This TV couldn't play that version (playback::cannotPlayHere): it is
   // tried after the channel's other versions for kUnplayableFor.
   void markUnplayable(const std::string& channelId);
+  // "Keep listening" on a channel (an entry or a raw channel id) with no
+  // picture: it plays as sound only, unchecked, for kAudioOnlyFor (saved).
+  void markAudioOnly(const std::string& id);
+  bool audioOnly(const std::string& id) const;
   // The version of a channel that just played: it starts first next time
   // (unless one is pinned with pinFeed).
   void rememberFeed(const std::string& entryId, const std::string& channelId);

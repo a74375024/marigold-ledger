@@ -94,6 +94,48 @@ TEST_CASE("a programme as a game listing: two sides, or a sports title with a ve
   CHECK_FALSE(listingFor(ch, "NBA Basketball", std::nullopt, std::string("Short"), true, s, e));
 }
 
+TEST_CASE("tennis coverage: a sports channel's listing naming tournaments") {
+  std::unordered_map<std::string, EntryInfo> infos;
+  infos["e|tennis"] = info("e|tennis", "Tennis Channel", LineupCategory::sports);
+  infos["e|fox13"] = info("e|fox13", "FOX 13 (KSTU)", LineupCategory::local, std::string("KSTU"));
+  auto list = listingChannels({"e|tennis", "e|fox13"}, {}, infos, StationMarkets());
+  REQUIRE(list.size() == 2);
+  CHECK(list[0].id == "e|fox13");
+  CHECK_FALSE(list[0].sportsChannel);
+  CHECK(list[1].sportsChannel);
+
+  ListingChannel ch = list[1];
+  Seconds s = utc(2026, 10, 31, 12, 0), e = s + 4 * 3600;
+  std::optional<std::string> about = std::string("Tennis action from around the world.");
+  auto semis = listingFor(ch, "Center Court Live", std::string("Vienna-ATP & Basel-ATP Semifinals"), about, true, s, e);
+  REQUIRE(semis);
+  CHECK(semis->tennisCoverage);
+  CHECK(semis->title == "Center Court Live Vienna-ATP & Basel-ATP Semifinals");
+  CHECK(semis->inLineup);
+  auto quarters = listingFor(ch, "Center Court Live",
+                             std::string("Vienna-ATP, Basel-ATP, Tokyo-WTA & Guangzhou-WTA Quarterfinals"), about,
+                             true, s, e);
+  REQUIRE(quarters);
+  CHECK(quarters->tennisCoverage);
+  auto today = listingFor(ch, "Tennis Today Live", std::string("Vienna-ATP & Basel Semifinals"),
+                          std::string("Coverage from ATP, WTA and other events from around the world."), true, s, e);
+  REQUIRE(today);
+  CHECK(today->tennisCoverage);
+  // A show, or live coverage that names no tournament: nothing to match.
+  CHECK_FALSE(listingFor(ch, "Tennis Channel Live", std::nullopt, about, true, s, e));
+  CHECK_FALSE(listingFor(ch, "Live: Center Court Live", std::nullopt, about, true, s, e));
+  // Not a sports channel: no coverage.
+  CHECK_FALSE(listingFor(list[0], "Center Court Live", std::string("Vienna-ATP & Basel-ATP Semifinals"), about, true,
+                         s, e));
+  // A game-like title stays a plain listing.
+  auto match = listingFor(ch, "ATP Tennis", std::string("Ann Player vs Bea Racket"), about, true, s, e);
+  REQUIRE(match);
+  CHECK_FALSE(match->tennisCoverage);
+  // Saved and read back.
+  CHECK(matcher::listingFromJson(matcher::toJson(*semis)) == *semis);
+  CHECK_FALSE(matcher::listingFromJson(matcher::toJson(*match))->tennisCoverage);
+}
+
 TEST_CASE("extracting listings: the guide's window, then saved listings past it") {
   Seconds now = utc(2026, 10, 25, 15, 0);
   ListingChannel ch{"e|fox13", true, false, 0};
@@ -349,6 +391,19 @@ TEST_CASE("every source of an event in backup order") {
   CHECK(target->channelName == "Name of e|fox13");
   CHECK(target->end - target->start == e.expectedLength());
   CHECK_FALSE(reminderTarget(none, resolver()));
+}
+
+TEST_CASE("tennis: tournament coverage is tried after the match's own feeds") {
+  SportsGame g = game("ATP", "Tennis", "1", team("1", "Ann Player"), team("2", "Bea Racket"), utc(2026, 10, 31, 13, 0));
+  g.tennis = true;
+  SportsEvent match = sportsdata::eventOf(
+      g, {feed("xt|1"), source("e|tennis", EventSource::Kind::team, false, station_rank::lineup, "Tournament coverage"),
+          feed("xt|2")});
+  CHECK(eventCandidates(match, std::nullopt, resolver()) == std::vector<std::string>{"xt|2", "xt|1", "e|tennis"});
+  // Picked in Where to Watch: the channel itself, the feeds as backups.
+  WatchPlan plan = watchPlan(match, std::string("e|tennis"), std::nullopt, resolver());
+  CHECK(plan.entry == "e|tennis");
+  CHECK(plan.candidates == std::vector<std::string>{"e|tennis", "xt|2", "xt|1"});
 }
 
 TEST_CASE("the saved result: watchable games, checked against today's feeds") {

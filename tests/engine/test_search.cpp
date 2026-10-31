@@ -1,5 +1,6 @@
 // Search (Build 113): the query cleaner, the matcher's rules and what each
-// group finds, numbers from an empty field, spoilers and recent searches.
+// group finds, numbers from an empty field, spoilers, recent searches and
+// the scope (your lineup and Live Events first).
 // Made-up channels and teams (and a few well-known team names).
 #include <doctest.h>
 
@@ -9,6 +10,7 @@
 #include <vector>
 
 #include "core/engine/search.hpp"
+#include "core/engine/search_build.hpp"
 #include "core/engine/views.hpp"
 #include "core/sports/types.hpp"
 
@@ -490,4 +492,240 @@ TEST_CASE("search: placeholders aren't shows") {
   CHECK(se::placeholderShow(show("Goal TV", kNow, kNow + 3600), "Goal TV"));
   CHECK(se::placeholderShow(show("Highlights", kNow, kNow + 24 * 3600), "Goal TV"));
   CHECK_FALSE(se::placeholderShow(show("Match Day Live", kNow, kNow + 3600), "Goal TV"));
+}
+
+// ---------------------------------------------------------------- scope (Build 115)
+
+namespace {
+
+se::Results scopedRun(const se::Index& index, const std::string& text, bool scoped) {
+  se::Options o;
+  o.now = kNow;
+  o.scoped = scoped;
+  return se::run(index, se::parse(text, [&index](const std::string& f) { return index.isTitle(f); }), o);
+}
+
+// An item anywhere in the results (the top result too).
+const se::Item* itemIn(const se::Results& r, const std::string& id) {
+  if (r.top && r.top->id == id) return &*r.top;
+  for (const auto* group : {&r.channels, &r.teams, &r.games, &r.shows, &r.genres})
+    for (const se::Item& i : *group)
+      if (i.id == id) return &i;
+  return nullptr;
+}
+
+const se::Item* showIn(const se::Results& r, const std::string& name) {
+  if (r.top && r.top->kind == se::Kind::Show && r.top->name == name) return &*r.top;
+  for (const se::Item& i : r.shows)
+    if (i.name == name) return &i;
+  return nullptr;
+}
+
+// The same results: the top, every group's items in order, the line over
+// them, and nothing.
+std::string listed(const se::Results& r) {
+  std::string out = r.top ? std::to_string(static_cast<int>(r.top->kind)) + ":" + r.top->id : "-";
+  for (const auto* group : {&r.channels, &r.teams, &r.games, &r.shows, &r.genres}) {
+    out += " |";
+    for (const se::Item& i : *group) out += " " + i.id;
+  }
+  return out + " | " + r.showing + (r.nothing ? " nothing" : "");
+}
+
+}  // namespace
+
+TEST_CASE("search scope: what counts as yours, for each kind") {
+  Tv tv;
+  tv.index.lineupSet = true;
+  // Channels: My Lineup and Favorites.
+  se::Results r = scopedRun(tv.index, "nbx", false);
+  REQUIRE(itemIn(r, "nbx"));
+  CHECK_FALSE(itemIn(r, "nbx")->outside);
+  r = scopedRun(tv.index, "goal", false);
+  REQUIRE(itemIn(r, "goal"));
+  CHECK(itemIn(r, "goal")->outside);
+  tv.index.channels.edit()[tv.index.channelById["goal"]].favorite = true;
+  CHECK_FALSE(itemIn(scopedRun(tv.index, "goal", false), "goal")->outside);
+  tv.index.channels.edit()[tv.index.channelById["goal"]].favorite = false;
+  // Shows: airing on your channels.
+  r = scopedRun(tv.index, "courtside kitchen", false);
+  REQUIRE(showIn(r, "Courtside Kitchen"));
+  CHECK_FALSE(showIn(r, "Courtside Kitchen")->outside);
+  r = scopedRun(tv.index, "the office", false);
+  REQUIRE(showIn(r, "The Office"));
+  CHECK(showIn(r, "The Office")->outside);
+  // Games: ones you can watch.
+  r = scopedRun(tv.index, "bulls at harbor kings", false);
+  REQUIRE(itemIn(r, "g-live"));
+  CHECK_FALSE(itemIn(r, "g-live")->outside);
+  r = scopedRun(tv.index, "riverton", false);
+  REQUIRE(itemIn(r, "g-stream"));
+  CHECK(itemIn(r, "g-stream")->outside);
+  // Teams: followed, or with a game you can watch this week.
+  CHECK_FALSE(itemIn(scopedRun(tv.index, "northbridge bulls", false), "PBL|1")->outside);
+  CHECK_FALSE(itemIn(scopedRun(tv.index, "harbor kings", false), "PBL|2")->outside);
+  CHECK_FALSE(itemIn(scopedRun(tv.index, "riverton", false), "PBL|3")->outside);
+  CHECK(itemIn(scopedRun(tv.index, "valley peaks", false), "PBL|4")->outside);  // its game is streaming only
+  CHECK(itemIn(scopedRun(tv.index, "lakeside owls", false), "PBL|5")->outside);  // a bye
+  // Genres, sports and leagues: always.
+  r = scopedRun(tv.index, "basketball", false);
+  REQUIRE(itemIn(r, "sport:basketball"));
+  CHECK_FALSE(itemIn(r, "sport:basketball")->outside);
+  // Before a lineup is set up, nothing is outside.
+  tv.index.lineupSet = false;
+  CHECK_FALSE(itemIn(scopedRun(tv.index, "goal", false), "goal")->outside);
+  CHECK_FALSE(itemIn(scopedRun(tv.index, "riverton", false), "g-stream")->outside);
+}
+
+TEST_CASE("search scope: your lineup and Live Events first, what's outside named on the last row") {
+  Tv tv;
+  tv.index.lineupSet = true;
+  se::Results r = scopedRun(tv.index, "sports net", true);
+  CHECK(r.scoped);
+  CHECK_FALSE(r.outsideOnly);
+  CHECK(itemIn(r, "sn2"));
+  CHECK_FALSE(itemIn(r, "sn2w"));  // outside, and not named exactly
+  REQUIRE(r.outside.size() == 1);
+  CHECK(r.outside.front().kind == se::Kind::Channel);
+  CHECK(r.outside.front().id == "sn2w");
+  // A team you can watch stays; its streaming-only game is left out and
+  // named instead.
+  r = scopedRun(tv.index, "riverton", true);
+  REQUIRE(r.top);
+  CHECK(r.top->id == "g-sat");
+  CHECK(ids(r.teams) == std::vector<std::string>{"PBL|3"});
+  CHECK_FALSE(itemIn(r, "g-stream"));
+  REQUIRE(r.outside.size() == 1);
+  CHECK(r.outside.front().name == "Riverton Rams at Valley Peaks");
+  // Shows on other channels the same way; at most three names.
+  r = scopedRun(tv.index, "n", true);
+  CHECK(r.outside.size() <= 3);
+  // Nothing outside: no names.
+  CHECK(scopedRun(tv.index, "nbx", true).outside.empty());
+  // The run in steps (each letter, then the shows) is the same.
+  for (const char* text : {"sports net", "riverton", "law", "jepordy", "2061", "nbx"}) {
+    se::Options o;
+    o.now = kNow;
+    o.scoped = true;
+    se::Query q = se::parse(text);
+    se::Results steps = se::merge(tv.index, se::find(tv.index, q, o), se::findShows(tv.index, q, o));
+    CHECK(listed(steps) == listed(se::run(tv.index, q, o)));
+  }
+}
+
+TEST_CASE("search scope: an exact name or number outside your lineup still comes up, marked") {
+  Tv tv;
+  tv.index.lineupSet = true;
+  // A number: the top result, marked.
+  se::Results r = scopedRun(tv.index, "2061", true);
+  REQUIRE(r.top);
+  CHECK(r.top->id == "sn2w");
+  CHECK(r.top->outside);
+  // A channel's name, a show's title, a team's name.
+  r = scopedRun(tv.index, "goal tv", true);
+  REQUIRE(r.top);
+  CHECK(r.top->id == "goal");
+  CHECK(r.top->outside);
+  r = scopedRun(tv.index, "jeopardy", true);
+  REQUIRE(showIn(r, "Jeopardy!"));
+  CHECK(showIn(r, "Jeopardy!")->outside);
+  r = scopedRun(tv.index, "valley peaks", true);
+  REQUIRE(itemIn(r, "PBL|4"));
+  CHECK(itemIn(r, "PBL|4")->outside);
+  // Another country's channels: still only by their exact name.
+  CHECK_FALSE(itemIn(scopedRun(tv.index, "deportes", true), "abroad"));
+  r = scopedRun(tv.index, "deportes norte", true);
+  REQUIRE(r.top);
+  CHECK(r.top->id == "abroad");
+  CHECK(r.top->outside);
+  // LG's number keys: a number outside your lineup plays when complete,
+  // unless its channel is in a hidden group (then only OK tunes it).
+  se::Digits d = se::digits(tv.index, "2061");
+  CHECK(d.channel == "sn2w");
+  CHECK_FALSE(d.waits);
+  auto& list = tv.index.channels.edit();
+  list[tv.index.channelById["sn2w"]].hidden = true;
+  CHECK(se::digits(tv.index, "2061").waits);
+  list[tv.index.channelById["sn2"]].hidden = true;  // yours: as before
+  CHECK_FALSE(se::digits(tv.index, "206").waits);
+  tv.index.lineupSet = false;
+  CHECK_FALSE(se::digits(tv.index, "2061").waits);
+}
+
+TEST_CASE("search scope: nothing in your lineup shows what's outside at once") {
+  Tv tv;
+  tv.index.lineupSet = true;
+  se::Results r = scopedRun(tv.index, "jepordy", true);
+  CHECK(r.scoped);
+  CHECK(r.outsideOnly);
+  CHECK_FALSE(r.nothing);
+  CHECK(r.outside.empty());
+  REQUIRE(r.top);
+  CHECK(r.top->name == "Jeopardy!");
+  // As everything would list them.
+  CHECK(listed(r) == listed(scopedRun(tv.index, "jepordy", false)));
+  CHECK(listed(scopedRun(tv.index, "law", true)) == listed(scopedRun(tv.index, "law", false)));
+  // Nothing anywhere: as before.
+  r = scopedRun(tv.index, "lacrosse", true);
+  CHECK(r.nothing);
+  CHECK_FALSE(r.outsideOnly);
+}
+
+TEST_CASE("search scope: everything is the unscoped run, and before a lineup everything is yours") {
+  Tv tv;
+  std::vector<std::string> queries = {"n",   "nb",          "nbx",     "sports net", "riverton", "goal", "law and ordr",
+                                      "jepordy", "2061",    "206",     "49",         "news",     "basketball",
+                                      "lakeside", "deportes norte", "bulls kings", "the office", "lacrosse"};
+  std::vector<std::string> before;
+  for (const std::string& q : queries) before.push_back(listed(scopedRun(tv.index, q, false)));
+  // Before a lineup is set up, a scoped run is everything.
+  for (size_t i = 0; i < queries.size(); ++i) {
+    se::Results r = scopedRun(tv.index, queries[i], true);
+    CHECK(listed(r) == before[i]);
+    CHECK_FALSE(r.scoped);
+    CHECK(r.outside.empty());
+  }
+  // With a lineup, "everything" is the same results in the same order.
+  tv.index.lineupSet = true;
+  for (size_t i = 0; i < queries.size(); ++i) {
+    se::Results r = scopedRun(tv.index, queries[i], false);
+    CHECK(listed(r) == before[i]);
+    CHECK_FALSE(r.scoped);
+  }
+}
+
+TEST_CASE("search scope: the index knows the lineup and hidden groups") {
+  auto channels = std::make_shared<Channels>();
+  for (const char* name : {"Sports Net 2", "Sports Net 2 West", "Harbor 24"}) {
+    GuideChannel g;
+    g.id = std::string("e|") + name;
+    g.name = name;
+    channels->byId[g.id] = static_cast<int>(channels->all.size());
+    channels->all.push_back(g);
+  }
+  channels->all[0].inLineup = true;
+  channels->lineup = {0};
+  channels->browse = {0, 1};  // Harbor 24's group is hidden
+  channels->lineupConfigured = true;
+  search_build::GuideInput in;
+  in.channels = channels;
+  in.listings = std::make_shared<Listings>();
+  in.now = kNow;
+  std::shared_ptr<se::Index> index = search_build::guide(in);
+  CHECK(index->lineupSet);
+  CHECK_FALSE(index->channels[0].hidden);
+  CHECK_FALSE(index->channels[1].hidden);
+  CHECK(index->channels[2].hidden);
+  CHECK(index->channels[0].mine());
+  CHECK_FALSE(index->channels[1].mine());
+  // Kept with the channels when only the listings change.
+  search_build::GuideInput again = in;
+  again.previous = index;
+  CHECK(search_build::guide(again)->lineupSet);
+  // Before a lineup is set up: everything is yours.
+  channels->lineupConfigured = false;
+  in.previous.reset();
+  index = search_build::guide(in);
+  CHECK_FALSE(index->lineupSet);
+  CHECK(listed(scopedRun(*index, "sports net", true)) == listed(scopedRun(*index, "sports net", false)));
 }

@@ -20,19 +20,29 @@ void microphone(Ctx& c, float cx, float cy, Color col) {
   c.g.fill({cx - 5, cy + 13, 10, 2}, col, 1);
 }
 
-Rect keyRect(int row, int col) {
-  return {kLeft + kStepX * static_cast<float>(col), kKeysTop + kStepY * static_cast<float>(row), kKeyW, kKeyH};
+Rect keyRect(int row, int col, int span = 1) {
+  return {kLeft + kStepX * static_cast<float>(col), kKeysTop + kStepY * static_cast<float>(row),
+          kKeyW + kStepX * static_cast<float>(span - 1), kKeyH};
+}
+
+Rect padRect(int row, int col) {
+  return {kPadX + kPadStepX * static_cast<float>(col), kPadY + kPadStepY * static_cast<float>(row), kPadW, kPadH};
 }
 
 Rect wideRect(int col) {
-  return {kLeft + (kWideW + 8) * static_cast<float>(col), kKeysTop + 6 * kStepY, kWideW, kKeyH};
+  return {kLeft + (kWideW + 8) * static_cast<float>(col), kKeysTop + 5 * kStepY, kWideW, kKeyH};
 }
 
-void key(Ctx& c, Rect r, const std::string& text, bool focused, float dim, int px, int hit) {
+// `quiet`: the keypad's & and ' (the matcher reads them as "and" and as
+// nothing), a darker key; `mode`: the mode key, outlined.
+void key(Ctx& c, Rect r, const std::string& text, bool focused, float dim, int px, int hit, bool quiet = false,
+         bool mode = false) {
   c.hit(r, hit);
   Rect shown = focused ? Rect{r.x - 2, r.y - 2, r.w + 4, r.h + 4} : r;
-  c.g.fill(shown, focused ? theme::white() : theme::white(0.1f * dim), 12);
-  labelIn(c, text, shown, Weight::Medium, px, focused ? theme::black() : theme::white(0.92f * dim), Align::Center);
+  c.g.fill(shown, focused ? theme::white() : theme::white((quiet ? 0.05f : 0.1f) * dim), 12);
+  if (!focused && (quiet || mode)) c.g.stroke(shown, theme::white((quiet ? 0.08f : 0.35f) * dim), 12, 2);
+  Color ink = focused ? theme::black() : theme::white((quiet ? 0.82f : 0.92f) * dim);
+  labelIn(c, text, shown, mode ? Weight::Bold : Weight::Medium, px, ink, Align::Center);
 }
 
 }  // namespace
@@ -60,18 +70,45 @@ void draw(Ctx& c, const Grid& grid, const Look& look, int base) {
     microphone(c, kSpeak.x + 30, kSpeak.y + 36, ink);
     labelIn(c, "Speak", {kSpeak.x + 46, kSpeak.y, kSpeak.w - 52, kSpeak.h}, Weight::Bold, 24, ink);
   }
-  for (int row = 0; row < search_keys::kRows; ++row) {
-    for (int col = 0; col < search_keys::kCols; ++col) {
-      bool f = look.focused && at.area == Area::Key && at.row == row && at.col == col;
-      key(c, keyRect(row, col), std::string(1, Grid::keyAt(row, col)), f, dim, 32,
-          base + kHitKeys + row * search_keys::kCols + col);
+  using search_keys::Page;
+  Page page = grid.page();
+  auto focusedKey = [&](int row, int col) {
+    return look.focused && at.area == Area::Key && at.row == row && at.col == col;
+  };
+  if (page == Page::Letters) {
+    // a-z, then Space in the cells after z.
+    for (int row = 0; row < search_keys::kRows; ++row) {
+      for (int col = 0; col < search_keys::kLetterCols; ++col) {
+        char ch = Grid::keyAt(page, row, col);
+        int id = base + kHitKeys + search_keys::targetOf(page, {Area::Key, row, col});
+        if (ch == ' ') {
+          key(c, keyRect(row, col, search_keys::kLetterCols - col), "Space", focusedKey(row, col), dim, 24, id);
+          break;
+        }
+        key(c, keyRect(row, col), std::string(1, ch), focusedKey(row, col), dim, 32, id);
+      }
     }
+  } else {
+    // The keypad on its panel, the margins even; Space across its row.
+    c.g.fill(kPanel, theme::white(0.035f * dim), 22);
+    c.g.stroke(kPanel, theme::white(0.06f * dim), 22, 1);
+    for (int row = 0; row + 1 < search_keys::kRows; ++row) {
+      for (int col = 0; col < search_keys::kPadCols; ++col) {
+        char ch = Grid::keyAt(page, row, col);
+        key(c, padRect(row, col), std::string(1, ch), focusedKey(row, col), dim, ch == '&' || ch == '\'' ? 30 : 32,
+            base + kHitKeys + search_keys::targetOf(page, {Area::Key, row, col}), ch == '&' || ch == '\'');
+      }
+    }
+    int row = search_keys::kRows - 1;
+    key(c, keyRect(row, 0, search_keys::kLetterCols), "Space", focusedKey(row, 0), dim, 24,
+        base + kHitKeys + search_keys::targetOf(page, {Area::Key, row, 0}));
   }
-  // Clear sits at the far end, away from Delete.
-  const char* wide[] = {"Delete", "Space", "Clear"};
+  // ⌫ Delete · 123 (abc) · Clear: Clear sits at the far end, away from Delete.
+  const char* wide[] = {"Delete", page == Page::Letters ? "123" : "abc", "Clear"};
   for (int col = 0; col < 3; ++col) {
     bool f = look.focused && at.area == Area::Bottom && at.col == col;
-    key(c, wideRect(col), wide[col], f, dim, 24, base + kHitWide + col);
+    bool mode = col == static_cast<int>(search_keys::Wide::Mode);
+    key(c, wideRect(col), wide[col], f, dim, 24, base + kHitKeys + search_keys::kTargetWide + col, false, mode);
     if (col == 0) {
       // ⌫: a small key shape with a cross, before the word.
       Rect r = wideRect(0);
@@ -92,21 +129,13 @@ void draw(Ctx& c, const Grid& grid, const Look& look, int base) {
   }
 }
 
-bool spotFor(int id, int base, Grid::Spot& spot) {
+bool spotFor(int id, int base, search_keys::Page page, Grid::Spot& spot) {
   int k = id - base;
   if (k == kHitSpeak) {
     spot = {Area::Speak, 0, 0};
     return true;
   }
-  if (k >= kHitKeys && k < kHitKeys + search_keys::kRows * search_keys::kCols) {
-    spot = {Area::Key, (k - kHitKeys) / search_keys::kCols, (k - kHitKeys) % search_keys::kCols};
-    return true;
-  }
-  if (k >= kHitWide && k < kHitWide + 3) {
-    spot = {Area::Bottom, 0, k - kHitWide};
-    return true;
-  }
-  return false;
+  return k >= kHitKeys && search_keys::spotOfTarget(page, k - kHitKeys, spot);
 }
 
 }  // namespace marigold::ui::keyboard

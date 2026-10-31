@@ -77,7 +77,43 @@ Everything in `docs/m4-test.md` › Search (Build 113) applies; these rows are w
 | Voice into Amazon's keyboard | Try the remote's voice button with Search open | Note what happens (Alexa, or text into the field), for deciding whether Fire TV gets Speak |
 | Key bar | The keyboard, then the results | Nothing but "▶ Choose a result · Back: Close" on the keyboard; "☰ More" and "◀ Keyboard · Back: Keyboard" in the results |
 | ☰ | ☰ on the keyboard, then on a result | Nothing on the keyboard; on a result, its More panel (as hold OK) |
-| Numbers | 2 0 6 on the grid, ▶, OK | Sports Net 2 (or your channel 206) plays |
+| Numbers | 123, then 2 0 6 on the keypad, ▶, OK | Sports Net 2 (or your channel 206) plays |
 | Muted corner | Rest 2 s on a live channel in the results, then OK | The corner plays without sound; full screen has sound at once, no re-tune |
 | Guide corner | The guide's preview after using Search | With sound, as before |
 | Back from the player | OK a result, Back within 2 minutes | The same row; the picture back in the corner, muted |
+
+### Search keyboard and scope (Build 115)
+
+Everything in `docs/m4-test.md` › Search keyboard and scope (Build 115) applies; these rows are what differs on a Fire TV.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Letters | Open Search | The 6×5 letters with Space after z; ⌫ Delete · 123 · Clear under them; no Speak, so ▲ from the top row stays there |
+| Numbers | ▼ to 123, OK, then 2 0 6 on the keypad, ▶, OK | Focus stays on abc after OK; the page stays on 123 while typing; Sports Net 2 (or your channel 206) plays |
+| Play/Pause | ⏯ on the keyboard | Nothing (only Apple TV flips the page with it) |
+| More outside | Type a word, ▼ to "More outside your lineup", OK; then ☰ on it | Everything, marked as on LG; ☰ on that row does nothing |
+
+## Caption timing (Build 115)
+
+Everything in `docs/m4-test.md` › Caption timing (Build 115) about the rows applies. ExoPlayer times the captions itself; Caption timing holds its lines back.
+
+| Area | How to check | Pass |
+|---|---|---|
+| On time | Subtitles on, Caption timing On time | Captions as before (ExoPlayer's own timing) |
+| Later | Caption timing 2 s later | Each line shows 2 s after it would have, and goes 2 s later too |
+| Earlier | Caption timing 1.5 s earlier | Captions on time: ExoPlayer can only hold them back (the row looks the same as on LG) |
+| Log | The playback log after 2 minutes with captions | "caption timing: clock player; setting +2.0 s" once a minute |
+
+## Picture check (Build 115)
+
+Everything in `docs/m4-test.md` › Picture check (Build 115) applies, from ExoPlayer's signals (there is no relay on Android): a picture only once the first frame is rendered (onRenderedFirstFrame, not isPlaying); the video track groups of the stream; the video decoder's rendered-frame counter. Black and static pictures are not detected here (no stream reading; no screen sampling).
+
+| Area | How to check | Pass |
+|---|---|---|
+| Picture facts | Any channel | Log: "video · 1920x1080 59.94p · h264 avc1.640028 · aac" once after "picture" |
+| No video track | A feed with only sound | After 6 s "picture check · no video track (the player lists none)", the next version |
+| Unsupported video | A feed in a codec this device can't decode (HEVC on an old Fire TV stick, H.264 4:2:2) | "picture check · unsupported …", the next version; tried last for 7 days |
+| Sound, no frame | A feed whose video never renders while the sound plays | After 8 s a failed start, one retry, then the next version |
+| Frozen | A stream whose picture freezes while the sound and clock go on | Rendered frames stop for 2 s → after 15 s (8 s before a real picture) one reconnect, then the next version |
+| No picture anywhere | Every version sound only | The card with Try another source and Keep listening, as on LG |
+| Radio | A radio channel | Plays when isPlaying; no check |

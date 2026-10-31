@@ -27,11 +27,20 @@ struct FakePlayer final : marigold::engine::Player {
     std::set<std::string> dead;      // feeds that fail as soon as they start
     std::map<std::string, std::string> errors;  // feeds that fail with this message
     PlayerState state;
+    // What every new attempt starts as (a stream with no picture...).
+    PlayerState onPlay;
+    // Connections to the source the relay closed, handed over once.
+    std::vector<SourceClosed> closed;
     bool canRetry = false;
     int retries = 0, stops = 0;
   };
   explicit FakePlayer(std::shared_ptr<Shared> s) : s_(std::move(s)) {}
-  void attempt() override { s_->state = {}; }
+  void attempt() override { s_->state = s_->onPlay; }
+  std::vector<SourceClosed> sourceClosed() override {
+    std::vector<SourceClosed> out;
+    out.swap(s_->closed);
+    return out;
+  }
   void play(const Feed& f, bool) override {
     s_->plays.push_back(f.channelId);
     if (s_->dead.count(f.channelId)) s_->state.failed = true;
@@ -86,6 +95,14 @@ struct Rig {
     for (int i = 0; i < 480 && session->feedIndex() != index; ++i) run(250);
     run(500);  // the new feed is handed to the player
     return session->feedIndex() == index;
+  }
+
+  // Log lines of this kind, newest last.
+  std::vector<std::string> logged(const std::string& event) const {
+    std::vector<std::string> out;
+    for (const auto& e : session->log().entries())
+      if (e.event == event) out.push_back(e.detail);
+    return out;
   }
 
   // Entries with at least `feeds` feeds, in guide order.
@@ -305,4 +322,156 @@ TEST_CASE("session: Back to is the last channel stayed on, and previous() swaps 
   r.run(1000);
   CHECK(r.session->previous() == ids[3]);
   CHECK(r.session->previousEntry() == ids[0]);
+}
+
+// --- the picture check (Build 115) -------------------------------------------
+
+TEST_CASE("session: a black picture on the relay gets one reconnect, then the next version") {
+  Rig r;
+  auto ids = r.entries(2);
+  REQUIRE_FALSE(ids.empty());
+  auto feeds = r.store->feeds(ids[0]);
+  PlayerState black;
+  black.picture = true;  // the decoder reported in; the frames are black
+  black.playing = true;
+  black.streamChecked = true;
+  black.stream = marigold::media::Verdict::Black;
+  black.streamDetail = "I 432 B, 16 kbps";
+  r.player->onPlay = black;
+  r.session->setShowingFull(true);
+  REQUIRE(r.session->tune(ids[0]));
+  r.run(500);
+  REQUIRE(r.player->plays.size() == 1);
+  r.run(7000);
+  CHECK(r.player->plays.size() == 1);
+  // 8 s of black: the same version again, once...
+  r.run(3000);
+  REQUIRE(r.player->plays.size() == 2);
+  CHECK(r.player->plays[1] == feeds[0].channelId);
+  // ...then the next one.
+  REQUIRE(r.runUntilFeed(1));
+  CHECK(r.player->plays[2] == feeds[1].channelId);
+  auto problem = r.session->feedProblem(feeds[0].channelId);
+  REQUIRE(problem);
+  CHECK(problem->why == "black picture");
+  auto checks = r.logged("picture check");
+  REQUIRE_FALSE(checks.empty());
+  CHECK(checks.front() == "black 8 s; I 432 B, 16 kbps");
+}
+
+TEST_CASE("session: sound without a frame drawn is a failed start with one retry") {
+  Rig r;
+  auto ids = r.entries(2);
+  REQUIRE_FALSE(ids.empty());
+  auto feeds = r.store->feeds(ids[0]);
+  PlayerState sound;
+  sound.playing = true;  // uMS "playing", and not a frame
+  r.player->onPlay = sound;
+  REQUIRE(r.session->tune(ids[0]));
+  r.run(8500);
+  CHECK_FALSE(r.session->ready());
+  REQUIRE(r.runUntilFeed(1));
+  REQUIRE(r.player->plays.size() == 3);  // one retry, then the next version
+  CHECK(r.player->plays[1] == feeds[0].channelId);
+  CHECK(r.session->feedProblem(feeds[0].channelId)->why == "no picture");
+}
+
+TEST_CASE("session: frames the relay sees fine while the TV shows none never flip") {
+  Rig r;
+  auto ids = r.entries(2);
+  REQUIRE_FALSE(ids.empty());
+  PlayerState shown;
+  shown.playing = true;
+  shown.streamChecked = true;
+  shown.stream = marigold::media::Verdict::Picture;
+  r.player->onPlay = shown;
+  REQUIRE(r.session->tune(ids[0]));
+  r.run(60'000);
+  CHECK(r.session->ready());
+  CHECK(r.player->plays.size() == 1);
+}
+
+TEST_CASE("session: the relay's pictures outweigh a player that lists no video track") {
+  Rig r;
+  auto ids = r.entries(2);
+  REQUIRE_FALSE(ids.empty());
+  PlayerState shown;
+  shown.playing = true;
+  shown.videoTracks = 0;  // a track list read wrong
+  shown.streamChecked = true;
+  shown.stream = marigold::media::Verdict::Picture;
+  r.player->onPlay = shown;
+  REQUIRE(r.session->tune(ids[0]));
+  r.run(60'000);
+  CHECK(r.session->ready());
+  CHECK(r.player->plays.size() == 1);
+}
+
+TEST_CASE("session: no picture anywhere asks, and Keep listening plays the sound unchecked") {
+  Rig r;
+  auto ids = r.entries(2);
+  REQUIRE_FALSE(ids.empty());
+  PlayerState audio;
+  audio.playing = true;
+  audio.videoTracks = 0;  // the player lists no video
+  r.player->onPlay = audio;
+  r.session->setShowingFull(true);
+  REQUIRE(r.session->tune(ids[0]));
+  for (int i = 0; i < 400 && !r.session->noPicture(); ++i) r.run(250);
+  REQUIRE(r.session->noPicture());
+  CHECK_FALSE(r.session->failed());
+  CHECK(r.session->ready());  // the sound plays on
+  CHECK(r.session->noPictureMessage().find("The sound plays on") != std::string::npos);
+  size_t plays = r.player->plays.size();
+  CHECK(plays == r.store->feeds(ids[0]).size());  // each version once, no retries
+  r.run(30'000);
+  CHECK(r.player->plays.size() == plays);
+  r.session->keepListening();
+  CHECK_FALSE(r.session->noPicture());
+  CHECK(r.store->audioOnly(ids[0]));
+  CHECK_FALSE(r.logged("keep listening").empty());
+
+  // Next time: sound only, not checked.
+  r.session->stop();
+  REQUIRE(r.session->tune(ids[0]));
+  r.run(60'000);
+  CHECK(r.session->ready());
+  CHECK_FALSE(r.session->noPicture());
+  CHECK(r.player->plays.size() == plays + 1);
+}
+
+TEST_CASE("session: a source that keeps closing moves to the next version, no retries") {
+  Rig r;
+  auto ids = r.entries(2);
+  REQUIRE_FALSE(ids.empty());
+  auto feeds = r.store->feeds(ids[0]);
+  REQUIRE(r.session->tune(ids[0]));
+  r.run(500);
+  r.picture();
+  for (int i = 0; i < 3; ++i) {
+    r.run(2500);
+    r.player->closed.push_back({2400, 310 * 1024, true});
+  }
+  REQUIRE(r.runUntilFeed(1));
+  CHECK(r.player->plays.size() == 2);
+  CHECK(r.session->feedProblem(feeds[0].channelId)->why == "the source keeps closing");
+  CHECK(r.logged("relay").size() == 3);
+  CHECK(r.logged("relay").front() == "closed after 2 s, 310 KB; reopened it (1 time)");
+  REQUIRE(r.logged("source keeps closing").size() == 1);
+}
+
+TEST_CASE("session: what plays is logged once, with the picture") {
+  Rig r;
+  auto ids = r.entries(1);
+  REQUIRE_FALSE(ids.empty());
+  REQUIRE(r.session->tune(ids[0]));
+  r.run(500);
+  r.player->state.facts = "1920x1080 59.94p \xc2\xb7 h264 High 8-bit \xc2\xb7 aac";
+  r.run(2000);
+  CHECK(r.logged("video").empty());  // no picture yet
+  r.picture();
+  r.run(5000);
+  auto video = r.logged("video");
+  REQUIRE(video.size() == 1);
+  CHECK(video[0] == "1920x1080 59.94p \xc2\xb7 h264 High 8-bit \xc2\xb7 aac");
 }

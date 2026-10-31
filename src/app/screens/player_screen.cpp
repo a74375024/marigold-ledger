@@ -104,7 +104,7 @@ class PlayerScreen : public Screen {
       clearScreen();
       return true;
     }
-    if (p.failed()) return failedKey(e);
+    if (p.failed() || p.noPicture()) return failedKey(e);
     if (zone_ == Zone::Row) return rowKey(e);
     if (zone_ == Zone::EdgeGuide || zone_ == Zone::EdgeLast) {
       if (e.key == Key::Ok) {
@@ -291,7 +291,7 @@ class PlayerScreen : public Screen {
       if (!p.failed()) ui::spinner(c, gfx::kLayoutWidth * 0.5f, 400, 26);
     }
     // A game: the low card (not while it fails: that banner says why).
-    const GameBanner* game = p.failed() && !pending ? nullptr : gameShown(c);
+    const GameBanner* game = (p.failed() || p.noPicture()) && !pending ? nullptr : gameShown(c);
     cardTop_ = game ? kGameCardTop : kCardTop;
     // Under a panel (the guide, Sources, Quick settings): the picture and its
     // captions only, never the banner beside the panel.
@@ -300,11 +300,11 @@ class PlayerScreen : public Screen {
       return;
     }
     // The pointer appearing brings up the controls, nothing highlighted.
-    if (c.pointerActive && !pointer_ && !p.failed()) openControls(false);
+    if (c.pointerActive && !pointer_ && !p.failed() && !p.noPicture()) openControls(false);
     pointer_ = c.pointerActive;
     c.hit(screen, kHitPicture);
     bool controls = zone_ == Zone::Row && picture;
-    if (p.failed() && !pending) {
+    if ((p.failed() || p.noPicture()) && !pending) {
       drawScrim(c);
       drawBanner(c, g, true);
       drawFailButtons(c);
@@ -360,7 +360,7 @@ class PlayerScreen : public Screen {
   // While it loads (or a channel key is pending) the banner stays up.
   bool loading() const {
     const Playback& p = app_.playback();
-    return !pendingFlip_.empty() || !p.ready() || p.failed();
+    return !pendingFlip_.empty() || !p.ready() || p.failed() || p.noPicture();
   }
   bool bannerVisible() const { return loading() || (app_.ms() >= bannerFrom_ && app_.ms() < bannerUntil_); }
   // Up/Down: Up is the channel above in the list (lower numbers) unless
@@ -668,6 +668,8 @@ class PlayerScreen : public Screen {
 
   // ---------------------------------------------------------- failed
   std::vector<std::string> failButtons() const {
+    // No picture anywhere, the sound playing: another source, or the sound.
+    if (app_.playback().noPicture()) return {"Try another source", "Keep listening"};
     std::vector<std::string> out = {"Try again", "Pick a feed"};
     if (app_.store().channels()->find(app_.playback().previousEntry()))
       out.push_back("Back to " + nameOf(app_.playback().previousEntry()));
@@ -684,6 +686,13 @@ class PlayerScreen : public Screen {
         return true;
       case Key::Ok: {
         Playback& p = app_.playback();
+        if (p.noPicture()) {
+          // "Keep listening" remembers the channel as sound only for a week.
+          if (failButton_ == 0) openSources();
+          else p.keepListening();
+          failButton_ = 0;
+          return true;
+        }
         if (failButton_ == 0) {
           std::string id = p.entry();
           p.stop();
@@ -707,7 +716,11 @@ class PlayerScreen : public Screen {
       case Key::ChannelDown:
         flipBy(e.key == Key::ChannelUp ? 1 : -1);
         return true;
-      case Key::Back: app_.nav().pop(); return true;
+      case Key::Back:
+        // The no-picture card goes (the sound plays on); a failed channel leaves.
+        if (app_.playback().noPicture()) app_.playback().dismissNoPicture();
+        else app_.nav().pop();
+        return true;
       default: return true;
     }
   }
@@ -881,6 +894,13 @@ class PlayerScreen : public Screen {
     // Which version plays, for channels with both.
     if (g && !g->partner.empty()) ui::coastChip(c, g->west, tx + whereW + 14, top + 2, 14);
     float y = top + 104;
+    if (failed && p.noPicture()) {
+      // Sound with no picture anywhere: said in the banner, the sound plays on.
+      std::string name = g ? g->name : std::string("This channel");
+      shadowed(c, name + " has no picture right now", tx, top + 30, Weight::Bold, 44, theme::white(), titleRight - tx);
+      shadowed(c, p.noPictureMessage(), x, y, Weight::Regular, 22, theme::white(0.82f), titleRight - x);
+      return;
+    }
     if (failed) {
       // Not playing: said in the banner, with why in one line.
       std::string name = g ? g->name : std::string("This channel");

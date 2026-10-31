@@ -32,6 +32,25 @@ std::string versionOf(size_t index, size_t count) {
   return std::to_string(index + 1) + " of " + std::to_string(count);
 }
 
+// "2 s", or "0.4 s" under a second.
+std::string lastedText(Ms ms) {
+  return ms < 1000 ? oneDecimal(static_cast<double>(ms) / 1000.0) + " s" : std::to_string(ms / 1000) + " s";
+}
+
+std::string kilobytes(int64_t bytes) {
+  return std::to_string(std::max<int64_t>(bytes > 0 ? 1 : 0, bytes / 1024)) + " KB";
+}
+
+// What the picture check found, for the log: "black 9 s; I 432 B, 16 kbps",
+// "no video track (PMT audio 1)".
+std::string checkText(media::Verdict v, Ms held, std::string_view detail) {
+  if (v == media::Verdict::NoVideo)
+    return std::string("no video track") + (detail.empty() ? std::string() : " (" + std::string(detail) + ")");
+  std::string text = std::string(media::verdictName(v)) + " " + std::to_string(held / 1000) + " s";
+  if (!detail.empty()) text += "; " + std::string(detail);
+  return text;
+}
+
 const char kDefaultOpenError[] = "This channel couldn't be opened right now.";
 
 }  // namespace
@@ -54,6 +73,7 @@ Actions Recovery::tune(Ms now, std::vector<FeedInfo> feeds, TuneOptions options)
   Actions out;
   feeds_ = std::move(feeds);
   surf_ = options.surf;
+  game_ = options.game;
   playerOnScreen_ = false;
   if (feeds_.empty()) {
     // Swift: the open loop never runs and gives up with its default error.
@@ -77,6 +97,7 @@ Actions Recovery::pick(Ms now, size_t feed) {
   manualFeedId_ = f.id;
   reconnectsOnFeed_ = 0;
   startupRetries_[f.id] = 0;
+  pictureReconnects_.erase(f.id);
   announceBackup_ = false;
   setNote("Switching…", out);
   log(out, "you picked", "version " + versionOf(feed, feeds_.size()), feed);
@@ -98,6 +119,7 @@ Actions Recovery::stop(Ms now) {
   phase_ = Phase::Idle;
   playerOnScreen_ = false;
   sawFirstFrame_ = false;
+  listening_ = false;
   feeds_.clear();
   out.push_back({Action::Kind::CloseStream, Action::npos, 0, false, {}, {}});
   return out;
@@ -122,6 +144,11 @@ Actions Recovery::streamHanded(Ms now, uint64_t token) {
   movedAt_ = now;
   bufferEnd_ = 0;
   bufferEndAt_ = now;
+  buffering_ = false;
+  verdict_ = media::Verdict::Unknown;
+  verdictSince_ = now;
+  realPicture_ = staticNoted_ = listening_ = keptClosing_ = false;
+  closed_.clear();
   log(out, replacing ? "swapped in player" : "play", "version " + versionOf(index_, feeds_.size()), index_);
   return out;
 }
@@ -202,6 +229,7 @@ void Recovery::loading(bool loaded) {
 
 Actions Recovery::bufferingStarted(Ms now) {
   Actions out;
+  buffering_ = true;
   // Before the first picture this is just the start; startup has its own timer.
   if (!playing() || !sawFirstFrame_) return out;
   bool settling = firstFrameAt_ && now - *firstFrameAt_ < kStartupBufferingMs;
@@ -211,6 +239,7 @@ Actions Recovery::bufferingStarted(Ms now) {
 
 Actions Recovery::bufferingEnded(Ms now) {
   Actions out;
+  buffering_ = false;
   // The Swift player reports "playing" again. Where the position is known,
   // only new video proves it (uMS can leave buffering on a frozen decoder).
   if (playing() && trouble_ && trouble_->cause == "stall" && !moved_) recoveredByItself(now, out);
@@ -245,6 +274,15 @@ Actions Recovery::ended(Ms now) {
   Actions out;
   if (!playing()) return out;
   log(out, "stream ended");
+  // The relay gave up on a source that kept closing: never a run that
+  // played (and earns reconnects) unless one connection lasted a while.
+  if (sawFirstFrame_ && !listening_ && closed_.size() >= static_cast<size_t>(kFlapConnections) &&
+      std::none_of(closed_.begin(), closed_.end(), [](const Closed& c) { return c.lasted >= kPlayedRunMs; })) {
+    log(out, "source keeps closing",
+        std::to_string(closed_.size()) + " connections in " + lastedText(now - handedAt_) + "; the relay gave up");
+    failedNoRetry(now, "the source keeps closing", "the source keeps closing", false, out);
+    return out;
+  }
   if (sawFirstFrame_) {
     // Marigold: the playback log (HLN) shows a live stream that "ends" never
     // plays on by itself; waiting the grace only froze the picture longer.
@@ -272,6 +310,101 @@ Actions Recovery::setPaused(Ms now, bool paused) {
     bufferEndAt_ = now;
   }
   return out;
+}
+
+Actions Recovery::videoCheck(Ms now, media::Verdict v, std::string_view detail) {
+  using media::Verdict;
+  Actions out;
+  if (!playing() || listening_ || !feeds_[index_].expectVideo) return out;
+  // What is on screen can't be judged while it waits for data or is paused:
+  // the count starts again after.
+  bool shown = v == Verdict::Black || v == Verdict::Frozen || v == Verdict::Static || v == Verdict::NoFrame;
+  bool suspended = shown && (paused_ || buffering_ || trouble_);
+  if (v != verdict_ || suspended) {
+    verdict_ = v;
+    verdictSince_ = now;
+  }
+  // A picture that held a while: what goes wrong after it is mid-stream.
+  if (v == Verdict::Picture && now - verdictSince_ >= kRealPictureMs) realPicture_ = true;
+  if (v == Verdict::Picture || v == Verdict::Unknown || suspended) return out;
+  Ms held = now - verdictSince_;
+  std::string what = checkText(v, held, detail);
+  switch (v) {
+    case Verdict::Unsupported:
+      if (held < kUnsupportedMs) break;
+      log(out, "picture check", what);
+      startupFailed(now, "this TV can't decode this version (" + std::string(detail) + ")", out, true);
+      break;
+    case Verdict::Scrambled:
+      if (held < kScrambledMs) break;
+      log(out, "picture check", what);
+      failedNoRetry(now, "the stream is scrambled", "scrambled", false, out);
+      break;
+    case Verdict::NoVideo:
+    case Verdict::TablesOnly:
+      if (held < kNoVideoMs) break;
+      log(out, "picture check", what);
+      if (v == Verdict::NoVideo) failedNoRetry(now, "the stream has no video", "no video", true, out);
+      else failedNoRetry(now, "the stream carries no sound or video", "no sound or video", false, out);
+      break;
+    case Verdict::NoFrame:
+      // Once a frame was drawn, a stuck picture is the stall watchdog's.
+      if (sawFirstFrame_ || held < kNoFrameMs) break;
+      log(out, "picture check", what);
+      startupFailed(now, "the sound plays but no frame was drawn", out, false, kNoFrameRetries, true, "no picture");
+      break;
+    case Verdict::Black:
+    case Verdict::Frozen:
+      if (held < (realPicture_ ? kBlackMidStreamMs : kBlackAtStartMs)) break;
+      log(out, "picture check", what);
+      pictureFailed(now, v, out);
+      break;
+    case Verdict::Static:
+      if (held < kStaticMs || staticNoted_) break;
+      staticNoted_ = true;
+      log(out, "picture check", what);
+      // A game's slate or frozen source: another source may have the game.
+      // A channel's picture that doesn't change is only noted.
+      if (game_ && !surf_ && triedCount_ < feeds_.size())
+        moveToNext(now, "the picture hasn’t changed in " + lastedText(held), out, true);
+      break;
+    case Verdict::Picture:
+    case Verdict::Unknown:
+      break;
+  }
+  return out;
+}
+
+Actions Recovery::sourceClosed(Ms now, Ms lasted, int64_t bytes, bool reopened) {
+  Actions out;
+  if (!playing()) return out;
+  closed_.push_back({now, lasted, bytes});
+  std::string detail = "closed after " + lastedText(lasted) + ", " + kilobytes(bytes);
+  if (reopened) {
+    size_t n = closed_.size();
+    detail += "; reopened it (" + std::to_string(n) + (n == 1 ? " time)" : " times)");
+  } else {
+    detail += "; the relay gave up on it";
+  }
+  log(out, "relay", detail);
+  if (listening_ || keptClosing_ || !reopened || !keepsClosing(now)) return out;
+  keptClosing_ = true;
+  log(out, "source keeps closing",
+      std::to_string(closed_.size() + 1) + " connections in " + lastedText(now - handedAt_));
+  failedNoRetry(now, "the source keeps closing", "the source keeps closing", false, out);
+  return out;
+}
+
+// Short connections with data, closed by 15 s after the picture (or before
+// it), and not one that lasted.
+bool Recovery::keepsClosing(Ms now) const {
+  Ms horizon = (firstFrameAt_ ? *firstFrameAt_ : now) + kFlapWindowMs;
+  int shortOnes = 0;
+  for (const Closed& c : closed_) {
+    if (c.lasted >= kLongConnectionMs) return false;
+    if (c.bytes > 0 && c.lasted < kShortConnectionMs && c.at <= horizon) ++shortOnes;
+  }
+  return shortOnes >= kFlapConnections;
 }
 
 Actions Recovery::tick(Ms now) {
@@ -344,6 +477,7 @@ void Recovery::startTune(Ms now, size_t feed, Ms delay, bool inPlace, bool recon
     recoveries_.clear();
     reconnectsOnFeed_ = 0;
     startupRetries_.clear();
+    pictureReconnects_.clear();
     setNote({}, out);
     std::string detail = std::to_string(feeds_.size()) + " version(s)";
     if (!reason.empty()) detail += "; " + std::string(reason);
@@ -425,7 +559,8 @@ void Recovery::scheduleStartupFailure(Ms now, std::string reason) {
 }
 
 // A feed that never showed a picture.
-void Recovery::startupFailed(Ms now, const std::string& reason, Actions& out, bool unplayable) {
+void Recovery::startupFailed(Ms now, const std::string& reason, Actions& out, bool unplayable, int allowed,
+                             bool picture, const std::string& why) {
   if (!playing()) return;
   startupErrorAt_.reset();
   const FeedInfo feed = feeds_[index_];
@@ -439,7 +574,9 @@ void Recovery::startupFailed(Ms now, const std::string& reason, Actions& out, bo
   // often the provider's connection limit while the previous stream lets go,
   // or a slow first segment.
   int retries = startupRetries_[feed.id];
-  if ((isDirect(feed.kind) && retries < kXtreamStartRetries) || (feed.retryOnce && retries < 1)) {
+  bool more = (isDirect(feed.kind) && retries < kXtreamStartRetries) || (feed.retryOnce && retries < 1);
+  if (allowed >= 0 && retries >= allowed) more = false;
+  if (more) {
     startupRetries_[feed.id] = retries + 1;
     if (!allowRecovery(now)) {
       giveUp("This channel keeps failing to start. Pick another feed, or try again later.", out);
@@ -456,8 +593,59 @@ void Recovery::startupFailed(Ms now, const std::string& reason, Actions& out, bo
     startTune(now, index_, isDirect(feed.kind) ? kXtreamRetryDelayMs : 0, true, true, false, reason, out);
     return;
   }
-  out.push_back({Action::Kind::RecordFeed, index_, 0, false, reason, {}});
-  moveToNext(now, reason, out);
+  out.push_back({Action::Kind::RecordFeed, index_, 0, false, reason, why});
+  moveToNext(now, reason, out, picture);
+}
+
+// A black or frozen picture: one reconnect (before a real picture only on a
+// direct feed, which is cheap to reopen), then the next feed.
+void Recovery::pictureFailed(Ms now, media::Verdict v, Actions& out) {
+  const FeedInfo feed = feeds_[index_];
+  bool direct = isDirect(feed.kind);
+  std::string reason = v == media::Verdict::Black ? "the picture is black" : "the picture froze";
+  int& done = pictureReconnects_[feed.id];
+  if (done < 1 && (realPicture_ || direct)) {
+    if (!allowRecovery(now)) {
+      giveUp("This channel keeps failing. Pick another feed, or try again later.", out);
+      return;
+    }
+    ++done;
+    setNote("Reconnecting…", out);
+    log(out, "reconnect", reason + "; once", index_);
+    startTune(now, index_, direct ? kXtreamReconnectDelayMs : 0, true, true, false, reason, out);
+    return;
+  }
+  out.push_back({Action::Kind::RecordFeed, index_, 0, false, reason,
+                 v == media::Verdict::Black ? "black picture" : "frozen picture"});
+  moveToNext(now, reason, out, true);
+}
+
+// A feed that can't work now however often it is tried (scrambled, no
+// video, a source that keeps closing): the next one, no retries.
+void Recovery::failedNoRetry(Ms now, const std::string& reason, const std::string& why, bool picture, Actions& out) {
+  startupErrorAt_.reset();
+  out.push_back({Action::Kind::RecordFeed, index_, 0, false, reason, why});
+  moveToNext(now, reason, out, picture);
+}
+
+// Every feed was tried and none shows a picture, but this one's sound
+// plays: it plays on, unchecked, and the viewer decides.
+void Recovery::noPictureAnywhere(Ms now, Actions& out) {
+  listening_ = true;
+  trouble_.reset();
+  startupErrorAt_.reset();
+  if (!sawFirstFrame_) {
+    // The sound is what plays now: the stall watchdog watches it.
+    sawFirstFrame_ = true;
+    firstFrameAt_ = now;
+  }
+  setNote({}, out);
+  log(out, "no picture", "none of the feeds shows one; the sound plays on");
+  out.push_back({Action::Kind::NoPicture, index_, 0, false,
+                 surf_ || game_ ? "None of the sources shows a picture right now. The sound plays on."
+                                : "None of this channel’s versions shows a picture right now. "
+                                  "The sound plays on.",
+                 {}});
 }
 
 // A playing stream that did not get over a stall / error by itself:
@@ -496,8 +684,12 @@ void Recovery::recover(Ms now, const std::string& reason, Actions& out) {
 // the first feed, so one round is the list); here a feed picked in the
 // middle of the list is followed by the ones after it and then the ones
 // before it, and the round ends when every feed has been tried once.
-void Recovery::moveToNext(Ms now, const std::string& reason, Actions& out) {
+void Recovery::moveToNext(Ms now, const std::string& reason, Actions& out, bool picture) {
   size_t count = feeds_.size();
+  if (triedCount_ >= count && picture && playing()) {
+    noPictureAnywhere(now, out);
+    return;
+  }
   if (triedCount_ >= count) {
     giveUp(count > 1 ? "None of this channel's " + std::to_string(count) + " versions are working right now."
                      : "This channel stopped working. " + capitalized(reason) + ".",
@@ -512,6 +704,10 @@ void Recovery::moveToNext(Ms now, const std::string& reason, Actions& out) {
   reconnectsOnFeed_ = 0;
   announceBackup_ = !surf_;
   std::string note = surf_ ? "Skipping to the next feed…" : "Switching to a backup feed…";
+  if (picture && !surf_) {
+    note = game_ ? "No picture on this source — trying " + versionOf(next, count)
+                 : "No picture on this version — trying another…";
+  }
   if (manualFeedId_ && *manualFeedId_ == feeds_[index_].id) {
     manualFeedId_.reset();
     note = "The feed you picked stopped working. Trying another…";

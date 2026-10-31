@@ -39,11 +39,15 @@ struct GuideListing {
   std::optional<std::string> city;
   // The station's rank (station_rank).
   std::optional<int> rank;
+  // A tennis channel's live coverage of named tournaments ("Center Court
+  // Live: Vienna-ATP & Basel-ATP Semifinals"): a likely way to watch their
+  // matches on at the time, never a tile of its own.
+  bool tennisCoverage = false;
 
   bool operator==(const GuideListing& o) const {
     return entryID == o.entryID && inLineup == o.inLineup && spanish == o.spanish &&
            title == o.title && start == o.start && end == o.end && detail == o.detail &&
-           venue == o.venue && city == o.city && rank == o.rank;
+           venue == o.venue && city == o.city && rank == o.rank && tennisCoverage == o.tennisCoverage;
   }
   bool operator!=(const GuideListing& o) const { return !(*this == o); }
 };
@@ -192,9 +196,17 @@ std::vector<int> fightTargets(const FightKey& key, std::optional<Seconds> start,
 // 500", "Tennis: Pan Pacific Open"): every match (game indices) of that
 // tournament on that day. The tournament is the one the title names, else
 // the only one of its tour and level (WTA 500) on, else the only one of its
-// tour. Empty for a feed that names its players (matched as a game).
+// tour. Empty for a feed that names its players (matched as a game); a
+// round in place of the second side ("Vienna vs Semifinals") is no player.
+// Cities count in their local names too ("Wien"). `namedOnly`: only a
+// tournament the title names, by its name or city.
 std::vector<int> tennisTargets(std::string_view title, std::string_view family, std::optional<Seconds> start,
-                               Seconds now, const std::vector<int>& matches, const std::vector<SportsGame>& games);
+                               Seconds now, const std::vector<int>& matches, const std::vector<SportsGame>& games,
+                               bool namedOnly = false);
+// A guide title naming a tour or tennis and an event or place besides
+// ("Center Court Live Vienna-ATP & Basel-ATP Semifinals"), not only a show
+// ("Tennis Channel Live", "Live: Center Court Live").
+bool namesTennisEvent(std::string_view title);
 // A tournament's level ("500"), for the tours' biggest events; nullopt for
 // the rest (250s, 125s, Challengers).
 std::optional<std::string> tennisLevel(std::string_view tour, std::string_view tournament);

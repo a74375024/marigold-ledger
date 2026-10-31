@@ -155,7 +155,9 @@ struct LiveStatus {
 // also the automatic backup order.
 struct EventSource {
   // Order of preference: My Lineup, your channels, provider event feeds,
-  // then a team's own channel (likely, not certain, to carry the game).
+  // then a team's own channel (likely, not certain, to carry the game). A
+  // tennis channel's coverage of the match's tournament is "likely" too
+  // (team, detail "Tournament coverage").
   enum class Kind : uint8_t { lineup = 0, guide = 1, provider = 2, team = 3 };
   std::string channelID;
   Kind kind = Kind::guide;

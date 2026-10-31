@@ -124,6 +124,10 @@ final class Bridge {
     return utf8(Video.state(out));
   }
 
+  static byte[] videoFacts() {
+    return utf8(Video.facts());
+  }
+
   static byte[] videoTextTracks() {
     return utf8(Video.textTracks());
   }

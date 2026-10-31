@@ -63,6 +63,13 @@ unsigned proxyts_sessao(void);
 // quantas vezes o proxy reabriu a .ts continua que a fonte fechou. 0 = a
 // sessao nao passou o fluxo pelo proxy (redirecionou, ou ja e outra).
 int proxyts_fonte(unsigned sessao, int *http, long long *bytes, int *reaberturas);
+// marigold: as ligacoes a .ts continua da sessao `sessao` que ja fecharam:
+// devolve quantas fecharam ao todo e copia, a partir da `desde`-esima (0 = a
+// primeira; as mais antigas que as ultimas PROXYTS_LIGACOES ja nao estao),
+// ate `max` delas: quanto durou (ms), os bytes e se o proxy a reabriu (1) ou
+// desistiu (0). Quem le guarda o total e o passa como `desde` da proxima vez.
+#define PROXYTS_LIGACOES 16
+int proxyts_ligacoes(unsigned sessao, int desde, long *ms, long long *bytes, int *reaberta, int max);
 // 1 se `url` (sem o prefixo) e candidata ao proxy num canal de addon: http(s)
 // e nao arquivo progressivo (.mp4/.mkv). Puro, testavel em qualquer alvo.
 int  proxyts_candidata(const char *url, int mp4);

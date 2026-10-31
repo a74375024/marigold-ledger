@@ -1,7 +1,8 @@
-// Search's keyboard grid, a swipe stopping at its edge, the corner
-// preview's pace and Search's key hints.
+// Search's keyboard (its letters and 123 pages), a swipe stopping at its
+// edge, the corner preview's pace and Search's key hints.
 #include <doctest.h>
 
+#include <set>
 #include <string>
 
 #include "core/input/hints.hpp"
@@ -10,40 +11,210 @@
 
 using namespace marigold;
 using search_keys::Grid;
+using search_keys::Page;
 using Area = Grid::Spot::Area;
 
-TEST_CASE("search keys: the 6x6 grid, the wide keys and Speak") {
+namespace {
+
+Grid::Spot key(int row, int col) { return {Area::Key, row, col}; }
+Grid::Spot wide(search_keys::Wide w) { return {Area::Bottom, 0, static_cast<int>(w)}; }
+
+// A page's keys row by row, Space as "_" once.
+std::string table(Page page) {
+  std::string out;
+  for (int r = 0; r < search_keys::kRows; ++r) {
+    if (r) out += '/';
+    for (int c = 0; c < search_keys::colsOf(page); ++c) {
+      char ch = Grid::keyAt(page, r, c);
+      if (ch == ' ' && c > 0 && Grid::keyAt(page, r, c - 1) == ' ') continue;
+      out += ch == ' ' ? '_' : ch;
+    }
+  }
+  return out;
+}
+
+}  // namespace
+
+TEST_CASE("search keys: the letters page, 6x5 with Space after z, and the wide keys") {
+  CHECK(table(Page::Letters) == "abcdef/ghijkl/mnopqr/stuvwx/yz_");
+  CHECK(Grid::keyAt(Page::Letters, 4, 5) == ' ');
+  CHECK(Grid::keyAt(Page::Letters, 5, 0) == 0);  // one row shorter than Build 113's
+  CHECK(Grid::keyAt(Page::Letters, 0, 6) == 0);
+  CHECK(Grid::keyFor(Page::Letters, 'z') == key(4, 1));
+  CHECK(Grid::keyFor(Page::Letters, ' ') == key(4, 2));
   Grid g(true);
+  CHECK(g.page() == Page::Letters);
   CHECK(g.typed() == "a");
-  CHECK(Grid::keyAt(4, 2) == '1');
-  CHECK(Grid::keyAt(5, 5) == '0');
-  CHECK(Grid::keyFor('z').row == 4);
-  CHECK(Grid::keyFor('z').col == 1);
-  // Up from the top row: Speak; Right from Speak: the results.
+  // Up from the top row: Speak; Right from Speak: the results; Down: f.
   CHECK(g.move(Key::Up).moved);
   CHECK(g.at().area == Area::Speak);
   CHECK(g.move(Key::Right).edge == Grid::Edge::Right);
   CHECK(g.move(Key::Down).moved);
   CHECK(g.typed() == "f");
-  // Right from the last column, Left from the first: out of the grid.
+  // Right from the last column, Left from the first: out of the keys.
   CHECK(g.move(Key::Right).edge == Grid::Edge::Right);
   g.home();
   CHECK(g.move(Key::Left).edge == Grid::Edge::Left);
-  // Down to the wide keys: Delete, Space, Clear (Clear far from Delete).
-  g.set(Grid::keyFor('7'));
+  // Space: right of z, one key over four cells; Right from it leaves.
+  g.set(Grid::keyFor(Page::Letters, 'z'));
+  CHECK(g.move(Key::Right).moved);
+  CHECK(g.at() == key(4, 2));
+  CHECK(g.typed() == " ");
+  CHECK(g.move(Key::Right).edge == Grid::Edge::Right);
+  CHECK(g.move(Key::Left).moved);
+  CHECK(g.typed() == "z");
+  // Up from Space goes back to the column it came from.
+  g.set(Grid::keyFor(Page::Letters, 'x'));
   CHECK(g.move(Key::Down).moved);
-  CHECK(g.at().area == Area::Bottom);
-  CHECK(g.at().col == static_cast<int>(search_keys::Wide::Space));
-  CHECK(g.typed().empty());
-  // Up returns to the column it came from.
+  CHECK(g.typed() == " ");
   CHECK(g.move(Key::Up).moved);
-  CHECK(g.typed() == "7");
+  CHECK(g.typed() == "x");
+  // Down from the middle columns lands on the mode key; Clear on the right
+  // and Delete on the left, away from each other.
+  g.set(Grid::keyFor(Page::Letters, 'v'));
+  CHECK(g.move(Key::Down).moved);
+  CHECK(g.move(Key::Down).moved);
+  CHECK(g.at() == wide(search_keys::Wide::Mode));
+  CHECK(g.onMode());
+  CHECK(g.typed().empty());
+  CHECK(g.move(Key::Up).moved);
+  CHECK(g.move(Key::Up).moved);
+  CHECK(g.typed() == "v");
+  g.set(Grid::keyFor(Page::Letters, 'x'));
+  g.move(Key::Down);
+  g.move(Key::Down);
+  CHECK(g.at() == wide(search_keys::Wide::Clear));
+  g.set(Grid::keyFor(Page::Letters, 'y'));
+  CHECK(g.move(Key::Down).moved);
+  CHECK(g.at() == wide(search_keys::Wide::Delete));
+  CHECK(g.move(Key::Up).moved);
+  CHECK(g.typed() == "y");
+  // Up from the mode key: Space.
+  g.set(wide(search_keys::Wide::Mode));
+  CHECK(g.move(Key::Up).moved);
+  CHECK(g.typed() == " ");
+  CHECK(g.move(Key::Down).edge == Grid::Edge::None);
+  CHECK(g.move(Key::Down).edge == Grid::Edge::Down);
   // No Speak (Fire TV): Up from the top row goes nowhere.
   Grid fire(false);
   CHECK(fire.move(Key::Up).edge == Grid::Edge::Up);
 }
 
-TEST_CASE("search keys: a swipe stops at the grid's edge, the next gesture crosses") {
+TEST_CASE("search keys: the 123 page is a phone keypad, and the mode key keeps the focus") {
+  CHECK(table(Page::Digits) == "123/456/789/&0'/_");
+  CHECK(Grid::keyAt(Page::Digits, 0, 3) == 0);
+  // No - or . anywhere, and no digits on the letters.
+  for (Page p : {Page::Letters, Page::Digits})
+    for (char c : {'-', '.'}) CHECK(table(p).find(c) == std::string::npos);
+  for (char d = '0'; d <= '9'; ++d) CHECK(table(Page::Letters).find(d) == std::string::npos);
+  Grid g(true);
+  g.set(wide(search_keys::Wide::Mode));
+  // OK on 123 flips the page and stays on the key: a second OK flips back.
+  g.flip();
+  CHECK(g.page() == Page::Digits);
+  CHECK(g.onMode());
+  g.flip();
+  CHECK(g.page() == Page::Letters);
+  CHECK(g.onMode());
+  g.flip();
+  // Up from abc: Space across the row, then 0, then up the keypad to Speak.
+  CHECK(g.move(Key::Up).moved);
+  CHECK(g.at() == key(4, 0));
+  CHECK(g.typed() == " ");
+  CHECK(g.move(Key::Up).moved);
+  CHECK(g.typed() == "0");
+  for (const char* d : {"8", "5", "2"}) {
+    CHECK(g.move(Key::Up).moved);
+    CHECK(g.typed() == d);
+  }
+  CHECK(g.move(Key::Up).moved);
+  CHECK(g.at().area == Area::Speak);
+  CHECK(g.move(Key::Down).moved);
+  CHECK(g.typed() == "3");
+  // The keypad's edges: 3 6 9 ' on the right, 1 4 7 & on the left.
+  CHECK(g.move(Key::Right).edge == Grid::Edge::Right);
+  g.set(Grid::keyFor(Page::Digits, '7'));
+  CHECK(g.move(Key::Left).edge == Grid::Edge::Left);
+  // Space spans its row: both sides leave.
+  g.set(Grid::keyFor(Page::Digits, ' '));
+  CHECK(g.move(Key::Left).edge == Grid::Edge::Left);
+  CHECK(g.move(Key::Right).edge == Grid::Edge::Right);
+  // Down each column to its wide key; Up comes back over Space.
+  g.set(Grid::keyFor(Page::Digits, '9'));
+  for (int i = 0; i < 3; ++i) CHECK(g.move(Key::Down).moved);
+  CHECK(g.at() == wide(search_keys::Wide::Clear));
+  g.set(Grid::keyFor(Page::Digits, '&'));
+  g.move(Key::Down);
+  g.move(Key::Down);
+  CHECK(g.at() == wide(search_keys::Wide::Delete));
+  g.move(Key::Up);
+  CHECK(g.move(Key::Up).moved);
+  CHECK(g.typed() == "&");
+  // Typing keeps the page (numbers are several digits).
+  g.set(Grid::keyFor(Page::Digits, '2'));
+  CHECK(g.typed() == "2");
+  CHECK(g.page() == Page::Digits);
+  // Flipping from a key goes to the one in its place; letters() goes back
+  // (Clear, an empty field); home() is "a" on the letters.
+  g.flip();
+  CHECK(g.page() == Page::Letters);
+  CHECK(g.typed() == "c");
+  g.set(Grid::keyFor(Page::Letters, 'q'));
+  g.flip();
+  CHECK(g.typed() == "9");
+  g.letters();
+  CHECK(g.page() == Page::Letters);
+  CHECK(g.typed() == "q");
+  g.letters();
+  CHECK(g.typed() == "q");
+  g.flip();
+  g.home();
+  CHECK(g.page() == Page::Letters);
+  CHECK(g.typed() == "a");
+}
+
+TEST_CASE("search keys: every key is one pointer target on its page") {
+  using search_keys::spotOfTarget;
+  using search_keys::targetOf;
+  for (Page page : {Page::Letters, Page::Digits}) {
+    std::set<int> seen;
+    int keys = 0;
+    for (int r = 0; r < search_keys::kRows; ++r)
+      for (int c = 0; c < search_keys::colsOf(page); ++c) {
+        char ch = Grid::keyAt(page, r, c);
+        if (ch == ' ' && c > 0 && Grid::keyAt(page, r, c - 1) == ' ') continue;
+        int t = targetOf(page, key(r, c));
+        CHECK(seen.insert(t).second);
+        Grid::Spot back;
+        REQUIRE(spotOfTarget(page, t, back));
+        CHECK(back == key(r, c));
+        ++keys;
+      }
+    for (int w = 0; w < 3; ++w) {
+      int t = targetOf(page, {Area::Bottom, 0, w});
+      CHECK(seen.insert(t).second);
+      Grid::Spot back;
+      REQUIRE(spotOfTarget(page, t, back));
+      CHECK(back == Grid::Spot{Area::Bottom, 0, w});
+    }
+    CHECK(keys == (page == Page::Letters ? 27 : 13));
+    CHECK(*seen.rbegin() < search_keys::kTargets);
+  }
+  CHECK(targetOf(Page::Letters, Grid::keyFor(Page::Letters, 'a')) == 0);
+  CHECK(targetOf(Page::Letters, Grid::keyFor(Page::Letters, ' ')) == 26);
+  CHECK(targetOf(Page::Digits, Grid::keyFor(Page::Digits, '1')) == search_keys::kTargetPad);
+  CHECK(targetOf(Page::Digits, Grid::keyFor(Page::Digits, ' ')) == search_keys::kTargetPad + 12);
+  CHECK(targetOf(Page::Letters, wide(search_keys::Wide::Mode)) == search_keys::kTargetWide + 1);
+  CHECK(targetOf(Page::Letters, {Area::Speak, 0, 0}) == -1);
+  // Space's other cells, and the other page's keys, are no target.
+  Grid::Spot s;
+  CHECK_FALSE(spotOfTarget(Page::Letters, 27, s));
+  CHECK_FALSE(spotOfTarget(Page::Letters, search_keys::kTargetPad, s));
+  CHECK_FALSE(spotOfTarget(Page::Digits, 5, s));
+  CHECK_FALSE(spotOfTarget(Page::Digits, search_keys::kTargetPad + 13, s));
+}
+
+TEST_CASE("search keys: a swipe stops at the page's edge, the next gesture crosses") {
   Grid g(false);
   // One long swipe (glide 7) right from "a": five moves to "f".
   for (int i = 0; i < 5; ++i) CHECK(g.move(Key::Right, 7).moved);
@@ -60,12 +231,32 @@ TEST_CASE("search keys: a swipe stops at the grid's edge, the next gesture cross
   // A ring press (glide 0) always crosses.
   CHECK(g.move(Key::Right, 0).edge == Grid::Edge::Right);
   // The same on the left, into the menu.
-  g.set(Grid::keyFor('c'));
+  g.set(Grid::keyFor(Page::Letters, 'c'));
   CHECK(g.move(Key::Left, 9).moved);
   CHECK(g.move(Key::Left, 9).moved);
   CHECK(g.typed() == "a");
   CHECK(g.move(Key::Left, 9).edge == Grid::Edge::None);
   CHECK(g.move(Key::Left, 10).edge == Grid::Edge::Left);
+  // A swipe along the last row stops on Space.
+  g.set(Grid::keyFor(Page::Letters, 'y'));
+  CHECK(g.move(Key::Right, 11).moved);
+  CHECK(g.move(Key::Right, 11).moved);
+  CHECK(g.typed() == " ");
+  CHECK(g.move(Key::Right, 11).edge == Grid::Edge::None);
+  // On 123 the edge is the keypad's: a swipe from 1 stops on 3.
+  g.flip();
+  g.set(Grid::keyFor(Page::Digits, '1'));
+  CHECK(g.move(Key::Right, 12).moved);
+  CHECK(g.move(Key::Right, 12).moved);
+  CHECK(g.typed() == "3");
+  CHECK(g.move(Key::Right, 12).edge == Grid::Edge::None);
+  CHECK(g.typed() == "3");
+  CHECK(g.move(Key::Right, 13).edge == Grid::Edge::Right);
+  // Down the keypad, a swipe stops on the wide keys.
+  g.set(Grid::keyFor(Page::Digits, '2'));
+  for (int i = 0; i < 5; ++i) CHECK(g.move(Key::Down, 14).moved);
+  CHECK(g.onMode());
+  CHECK(g.move(Key::Down, 14).edge == Grid::Edge::None);
   // The results list uses the same stop.
   search_keys::GlideStop stop;
   CHECK_FALSE(stop.stop(3));  // a swipe that starts at the edge crosses
@@ -133,12 +324,23 @@ TEST_CASE("hints: Search on LG, Fire TV and Apple TV") {
   REQUIRE(fire.keys.size() == 1);
   CHECK(fire.keys[0].icons == std::vector<std::string>{"key-menu"});
   CHECK(fire.right == "\xe2\x97\x80 Keyboard \xc2\xb7 Back: Keyboard");
-  // Apple TV: how to move and type; click and hold for More.
+  // Apple TV: how to move and type, and Play/Pause for the other page;
+  // click and hold for More.
   Bar apple = search(RemoteKeys::appleTv(), SearchPlace::Keyboard, true);
-  REQUIRE(apple.keys.size() == 2);
+  REQUIRE(apple.keys.size() == 3);
   CHECK(apple.keys[0].cap == "Swipe or ring");
   CHECK(apple.keys[1].label == "Type");
+  CHECK(apple.keys[2].icons == std::vector<std::string>{"key-playpause"});
+  CHECK(apple.keys[2].label == "123");
+  Bar keypad = search(RemoteKeys::appleTv(), SearchPlace::Keypad, true);
+  REQUIRE(keypad.keys.size() == 3);
+  CHECK(keypad.keys[2].label == "abc");
   CHECK(search(RemoteKeys::appleTv(), SearchPlace::Results, true).keys[0].cap == "Click and hold");
+  // LG on the 123 page: the same as on the letters (the remote's digits type too).
+  Bar lgPad = search(RemoteKeys::lg(), SearchPlace::Keypad, true);
+  REQUIRE(lgPad.keys.size() == 2);
+  CHECK(lgPad.keys[1].label == "Channel");
+  CHECK(lgPad.right == lg.right);
   // LG's number box: plays when complete, or waits when the digits start a name.
   Bar box = search(RemoteKeys::lg(), SearchPlace::Digits, false, {"206", ""});
   CHECK(box.keys[0].label == "Watch now");
@@ -147,4 +349,8 @@ TEST_CASE("hints: Search on LG, Fire TV and Apple TV") {
   CHECK(wait.keys[0].label == "Watch channel 49");
   CHECK(wait.keys[1].label == "The 49s");
   CHECK(wait.right == "Doesn't tune by itself \xc2\xb7 Back: Cancel");
+  // A channel in a hidden group outside your lineup: only OK tunes it.
+  Bar hidden = search(RemoteKeys::lg(), SearchPlace::Digits, false, {"2061", "", true});
+  CHECK(hidden.keys[0].label == "Watch channel 2061");
+  CHECK(hidden.right == "Doesn't tune by itself \xc2\xb7 Back: Cancel");
 }

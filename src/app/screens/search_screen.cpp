@@ -12,6 +12,14 @@
 // same stream with sound. Back from the player within 2 minutes returns
 // here with the stream in the corner. Results don't move while focus is in
 // them. Never a score, and finished games only with Show scores on.
+//
+// Build 115: the keyboard's letters and 123 pages (search_keys.hpp), and
+// your lineup and Live Events first once a lineup is set up. The header
+// says so; a last row names what else matches outside and shows it
+// (EVERYTHING, those items marked "Outside your lineup"), and then goes
+// back. That choice holds while Search is open. With nothing in your
+// lineup, what's outside shows at once under its own header. Never a
+// count.
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -40,6 +48,7 @@
 #include "core/sports/my_sports.hpp"
 #include "core/util/log.hpp"
 #include "core/util/strings.hpp"
+#include "platform/icons.hpp"
 
 namespace marigold::app {
 namespace {
@@ -73,7 +82,7 @@ struct Last {
 };
 Last gLast;
 
-enum class CellKind { Channel, Team, Game, Show, Genre, Chip, Recent, ClearRecents, Instead, Follow };
+enum class CellKind { Channel, Team, Game, Show, Genre, Chip, Recent, ClearRecents, Instead, Follow, Scope };
 
 struct Cell {
   CellKind kind = CellKind::Channel;
@@ -83,6 +92,7 @@ struct Cell {
   Listing listing;    // shows
   time::Seconds also = 0;
   bool top = false;   // the band's top result card
+  bool outside = false;  // marked "Outside your lineup"
   // What it shows, made by label() after a layout, each minute and when
   // the data changes: drawing makes no text.
   struct Label {
@@ -96,7 +106,7 @@ struct Cell {
   } label;
 };
 
-enum class RowKind { Band, Tiles, Chips, List };
+enum class RowKind { Band, Tiles, Chips, List, Note };  // Note: one quiet line (its header), no cells
 
 struct Row {
   RowKind kind = RowKind::List;
@@ -121,6 +131,8 @@ std::string whenText(const ui::Ctx& c, time::Seconds t) {
 
 using Clock = std::chrono::steady_clock;
 double msSince(Clock::time_point t) { return std::chrono::duration<double, std::milli>(Clock::now() - t).count(); }
+
+constexpr const char* kOutside = "Outside your lineup";
 
 // The same query for what it finds (the shows kept for it).
 bool sameQuery(const se::Query& a, const se::Query& b) {
@@ -246,10 +258,16 @@ class SearchScreen : public Screen {
       return true;
     }
     if (!digits_.empty() && digitsKey(e)) return true;
-    // Red clears the typed text (never recent searches).
+    // Red clears the typed text (never recent searches), back on the letters.
     if (k == Key::Red) {
       setQuery("");
       focusKeyboard();
+      grid_.letters();
+      return true;
+    }
+    // Play/Pause changes the keyboard's page on Apple TV, as on Apple's own.
+    if (k == Key::PlayPause && appleTv_ && !inResults()) {
+      grid_.flip();
       return true;
     }
     if (int d = digitOf(k); d >= 0) {
@@ -266,7 +284,7 @@ class SearchScreen : public Screen {
       return;
     }
     Grid::Spot spot;
-    if (kb::spotFor(id, kHitKeyboard, spot)) {
+    if (kb::spotFor(id, kHitKeyboard, grid_.page(), spot)) {
       grid_.set(spot);
       focusKeyboard();
     } else if (id >= kHitCells) {
@@ -370,7 +388,8 @@ class SearchScreen : public Screen {
     o.zone = app_.zone();
     o.showScores = s.settings().showScores;
     o.shows = shows || q.length() < 2;
-    if (!keep || newIndex || !find_ || !sameQuery(find_->query, q)) {
+    o.scoped = !wide_;  // no effect before a lineup is set up
+    if (!keep || newIndex || !find_ || !sameQuery(find_->query, q) || find_->options.scoped != o.scoped) {
       Clock::time_point t = Clock::now();
       find_ = se::find(*index_, q, o);
       double ms = msSince(t);
@@ -381,11 +400,12 @@ class SearchScreen : public Screen {
     se::FoundShows none;
     const se::FoundShows* found = &none;
     if (o.shows && q.length() >= 2) {
-      if (!shows_ || !showsIndex_ || !sameQuery(showsQuery_, q)) {
+      if (!shows_ || !showsIndex_ || !sameQuery(showsQuery_, q) || showsScoped_ != o.scoped) {
         Clock::time_point t = Clock::now();
         shows_ = se::findShows(*index_, q, o);
         showsIndex_ = index_;
         showsQuery_ = q;
+        showsScoped_ = o.scoped;
         ++stats_.shows;
         stats_.showsMax = std::max(stats_.showsMax, msSince(t));
       }
@@ -442,6 +462,12 @@ class SearchScreen : public Screen {
         r.h = card ? 200 : kRowH;
         r.y = bandY;
         bandY += r.h + 8;
+        continue;
+      }
+      if (r.kind == RowKind::Note) {
+        r.y = y + 6;
+        r.h = 30;
+        y += 50;
         continue;
       }
       if (!r.header.empty()) y += 44;
@@ -510,7 +536,8 @@ class SearchScreen : public Screen {
     return c;
   }
 
-  static Cell cellOf(const se::Item& it) {
+  // `mark`: an item outside your lineup says so.
+  static Cell cellOf(const se::Item& it, bool mark = true) {
     Cell c;
     switch (it.kind) {
       case se::Kind::Channel: c.kind = CellKind::Channel; break;
@@ -524,6 +551,7 @@ class SearchScreen : public Screen {
     c.entryId = it.entryId;
     if (it.listing) c.listing = *it.listing;
     c.also = it.also;
+    c.outside = mark && it.outside;
     return c;
   }
 
@@ -652,12 +680,27 @@ class SearchScreen : public Screen {
       }
       addList(live, "GAMES ON NOW");
       addList(soon, "STARTING SOON");
+      addScopeNote();
       return;
     }
     std::vector<Cell> rest(recent.begin() + static_cast<std::ptrdiff_t>(recentFrom), recent.end());
     addTiles(rest, recentFrom ? "" : "RECENTLY WATCHED");
     addRecentSearches();
+    addScopeNote();
   }
+
+  // Once a lineup is set up: where Search looks first.
+  void addScopeNote() {
+    if (!app_.store().channels()->lineupConfigured) return;
+    Row r;
+    r.kind = RowKind::Note;
+    r.header = "Search looks in your lineup and Live Events first.";
+    rows_.push_back(std::move(r));
+  }
+
+  // The scope's words show once a lineup is set up (before that,
+  // everything is yours).
+  bool scopeShown() const { return index_ && index_->lineupSet; }
 
   void addRecentSearches() {
     if (!app_.store().settings().recentSearches) return;
@@ -670,27 +713,58 @@ class SearchScreen : public Screen {
     addChips(cells, "RECENT SEARCHES");
   }
 
+  // What to try: the chips and recent searches.
+  void addTry() {
+    std::vector<Cell> chips;
+    if (!liveGames().empty()) chips.push_back(chip("live", "Games on now"));
+    for (const std::string& l : app_.store().mySports().leagues)
+      if (chips.size() < 4) chips.push_back(chip(l, sports::nameOf(l).value_or(l)));
+    chips.push_back(chip("genre:news", "News"));
+    chips.push_back(chip("genre:movies", "Movies"));
+    chips.push_back(chip("genre:kids", "Kids"));
+    chips.push_back(chip("more", "More"));
+    addChips(chips, "TRY");
+    addRecentSearches();
+  }
+
   void layoutResults() {
     const se::Results& r = found_;
     bool topReady = showsIn_ || r.query.length() < 2;
     if (r.nothing && topReady) {
       // One plain line with what to try, then the chips and recent searches.
-      std::vector<Cell> chips;
-      if (!liveGames().empty()) chips.push_back(chip("live", "Games on now"));
-      for (const std::string& l : app_.store().mySports().leagues)
-        if (chips.size() < 4) chips.push_back(chip(l, sports::nameOf(l).value_or(l)));
-      chips.push_back(chip("genre:news", "News"));
-      chips.push_back(chip("genre:movies", "Movies"));
-      chips.push_back(chip("genre:kids", "Kids"));
-      chips.push_back(chip("more", "More"));
-      addChips(chips, "TRY");
-      addRecentSearches();
+      addTry();
+      return;
+    }
+    if (r.outsideOnly) {
+      // Nothing in your lineup: what's outside at once, under one header
+      // (it says where they are), then what to try. The shows may still be
+      // yours until they're in.
+      if (!topReady) return;
+      std::vector<Cell> groups[4];  // channels, teams, games, shows
+      if (r.top) {
+        se::Kind k = r.top->kind;
+        int g = k == se::Kind::Channel ? 0 : k == se::Kind::Team ? 1 : k == se::Kind::Game ? 2 : 3;
+        groups[g].push_back(cellOf(*r.top, false));
+      }
+      for (const se::Item& it : r.channels) groups[0].push_back(cellOf(it, false));
+      for (const se::Item& it : r.teams) groups[1].push_back(cellOf(it, false));
+      for (const se::Item& it : r.games) groups[2].push_back(cellOf(it, false));
+      for (const se::Item& it : r.shows) groups[3].push_back(cellOf(it, false));
+      std::string header = "OUTSIDE YOUR LINEUP";
+      for (int g = 0; g < 4; ++g) {
+        if (groups[g].empty()) continue;
+        if (g == 0) addTiles(groups[g], header);
+        else addList(groups[g], header);
+        header.clear();
+      }
+      addTry();
       return;
     }
     if (r.top && topReady) {
       Cell c = cellOf(*r.top);
       c.top = true;
-      addBand(c, r.showing.empty() ? "TOP RESULT" : "");
+      // With a lineup, the scope's header is over the band (drawRows()).
+      addBand(c, r.showing.empty() && !scopeShown() ? "TOP RESULT" : "");
     }
     if (!r.showing.empty() && topReady)
       addChips({chip("instead", "Search for \xe2\x80\x9c" + query_ + "\xe2\x80\x9d instead", CellKind::Instead)}, "");
@@ -709,6 +783,50 @@ class SearchScreen : public Screen {
     cells.clear();
     for (const se::Item& it : r.genres) cells.push_back(cellOf(it));
     addList(cells, "BROWSE");
+    if (!scopeShown() || !hasResults()) return;
+    // The last row: what else matches outside your lineup, by name (never a
+    // count); widened, the way back.
+    if (wide_) {
+      addList({chip("narrow", "", CellKind::Scope)}, "");
+    } else if (!r.outside.empty()) {
+      std::vector<std::string> names;
+      auto ch = app_.store().channels();
+      for (const se::Item& it : r.outside) {
+        std::string name = it.name;
+        if (it.kind == se::Kind::Channel)
+          if (const GuideChannel* g = ch->find(it.id)) name = g->name;
+        if (!name.empty() && std::find(names.begin(), names.end(), name) == names.end()) names.push_back(name);
+      }
+      addList({chip("wide", str::join(names, " \xc2\xb7 "), CellKind::Scope)}, "");
+    }
+  }
+
+  // Shows what's outside your lineup (`on`), or hides it again. Widened,
+  // focus lands on the first new item outside; narrowed, on the row that
+  // widens again.
+  void widen(bool on) {
+    auto key = [](const Cell& c) { return std::to_string(static_cast<int>(c.kind)) + ":" + c.id; };
+    std::set<std::string> before;
+    for (const Row& r : rows_)
+      for (const Cell& c : r.cells) before.insert(key(c));
+    wide_ = on;
+    results_ = false;
+    stopPreview();
+    search(true);
+    enterResults(false);
+    auto land = [&] {
+      for (size_t r = 0; r < rows_.size(); ++r)
+        for (size_t k = 0; k < rows_[r].cells.size(); ++k) {
+          const Cell& c = rows_[r].cells[k];
+          if (on ? c.outside && !before.count(key(c)) : c.kind == CellKind::Scope) {
+            row_ = static_cast<int>(r);
+            col_ = static_cast<int>(k);
+            return;
+          }
+        }
+    };
+    land();
+    if (const Cell* f = focusedCell()) pace_.hold(previewId(*f));
   }
 
   // A chip's page: Games on now, Starting soon, a league or a sport, the
@@ -811,10 +929,17 @@ class SearchScreen : public Screen {
   // start with the digits, and a team those digits also start ("49").
   void layoutDigits() {
     const se::Digits d = digitsNow();
+    auto ch = app_.store().channels();
+    // A number outside your lineup still finds its channel, marked.
+    auto outside = [&](const std::string& id) {
+      const GuideChannel* g = ch->find(id);
+      return ch->lineupConfigured && g && !g->inLineup && !g->favorite;
+    };
     if (!d.channel.empty()) {
       Cell c;
       c.kind = CellKind::Channel;
       c.id = d.channel;
+      c.outside = outside(c.id);
       addBand(c, "CHANNEL " + digits_);
     }
     std::vector<Cell> also;
@@ -822,6 +947,7 @@ class SearchScreen : public Screen {
       Cell c;
       c.kind = CellKind::Channel;
       c.id = d.also[i];
+      c.outside = outside(c.id);
       also.push_back(c);
     }
     if (d.waits && !d.team.empty()) {
@@ -864,12 +990,16 @@ class SearchScreen : public Screen {
         } else if (at.area == A::Bottom) {
           if (at.col == static_cast<int>(search_keys::Wide::Delete)) {
             if (!query_.empty()) setQuery(dropLast(query_));
-          } else if (at.col == static_cast<int>(search_keys::Wide::Space)) {
-            if (!query_.empty() && query_.back() != ' ') setQuery(query_ + " ");
+          } else if (at.col == static_cast<int>(search_keys::Wide::Mode)) {
+            grid_.flip();  // the focus stays on the key: a second OK flips back
           } else {
             setQuery("");
+            grid_.letters();
           }
+        } else if (grid_.typed() == " ") {
+          if (!query_.empty() && query_.back() != ' ') setQuery(query_ + " ");
         } else {
+          // The page stays on 123 after a digit (numbers are several).
           exactOnly_ = false;
           setQuery(query_ + grid_.typed());
         }
@@ -973,6 +1103,8 @@ class SearchScreen : public Screen {
   void focusKeyboard() {
     if (!results_) return;
     results_ = false;
+    // Back to an empty field: the letters.
+    if (query_.empty()) grid_.letters();
     stopPreview();
     // What changed while focus was in the results shows now.
     search(!showsAt_);
@@ -1046,7 +1178,7 @@ class SearchScreen : public Screen {
     switch (e.key) {
       case Key::Ok: {
         Grid::Spot spot;
-        bool pointed = pointer_ && kb::spotFor(pointer_, kHitKeyboard, spot);
+        bool pointed = pointer_ && kb::spotFor(pointer_, kHitKeyboard, grid_.page(), spot);
         if (pointed) grid_.set(spot);
         if (pointed || digitsMoved_) {
           std::string typed = grid_.typed();
@@ -1171,6 +1303,7 @@ class SearchScreen : public Screen {
         enterResults(false);
         return;
       case CellKind::Follow: app_.nav().push(makeMySports(app_)); return;
+      case CellKind::Scope: widen(c.id == "wide"); return;
     }
   }
 
@@ -1596,15 +1729,25 @@ class SearchScreen : public Screen {
     if (!found_.showing.empty() && page_.empty() && digits_.empty() && !found_.query.text.empty()) {
       ui::label(c, showingText_, kX, 40, Weight::Bold, 26, theme::white(), kBandW);
     }
+    bool typed = page_.empty() && digits_.empty() && !found_.query.text.empty();
+    bool topReady = showsIn_ || found_.query.length() < 2;
     if (found_.nothing && showsIn_ && page_.empty() && digits_.empty()) {
       ui::label(c, nothingText_, kX, 96, Weight::Bold, 34, theme::white(), kBandW);
       ui::paragraph(c, "Not in your channels or the guide right now. Try a channel name or number, a show or a team.",
                     kX, 150, kBandW, Weight::Regular, 24, theme::white(0.7f), 3);
     }
+    if (found_.outsideOnly && topReady && typed) {
+      ui::label(c, nothingInText_, kX, 96, Weight::Bold, 34, theme::white(), kBandW);
+      ui::paragraph(c, "Here\xe2\x80\x99s what\xe2\x80\x99s outside it.", kX, 150, kBandW, Weight::Regular, 24,
+                    theme::white(0.7f), 3);
+    }
     bool waiting = !showsIn_ && found_.query.length() >= 2 && page_.empty() && digits_.empty();
+    // Once a lineup is set up, the header says where the results are from.
+    if (typed && scopeShown() && found_.showing.empty() && !(found_.nothing && topReady) && (waiting || hasResults()))
+      ui::label(c, wide_ ? "EVERYTHING" : "YOUR LINEUP AND LIVE EVENTS", kX, 52, Weight::Bold, 20, theme::white(0.75f));
     if (waiting) {
       // The top result waits for the shows (it never swaps after it's read).
-      ui::label(c, "TOP RESULT", kX, 52, Weight::Bold, 20, theme::white(0.75f));
+      if (!scopeShown()) ui::label(c, "TOP RESULT", kX, 52, Weight::Bold, 20, theme::white(0.75f));
       c.g.fill({kX, 88, kBandW, 200}, ui::skeleton(c), 18);
     }
     // Scroll so the focused row stays in view (rows below the band).
@@ -1635,6 +1778,10 @@ class SearchScreen : public Screen {
       if (r.kind == RowKind::Band) continue;
       float y = r.y - scroll_;
       if (y + r.h < kListTop - 50 || y - 44 > kListBottom) continue;
+      if (r.kind == RowKind::Note) {
+        ui::label(c, r.header, kX, y, Weight::Regular, 22, theme::white(0.6f), kW);
+        continue;
+      }
       if (!r.header.empty()) ui::label(c, r.header, kX, y - 38, Weight::Bold, 20, theme::white(0.75f));
       if (r.kind == RowKind::Chips) {
         float x = kX;
@@ -1684,6 +1831,7 @@ class SearchScreen : public Screen {
         return s.hasReminder(id) ? "Hold OK: Cancel reminder" : "OK: Remind me";
       }
       case CellKind::Genre: return "OK: Open";
+      case CellKind::Scope: return cell.id == "wide" ? "OK: Show" : "";
       default: return {};
     }
   }
@@ -1694,6 +1842,10 @@ class SearchScreen : public Screen {
     float x = kX + (row.kind == RowKind::Tiles ? static_cast<float>(k) * (kTileW + 20) : 0);
     Rect box{x, y, w, row.h};
     c.hit(box, kHitCells + r * 100 + k);
+    if (cell.kind == CellKind::Scope) {
+      scopeRow(c, cell, box, f);
+      return;
+    }
     c.g.fill(box, f ? theme::white() : theme::white(0.07f), 18);
     Color ink = f ? theme::black() : theme::white();
     Color sub = f ? theme::black(0.65f) : theme::white(0.7f);
@@ -1727,6 +1879,30 @@ class SearchScreen : public Screen {
     if (!l.tag.empty()) lx += ui::chip(c, l.tag, lx, ty + 4, 17, f ? theme::black(0.15f) : theme::white(0.18f), ink) + 10;
     ui::label(c, l.title, lx, ty, Weight::Bold, 26, ink, right - lx);
     ui::label(c, l.line, tx, ty + 38, Weight::Medium, 22, sub, right - tx);
+  }
+
+  // The scope's row: outlined, full width, a round icon, the words and a ›
+  // ("OK: Show" while focused).
+  void scopeRow(ui::Ctx& c, const Cell& cell, Rect box, bool f) {
+    if (f) c.g.fill(box, theme::white(), 18);
+    else c.g.stroke(box, theme::white(0.4f), 18, 2);
+    const Cell::Label& l = cell.label;
+    bool wide = cell.id == "wide";
+    Color ink = f ? theme::black() : theme::white();
+    Color sub = f ? theme::black(0.66f) : theme::white(0.75f);
+    Rect lead{box.x + 22, box.y + (box.h - 52) * 0.5f, 52, 52};
+    c.g.fill(lead, f ? theme::black(0.08f) : theme::white(0.12f), 26);
+    if (unsigned t = c.icons ? c.icons->get(wide ? "ui-all" : "ui-lineup") : 0)
+      c.g.textureAlpha(t, {lead.x + 11, lead.y + 11, 30, 30}, ink);
+    std::string right = f ? l.ok : wide ? "\xe2\x80\xba" : "";
+    int px = f ? 20 : 34;
+    float rw = right.empty() ? 0 : ui::textWidth(c, right, Weight::Bold, px) + 24;
+    float rx = box.x + box.w - 22 - rw;
+    if (!right.empty())
+      ui::labelIn(c, right, {rx, box.y, rw, box.h}, Weight::Bold, px, f ? ink : theme::white(0.85f), Align::Right);
+    float tx = lead.x + lead.w + 18, ty = box.y + box.h * 0.5f - 36;
+    ui::label(c, l.title, tx, ty, Weight::Bold, 26, ink, rx - tx);
+    ui::label(c, l.line, tx, ty + 38, Weight::Medium, 22, sub, rx - tx);
   }
 
   // The top result: a type tag, a big title and what's on, beside the corner.
@@ -1806,6 +1982,7 @@ class SearchScreen : public Screen {
     pillText_ = page_.empty() ? std::string() : page_.title + "  \xc3\x97";
     showingText_ = found_.showing.empty() ? std::string() : "Showing " + found_.showing;
     nothingText_ = "Nothing for \xe2\x80\x9c" + query_ + "\xe2\x80\x9d";
+    nothingInText_ = nothingText_ + " in your lineup";
   }
 
   void label(const ui::Ctx& c, Cell& cell) {
@@ -1827,11 +2004,17 @@ class SearchScreen : public Screen {
         l.logoName = l.cornerName = l.cornerTitle = g->name;
         l.title = l.cardTitle = g->name;
         l.line = channelLine(c, *g, l.live);
+        if (cell.outside) {
+          // "2401 · Outside your lineup".
+          l.line = (g->number ? std::to_string(*g->number) + " \xc2\xb7 " : std::string()) + kOutside;
+          l.live = false;
+        }
         l.west = g->west;
         l.cardTag = "CHANNEL" + std::string(g->number ? " \xc2\xb7 " + std::to_string(*g->number) : "") +
                     (g->inLineup ? " \xc2\xb7 MY LINEUP" : "");
         views::NowNext nn = views::nowAndNext(*s.listings(), g->id, c.now);
         if (nn.now) l.cornerLine = nn.now->title;
+        if (cell.outside) l.cornerLine = l.line;
         break;
       }
       case CellKind::Show: {
@@ -1846,6 +2029,7 @@ class SearchScreen : public Screen {
         l.live = x.isOn(c.now);
         l.tag = se::showTag(se::fold(x.title));
         l.line = showLine(c, cell, g);
+        if (cell.outside) l.line += std::string(" \xc2\xb7 ") + kOutside;
         l.cardTag = "SHOW" + (l.tag.empty() ? std::string() : " \xc2\xb7 " + l.tag);
         l.cornerLine = x.isOn(c.now) ? "Now until " + ui::clock(c, x.end) : whenText(c, x.start);
         if (!x.isOn(c.now))
@@ -1879,6 +2063,10 @@ class SearchScreen : public Screen {
         l.title = t->name + (s.followsTeam(t->key) ? " \xe2\x98\x85" : "");
         l.cardTitle = l.cornerTitle = t->name;
         l.line = teamLine(c, *t, l.live);
+        // Its games say why already when they're not in your channels.
+        if (cell.outside && l.line.find("Not in your channels") == std::string::npos &&
+            l.line.find("Streaming only") == std::string::npos)
+          l.line += std::string(" \xc2\xb7 ") + kOutside;
         l.cardTag = "TEAM \xc2\xb7 " + t->league;
         corner = s.eventTile(teamGame(*t));
         break;
@@ -1887,6 +2075,16 @@ class SearchScreen : public Screen {
         l.title = l.cardTitle = l.cornerTitle = cell.title;
         l.line = "Live now and later today";
         l.cardTag = cell.id.rfind("genre:", 0) == 0 ? "GENRE" : cell.id.rfind("sport:", 0) == 0 ? "SPORT" : "LEAGUE";
+        break;
+      case CellKind::Scope:
+        if (cell.id == "wide") {
+          l.title = "More outside your lineup";
+          l.line = cell.title;  // the first few names
+        } else {
+          l.title = "Only your lineup and Live Events";
+          l.line = "Hide what\xe2\x80\x99s outside your lineup";
+        }
+        l.cornerTitle = l.title;
         break;
       case CellKind::Follow:
         l.title = "\xe2\x98\x85 Follow your teams";
@@ -2049,10 +2247,12 @@ class SearchScreen : public Screen {
     if (!digits_.empty()) {
       const se::Digits& d = digitsNow();
       bar = hints::search(app_.remoteKeys(), hints::SearchPlace::Digits, false,
-                          {digits_, d.waits ? d.team : std::string()});
+                          {digits_, d.waits ? d.team : std::string(), d.waits});
     } else {
-      bar = hints::search(app_.remoteKeys(), inResults() ? hints::SearchPlace::Results : hints::SearchPlace::Keyboard,
-                          hasResults());
+      hints::SearchPlace place = inResults()                                ? hints::SearchPlace::Results
+                                 : grid_.page() == search_keys::Page::Digits ? hints::SearchPlace::Keypad
+                                                                            : hints::SearchPlace::Keyboard;
+      bar = hints::search(app_.remoteKeys(), place, hasResults());
     }
     ui::keyBar(c, bar, kb::kLeft);
   }
@@ -2064,6 +2264,7 @@ class SearchScreen : public Screen {
   bool appleTv_ = false;
   std::string query_;
   bool exactOnly_ = false;
+  bool wide_ = false;  // everything, not only your lineup and Live Events (while Search is open)
   std::shared_ptr<const se::Index> index_;
   // What the query found (each letter), the shows (after the pause, on
   // the index they were found on) and the two merged.
@@ -2071,6 +2272,7 @@ class SearchScreen : public Screen {
   std::optional<se::FoundShows> shows_;
   std::shared_ptr<const se::Index> showsIndex_;
   se::Query showsQuery_;
+  bool showsScoped_ = false;
   se::Results found_;
   bool showsIn_ = false;
   uint32_t showsAt_ = 0;
@@ -2101,7 +2303,7 @@ class SearchScreen : public Screen {
   time::Seconds labelMinute_ = 0;
   std::array<uint64_t, 3> labeled_{};
   uint64_t labelGeneration_ = 0;
-  std::string pillText_, showingText_, nothingText_;
+  std::string pillText_, showingText_, nothingText_, nothingInText_;
   std::string caption_, captionEntry_;
   const Cell* captionCell_ = nullptr;
   uint64_t captionGeneration_ = 0;

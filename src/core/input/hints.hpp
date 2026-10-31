@@ -45,12 +45,15 @@ Bar guide(const RemoteKeys& k, bool inLineup, Rail rail = Rail::Content);
 // Live Events' bottom bar.
 Bar eventsBoard(const RemoteKeys& k, Rail rail = Rail::Content);
 
-// Search (Build 113): on its keyboard (`results`: something is on the right
-// to choose), in the results, or LG's number box from an empty field
-// (`digits.team`: a name the digits also start, so only OK tunes).
-enum class SearchPlace { Keyboard, Results, Digits };
+// Search (Build 113, 115): on its keyboard's letters or 123 page
+// (`results`: something is on the right to choose), in the results, or
+// LG's number box from an empty field (`digits.team`: a name the digits
+// also start; `digits.waits`: only OK tunes, as for a channel in a hidden
+// group).
+enum class SearchPlace { Keyboard, Keypad, Results, Digits };
 struct SearchDigits {
   std::string number, team;
+  bool waits = false;
 };
 Bar search(const RemoteKeys& k, SearchPlace place, bool results, const SearchDigits& digits = {});
 

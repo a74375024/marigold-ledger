@@ -14,6 +14,7 @@
 namespace marigold::ui {
 class ListPanel;
 struct Ctx;
+struct PanelItem;
 }  // namespace marigold::ui
 
 namespace marigold::app {
@@ -75,9 +76,11 @@ enum class LineupStep { Area, Countries, Kinds };
 std::unique_ptr<Screen> makeLineupStep(App& app, LineupStep step);
 // Sources for a channel (red key).
 std::unique_ptr<Screen> makeSources(App& app, const std::string& entryId);
-// Subtitles (the player's Aa): Off or a language the stream carries, and
-// the style.
+// Subtitles (the player's Aa): Off or a language the stream carries, the
+// timing and the style.
 std::unique_ptr<Screen> makeSubtitles(App& app);
+// The Caption timing row (Aa and Settings): `ms` now, `pick` gets the new one.
+ui::PanelItem captionTimingRow(int ms, std::function<void(int)> pick);
 // Live Events: the board, the left rail's Live Events section over the
 // guide. `go` gets what its strip or menu picks for the guide: a guide
 // section once the board has closed (`column`: land on its neighborhoods),

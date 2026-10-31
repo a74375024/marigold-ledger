@@ -48,6 +48,9 @@ struct ListingChannel {
   bool inLineup = false;
   bool spanish = false;
   int rank = station_rank::elsewhere;
+  // A sports channel (not a station, not a free streaming channel): its
+  // tennis coverage of named tournaments counts.
+  bool sportsChannel = false;
 };
 // Which channels to read, with their rank (station_rank) and language.
 std::vector<ListingChannel> listingChannels(const std::set<std::string>& lineup,
@@ -57,7 +60,9 @@ std::vector<ListingChannel> listingChannels(const std::set<std::string>& lineup,
 
 // One programme as a game listing: a title (with its episode title) that
 // names two sides, or a plain sports title ("NBA Basketball") whose
-// description names the venue (or maybe the teams). nullopt otherwise.
+// description names the venue (or maybe the teams), or a sports channel's
+// coverage of named tennis tournaments (title or subtitle naming ATP, WTA
+// or tennis and an event or city). nullopt otherwise.
 std::optional<matcher::GuideListing> listingFor(const ListingChannel& channel, const std::string& title,
                                                 const std::optional<std::string>& subtitle,
                                                 const std::optional<std::string>& overview, bool sports,

@@ -23,6 +23,7 @@
 
 #include <cstddef>
 #include <string>
+#include <vector>
 
 namespace marigold::platform {
 
@@ -70,6 +71,16 @@ class TsProxy {
     int reopened = 0;
   };
   Source source() const;
+  // The connections to a continuous source passed through that closed, from
+  // the `from`-th on (0 = the first; only the last 16 are kept), into `out`:
+  // how long each lasted, its bytes, and whether the proxy opened it again.
+  // Returns how many closed in all (the next call's `from`).
+  struct Connection {
+    long ms = 0;
+    long long bytes = 0;
+    bool reopened = false;
+  };
+  int connections(int from, std::vector<Connection>& out) const;
 
   // The variant picked from a master playlist for the next sessions: the
   // nearest to `height` (2160, 1080, 720, 480), or the highest with 0.

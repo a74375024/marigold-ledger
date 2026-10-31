@@ -19,6 +19,7 @@ namespace marigold::sports::matcher {
 namespace {
 
 constexpr const char* kProviderDetail = "Provider event channel";
+constexpr const char* kCoverageDetail = "Tournament coverage";
 
 bool has(std::string_view hay, std::string_view needle) { return hay.find(needle) != std::string_view::npos; }
 
@@ -218,6 +219,7 @@ json::Value toJson(const GuideListing& l) {
   if (l.venue) v.set("venue", *l.venue);
   if (l.city) v.set("city", *l.city);
   if (l.rank) v.set("rank", *l.rank);
+  if (l.tennisCoverage) v.set("tennisCoverage", true);
   return v;
 }
 
@@ -236,6 +238,7 @@ std::optional<GuideListing> listingFromJson(const json::Value& v) {
   if (v["venue"].isString()) l.venue = v["venue"].asString();
   if (v["city"].isString()) l.city = v["city"].asString();
   if (v["rank"].isNumber()) l.rank = static_cast<int>(v["rank"].asInt());
+  l.tennisCoverage = v["tennisCoverage"].asBool();
   return l;
 }
 
@@ -829,6 +832,9 @@ std::optional<BuildResult> build(const BuildInput& in) {
     byVenue[name].push_back(static_cast<int>(i));
     if (parts.size() > 1) byCity[trimmed(normalized(parts.back()))].push_back(static_cast<int>(i));
   }
+  // A tennis channel's coverage of named tournaments, once the listings
+  // naming players have had their say.
+  std::vector<const GuideListing*> coverage;
   if (anyRelevant) {
     auto started = std::chrono::steady_clock::now();
     for (const GuideListing& listing : in.listings) {
@@ -849,6 +855,10 @@ std::optional<BuildResult> build(const BuildInput& in) {
         return out;
       };
       std::vector<int> candidates = filtered(index.matches(listing.title, isRelevant), airing);
+      if (candidates.empty() && listing.tennisCoverage) {
+        if (!tennisMatches.empty()) coverage.push_back(&listing);
+        continue;
+      }
       std::string how = "title";
       if (candidates.empty() && (listing.venue || listing.detail)) {
         std::string league = catalog::leagueFor("", "", listing.title);
@@ -898,6 +908,38 @@ std::optional<BuildResult> build(const BuildInput& in) {
           source.rank = rank;
           value.sources.push_back(std::move(source));
         }
+        byGame[g] = std::move(value);
+      }
+    }
+    // Each tournament it names ("Vienna-ATP, Basel-ATP & Tokyo-WTA
+    // Quarterfinals"): that tournament's matches on during the listing, or
+    // starting in it. A likely way to watch them, tried after their own
+    // feeds; a listing naming none ("Center Court Live") gives nothing.
+    for (const GuideListing* listing : coverage) {
+      std::string parts = rx::replace(listing->title, "\\s*(?:,|&|\\band\\b)\\s*", "|", true);
+      std::set<int> targets;
+      for (const std::string& part : text::components(parts, "|")) {
+        if (trimmed(part).empty()) continue;
+        for (int g : tennisTargets(part, "", listing->start, now, tennisMatches, games, true)) targets.insert(g);
+      }
+      bool onNow = listing->start <= now && now < listing->end;
+      for (int gi : targets) {
+        if (!isRelevant(gi)) continue;
+        size_t g = static_cast<size_t>(gi);
+        const SportsGame& game = games[g];
+        bool startsDuring = game.start >= listing->start && game.start < listing->end;
+        bool liveDuring = onNow && game.start < listing->start;
+        if (!startsDuring && !liveDuring) continue;
+        SportsEvent value = entry(g);
+        if (containsSource(value.sources, listing->entryID)) continue;
+        stats.matchedListings += 1;
+        EventSource source;
+        source.channelID = listing->entryID;
+        source.kind = EventSource::Kind::team;
+        source.spanish = listing->spanish;
+        source.detail = kCoverageDetail;
+        source.rank = listing->rank.value_or(listing->inLineup ? station_rank::lineup : station_rank::elsewhere);
+        value.sources.push_back(std::move(source));
         byGame[g] = std::move(value);
       }
     }
@@ -1386,10 +1428,82 @@ std::optional<std::string> tennisLevel(std::string_view tour, std::string_view t
   return std::nullopt;
 }
 
+namespace {
+
+// The place a tournament is played when its name doesn't say ("Erste Bank
+// Open" is Vienna's), by words of the name.
+const std::vector<std::pair<const char*, const char*>>& tennisHomes() {
+  static const std::vector<std::pair<const char*, const char*>> kHomes = {
+      {"erste bank", "vienna"},       {"swiss indoors", "basel"},      {"pan pacific", "tokyo"},
+      {"japan open", "tokyo"},        {"kinoshita", "tokyo"},          {"china open", "beijing"},
+      {"korea open", "seoul"},        {"bnp paribas", "indian wells"}, {"internazionali", "rome"},
+      {"abierto mexicano", "acapulco"}, {"terra wortmann", "halle"},   {"credit one", "charleston"},
+      {"porsche", "stuttgart"},       {"citi dc", "washington"},       {"european open", "antwerp"},
+      {"moselle open", "metz"},       {"hellenic", "athens"},          {"roland garros", "paris"},
+      {"french open", "paris"},       {"wimbledon", "london"},         {"us open", "new york"},
+      {"australian open", "melbourne"}, {"atp finals", "turin"},       {"generali open", "kitzbuhel"},
+      {"nordea open", "bastad"},      {"plava laguna", "umag"},        {"western and southern", "cincinnati"},
+  };
+  return kHomes;
+}
+
+// Cities as other countries' feeds write them ("ATP Tennis: Wien").
+const std::vector<std::pair<const char*, const char*>>& tennisCityNames() {
+  static const std::vector<std::pair<const char*, const char*>> kNames = {
+      {"wien", "vienna"},    {"viena", "vienna"},     {"vienne", "vienna"},   {"wenen", "vienna"},
+      {"basilea", "basel"},  {"basileia", "basel"},   {"bale", "basel"},      {"roma", "rome"},
+      {"rom", "rome"},       {"munchen", "munich"},   {"muenchen", "munich"}, {"tokio", "tokyo"},
+      {"peking", "beijing"}, {"pekin", "beijing"},    {"torino", "turin"},    {"genf", "geneva"},
+      {"geneve", "geneva"},  {"antwerpen", "antwerp"}, {"anvers", "antwerp"}, {"parigi", "paris"},
+      {"londres", "london"}, {"londra", "london"},    {"atenas", "athens"},   {"athen", "athens"},
+  };
+  return kNames;
+}
+
+// A round or stage on its own ("Semifinals", "R16", "QF"): what a feed puts
+// where the second player would go ("Vienna vs Semifinals").
+bool isTennisRound(const std::string& normalizedText) {
+  static const char* const kRound =
+      "^ (?:semi ?finals?|semis|quarter ?finals?|finals?|round of \\d+|r\\d+|qf|sf|f|q\\d?|qualifying|qualifiers|"
+      "(?:first|second|third|fourth|1st|2nd|3rd|4th) round|round \\d|day \\d+|early rounds) $";
+  return rx::test(kRound, normalizedText);
+}
+
+}  // namespace
+
+bool namesTennisEvent(std::string_view titleIn) {
+  std::string title = normalized(titleIn);
+  if (!(has(title, " atp ") || has(title, " wta ") || has(title, " tennis "))) return false;
+  // Words of the show's name, the tours and the rounds don't name an event.
+  static const std::set<std::string> kShow = {
+      "tennis", "atp",      "wta",     "channel", "live",    "center",   "centre",   "court",       "today",
+      "coverage", "tour",   "show",    "studio",  "news",    "highlights", "classic", "replay",     "encore",
+      "semifinals", "semifinal", "semis", "quarterfinals", "quarterfinal", "finals", "final", "round", "rounds",
+      "early",  "late",     "match",   "matches", "day",     "night",    "session",  "action",      "world",
+      "from",   "the",      "and",     "with",    "presents", "plus",    "best",     "week",        "doubles",
+      "singles", "mens",    "womens",  "men",     "women",   "qualifying"};
+  for (const std::string& w : splitWords(title)) {
+    if (text::count(w) >= 4 && !text::isAllDigits(w) && !kShow.count(w)) return true;
+  }
+  return false;
+}
+
 std::vector<int> tennisTargets(std::string_view titleIn, std::string_view family, std::optional<Seconds> start,
-                               Seconds now, const std::vector<int>& matches, const std::vector<SportsGame>& games) {
-  if (matches.empty() || looksLikeGame(titleIn)) return {};
-  std::string title = normalized(std::string(titleIn) + " " + std::string(family));
+                               Seconds now, const std::vector<int>& matches, const std::vector<SportsGame>& games,
+                               bool namedOnly) {
+  if (matches.empty()) return {};
+  std::string given(titleIn);
+  if (looksLikeGame(given)) {
+    // "ATP 500 Tennis: Vienna vs Semifinals": the tournament and its round,
+    // not two players.
+    auto sep = rx::first("\\s+(?:vs\\.?|v\\.?)\\s+", given, true);
+    if (!sep || has(given, "@") || !isTennisRound(normalized(given.substr(sep->end)))) return {};
+    given = given.substr(0, sep->begin);
+  }
+  std::string title = normalized(given + " " + std::string(family));
+  for (const auto& [local, city] : tennisCityNames()) {
+    if (has(title, std::string(" ") + local + " ")) title += std::string(city) + " ";
+  }
   std::optional<std::string> tour;
   if (has(title, " wta ")) tour = "WTA";
   if (has(title, " atp ")) tour = tour ? std::optional<std::string>() : std::optional<std::string>("ATP");
@@ -1420,10 +1534,22 @@ std::vector<int> tennisTargets(std::string_view titleIn, std::string_view family
       for (const std::string& w : splitWords(normalized(*g.tournament))) {
         if (text::count(w) >= 4 && !kStop.count(w) && has(title, " " + w + " ")) c.words += 1;
       }
+      std::string name = normalized(*g.tournament);
+      std::set<std::string> places;
       if (g.venue) {
-        // The city ("Tokyo, Japan" -> tokyo).
+        // The city ("Tokyo, Japan" -> tokyo); a court ("Center Court") is
+        // no place to name.
         std::string city = normalized(text::components(*g.venue, ",").front());
-        if (city.size() > 4 && has(title, city)) c.words += 1;
+        if (!has(city, " court ") && !has(city, " arena ") && !has(city, " stadium ")) places.insert(city);
+      }
+      for (const auto& [words, home] : tennisHomes()) {
+        if (has(name, std::string(" ") + words + " ")) places.insert(std::string(" ") + home + " ");
+      }
+      for (const std::string& place : places) {
+        if (place.size() > 4 && !has(name, place) && has(title, place)) {
+          c.words += 1;
+          break;
+        }
       }
       c.levelMatches = level && tennisLevel(g.leagueShort, *g.tournament) == level;
     }
@@ -1437,6 +1563,7 @@ std::vector<int> tennisTargets(std::string_view titleIn, std::string_view family
       pick = &c;
     }
   }
+  if (!pick && namedOnly) return {};
   if (!pick && level) {
     // "WTA 500": the only one of that level on.
     for (const auto& [key, c] : byTournament) {

@@ -715,6 +715,104 @@ TEST_CASE("tennis: a tournament's feed is each of that day's matches") {
   CHECK(tennisTargets("Player vs Racket", "", std::nullopt, noon, all, games).empty());
 }
 
+namespace {
+
+// Saturday's semifinals in Vienna and Basel, and Tokyo's: courts for
+// venues, as the tours' feed has them.
+struct TennisDay {
+  Seconds start = utc(2026, 10, 31, 13, 0);
+  std::vector<SportsGame> games;
+  TennisDay() {
+    auto match = [&](const std::string& league, const std::string& id, const std::string& tournament,
+                     const std::string& court, Seconds at) {
+      SportsGame g = game(league, "Tennis", id, team(id + "a", "Ann Player"), team(id + "b", "Bea Racket"), at);
+      g.tennis = true;
+      g.tournament = tournament;
+      g.venue = court;
+      return g;
+    };
+    games = {
+        match("ATP", "v1", "Erste Bank Open", "Centre Court", start - 3600),  // under way
+        match("ATP", "v2", "Erste Bank Open", "Centre Court", start + 2 * 3600),
+        match("ATP", "b1", "Swiss Indoors Basel", "Center Court", start + 1800),
+        match("WTA", "t1", "Toray Pan Pacific Open", "Center Court", start),
+        match("ATP", "v3", "Erste Bank Open", "Centre Court", start + 24 * 3600),  // the final, tomorrow
+        match("ATP", "v4", "Erste Bank Open", "Centre Court", start - 3 * 3600),   // over
+    };
+    games[5].completed = true;
+  }
+};
+
+}  // namespace
+
+TEST_CASE("tennis: a round for the second side, cities in their local names") {
+  TennisDay day;
+  std::vector<int> all = {0, 1, 2, 3, 4, 5};
+  Seconds at = day.start - 3600;
+  CHECK(tennisTargets("ATP 500 Tennis: Vienna vs Semifinals", "", at, at, all, day.games) ==
+        std::vector<int>{5, 0, 1});
+  CHECK(tennisTargets("ATP 500 Tennis: Basel vs Semifinals", "", at, at, all, day.games) == std::vector<int>{2});
+  CHECK(tennisTargets("ATP Tennis: Wien", "", at, at, all, day.games) == std::vector<int>{5, 0, 1});
+  CHECK(tennisTargets("ATP Tennis: Basilea", "", at, at, all, day.games) == std::vector<int>{2});
+  CHECK(tennisTargets("ATP 500 VIENNA", "", at, at, all, day.games) == std::vector<int>{5, 0, 1});
+  CHECK(tennisTargets("Tokyo-WTA Semifinals", "", at, at, all, day.games, true) == std::vector<int>{3});
+  // Players, a court or no tournament named: none.
+  CHECK(tennisTargets("ATP 500 Tennis: Vienna vs Racket", "", at, at, all, day.games).empty());
+  CHECK(tennisTargets("Live: Center Court Live", "", at, at, all, day.games).empty());
+  CHECK(tennisTargets("ATP Tennis", "", at, at, all, day.games, true).empty());
+  CHECK(namesTennisEvent("Center Court Live Vienna-ATP & Basel-ATP Semifinals"));
+  CHECK_FALSE(namesTennisEvent("Tennis Channel Live"));
+  CHECK_FALSE(namesTennisEvent("Live: Center Court Live"));
+}
+
+TEST_CASE("tennis: a channel's coverage of named tournaments, after the matches' own feeds") {
+  TennisDay day;
+  BuildInput in;
+  in.games = day.games;
+  in.now = day.start + 1800;
+  in.events = {provider("p1", "ATP 500 Tennis: Vienna vs Semifinals", "Tennis", day.start - 3600, {"xt|v"}),
+               provider("p2", "ATP Tennis: Wien", "Tennis", day.start - 3600, {"xt|w"})};
+  auto coverage = [&](const std::string& id, const std::string& title, Seconds start, Seconds end) {
+    GuideListing l;
+    l.entryID = id;
+    l.inLineup = true;
+    l.title = title;
+    l.start = start;
+    l.end = end;
+    l.rank = station_rank::lineup;
+    l.tennisCoverage = true;
+    return l;
+  };
+  in.listings = {
+      coverage("e|tennis", "Center Court Live Vienna-ATP & Basel-ATP Semifinals", day.start - 1800,
+               day.start + 4 * 3600),
+      // Tonight, after the semifinals: nothing on then.
+      coverage("e|later", "Center Court Live Vienna-ATP Semifinals", day.start + 7 * 3600, day.start + 10 * 3600),
+      // No tournament named.
+      coverage("e|bare", "Live: Center Court Live", day.start - 1800, day.start + 4 * 3600),
+  };
+  auto out = build(in);
+  REQUIRE(out);
+  // Vienna: its feeds first, then the channel.
+  for (const char* id : {"ATP|v1", "ATP|v2"}) {
+    const SportsEvent* vienna = findGame(out->events, id);
+    REQUIRE(vienna);
+    CHECK(ids(vienna->sources) == std::vector<std::string>{"xt|v", "xt|w", "e|tennis"});
+    CHECK(vienna->sources[2].kind == EventSource::Kind::team);
+    CHECK(vienna->sources[2].detail == "Tournament coverage");
+  }
+  const SportsEvent* basel = findGame(out->events, "ATP|b1");
+  REQUIRE(basel);
+  CHECK(ids(basel->sources) == std::vector<std::string>{"e|tennis"});
+  // Not named, not on during the listing, or over: nothing.
+  CHECK(findGame(out->events, "WTA|t1")->sources.empty());
+  CHECK(ids(findGame(out->events, "ATP|v3")->sources).empty());
+  std::vector<std::string> over = ids(findGame(out->events, "ATP|v4")->sources);
+  CHECK(std::find(over.begin(), over.end(), "e|tennis") == over.end());
+  // Never a tile of its own.
+  for (const SportsEvent& e : out->events) CHECK(e.game);
+}
+
 TEST_CASE("shows: titles that name no teams, a network and a sport, old years") {
   CHECK(isTeamSportShow("The Harbor Collective", "Basketball"));
   CHECK(isTeamSportShow("Hawk Talk with Coach Harbor", "Football"));

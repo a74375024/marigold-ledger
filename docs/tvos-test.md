@@ -85,7 +85,44 @@ Everything in `docs/m4-test.md` › Search (Build 113) applies; these rows are w
 | Speaking copy | Look under the grid | "To speak: choose Speak, then hold the microphone button on the remote and say what you want." |
 | Siri button | The Siri button with Search open (not from Speak) | The system's Siri, as everywhere else |
 | Click and hold | Click and hold on a result | Its More panel (Follow, Where to Watch, Remind me…) |
-| Key bar | The keyboard, then the results | "Swipe or ring Move · Centre click Type"; "Click and hold More · ◀ Keyboard · Back: Keyboard" |
+| Key bar | The keyboard, then the results | "Swipe or ring Move · Centre click Type · ⏯ 123"; "Click and hold More · ◀ Keyboard · Back: Keyboard" |
 | Muted corner | Rest 2 s on a live channel in the results, then click | The corner plays without sound (VLC); full screen has sound at once, no re-tune |
 | Guide corner | The guide's preview after using Search | With sound, as before |
 | HDMI remote digits | A TV remote over HDMI with number keys | As on LG |
+
+### Search keyboard and scope (Build 115)
+
+Everything in `docs/m4-test.md` › Search keyboard and scope (Build 115) applies; these rows are what differs on the Siri Remote.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Play/Pause | ⏯ on the letters, then again | The 123 page, then the letters; on 123 or abc the focus stays on it, on another key it moves to the key in its place |
+| Key bar | The letters, then the 123 page | "Swipe or ring Move · Centre click Type · ⏯ 123", then "… ⏯ abc" |
+| Swipe on 123 | A long swipe right from 1 | It stops on 3, the keypad's edge (not at the panel's margin); one more swipe crosses to the results |
+| Swipe along the last row | A long swipe right from y | It stops on Space; one more swipe crosses |
+| Swipe down | A long swipe down from 2 on the 123 page | It stops on abc |
+| More outside | Swipe down to the last row, click | Everything, marked as on LG; click and hold on that row does nothing |
+
+## Caption timing (Build 115)
+
+Everything in `docs/m4-test.md` › Caption timing (Build 115) about the rows applies. VLC draws the captions; Caption timing becomes its subtitle delay.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Later | Caption timing 2 s later, on a channel with captions | Captions show 2 s later at once (no re-tune) |
+| Earlier | Caption timing 1.5 s earlier | Captions on time; the Settings row's text says Apple TV can only hold them back |
+| One channel | Aa › Only this channel, 1 s later; change channel and back | 1 s later only on that channel |
+| Log | The playback log after 2 minutes with captions | "caption timing: clock player; setting +2.0 s" once a minute |
+
+## Picture check (Build 115)
+
+Everything in `docs/m4-test.md` › Picture check (Build 115) applies, from VLC's signals (no relay on Apple TV): a picture once VLC has displayed one (displayedPictures > 0); the displayed count must keep increasing while the clock runs; the video tracks VLC lists. Black and static pictures are not detected here.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Picture facts | Any channel | Log: "video · 1920x1080 · h264 · aac" once after "picture"; on an Apple TV HD an HEVC feed says "hevc (no hardware decoder)" |
+| No video track | A feed with only sound | After 6 s "picture check · no video track (the player lists none)", the next version |
+| Sound, no frame | A feed whose video never displays while the sound plays | After 8 s a failed start, one retry, then the next version (before Build 115 it waited for "no picture after 10 s") |
+| Frozen | A stream whose displayed pictures stop while the clock runs (an HEVC 4K feed on an Apple TV HD) | After 15 s (8 s at the start) one reconnect, then the next version |
+| Radio | A radio channel | Plays with the sound alone (VLC's clock running), no check |
+| No picture anywhere | Every version sound only | The card with Try another source and Keep listening |

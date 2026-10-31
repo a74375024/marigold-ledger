@@ -356,6 +356,8 @@ TEST_CASE("loading: the player's settings come back next launch; one old subtitl
     s.subtitleSize = 3;  // extra large
     s.upGoesHigher = true;
     s.systemCaptions = 1;
+    marigold::engine::setCaptionTiming(s, "", -1000);
+    marigold::engine::setCaptionTiming(s, "ch:news", 2500);
     store.setSettings(s);
   }
   {
@@ -367,6 +369,9 @@ TEST_CASE("loading: the player's settings come back next launch; one old subtitl
     CHECK(s.subtitleSize == 3);
     CHECK(s.upGoesHigher);
     CHECK(s.systemCaptions == 1);
+    CHECK(s.captionTiming == -1000);
+    CHECK(marigold::engine::captionTiming(s, "ch:news") == 2500);
+    CHECK(marigold::engine::captionTiming(s, "ch:sports") == -1000);
   }
   // A settings file from before the two choices: its one switch is both.
   tv.files.write("settings.json", R"({"subtitles": true, "subtitleSize": 2})", false);
@@ -375,4 +380,5 @@ TEST_CASE("loading: the player's settings come back next launch; one old subtitl
   CHECK(old.settings().subtitlesEs);
   CHECK_FALSE(old.settings().upGoesHigher);
   CHECK(old.settings().systemCaptions == -1);
+  CHECK(old.settings().captionTiming == 0);
 }

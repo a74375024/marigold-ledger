@@ -18,6 +18,13 @@
 // Names are made ready once, in the index (words, initials); another
 // country's channels are looked up by their exact names, never matched.
 //
+// Scope (Build 115, once a lineup is set up): your lineup and Live Events
+// first. In scope: channels in My Lineup and Favorites, shows airing on
+// them, games you can watch, teams you follow or with a game you can watch
+// this week, and genres, sports and leagues. Anything named exactly (a
+// name or a channel number) is in scope too, marked outside. Scope is a
+// filter on the run, never a different index.
+//
 // Matching: "&" = "and", a leading "the" is optional, tokens match in any
 // order with the last one as a prefix, typos per token (1 edit at 5-7
 // letters, 2 at 8+, a swap is one edit), two letters only match word
@@ -124,8 +131,11 @@ struct ChannelEntry {
   std::string section;               // folded neighborhood
   bool inLineup = false, favorite = false;
   bool browsable = true;  // another country's sports channel: only when named exactly
+  bool hidden = false;    // in a hidden group of All Channels
   int stationRank = 0;    // lower first (network_map::stationRank)
   std::vector<Name> forms;  // Index::finish(): the name, then the aliases (browsable only)
+  // Yours: in My Lineup or Favorites (Search looks there first).
+  bool mine() const { return inLineup || favorite; }
 };
 
 struct TeamEntry {
@@ -224,6 +234,9 @@ class Shared {
 
 struct Index {
   static constexpr uint32_t kNone = 0xffffffffu;
+  // My Lineup is set up: Search can look in your lineup and Live Events
+  // first (Options::scoped). Before that, everything is yours.
+  bool lineupSet = false;
   // The guide's part (channels and shows) and the board's (teams, games,
   // leagues): the store makes them apart and joins them.
   Shared<std::vector<ChannelEntry>> channels;
@@ -319,6 +332,10 @@ struct Item {
   time::Seconds also = 0;
   bool live = false;
   bool playable = false;  // OK watches it (live, in your channels)
+  // Outside your lineup and Live Events (once a lineup is set up): a
+  // channel not in My Lineup or Favorites, a show airing on one, a game
+  // you can't watch, a team whose games are all outside.
+  bool outside = false;
 };
 
 struct Options {
@@ -326,6 +343,11 @@ struct Options {
   time::Zone zone = time::Zone::utc();
   bool showScores = true;
   bool shows = true;  // shows are searched (after the 450 ms pause)
+  // Your lineup and Live Events first (once a lineup is set up): what's
+  // outside them is left out of the groups, unless named exactly (a name or
+  // a number), and named on the last row instead. Off, the results are
+  // everything, the same and in the same order as before scope.
+  bool scoped = false;
   size_t maxChannels = 6, maxTeams = 3, maxGames = 6, maxShows = 6, maxGenres = 2;
 };
 
@@ -337,6 +359,14 @@ struct Results {
   std::string showing;
   // Nothing anywhere (never for one character).
   bool nothing = false;
+  // Options::scoped with a lineup set up: the groups are your lineup and
+  // Live Events, and exact names outside them (marked `outside`). With
+  // nothing there, `outsideOnly`: the groups are what matches outside, as
+  // an unscoped run would list it.
+  bool scoped = false, outsideOnly = false;
+  // The first few that match outside (left out of the groups), in group
+  // order, for the row that names them.
+  std::vector<Item> outside;
   bool empty() const { return !top && channels.empty() && teams.empty() && games.empty() && shows.empty() && genres.empty(); }
 };
 
@@ -357,17 +387,25 @@ struct Found {
     const TeamEntry* team;
     Hit hit;
   };
-  std::vector<TeamHit> teams;
+  std::vector<TeamHit> teams;  // every match, in scope or not
   struct GameHit {
     const GameEntry* game;
     Hit hit;
     int tier;
   };
-  std::vector<GameHit> games;
+  std::vector<GameHit> games;  // every match, in scope or not (merge() picks)
+  // Options::scoped with a lineup set up: `channels` and `bestChannel` are
+  // in scope (or named exactly); the first few outside, best first.
+  bool scoped = false;
+  std::vector<Item> outsideChannels;
+  std::optional<Item> bestOutsideChannel;
 };
 struct FoundShows {
   std::vector<Item> shows;  // the first few, best first
   std::optional<Item> best;
+  // Found::scoped: the same for the shows outside.
+  std::vector<Item> outside;
+  std::optional<Item> bestOutside;
 };
 Found find(const Index& index, const Query& q, const Options& o);
 FoundShows findShows(const Index& index, const Query& q, const Options& o);
@@ -377,7 +415,8 @@ Results merge(const Index& index, const Found& found, const FoundShows& shows);
 
 // Number keys from an empty field (LG): the channel with that number, the
 // ones starting with it, and whether to wait for OK because the digits
-// also start a team or channel name ("49": the 49ers).
+// also start a team or channel name ("49": the 49ers), or name a channel
+// in a hidden group outside your lineup.
 struct Digits {
   std::string channel;            // entry id, or ""
   std::vector<std::string> also;  // numbers that start with the digits

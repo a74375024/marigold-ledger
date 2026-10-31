@@ -257,7 +257,8 @@ std::unique_ptr<Screen> groupsPage(App& app) {
     p.subtitle = "SETTINGS \xc2\xb7 GUIDE";
     p.title = "Groups in All Channels";
     p.items.push_back(ui::PanelItem::note(
-        "Unchecked groups are left out of All Channels. They can still be found with Search or the guide filter."));
+        "Unchecked groups are left out of All Channels. Search (outside your lineup) and the guide filter still "
+        "find them."));
     for (const GroupSummary& g : app.store().groups()) {
       ui::PanelItem it{ui::PanelItem::Kind::Check, g.name};
       it.on = !g.hidden;
@@ -469,6 +470,15 @@ void watchingRows(App& app, ui::ListPanel& p) {
   position.preview = "captions";
   dim(position, !apple, "Apple TV places captions itself");
   p.items.push_back(position);
+  ui::PanelItem timing = captionTimingRow(set.captionTiming, [&app](int ms) {
+    changeCaptions(app, [ms](Settings& s) { setCaptionTiming(s, "", ms); });
+  });
+  timing.detail = set.captionTimingByChannel.empty() ? "For every channel" : "Channels given their own keep it";
+  timing.about = std::string("Later holds captions back; earlier shows them sooner. Live captions are typed as "
+                             "people speak, so they often come a few seconds after the words.\nAa in the player "
+                             "can give a channel its own timing.") +
+                 (apple ? "\nOn Apple TV captions can only be held back: earlier shows them on time." : "");
+  p.items.push_back(timing);
   if (set.systemCaptions >= 0)
     p.items.push_back(ui::PanelItem::note("The TV's own captions switch also turns subtitles on and off."));
   p.items.push_back(ui::PanelItem::header("CHANGING CHANNELS"));
@@ -510,7 +520,8 @@ void guideRows(App& app, ui::ListPanel& p) {
     for (const GroupSummary& g : s.groups()) anyHidden = anyHidden || g.hidden;
   ui::PanelItem groups = chevron("Groups in All Channels", "The provider's groups the tab shows",
                                  anyHidden ? "Some hidden" : "All shown", [&app] { app.nav().push(groupsPage(app)); });
-  groups.about = "Unchecked groups are left out of All Channels. Search and the guide filter still find them.";
+  groups.about = "Unchecked groups are left out of All Channels. Search (outside your lineup) and the guide filter "
+                 "still find them.";
   dim(groups, set.allChannelsTab, "Turn on All Channels tab");
   p.items.push_back(groups);
   ui::PanelItem listings = chevron("Guide listings", "Your provider's guide and free listings",

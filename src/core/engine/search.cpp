@@ -493,6 +493,7 @@ void Index::finishShows() {
 }
 
 void Index::keepChannels(const Index& from) {
+  lineupSet = from.lineupSet;
   channels = from.channels;
   titles = from.titles;
   channelById = from.channelById;
@@ -777,6 +778,7 @@ Found find(const Index& index, const Query& q, const Options& o) {
   Found f;
   f.query = q;
   f.options = o;
+  f.scoped = o.scoped && index.lineupSet;
   size_t len = q.length();
   if (len == 0) return f;
 
@@ -787,7 +789,7 @@ Found find(const Index& index, const Query& q, const Options& o) {
     int tier, score;
     int64_t order;
   };
-  std::vector<ChannelHit> channels;
+  std::vector<ChannelHit> channels, outside;  // in scope (or named exactly), and the rest
   std::vector<uint32_t> strict = strictChannels(index, q);
   size_t nextStrict = 0;
   const std::vector<ChannelEntry>& list = *index.channels;
@@ -801,7 +803,9 @@ Found find(const Index& index, const Query& q, const Options& o) {
     int tier = 9;
     int score = channelScore(q, c, hit, tier);
     if (!score) continue;
-    channels.push_back({static_cast<uint32_t>(i), hit, tier, score, -static_cast<int64_t>(score) * 1000 + c.stationRank});
+    bool in = !f.scoped || c.mine() || tier == 1;
+    (in ? channels : outside)
+        .push_back({static_cast<uint32_t>(i), hit, tier, score, -static_cast<int64_t>(score) * 1000 + c.stationRank});
   }
   // In order (a stable sort: guide order among equals), the first few; the
   // best by the top result's rule among all of them.
@@ -815,18 +819,23 @@ Found find(const Index& index, const Query& q, const Options& o) {
     it.tier = h.tier;
     it.score = h.score;
     it.playable = true;
+    it.outside = index.lineupSet && !list[h.at].mine();
     return it;
   };
-  if (!channels.empty()) {
-    const ChannelHit* top = &channels.front();
-    for (const ChannelHit& h : channels)
-      if (h.tier < top->tier || (h.tier == top->tier && (h.score > top->score || (h.score == top->score && listed(h, *top)))))
+  auto pick = [&](std::vector<ChannelHit>& hits, std::vector<Item>& out, std::optional<Item>& best) {
+    if (hits.empty()) return;
+    const ChannelHit* top = &hits.front();
+    for (const ChannelHit& h : hits)
+      if (h.tier < top->tier ||
+          (h.tier == top->tier && (h.score > top->score || (h.score == top->score && listed(h, *top)))))
         top = &h;
-    f.bestChannel = channelItem(*top);
-    size_t head = std::min(channels.size(), o.maxChannels + 1);
-    std::partial_sort(channels.begin(), channels.begin() + static_cast<std::ptrdiff_t>(head), channels.end(), listed);
-    for (size_t i = 0; i < head; ++i) f.channels.push_back(channelItem(channels[i]));
-  }
+    best = channelItem(*top);
+    size_t head = std::min(hits.size(), o.maxChannels + 1);
+    std::partial_sort(hits.begin(), hits.begin() + static_cast<std::ptrdiff_t>(head), hits.end(), listed);
+    for (size_t i = 0; i < head; ++i) out.push_back(channelItem(hits[i]));
+  };
+  pick(channels, f.channels, f.bestChannel);
+  pick(outside, f.outsideChannels, f.bestOutsideChannel);
 
   // ---- genres, sports and leagues ("News on now", "Basketball", "PBL")
   std::vector<Item>& genres = f.genres;
@@ -951,6 +960,7 @@ Found find(const Index& index, const Query& q, const Options& o) {
 FoundShows findShows(const Index& index, const Query& q, const Options& o) {
   FoundShows out;
   if (q.length() < 2) return out;
+  bool scoped = o.scoped && index.lineupSet;
   // ---- shows: one row per title per channel
   struct ShowHit {
     uint32_t show, airing;
@@ -959,7 +969,7 @@ FoundShows findShows(const Index& index, const Query& q, const Options& o) {
     int tier, score;
     int64_t order;
   };
-  std::vector<ShowHit> hits;
+  std::vector<ShowHit> hits, outside;  // in scope (or named exactly), and the rest
   const std::vector<Index::Show>& titles = *index.showTitles;
   const std::vector<ChannelEntry>& list = *index.channels;
   // The channels a title already has a row on (the title's number + 1).
@@ -979,11 +989,12 @@ FoundShows findShows(const Index& index, const Query& q, const Options& o) {
       seen[a.channel] = mark;
       int score = strength(h) * 100 + (on ? 30 : 0) + (c.inLineup ? 12 : 0) + (c.favorite ? 6 : 0);
       int64_t start = on ? 0 : a.listing->start - o.now;
-      hits.push_back({static_cast<uint32_t>(s), static_cast<uint32_t>(i), h, on, h == Hit::Exact && on ? 4 : tierOf(h),
-                      score, -static_cast<int64_t>(score) * 10'000'000LL + std::min<int64_t>(start, 9'999'999)});
+      ShowHit hit{static_cast<uint32_t>(s), static_cast<uint32_t>(i), h, on, h == Hit::Exact && on ? 4 : tierOf(h),
+                  score, -static_cast<int64_t>(score) * 10'000'000LL + std::min<int64_t>(start, 9'999'999)};
+      (!scoped || c.mine() || h == Hit::Exact ? hits : outside).push_back(hit);
     }
   }
-  if (hits.empty()) return out;
+  if (hits.empty() && outside.empty()) return out;
   auto airing = [&](const ShowHit& h) -> const Index::Airing& { return titles[h.show].airings[h.airing]; };
   // By order, then by id ("entry|start", as the rows' ids compare).
   std::string ia, ib;
@@ -1012,28 +1023,57 @@ FoundShows findShows(const Index& index, const Query& q, const Options& o) {
         break;
       }
     it.score = h.score;
+    it.outside = index.lineupSet && !list[a.channel].mine();
     return it;
   };
-  const ShowHit* top = &hits.front();
-  for (const ShowHit& h : hits)
-    if (h.tier < top->tier || (h.tier == top->tier && (h.score > top->score || (h.score == top->score && listed(h, *top)))))
-      top = &h;
-  out.best = item(*top);
-  size_t head = std::min(hits.size(), o.maxShows + 1);
-  std::partial_sort(hits.begin(), hits.begin() + static_cast<std::ptrdiff_t>(head), hits.end(), listed);
-  for (size_t i = 0; i < head; ++i) out.shows.push_back(item(hits[i]));
+  auto pick = [&](std::vector<ShowHit>& v, std::vector<Item>& shows, std::optional<Item>& best) {
+    if (v.empty()) return;
+    const ShowHit* top = &v.front();
+    for (const ShowHit& h : v)
+      if (h.tier < top->tier ||
+          (h.tier == top->tier && (h.score > top->score || (h.score == top->score && listed(h, *top)))))
+        top = &h;
+    best = item(*top);
+    size_t head = std::min(v.size(), o.maxShows + 1);
+    std::partial_sort(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(head), v.end(), listed);
+    for (size_t i = 0; i < head; ++i) shows.push_back(item(v[i]));
+  };
+  pick(hits, out.shows, out.best);
+  pick(outside, out.outside, out.bestOutside);
   return out;
 }
 
-Results merge(const Index& index, const Found& found, const FoundShows& shows) {
+namespace {
+
+// A team is yours when you follow it or it has a game you can watch this
+// week (on now, or its next one).
+bool teamYours(const Index& index, const TeamEntry& t) {
+  if (t.followed) return true;
+  for (const std::string* id : {&t.liveGame, &t.nextGame}) {
+    auto it = index.gameById.find(*id);
+    if (it != index.gameById.end() && index.games[it->second].watchable) return true;
+  }
+  return false;
+}
+
+// What merge() puts together: every match, or those in scope.
+struct Parts {
+  const std::vector<Item>& channels;
+  const std::optional<Item>& bestChannel;
+  const std::vector<Item>& genres;
+  const std::vector<Found::TeamHit>& teams;
+  const std::vector<Found::GameHit>& games;
+  const std::vector<Item>& shows;
+  const std::optional<Item>& bestShow;
+};
+
+Results assemble(const Index& index, const Query& q, const Options& o, const Parts& p) {
   Results r;
-  const Query& q = found.query;
-  const Options& o = found.options;
   r.query = q;
   size_t len = q.length();
   if (len == 0) return r;
-  const std::vector<Found::TeamHit>& teams = found.teams;
-  const std::vector<Found::GameHit>& games = found.games;
+  const std::vector<Found::TeamHit>& teams = p.teams;
+  const std::vector<Found::GameHit>& games = p.games;
   auto gameOf = [&](const std::string& id) -> const GameEntry* {
     auto it = index.gameById.find(id);
     return it == index.gameById.end() ? nullptr : &index.games[it->second];
@@ -1059,6 +1099,7 @@ Results merge(const Index& index, const Found& found, const FoundShows& shows) {
     it.tier = tier;
     it.live = gameLive(g);
     it.playable = g.watchable && it.live;
+    it.outside = index.lineupSet && !g.watchable;
     int64_t order = gameOrder(g, o);
     it.score = 1000 - static_cast<int>(std::min<int64_t>(order / 100'000'000'000LL, 9) * 100) + (g.favorite ? 50 : 0) +
                (it.live ? 20 : 0);
@@ -1066,9 +1107,9 @@ Results merge(const Index& index, const Found& found, const FoundShows& shows) {
     if (!g.watchable || g.state == GameEntry::State::Ended || g.state == GameEntry::State::Unknown) it.tier = kNeverTop;
     return it;
   };
-  if (found.bestChannel) consider(*found.bestChannel);
-  for (const Item& g : found.genres) consider(g);
-  if (shows.best) consider(*shows.best);
+  if (p.bestChannel) consider(*p.bestChannel);
+  for (const Item& g : p.genres) consider(g);
+  if (p.bestShow) consider(*p.bestShow);
   for (const Found::GameHit& g : games)
     if (!teamGames.count(g.game->id)) consider(gameItem(*g.game, g.hit, g.tier));
   for (size_t i = 0; i < teams.size() && i < o.maxTeams; ++i) {
@@ -1092,6 +1133,7 @@ Results merge(const Index& index, const Found& found, const FoundShows& shows) {
       it.hit = t.hit;
       it.tier = tier;
       it.score = 10;
+      it.outside = index.lineupSet && !teamYours(index, *t.team);
       consider(it);
     }
   }
@@ -1101,7 +1143,7 @@ Results merge(const Index& index, const Found& found, const FoundShows& shows) {
 
   // ---- the groups, without the top result
   auto notTop = [&](Kind k, const std::string& id) { return !(r.top && r.top->kind == k && r.top->id == id); };
-  for (const Item& c : found.channels) {
+  for (const Item& c : p.channels) {
     if (r.channels.size() >= o.maxChannels) break;
     if (notTop(Kind::Channel, c.id)) r.channels.push_back(c);
   }
@@ -1117,6 +1159,7 @@ Results merge(const Index& index, const Found& found, const FoundShows& shows) {
     const GameEntry* live = gameOf(t.team->liveGame);
     it.live = live != nullptr;
     it.playable = live && live->watchable;
+    it.outside = index.lineupSet && !teamYours(index, *t.team);
     r.teams.push_back(it);
   }
   for (const Found::GameHit& g : games) {
@@ -1126,11 +1169,11 @@ Results merge(const Index& index, const Found& found, const FoundShows& shows) {
     it.tier = g.tier;
     r.games.push_back(it);
   }
-  for (const Item& s : shows.shows) {
+  for (const Item& s : p.shows) {
     if (r.shows.size() >= o.maxShows) break;
     if (notTop(Kind::Show, s.id)) r.shows.push_back(s);
   }
-  for (const Item& g : found.genres) {
+  for (const Item& g : p.genres) {
     if (r.genres.size() >= o.maxGenres) break;
     if (notTop(Kind::Genre, g.id)) r.genres.push_back(g);
   }
@@ -1160,6 +1203,55 @@ Results merge(const Index& index, const Found& found, const FoundShows& shows) {
   return r;
 }
 
+}  // namespace
+
+Results merge(const Index& index, const Found& found, const FoundShows& shows) {
+  const Query& q = found.query;
+  const Options& o = found.options;
+  if (!found.scoped)
+    return assemble(index, q, o,
+                    {found.channels, found.bestChannel, found.genres, found.teams, found.games, shows.shows,
+                     shows.best});
+  // In scope: what's yours, and what's named exactly (a team's games, for
+  // its name in full).
+  std::vector<Found::TeamHit> teams, outTeams;
+  for (const Found::TeamHit& t : found.teams)
+    (teamYours(index, *t.team) || t.hit == Hit::Exact ? teams : outTeams).push_back(t);
+  std::vector<Found::GameHit> games, outGames;
+  for (const Found::GameHit& g : found.games)
+    (g.game->watchable || g.hit == Hit::Exact ? games : outGames).push_back(g);
+  Results r =
+      assemble(index, q, o, {found.channels, found.bestChannel, found.genres, teams, games, shows.shows, shows.best});
+  r.scoped = true;
+  // The first few outside, in group order: names for the last row.
+  constexpr size_t kNamed = 3;
+  std::vector<Item> outside;
+  auto add = [&](Kind kind, const std::string& id, const std::string& name) {
+    if (outside.size() >= kNamed) return;
+    Item it;
+    it.kind = kind;
+    it.id = id;
+    it.name = name;
+    it.outside = true;
+    outside.push_back(std::move(it));
+  };
+  for (const Item& c : found.outsideChannels) add(Kind::Channel, c.id, c.name);
+  for (const Found::TeamHit& t : outTeams) add(Kind::Team, t.team->key, t.team->name);
+  for (const Found::GameHit& g : outGames) add(Kind::Game, g.game->id, g.game->title);
+  for (const Item& s : shows.outside) add(Kind::Show, s.id, s.name);
+  if (r.empty() && !outside.empty()) {
+    // Nothing in scope: what's outside, as everything would list it.
+    static const std::vector<Item> none;
+    r = assemble(index, q, o,
+                 {found.outsideChannels, found.bestOutsideChannel, none, outTeams, outGames, shows.outside,
+                  shows.bestOutside});
+    r.scoped = r.outsideOnly = true;
+    return r;
+  }
+  r.outside = std::move(outside);
+  return r;
+}
+
 Results run(const Index& index, const Query& q, const Options& o) {
   Found found = find(index, q, o);
   FoundShows shows;
@@ -1177,7 +1269,12 @@ Digits digits(const Index& index, const std::string& typed) {
   // starting with it (in guide order, then by length and number).
   const std::map<std::string, std::vector<uint32_t>>& numbers = *index.numbers;
   auto exact = numbers.find(typed);
-  if (exact != numbers.end() && !exact->second.empty()) d.channel = list[exact->second.front()].id;
+  if (exact != numbers.end() && !exact->second.empty()) {
+    const ChannelEntry& c = list[exact->second.front()];
+    d.channel = c.id;
+    // A channel in a hidden group outside your lineup waits for OK.
+    if (index.lineupSet && c.hidden && !c.mine()) d.waits = true;
+  }
   std::vector<uint32_t> at;
   for (auto it = numbers.lower_bound(typed); it != numbers.end() && str::startsWith(it->first, typed); ++it)
     if (it->first != typed) at.insert(at.end(), it->second.begin(), it->second.end());

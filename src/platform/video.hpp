@@ -29,10 +29,21 @@ struct VideoState {
   bool audioUnsupported = false;
   unsigned bufferingMs = 0;
   double position = 0;
+  // ms since the player said its position (webOS: its currentTime event);
+  // -1 when it doesn't say when.
+  int64_t positionAgeMs = -1;
   double bufferEnd = 0;
   int width = 0, height = 0;
   std::string hdr;
   std::string error;             // already redacted
+  // The picture check, from the player: the video tracks it lists (-1 not
+  // known yet), one it can't decode, its frame counter stopped while its
+  // clock runs (Android, tvOS), and what it plays ("1920x1080 59.94p · h264
+  // High 8-bit · aac"; "" not known).
+  int videoTracks = -1;
+  bool videoUnsupported = false;
+  bool framesStalled = false;
+  std::string facts;
 };
 
 class Video {
@@ -72,6 +83,9 @@ class Video {
   // size (0..3) and look (0 box, 1 outline, 2 shadow) where it can.
   static bool drawsText();
   void setTextStyle(int size, int look);
+  // Caption timing for a player that draws the text itself (tvOS: VLC's
+  // subtitle delay), ms, + later. Elsewhere the app times the captions.
+  void setTextDelay(int ms);
   // The system's own captions switch (Android: Accessibility › Captions;
   // Apple TV: Accessibility › Subtitles and Captioning): 1 on, 0 off, -1
   // when the platform has none (webOS).

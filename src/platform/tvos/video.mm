@@ -7,6 +7,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <TVVLCKit/TVVLCKit.h>
 #import <UIKit/UIKit.h>
+#import <VideoToolbox/VideoToolbox.h>
 
 #include <algorithm>
 #include <chrono>
@@ -29,7 +30,58 @@ struct Snapshot {
   double position = 0;
   int width = 0, height = 0;
   std::string error;
+  // The picture check: the video tracks VLC lists (-1 not yet), pictures
+  // that stopped being displayed while the clock runs, and what plays.
+  int videoTracks = -1;
+  bool stalled = false;
+  std::string facts;
 };
+
+double secondsNow() {
+  return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+// A VLC codec fourcc as the playback log names it ("h264", "aac").
+std::string codecName(uint32_t fourcc) {
+  char c[5] = {static_cast<char>(fourcc & 0xFF), static_cast<char>((fourcc >> 8) & 0xFF),
+               static_cast<char>((fourcc >> 16) & 0xFF), static_cast<char>((fourcc >> 24) & 0xFF), 0};
+  std::string s(c);
+  while (!s.empty() && (s.back() == ' ' || s.back() == '\0')) s.pop_back();
+  if (s == "mpgv" || s == "mp2v") return "mpeg2";
+  if (s == "mp4a") return "aac";
+  if (s == "a52") return "ac3";
+  if (s == "mpga") return "mp2";
+  return s;
+}
+
+// What plays, from the stream's track information: "1920x1080 · h264 ·
+// aac" ("" before VLC knows the video track).
+std::string factsOf(VLCMedia* media) {
+  std::string video, audio;
+  int w = 0, h = 0;
+  for (id item in media.tracksInformation) {
+    if (![item isKindOfClass:NSDictionary.class]) continue;
+    NSDictionary* t = item;
+    NSString* type = t[VLCMediaTracksInformationType];
+    uint32_t fourcc = [t[VLCMediaTracksInformationCodec] unsignedIntValue];
+    if ([type isEqualToString:VLCMediaTracksInformationTypeVideo] && video.empty()) {
+      video = codecName(fourcc);
+      w = [t[VLCMediaTracksInformationVideoWidth] intValue];
+      h = [t[VLCMediaTracksInformationVideoHeight] intValue];
+    } else if ([type isEqualToString:VLCMediaTracksInformationTypeAudio] && audio.empty()) {
+      audio = codecName(fourcc);
+    }
+  }
+  if (video.empty()) return {};
+  // HEVC on an Apple TV without its hardware decoder plays in software, if
+  // at all: said, for the log.
+  if (video == "hevc" && !VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC)) video += " (no hardware decoder)";
+  std::string out;
+  if (w > 0 && h > 0) out = std::to_string(w) + "x" + std::to_string(h) + " \xc2\xb7 ";
+  out += video;
+  if (!audio.empty()) out += " \xc2\xb7 " + audio;
+  return out;
+}
 
 std::mutex gMu;
 Snapshot gState;
@@ -41,6 +93,7 @@ struct TextState {
   bool on = false;
   std::string wanted;
   int size = 1, look = 0;
+  int delayMs = 0;  // Caption timing: only later (VLC can't show captions from the picture before it)
 };
 TextState gText;  // guarded by gMu
 // Search's corner preview plays without sound (applied by the tick, since
@@ -66,6 +119,11 @@ bool gMuted = false;  // guarded by gMu
 @property(nonatomic, strong) VLCMediaPlayer* player;
 @property(nonatomic, strong) NSTimer* timer;
 @property(nonatomic) int lastTime;
+// The picture check: the displayed-picture count last seen, and since when
+// (and from which clock time, ms) it hasn't moved; 0 = it moves.
+@property(nonatomic) int lastShown;
+@property(nonatomic) double stillSince;
+@property(nonatomic) int stillFrom;
 @end
 
 @implementation MGPlayer
@@ -99,6 +157,8 @@ bool gMuted = false;  // guarded by gMu
   [media addOption:[NSString stringWithFormat:@":freetype-outline-thickness=%d", look == 1 ? 6 : 0]];
   [media addOption:[NSString stringWithFormat:@":freetype-shadow-opacity=%d", look == 2 ? 200 : 0]];
   self.lastTime = -1;
+  self.lastShown = -1;
+  self.stillSince = 0;
   {
     std::lock_guard<std::mutex> lock(gMu);
     gState = Snapshot{};
@@ -137,8 +197,43 @@ bool gMuted = false;  // guarded by gMu
   int shown = p.media ? p.media.statistics.displayedPictures : 0;
   bool advancing = now > self.lastTime && self.lastTime >= 0;
   self.lastTime = now;
+  // The picture check: displayed pictures must keep coming while the clock
+  // runs (2 s and 1.5 s of clock without one is a frozen picture).
+  bool stalled = false;
+  if (shown > 0 && p.state == VLCMediaPlayerStatePlaying) {
+    if (shown != self.lastShown) {
+      self.lastShown = shown;
+      self.stillSince = 0;
+    } else if (self.stillSince == 0) {
+      self.stillSince = secondsNow();
+      self.stillFrom = now;
+    } else {
+      stalled = secondsNow() - self.stillSince >= 2.0 && now - self.stillFrom >= 1500;
+    }
+  } else {
+    self.stillSince = 0;
+  }
+  // The video tracks VLC lists, once it has found the stream's tracks.
+  int videoTracks = -1;
+  if (p.state == VLCMediaPlayerStatePlaying) {
+    int video = 0, audio = 0;
+    for (NSNumber* i in p.videoTrackIndexes)
+      if (i.intValue >= 0) ++video;  // not "Disable"
+    for (NSNumber* i in p.audioTrackIndexes)
+      if (i.intValue >= 0) ++audio;
+    if (video > 0 || audio > 0) videoTracks = video;
+  }
+  bool needFacts = false;
+  {
+    std::lock_guard<std::mutex> lock(gMu);
+    needFacts = gState.active && gState.picture && gState.facts.empty();
+  }
+  std::string facts = needFacts && p.media ? factsOf(p.media) : std::string();
   std::lock_guard<std::mutex> lock(gMu);
   if (!gState.active) return;
+  gState.stalled = stalled;
+  gState.videoTracks = videoTracks;
+  if (!facts.empty()) gState.facts = facts;
   gState.position = now > 0 ? now / 1000.0 : 0.0;
   if (size.width > 0 && size.height > 0) {
     gState.width = static_cast<int>(size.width);
@@ -172,9 +267,14 @@ bool gMuted = false;  // guarded by gMu
     }
     gText.tracks = std::move(tracks);
     if (p.currentVideoSubTitleIndex != want && (want >= 0 || p.currentVideoSubTitleIndex >= 0)) p.currentVideoSubTitleIndex = want;
+    // VLC's subtitle delay is in microseconds, positive later.
+    NSInteger delay = static_cast<NSInteger>(gText.delayMs) * 1000;
+    if (p.currentVideoSubTitleDelay != delay) p.currentVideoSubTitleDelay = delay;
   }
   if (p.audio && p.audio.muted != gMuted) p.audio.muted = gMuted;
-  bool waiting = !gState.picture || (!advancing && p.state != VLCMediaPlayerStatePaused);
+  // Waiting: the clock stands (before a picture, sound alone with the clock
+  // running isn't waiting: the picture check judges it).
+  bool waiting = gState.picture ? !advancing && p.state != VLCMediaPlayerStatePaused : !advancing;
   if (waiting && !gState.waiting) gState.waitingSince = std::chrono::steady_clock::now();
   gState.waiting = waiting && !gState.failed && !gState.ended;
 }
@@ -309,6 +409,9 @@ VideoState Video::state() const {
   s.width = gState.width;
   s.height = gState.height;
   s.error = redact(gState.error);
+  s.videoTracks = gState.videoTracks;
+  s.framesStalled = gState.stalled;
+  s.facts = gState.facts;
   return s;
 }
 
@@ -337,6 +440,12 @@ void Video::setTextStyle(int size, int look) {
   std::lock_guard<std::mutex> lock(gMu);
   gText.size = size;
   gText.look = look;
+}
+
+// Applied by the player's next tick (on the main thread).
+void Video::setTextDelay(int ms) {
+  std::lock_guard<std::mutex> lock(gMu);
+  gText.delayMs = std::max(ms, 0);
 }
 
 }  // namespace marigold::platform

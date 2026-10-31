@@ -597,7 +597,7 @@ Search is a section of the left rail with its own keyboard, the same on every TV
 
 | Area | How to check | Pass |
 |---|---|---|
-| Opening | Search in the strip or the menu | The strip stays with its bar on Search; the field ("Channel, show, movie or team"), 🎤 Speak, the 6×6 a–z / 1–0 grid and Delete · Space · Clear on the left; focus on "a"; the clock over the preview corner |
+| Opening | Search in the strip or the menu | The strip stays with its bar on Search; the field ("Channel, show, movie or team"), 🎤 Speak, the letters (a–z, 6×5, Space after z) and Delete · 123 · Clear on the left (Build 115; before, a 6×6 a–z / 1–0 grid); focus on "a"; the clock over the preview corner |
 | Zero state, a fan | Follow a team that is live (or starts within the hour) | YOUR TEAMS AND LEAGUES in the band beside the corner (at most two rows: LIVE and the state, or "in 40 min", never a score); then chips from y 330 (Games on now, your leagues by name, News, Movies, Kids, More), Recently watched (two across, with what's on now) and Recent searches |
 | Zero state, shared TV | No team followed, or none live within the hour | Recently watched in the band; News, Movies and Kids lead the chips. Someone else's team shows only while live or within the hour |
 | New user | A fresh install with a provider | A "Follow your teams" card (OK opens My Sports), the chips, Games on now and Starting soon rows |
@@ -620,7 +620,7 @@ Search is a section of the left rail with its own keyboard, the same on every TV
 | Cleaner | "watch the bulls game", "news tonight", a show called "Lakers Tonight" | The Bulls; News tonight; the show itself (its title isn't cleaned) |
 | Did you mean | "nothbridge" | "Showing Northbridge Bulls"; "Search for “nothbridge” instead" first under the band; OK on it searches exactly |
 | Nothing | "lacrosse" (with no lacrosse anywhere) | "Nothing for “lacrosse”" and what to try, then the chips and recent searches. One letter never says nothing |
-| Numbers on the grid | "4", "206" on the grid | The channel band; ▶, OK plays it |
+| Numbers on the keyboard | "4", "206" on the 123 page | The channel band; ▶, OK plays it |
 | LG digits, complete | Empty field, 2 0 6 on the remote | The digit box in the corner and Sports Net 2 in the band; it plays when the number is complete |
 | LG digits, a name | Empty field, 4 9 | Channel 49 in the band and "OR DID YOU MEAN" the 49ers; nothing tunes by itself; OK watches channel 49, ▼ goes to the team, a grid letter (after moving) carries on "49…" |
 | LG digits with text | Type "sn", then 2 on the remote | "sn2" in the field |
@@ -637,3 +637,101 @@ Search is a section of the left rail with its own keyboard, the same on every TV
 | Pointer (LG) | Point at keys, chips, results and the corner; click; park the pointer while rows change | Each is a click target; a click on a playing corner goes full screen; a parked pointer doesn't start a preview |
 | Key bar | Keyboard, results, the digit box | "Clear text · 0–9 Channel · ▶ Choose a result · Back: Close"; "◀ Keyboard · Hold OK: more · Back: Keyboard"; "Plays when the number is complete · Back: Cancel" |
 | Rail | ◀ from the grid's left column; pick Live Events, then My Lineup | The menu over Search; each closes Search and opens that section |
+
+## Tennis coverage (Build 115)
+
+A tennis channel's live coverage that names its tournaments ("Center Court Live · Vienna-ATP & Basel-ATP Semifinals") is a way to watch those tournaments' matches while it's on. It never makes a tile of its own.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Matches | Live Events while Tennis Channel (in My Lineup) shows live coverage naming two tournaments | Each of their matches on or starting during it lists Tennis Channel; matches of other tournaments don't |
+| Where to Watch | OK on such a match | Tennis Channel under Your channels with "Tournament coverage"; the match's own feeds under Event feeds |
+| Order | Watch the match, then make its feeds fail | The match's own feeds play first; Tennis Channel is tried after them |
+| Tile | A match with feeds, and one with only the channel | The first names its feeds; the second names Tennis Channel |
+| Unnamed | Coverage that names no tournament ("Live: Center Court Live"), a studio show ("Tennis Channel Live") | Nothing is added to any match |
+| Other times | Coverage later in the day, after the matches | Nothing is added to matches that aren't on then |
+| Round slots | A provider slot "ATP 500 Tennis: Vienna vs Semifinals" | Joins Vienna's matches instead of a tile of its own |
+| Local names | "ATP Tennis: Wien", "ATP 500 VIENNA" | Join Vienna's matches when they are on |
+
+### Search keyboard and scope (Build 115)
+
+The keyboard keeps letters on its first page and numbers behind a 123 key. Once My Lineup is set up, Search looks in your lineup and Live Events first and says so; what's outside is one row away. Never a count, a data source or a score.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Letters | Open Search | a–z in the 6×5 grid (same columns and key size as before), Space in the four cells after z, ⌫ Delete · 123 · Clear under it with Clear at the far end; no digits; the keyboard ends a row higher than in Build 114 |
+| 123 page | OK on 123 | A phone keypad (1 2 3 / 4 5 6 / 7 8 9 / & 0 ') centred on a faint panel with even margins, Space across its row, ⌫ Delete · abc · Clear; every row full, no empty-looking cells, no line of text, no - or . keys; focus stays on abc |
+| Mode key | OK on abc; ▼ from u, v, w or x; ▲ from 123 and from abc | Back to the letters with focus on 123; ▼ from the middle columns reaches 123 over Space; ▲ reaches Space, then the key above (0 on the 123 page) |
+| Page stays | On 123, type 2 0 6 | The page stays on 123 after each digit; "206" in the field and its channel in the band |
+| Back to letters | Clear; Red; ◀ from the zero state's results with an empty field; close Search with text and reopen within 5 minutes | Each comes back on the letters page; the reopened query is in the field, on the letters page |
+| LG number keys | On either page: 2 0 6 with text in the field, then from an empty field | Into the field after the text; from an empty field the guide's digit box, as before |
+| Pointer (LG) | Point at every key on both pages, then click 123 and abc | Each key is one target (Space too); the click flips the page and the pointer's key stays focused |
+| Speak and ▶ | ▲ from the top row of either page; ▶ from its right column | 🎤 Speak; the results, as before |
+| Your lineup first | My Lineup set up; type a word that matches a channel in it and one outside it | "YOUR LINEUP AND LIVE EVENTS" over the results: channels in My Lineup and Favorites, shows on them, games you can watch, teams you follow or with a game you can watch this week, leagues and genres |
+| More outside | ▼ to the last row | An outlined row: "More outside your lineup", the first few names outside ("Harbor 24 · Harbor Life · Harbor Lights", never a count) and a ›; focused, "OK: Show" |
+| Everything | OK on it | "EVERYTHING" over the results: the same list as Build 114, in the same order; outside channels, shows and teams say "Outside your lineup" in their second line ("2401 · Outside your lineup"); games keep "Not in your channels" or "Streaming only"; focus on the first new item outside; the last row says "Only your lineup and Live Events" / "Hide what's outside your lineup" |
+| Back to your lineup | OK on that row | Your lineup and Live Events again; focus on "More outside your lineup" |
+| Choice holds | Widen, type more letters and ⌫; close Search and open it again | New letters stay widened; reopened, your lineup comes first again |
+| Exact names | A channel outside your lineup by its full name; its number on the 123 page | In the results at once, marked "Outside your lineup"; it can be the top result |
+| LG number outside | Empty field: the number of a channel outside your lineup; then one in a hidden group | The band says "2061 · Outside your lineup" and it plays when the number is complete; the hidden group's waits for OK ("Doesn't tune by itself") |
+| Nothing in your lineup | A word that only matches outside it (a show on a channel you haven't added) | "Nothing for “…” in your lineup", "Here's what's outside it.", then the matches under OUTSIDE YOUR LINEUP (no mark on each), then Try and Recent searches |
+| Nothing anywhere | "lacrosse" | As in Build 113 |
+| Zero state | Open Search with My Lineup set up | As before, with one quiet last line: "Search looks in your lineup and Live Events first." |
+| Before a lineup | A fresh install before My Lineup is set up | Everything is searched; no scope words, no last row, no quiet line |
+| All Channels tab | Settings › Guide › All Channels off, then on | The same words either way |
+| Speed | Type quickly with a large provider | Each letter as fast as in Build 114 (the timing log's runMax and runAvg about the same) |
+
+## Caption timing (Build 115)
+
+Captions read from the stream now wait for the TV player's own clock (its position, carried on between its reports), so each one shows with the picture it belongs to. Live captions are typed as people speak and often come a few seconds after the words; Caption timing moves them. The playback log (Settings › Help & info) says how they were timed, once a minute while they show, in counts and ms only.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Pop-on in time | A channel with pop-on captions (a show or an ad, not live news), subtitles on | Each caption appears with the line being spoken, within a frame or two, from the first minute on |
+| Roll-up | A live news channel | The words roll up steadily, a few seconds after they're said (the station's typing), and never ahead of the speaker |
+| Clock in the log | Watch 2 minutes, then Help & info › the playback log | "caption timing: the player's clock counts from the first picture" (or "from the stream's first timestamp": note which), then once a minute "caption timing: clock currentTime; ahead median … ms (min …, max …); error ±… ms; jumps 0; setting 0.0 s". No caption text, links or names in it |
+| Clock fallback | If the log says "clock buffer" or "clock default" | Note the TV model and webOS version: the player didn't say its position |
+| Relay reopen | A channel whose source drops and reopens ("the source closed; reopened it" in the log) | Captions keep coming in order after it; "jumps 1" in the next timing line |
+| Stall | A channel that stops to buffer mid-show | Captions freeze with the picture and carry on with it; none shows before its picture |
+| Picture order | An HEVC (4K or 1080p HEVC) channel with captions | No scrambled or doubled letters |
+| Settings row | Settings › Watching › Caption timing | ‹ On time ›; ◀ ▶ step by half a second from "3 s earlier" to "3 s later"; the arrow at an end dims; "For every channel" under it |
+| Player row | Aa in the player › TIMING › Caption timing | The same row; "For every channel", or "For this channel" once Only this channel is on |
+| Later | Caption timing 1.5 s later | Captions show 1.5 s later than before, every channel |
+| Earlier | Caption timing 1 s earlier | Captions show 1 s sooner; at 3 s earlier on a channel with a short buffer they go no earlier than the stream allows (no message) |
+| One channel | Aa › Only this channel on, then 2 s later; change channel | That channel keeps 2 s later (next time too); other channels keep every channel's value. Off again: it follows every channel's |
+| Kept | Restart the app | Both values kept |
+| Pointer | Click ‹ and › on the row | One step each; a click on the value does nothing |
+
+## Picture check (Build 115)
+
+A stream that plays must show a picture. The relay reads every byte it passes the TV (beside the captions) and calls each second of video picture, black or static; the player counts a picture only once the decoder reports its first frame (uMS videoInfo, no longer "playing"), and lists the video tracks (sourceInfo). Radio, a channel kept as sound only, a pause and buffering are never judged. Every step is in the playback log (Settings › Help & info › Send a report to your phone › Playback log); none of it ever names a link.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Picture facts | Any channel through the app | Log: "video · 1920x1080 59.94p · h264 High 8-bit · aac" (size, rate and scan, codec, profile and bit depth, sound) once after "picture" |
+| A codec this TV can't decode | A feed in H.264 4:2:2 10-bit (or High 10) | Log "picture check · unsupported 0 s; h264 High 4:2:2 10-bit" at once, then the next version; next time it's tried last ("this TV can't play it"), as a 601 is |
+| Scrambled | An encrypted feed (picture and sound scrambled) | After 3 s "picture check · scrambled 3 s; 100% of packets scrambled", the next version, no Xtream retries |
+| No video | A feed with only sound (a radio-style feed under a TV channel) | After 6 s "picture check · no video track (PMT audio 1)", the next version, no retries |
+| Tables only | A feed that sends only tables and padding | After 6 s "picture check · tables only 6 s; tables and padding only (null 99%)", the next version |
+| Sound, no frame | A feed whose decoder never starts while the sound plays | After 8 s "start failed · the sound plays but no frame was drawn", one retry, then the next version |
+| Black at the start | A feed that sends black (padded to a constant rate or not) | After 8 s "picture check · black 8 s; I 432 B, 16 kbps", one reconnect on an Xtream / M3U feed (none on Emby), then the next version. Sources says "black picture" |
+| Black mid-stream | A channel that plays, then goes black and stays black | After 15 s one reconnect, then (8 s more) the next version |
+| Fades | Programmes and ads with fades to black, night scenes | Never a reconnect or a switch (a fade is at most 3 s; a dark noisy scene is a picture) |
+| Static (a slate) | A game whose source shows a "starting soon" slate | After 45 s "picture check · static 45 s; P 318 B, …" and, for a game with a source not tried yet, "No picture on this source — trying 2 of 3", then the "Back on" banner. A channel's slate is only logged |
+| No picture anywhere | A channel whose every version has sound and no picture | Its versions are tried in turn (never another channel); then the card "<channel> has no picture right now · None of this channel’s versions shows a picture right now. The sound plays on." with Try another source (opens Sources) and Keep listening |
+| Keep listening | Keep listening on that card; tune away and back | The card goes, the sound plays on; for 7 days the channel plays as sound only and isn't checked (log "keep listening") |
+| Radio | A radio channel | Plays with sound alone as before; no picture check, no card |
+| Budget | A channel with many black versions | At most 6 automatic actions in 3 minutes, one round through the versions, then the usual message |
+| Our own display | A stream whose frames are fine while the TV shows nothing (the plane not attached) | Never a reconnect or switch: the relay's "frames are fine" counts as the picture |
+| Emby / Jellyfin | An Emby channel (no relay) | Only the player's signals: videoInfo for the picture, sourceInfo's video tracks, sound without a frame |
+
+### Sources that keep closing
+
+The relay reopens a continuous source that closes (up to 6 times without 30 s of flow). It now reports each connection; a source that closes 3 times within 15 s of the picture, every time after under 5 s and never lasting 10 s, is a failed start.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Each reopen | A source that closes now and then | Log "relay · closed after 2 s, 310 KB; reopened it (3 times)" for each one (no longer only a count) |
+| Keeps closing | A PPV event feed that reopens every ~2.4 s after its picture | "source keeps closing · 4 connections in 9 s", no Xtream retries, no reconnects: a game is on its next source within ~8–10 s, a channel on its next version. Sources says "the source keeps closing" |
+| The relay gives up | A source whose connections last 5–9 s each until the relay stops | "source keeps closing · …; the relay gave up" and the next feed, not a reconnect of a stream that "played" |
+| A real run | A source that played 30 s or more, then closes | Reconnected as before ("played" credit kept) |

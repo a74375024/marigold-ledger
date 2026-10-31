@@ -239,6 +239,12 @@ struct PxFluxo {
   uint64_t espiado;                 // marigold: ate onde o espiao ja leu
   int http;                         // marigold: o ultimo HTTP da fonte (0 = sem resposta)
   int reaberturas;                  // marigold: vezes que a .ts continua foi reaberta
+  // marigold: as ligacoes a .ts continua que fecharam (as ultimas
+  // PROXYTS_LIGACOES): duracao, bytes, e se foi reaberta.
+  int nLigacoes;
+  long ligMs[PROXYTS_LIGACOES];
+  long long ligBytes[PROXYTS_LIGACOES];
+  int ligReaberta[PROXYTS_LIGACOES];
   PxConexao produtor;
 };
 static PxFluxo *fluxoAtual;
@@ -248,6 +254,10 @@ static uint64_t pxCursorInicio(const PxFluxo *f);
 static unsigned fonteSessao;
 static int fonteHttp, fonteReaberturas;
 static long long fonteBytes;
+static int fonteNLigacoes;
+static long fonteLigMs[PROXYTS_LIGACOES];
+static long long fonteLigBytes[PROXYTS_LIGACOES];
+static int fonteLigReaberta[PROXYTS_LIGACOES];
 
 static void pxFluxoDestruir(PxFluxo *f) {
   pthread_cond_destroy(&f->chegou);
@@ -493,15 +503,31 @@ static int pxReceberVivo(const char *d, size_t n, void *u) {
 #define PX_VIVO_VAZIAS     2      // novas tentativas antes do primeiro byte
 #define PX_VIVO_PAUSA_MS   1500   // pausa antes de tentar de novo sem nada recebido
 
+// marigold: uma ligacao que fechou, no registro do fluxo (sob f->trava).
+static void pxLigacao(PxFluxo *f, long ms, uint64_t bytes, int reaberta) {
+  int i = f->nLigacoes % PROXYTS_LIGACOES;
+  f->ligMs[i] = ms;
+  f->ligBytes[i] = (long long)bytes;
+  f->ligReaberta[i] = reaberta;
+  f->nLigacoes++;
+}
+
+static long long pxMsAgora(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
 static void pxContinuo(PxConexao *c, const char *url, const char *cabs) {
   PxFluxo *f = c->fluxo;
   int seguidas = 0, vazias = 0;
   for (;;) {
     char copia[512];
     const char *v[8];
-    int st = 0, ok;
+    int st = 0, ok, desiste = 0;
     uint64_t antes, veio;
     time_t t0 = time(NULL);
+    long long ms0 = pxMsAgora();
     snprintf(copia, sizeof copia, "%s", cabs ? cabs : "");
     pthread_mutex_lock(&f->trava); antes = f->fim; pthread_mutex_unlock(&f->trava);
     pthread_mutex_lock(&trava); cancelarEmCurso = &c->cancelar; pthread_mutex_unlock(&trava);
@@ -514,10 +540,12 @@ static void pxContinuo(PxConexao *c, const char *url, const char *cabs) {
     if (!pxViva(c)) break;
     if (time(NULL) - t0 >= 30) seguidas = 0;
     if (!antes && !veio) {
-      if (++vazias > PX_VIVO_VAZIAS) break;
+      if (++vazias > PX_VIVO_VAZIAS) desiste = 1;
     } else if (++seguidas > PX_VIVO_REABRIR) {
-      break;
+      desiste = 1;
     }
+    pthread_mutex_lock(&f->trava); pxLigacao(f, (long)(pxMsAgora() - ms0), veio, !desiste); pthread_mutex_unlock(&f->trava);
+    if (desiste) break;
     pxDormir(c, veio ? 200 : PX_VIVO_PAUSA_MS);
     if (!pxViva(c)) break;
     pthread_mutex_lock(&f->trava); f->reaberturas++; pthread_mutex_unlock(&f->trava);
@@ -535,6 +563,10 @@ static void *pxProduzir(void *u) {
   f->encerrado = 1; pthread_cond_broadcast(&f->chegou);
   fonteSessao = f->produtor.sessao; fonteHttp = f->http;
   fonteBytes = (long long)f->fim; fonteReaberturas = f->reaberturas;
+  fonteNLigacoes = f->nLigacoes;
+  memcpy(fonteLigMs, f->ligMs, sizeof fonteLigMs);
+  memcpy(fonteLigBytes, f->ligBytes, sizeof fonteLigBytes);
+  memcpy(fonteLigReaberta, f->ligReaberta, sizeof fonteLigReaberta);
   pthread_mutex_unlock(&f->trava);
   pthread_mutex_unlock(&trava);
   pxFluxoSoltar(f);
@@ -883,6 +915,37 @@ int proxyts_fonte(unsigned sessao, int *http, long long *bytes, int *reaberturas
   }
   pthread_mutex_unlock(&trava);
   return achou;
+}
+
+int proxyts_ligacoes(unsigned sessao, int desde, long *ms, long long *bytes, int *reaberta, int max) {
+  int n = 0, total, i;
+  const long *lm = NULL;
+  const long long *lb = NULL;
+  const int *lr = NULL;
+  PxFluxo *f = NULL;
+  if (desde < 0) desde = 0;
+  pthread_mutex_lock(&trava);
+  if (fluxoAtual && fluxoAtual->produtor.sessao == sessao) {
+    f = fluxoAtual;
+    pthread_mutex_lock(&f->trava);
+    total = f->nLigacoes; lm = f->ligMs; lb = f->ligBytes; lr = f->ligReaberta;
+  } else if (sessao && fonteSessao == sessao) {
+    total = fonteNLigacoes; lm = fonteLigMs; lb = fonteLigBytes; lr = fonteLigReaberta;
+  } else {
+    pthread_mutex_unlock(&trava);
+    return 0;
+  }
+  // As mais antigas que o registro ja nao guarda ficam de fora.
+  if (desde < total - PROXYTS_LIGACOES) desde = total - PROXYTS_LIGACOES;
+  for (i = desde; i < total && n < max; i++, n++) {
+    int k = i % PROXYTS_LIGACOES;
+    if (ms) ms[n] = lm[k];
+    if (bytes) bytes[n] = lb[k];
+    if (reaberta) reaberta[n] = lr[k];
+  }
+  if (f) pthread_mutex_unlock(&f->trava);
+  pthread_mutex_unlock(&trava);
+  return total;
 }
 
 int proxyts_redirecionou(void) {

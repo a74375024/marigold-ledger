@@ -82,6 +82,10 @@ Bar search(const RemoteKeys& k, SearchPlace place, bool results, const SearchDig
       b.keys = {cap("OK", "Watch channel " + digits.number), cap(kDown, "The " + digits.team),
                 cap("Letters", "Keep typing \xe2\x80\x9c" + digits.number + "\xe2\x80\xa6\xe2\x80\x9d")};
       b.right = std::string("Doesn't tune by itself") + dot + "Back: Cancel";
+    } else if (digits.waits) {
+      // A channel in a hidden group: only OK tunes it.
+      b.keys = {cap("OK", "Watch channel " + digits.number), cap("0\xe2\x80\x93" "9", "More digits")};
+      b.right = std::string("Doesn't tune by itself") + dot + "Back: Cancel";
     } else {
       b.keys = {cap("OK", "Watch now"), cap("0\xe2\x80\x93" "9", "More digits")};
       b.right = std::string("Plays when the number is complete") + dot + "Back: Cancel";
@@ -90,9 +94,12 @@ Bar search(const RemoteKeys& k, SearchPlace place, bool results, const SearchDig
   }
   if (k.colour) b.keys.push_back(colour(Colour::Red, "Clear text"));
   if (k.digits) b.keys.push_back(cap("0\xe2\x80\x93" "9", "Channel"));
-  if (place == SearchPlace::Keyboard) {
-    // The Siri Remote: the ring or a swipe moves, only the centre click types.
-    if (k.clickpad) b.keys = {cap("Swipe or ring", "Move"), cap("Centre click", "Type")};
+  if (place == SearchPlace::Keyboard || place == SearchPlace::Keypad) {
+    // The Siri Remote: the ring or a swipe moves, only the centre click
+    // types; Play/Pause changes the page, as on Apple's keyboard.
+    if (k.clickpad)
+      b.keys = {cap("Swipe or ring", "Move"), cap("Centre click", "Type"),
+                icons({"key-playpause"}, place == SearchPlace::Keypad ? "abc" : "123")};
     b.right = results ? std::string(kRight) + " Choose a result" + dot + "Back: Close" : std::string("Back: Close");
     return b;
   }

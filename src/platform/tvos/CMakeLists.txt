@@ -73,7 +73,8 @@ set_source_files_properties(${MARIGOLD_TVOS_SOURCES} PROPERTIES
 get_filename_component(vlc_dir "${MARIGOLD_VLCKIT}" DIRECTORY)
 target_link_libraries(Marigold PRIVATE marigold_core "${MARIGOLD_VLCKIT}"
   "-framework UIKit" "-framework Metal" "-framework QuartzCore" "-framework CoreText"
-  "-framework CoreGraphics" "-framework ImageIO" "-framework Security" "-framework AVFoundation")
+  "-framework CoreGraphics" "-framework ImageIO" "-framework Security" "-framework AVFoundation"
+  "-framework VideoToolbox")
 
 # The version shown in Settings is the release; the build is "Build NN".
 if(MARIGOLD_BUILD_NUMBER STREQUAL "dev")

@@ -212,9 +212,16 @@ static int       viuVideo;
 // Faixas de audio lidas do sourceInfo.
 static VideoFaixa faixaAudio[NV_FAIXA_MAX];
 static int nAudio, audioAtual;
+// marigold: faixas de video do sourceInfo (-1 = ainda nao veio) e o codec
+// da primeira.
+static int nVideo = -1;
+static char codecVideo[24];
 
 static char      midia[64];
 static double    posSeg, durSeg;
+// marigold: when the last currentTime came (SDL ticks; 0 = none since the
+// load), so the caption clock can carry it on between events.
+static Uint32    posEm;
 static _Atomic int tocando, falhou, terminou;
 static int       pronto, ligado;
 static _Atomic int ackMidia; // presenca de midia, sem ler a string entre fios
@@ -527,7 +534,28 @@ static int eventoPayload(const char *p, unsigned minhaSessao) {
         o = js_prox(fo);
       }
     }
-    printf("[video] faixas: audio=%d\n", nAudio);
+    // marigold: as de video tambem (a verificacao da imagem: um fluxo so
+    // com som). Sem a chave, nao se sabe; com o array vazio, nenhuma.
+    if (strstr(p, "\"videoTrackInfo\"")) {
+      const char *o = js_array(p, NULL, "videoTrackInfo");
+      nVideo = 0;
+      codecVideo[0] = 0;
+      while (o && *o == '{' && nVideo < NV_FAIXA_MAX) {
+        const char *fo = js_fim(o);
+        if (!fo) break;
+        if (nVideo == 0) {
+          const char *c2 = strstr(o, "\"codec\":\"");
+          if (c2 && c2 < fo) {
+            size_t k = 0; c2 += 9;
+            while (*c2 && *c2 != '"' && k + 1 < sizeof codecVideo) codecVideo[k++] = *c2++;
+            codecVideo[k] = 0;
+          }
+        }
+        nVideo++;
+        o = js_prox(fo);
+      }
+    }
+    printf("[video] faixas: audio=%d video=%d\n", nAudio, nVideo);
     fflush(stdout);
   }
 
@@ -676,6 +704,8 @@ static int eventoPayload(const char *p, unsigned minhaSessao) {
   { double v = numeroDe(p, "\"currentTime\":");
     if (v >= 0) {
       posSeg = v / 1000.0;
+      posEm = SDL_GetTicks();
+      if (!posEm) posEm = 1;
       // Primeiro quadro com avanco: o numero de inicio de verdade.
       if (cronPediu && !cronQuadro && posSeg > 0.0) {
         cronQuadro = 1;
@@ -1214,9 +1244,11 @@ static int tocarInterno(const char *url) {
   // mesmo rect cairia no "ja e esse" e nunca chegaria a mandar nada ao plano.
   fonX = -1; dstX = dstY = dstW = dstH = -1;
   posSeg = durSeg = bufferSeg = 0; tocando = pronto = 0; midia[0] = 0;
+  posEm = 0;
   ackMidia = 0; ack_publicar();
   bufferandoDesde = 0;
   nAudio = 0; audioAtual = 0;
+  nVideo = -1; codecVideo[0] = 0;
   snprintf(vidHdr, sizeof vidHdr, "none");
   seiX0 = seiX1 = seiX2 = seiY0 = seiY1 = seiY2 = 0;
   seiBrancoX = seiBrancoY = seiMinLum = seiMaxLum = seiMaxCLL = seiMaxFALL = 0;
@@ -1436,6 +1468,10 @@ void video_janela_fonte(int sx, int sy, int sw, int sh,
 }
 
 double video_pos(void)      { return posSeg; }
+int    video_pos_idade_ms(void) {
+  Uint32 t = posEm;
+  return t ? (int)(SDL_GetTicks() - t) : -1;
+}
 double video_duracao(void)  { return durSeg; }
 double video_buffer_fim(void) { return bufferSeg; }
 int    video_tocando(void)  { return tocando; }
@@ -1459,6 +1495,8 @@ unsigned video_bufferando_ms(void) {
 }
 
 int  video_n_audio(void)   { return nAudio; }
+int  video_n_video(void)   { return nVideo; }
+const char *video_codec_video(void) { return codecVideo; }
 const VideoFaixa *video_audio(int i)   { return (i >= 0 && i < nAudio) ? &faixaAudio[i] : NULL; }
 int  video_audio_atual(void)   { return audioAtual; }
 const char *video_hdr(void)       { return vidHdr; }

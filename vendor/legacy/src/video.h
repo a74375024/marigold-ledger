@@ -63,6 +63,9 @@ void video_recorte_reaplicar(void);
 void video_escala_definir(int sw, int sh);
 
 double video_pos(void);      // segundos decorridos
+// marigold: ms since the pipeline last said its currentTime (video_pos); -1
+// when it hasn't since the load.
+int    video_pos_idade_ms(void);
 double video_duracao(void);  // 0 enquanto desconhecida (canal ao vivo: 0)
 double video_buffer_fim(void); // ate onde o buffer cobre (s); 0 se desconhecido
 // Ha quanto tempo (ms) o pipeline esta parado esperando dados, do par de
@@ -113,6 +116,10 @@ typedef struct {
 
 int  video_n_audio(void);
 const VideoFaixa *video_audio(int i);
+// marigold: faixas de video que o sourceInfo listou (-1 = ainda nao veio) e
+// o codec da primeira ("" sem).
+int  video_n_video(void);
+const char *video_codec_video(void);
 int  video_audio_atual(void);
 void video_escolher_audio(int i);
 

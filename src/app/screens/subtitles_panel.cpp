@@ -1,7 +1,8 @@
 // Subtitles: the panel from the player's Aa button (Off or a language the
-// stream carries, and the style). Settings › Watching has the same choices
+// stream carries, the timing and the style). Settings › Watching has the same choices
 // (settings_rows.cpp). Picking a language turns subtitles on for every channel of the same
 // language (English-language or Spanish-language) until Off is picked.
+// Caption timing changes every channel's, or this channel's own once it has one.
 #include <algorithm>
 
 #include "app/app.hpp"
@@ -58,7 +59,44 @@ std::vector<ui::PanelItem> styleItems(App& app) {
   return out;
 }
 
+// Caption timing: later or earlier, for every channel or this one alone.
+std::vector<ui::PanelItem> timingItems(App& app) {
+  std::vector<ui::PanelItem> out;
+  Playback& pb = app.playback();
+  std::string entry = pb.entry();
+  bool own = hasOwnCaptionTiming(app.store().settings(), entry);
+  ui::PanelItem timing = captionTimingRow(pb.captionTiming(), [&app, entry, own](int ms) {
+    change(app, [entry, own, ms](Settings& s) { setCaptionTiming(s, own ? entry : std::string(), ms); });
+  });
+  timing.detail = own ? "For this channel" : "For every channel";
+  out.push_back(timing);
+  ui::PanelItem only{ui::PanelItem::Kind::Toggle, "Only this channel"};
+  only.detail = "Its own timing, kept for next time";
+  only.on = own;
+  only.enabled = !entry.empty();
+  only.why = "Nothing playing";
+  only.select = [&app, entry] {
+    int now = app.playback().captionTiming();
+    change(app, [entry, now](Settings& s) {
+      if (hasOwnCaptionTiming(s, entry)) clearOwnCaptionTiming(s, entry);
+      else setCaptionTiming(s, entry, now);
+    });
+  };
+  out.push_back(only);
+  return out;
+}
+
 }  // namespace
+
+ui::PanelItem captionTimingRow(int ms, std::function<void(int)> pick) {
+  ui::PanelItem it{ui::PanelItem::Kind::Choice, "Caption timing"};
+  for (int v = -kCaptionTimingMaxMs; v <= kCaptionTimingMaxMs; v += kCaptionTimingStepMs)
+    it.choices.push_back(engine::captionTimingLabel(v));
+  it.choice = (clampCaptionTiming(ms) + kCaptionTimingMaxMs) / kCaptionTimingStepMs;
+  it.stepper = true;
+  it.pick = [pick = std::move(pick)](int k) { pick(k * kCaptionTimingStepMs - kCaptionTimingMaxMs); };
+  return it;
+}
 
 std::unique_ptr<Screen> makeSubtitles(App& app) {
   auto panel = page(app, [&app](ui::ListPanel& p) {
@@ -98,6 +136,8 @@ std::unique_ptr<Screen> makeSubtitles(App& app) {
       };
       p.items.push_back(on);
     }
+    p.items.push_back(ui::PanelItem::header("TIMING"));
+    for (ui::PanelItem& it : timingItems(app)) p.items.push_back(std::move(it));
     p.items.push_back(ui::PanelItem::header("STYLE"));
     for (ui::PanelItem& it : styleItems(app)) p.items.push_back(std::move(it));
     p.hint = pb.spanishChannel() ? "Your choice stays on for every Spanish-language channel"

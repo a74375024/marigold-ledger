@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdlib>
 
+#include "core/media/ts_video_probe.hpp"
 #include "core/util/log.hpp"
 #include "core/util/redact.hpp"
 #include "core/util/strings.hpp"
@@ -30,6 +31,29 @@ void window(gfx::Rect r, bool force) {
                           static_cast<jint>(std::lround(r.w)), static_cast<jint>(std::lround(r.h)),
                           static_cast<jboolean>(force));
   android::caught(e, "videoWindow");
+}
+
+// ExoPlayer's formats ("width\theight\tfps\tvideo/avc\tavc1.640028\t
+// audio/mp4a-latm") as the playback log says them: "1920x1080 59.94p ·
+// h264 avc1.640028 · aac".
+std::string factsLine(const std::string& raw) {
+  std::vector<std::string_view> f = str::split(raw, '\t', true);
+  if (f.size() < 6) return {};
+  media::VideoFacts v;
+  v.width = std::atoi(std::string(f[0]).c_str());
+  v.height = std::atoi(std::string(f[1]).c_str());
+  v.frameRate = std::atof(std::string(f[2]).c_str());
+  std::string out = media::describe(v);  // the size and rate
+  std::string_view mime = f[3];
+  std::string codec = mime == "video/avc" ? "h264" : mime == "video/hevc" ? "hevc"
+                    : mime == "video/mpeg2" ? "mpeg2" : std::string(mime.substr(mime.find('/') + 1));
+  if (!f[4].empty()) codec += " " + std::string(f[4]);
+  if (!codec.empty()) out += (out.empty() ? "" : " \xc2\xb7 ") + codec;
+  std::string_view a = f[5];
+  std::string audio = a == "audio/mp4a-latm" ? "aac" : a == "audio/mpeg-L2" ? "mp2" : a == "audio/mpeg" ? "mp3"
+                    : std::string(a.substr(a.find('/') + 1));
+  if (!audio.empty()) out += (out.empty() ? "" : " \xc2\xb7 ") + audio;
+  return out;
 }
 
 }  // namespace
@@ -77,13 +101,14 @@ VideoState Video::state() const {
   s.registered = started_;
   JNIEnv* e = android::env();
   if (!e) return s;
-  // Bridge.videoState fills: flags, bufferingMs, position, bufferEnd, width, height.
+  // Bridge.videoState fills: flags, bufferingMs, position, bufferEnd, width,
+  // height, video tracks.
   static jmethodID id = android::method("videoState", "([D)[B");
-  android::Local<jdoubleArray> values(e, e->NewDoubleArray(6));
+  android::Local<jdoubleArray> values(e, e->NewDoubleArray(7));
   android::Local<jbyteArray> error(e, static_cast<jbyteArray>(e->CallStaticObjectMethod(android::bridge(), id, values.get())));
   if (android::caught(e, "videoState")) return s;
-  double v[6] = {0, 0, 0, 0, 0, 0};
-  e->GetDoubleArrayRegion(values.get(), 0, 6, v);
+  double v[7] = {0, 0, 0, 0, 0, 0, -1};
+  e->GetDoubleArrayRegion(values.get(), 0, 7, v);
   int flags = static_cast<int>(v[0]);
   s.active = flags & 1;
   s.ready = flags & 2;
@@ -98,7 +123,15 @@ VideoState Video::state() const {
   s.bufferEnd = v[3];
   s.width = static_cast<int>(v[4]);
   s.height = static_cast<int>(v[5]);
+  s.videoTracks = static_cast<int>(v[6]);
+  s.framesStalled = flags & 128;
+  s.videoUnsupported = flags & 256;
   s.error = redact(android::text(e, error.get()));
+  if (s.decoderSeen) {
+    static jmethodID factsId = android::method("videoFacts", "()[B");
+    android::Local<jbyteArray> f(e, static_cast<jbyteArray>(e->CallStaticObjectMethod(android::bridge(), factsId)));
+    if (!android::caught(e, "videoFacts")) s.facts = factsLine(android::text(e, f.get()));
+  }
   return s;
 }
 
@@ -162,5 +195,7 @@ int Video::systemCaptions() {
   return static_cast<int>(on);
 }
 void Video::setTextStyle(int, int) {}
+// ExoPlayer's lines are held by the app (engine::Subtitles).
+void Video::setTextDelay(int) {}
 
 }  // namespace marigold::platform

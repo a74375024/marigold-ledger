@@ -69,6 +69,10 @@ std::shared_ptr<se::Index> guide(const GuideInput& in) {
     index->keepChannels(*in.previous);
   } else {
     // ---- channels, with their other names
+    index->lineupSet = channels.lineupConfigured;
+    // In a hidden group: in All Channels, not in its browse list.
+    std::vector<bool> shown(channels.all.size(), false);
+    for (int i : channels.browse) shown[static_cast<size_t>(i)] = true;
     const catalog::reference::Index& ref = catalog::reference::builtInIndex();
     std::map<std::string, const catalog::CoreChannel*> cores;
     std::unordered_map<std::string_view, size_t> entryInfo;  // entry id -> catalog entries index
@@ -81,7 +85,8 @@ std::shared_ptr<se::Index> guide(const GuideInput& in) {
     }
     std::vector<se::ChannelEntry>& list = index->channels.edit();
     list.reserve(channels.all.size());
-    for (const GuideChannel& g : channels.all) {
+    for (size_t at = 0; at < channels.all.size(); ++at) {
+      const GuideChannel& g = channels.all[at];
       se::ChannelEntry c;
       c.id = g.id;
       c.name = se::fold(g.name);
@@ -90,6 +95,7 @@ std::shared_ptr<se::Index> guide(const GuideInput& in) {
       c.inLineup = g.inLineup;
       c.favorite = g.favorite;
       c.browsable = g.browsable;
+      c.hidden = g.browsable && !shown[at];
       if (in.quick) {
         list.push_back(std::move(c));
         continue;

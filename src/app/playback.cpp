@@ -1,6 +1,7 @@
 #include "app/playback.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <memory>
 #include <set>
@@ -8,6 +9,7 @@
 #include <utility>
 
 #include "app/app.hpp"
+#include "core/media/ts_video_probe.hpp"
 #include "core/util/log.hpp"
 #include "core/util/strings.hpp"
 #include "platform/storage.hpp"
@@ -58,7 +60,8 @@ class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
 
   void attempt() override {
     viaProxy_ = false;
-    reopenedSeen_ = 0;
+    closedSeen_ = 0;
+    check_.begin(0);
     app_.video().setWindow(window_());
   }
 
@@ -78,6 +81,7 @@ class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
       }
     }
     app_.playback().subtitlesBegin(relay, !asGiven && proxy_.running() && !proxyFailed_.count(f.channelId));
+    check_.begin(relay);  // the picture check reads what the relay passes
     app_.video().play(url, headers, f.loadMode);
   }
 
@@ -90,6 +94,7 @@ class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
     std::string answered = sourceAnswer(proxy_.source());
     proxyFailed_.insert(feed_.channelId);
     proxy_.stop();
+    check_.begin(0);
     if (redirected) return std::nullopt;
     MLOG_I("play", "proxy didn't start this feed; playing it directly");
     app_.playback().subtitlesBegin(0, false);
@@ -97,18 +102,18 @@ class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
     return Retry{"proxy failed", "playing directly" + answered};
   }
 
-  // The relay reopened a source that closed mid-stream (the player kept
-  // playing): said in the log once each time.
-  std::optional<Retry> note() override {
-    if (!viaProxy_) return std::nullopt;
+  // The relay's connections to a source that closed mid-stream (it reopens
+  // it; the player keeps playing), twice a second: for the log, and a source
+  // that keeps closing is moved off.
+  std::vector<SourceClosed> sourceClosed() override {
+    std::vector<SourceClosed> out;
+    if (!viaProxy_) return out;
     uint32_t now = app_.ms();
-    if (now - noteCheckedAt_ < 1000) return std::nullopt;
-    noteCheckedAt_ = now;
-    platform::TsProxy::Source s = proxy_.source();
-    if (!s.known || s.reopened <= reopenedSeen_) return std::nullopt;
-    reopenedSeen_ = s.reopened;
-    return Retry{"relay", "the source closed; reopened it (" + std::to_string(s.reopened) +
-                              (s.reopened == 1 ? " time)" : " times)")};
+    if (now - closedCheckedAt_ < 500) return out;
+    closedCheckedAt_ = now;
+    closedSeen_ = proxy_.connections(closedSeen_, closed_);
+    for (const platform::TsProxy::Connection& c : closed_) out.push_back({c.ms, c.bytes, c.reopened});
+    return out;
   }
 
   void streamClosed() override { proxy_.stop(); }
@@ -116,12 +121,17 @@ class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
   void stop() override {
     app_.video().stop();
     proxy_.stop();
+    check_.begin(0);
   }
 
   engine::PlayerState state() const override {
     platform::VideoState v = app_.video().state();
     engine::PlayerState s;
-    s.picture = v.playing || v.decoderSeen;
+    // A picture is a frame drawn (webOS: the decoder's videoInfo; uMS says
+    // "playing" for sound alone too).
+    s.picture = v.decoderSeen;
+    s.playing = v.playing;
+    pictureCheck(v, s);
     s.buffering = v.bufferingMs > 0;
     s.failed = v.failed;
     s.ended = v.ended;
@@ -134,8 +144,34 @@ class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
   }
 
  private:
-  // The proxy's threads: the stream as it reaches the player.
-  void bytes(const unsigned char* data, size_t n, unsigned session) override { subtitles_->bytes(data, n, session); }
+  // The proxy's threads: the stream as it reaches the player, for the
+  // captions and the picture check.
+  void bytes(const unsigned char* data, size_t n, unsigned session) override {
+    subtitles_->bytes(data, n, session);
+    check_.bytes(data, n, session);
+  }
+
+  // What the relay read of the stream and what the player says.
+  void pictureCheck(const platform::VideoState& v, engine::PlayerState& s) const {
+    s.videoTracks = v.videoTracks;
+    s.videoUnsupported = v.videoUnsupported;
+    s.framesStalled = v.framesStalled;
+    s.facts = v.facts;
+    media::StreamCheck::Snapshot c = check_.snapshot();
+    if (!viaProxy_ || !c.active) return;
+    s.streamChecked = true;
+    s.stream = c.verdict;
+    s.streamDetail = c.detail;
+    // The stream's own facts once the frame rate is measured (the player's
+    // otherwise: a codec the relay can't read).
+    media::VideoFacts f = c.facts;
+    if (f.width == 0 && v.width > 0) {
+      f.width = v.width;
+      f.height = v.height;
+    }
+    if (f.header && f.frameRate > 0) s.facts = media::describe(f);
+    else if (f.codec != media::ts::Codec::OtherVideo) s.facts.clear();
+  }
 
   App& app_;
   std::function<gfx::Rect()> window_;
@@ -146,8 +182,12 @@ class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
   // the proxy failed on play directly for the rest of this tune.
   bool viaProxy_ = false;
   std::set<std::string> proxyFailed_;
-  int reopenedSeen_ = 0;
-  uint32_t noteCheckedAt_ = 0;
+  // The picture check on the relay's stream (a second reader beside the
+  // captions), and the relay's connections to the source already reported.
+  media::StreamCheck check_{platform::TsProxy::wanted() ? media::Device::LgWebOs : media::Device::Any};
+  int closedSeen_ = 0;
+  uint32_t closedCheckedAt_ = 0;
+  std::vector<platform::TsProxy::Connection> closed_;
 };
 
 engine::Host sessionHost(App& app) {
@@ -240,13 +280,16 @@ void Playback::subtitlesBegin(unsigned relaySession, bool relayPossible) {
   textVersion_ = 0;
   textTracksAt_ = 0;
   pictureAt_ = 0;
+  timingLogAt_ = 0;
   const Settings& set = app_.store().settings();
   app_.video().setTextStyle(set.subtitleSize, set.subtitleLook);
+  app_.video().setTextDelay(captionTiming());
 }
 
 void Playback::subtitlesChanged() {
   const Settings& set = app_.store().settings();
   app_.video().setTextStyle(set.subtitleSize, set.subtitleLook);
+  app_.video().setTextDelay(captionTiming());
   // webOS: captions are read on the way through the relay, which a
   // continuous TS feed only takes with subtitles on; play it again that way.
   if (subtitleChoice().on && relayPossible_ && active() && !failed() && !subtitles_->fromStream())
@@ -255,6 +298,8 @@ void Playback::subtitlesChanged() {
 }
 
 bool Playback::spanishChannel() const { return channelLanguage(app_) != "English"; }
+
+int Playback::captionTiming() const { return engine::captionTiming(app_.store().settings(), entry()); }
 
 SubtitleChoice Playback::subtitleChoice() const {
   return engine::subtitleChoice(app_.store().settings(), spanishChannel());
@@ -344,13 +389,35 @@ void Playback::tickSubtitles(uint32_t ms) {
     s.select(want);
     if (!s.fromStream()) video.selectText(want, choice.on);
   }
-  int64_t lead = -1;
+  // Captions read from the stream wait for the player's clock: its
+  // position, or else how far its buffer runs ahead of the picture.
+  engine::PlayerClock clock;
+  clock.showing = ready();
   if (s.fromStream()) {
     platform::VideoState v = video.state();
-    if (v.bufferEnd > v.position && v.position > 0) lead = static_cast<int64_t>((v.bufferEnd - v.position) * 1000);
+    clock.running = v.playing && v.bufferingMs == 0;
+    clock.reportsPosition = true;  // webOS: currentTime, every ~200 ms
+    if (v.position > 0 && v.positionAgeMs >= 0) {
+      clock.positionMs = std::llround(v.position * 1000);
+      clock.positionAgeMs = v.positionAgeMs;
+    }
+    if (v.bufferEnd > v.position && v.position > 0)
+      clock.leadMs = static_cast<int64_t>((v.bufferEnd - v.position) * 1000);
   }
+  s.setDelay(captionTiming());
   if (ready() && !pictureAt_) pictureAt_ = ms;
-  if (s.tick(ms, lead, ready())) app_.invalidate();
+  if (s.tick(ms, clock)) app_.invalidate();
+  // The playback log: how the player's clock counts (once), and how captions
+  // were timed, once a minute while they show.
+  std::string anchor = s.takeAnchorNote();
+  if (!anchor.empty()) logNote("caption timing", anchor);
+  if (!timingLogAt_) {
+    timingLogAt_ = ms + 60000;
+  } else if (ms >= timingLogAt_) {
+    timingLogAt_ = ms + 60000;
+    engine::CaptionTiming t;
+    if (s.takeTiming(t)) logNote("caption timing", engine::captionTimingLog(t));
+  }
   // The playback log: whether the stream carries captions.
   size_t i = feedIndex();
   if (s.present() && !captionsLogged_) {

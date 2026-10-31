@@ -15,6 +15,10 @@ unsigned TsProxy::session() const { return 0; }
 void TsProxy::setTap(Tap*) {}
 bool TsProxy::redirected() const { return false; }
 TsProxy::Source TsProxy::source() const { return {}; }
+int TsProxy::connections(int from, std::vector<Connection>& out) const {
+  out.clear();
+  return from;
+}
 void TsProxy::setPreferredHeight(int) {}
 
 bool TsProxy::candidate(const std::string& source) {

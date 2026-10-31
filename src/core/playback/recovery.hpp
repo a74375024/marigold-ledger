@@ -22,6 +22,22 @@
 // until the previous open has reported back), and a tune that has been
 // superseded (fast Up / Down) never opens anything.
 //
+// Marigold (Build 115): a stream that plays isn't enough, it must show a
+// picture. The picture check (videoCheck) gets a verdict from the stream
+// itself (the LG relay reads it) or from the player, and acts once one has
+// held long enough: a codec this TV can't decode goes the "can't play here"
+// way at once; a scrambled stream (3 s), one with no video or nothing but
+// tables (6 s) go to the next feed without retries; sound without a single
+// frame drawn (8 s) is a failed start with one retry; a black or frozen
+// picture gets one reconnect (at the start only on direct feeds) after 8 s,
+// or 15 s once a real picture was seen, then the next feed; a picture that
+// doesn't change for 45 s moves a game to a source not tried yet, and is
+// only noted for a channel. None of it runs for radio, while paused or while
+// buffering. When no feed shows a picture but the sound plays, the sound
+// plays on and the viewer is asked (NoPicture). A source the relay keeps
+// reopening (sourceClosed: 3 short connections around the picture, none of
+// them long) is a failed start too: no retries, the next feed.
+//
 // No timers or threads: every input takes a monotonic time in ms and returns
 // the actions to perform now; tick() returns the ones that fell due. The
 // object is used from the UI thread only.
@@ -34,6 +50,8 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "core/media/picture.hpp"
 
 namespace marigold::playback {
 
@@ -72,6 +90,28 @@ inline constexpr Ms kFreshRunMs = 120000;         // a healthy run earns fresh r
 inline constexpr Ms kDrySourceMs = 15000;
 inline constexpr double kDryReserveS = 2.0;
 inline constexpr double kPositionStepS = 0.05;
+// The picture check: how long a verdict must hold before it counts.
+// A codec this TV can't decode: at its first sequence header (held half a
+// second, so a flag left over from the last stream never counts).
+inline constexpr Ms kUnsupportedMs = 500;
+inline constexpr Ms kScrambledMs = 3000;
+inline constexpr Ms kNoVideoMs = 6000;          // no video, or tables only
+inline constexpr Ms kNoFrameMs = 8000;          // sound, and not a frame drawn
+inline constexpr Ms kBlackAtStartMs = 8000;     // black / frozen before a real picture
+inline constexpr Ms kBlackMidStreamMs = 15000;  // ... after one
+inline constexpr Ms kRealPictureMs = 10000;     // a picture this long makes the rest mid-stream
+inline constexpr Ms kStaticMs = 45000;
+inline constexpr int kNoFrameRetries = 1;
+// A source that keeps closing (the LG relay reopens it each time): this many
+// connections with data that lasted under kShortConnectionMs, closed within
+// kFlapWindowMs of the picture, and none that lasted kLongConnectionMs.
+inline constexpr int kFlapConnections = 3;
+inline constexpr Ms kShortConnectionMs = 5000;
+inline constexpr Ms kFlapWindowMs = 15000;
+inline constexpr Ms kLongConnectionMs = 10000;
+// A stream that ended after only short connections never played: one
+// connection this long earns it the reconnects of a stream that played.
+inline constexpr Ms kPlayedRunMs = 30000;
 
 enum class FeedKind {
   Xtream,    // direct link; cheap to reopen
@@ -96,6 +136,9 @@ struct FeedInfo {
   // Marigold: a failed start gets one more try on the same feed (an Emby
   // quick start falls back to the server's normal open).
   bool retryOnce = false;
+  // Marigold: the feed should show a picture (not radio, not a channel the
+  // viewer keeps listening to): the picture check runs.
+  bool expectVideo = true;
 };
 
 struct TuneOptions {
@@ -107,6 +150,9 @@ struct TuneOptions {
   // 0 when the caller has already waited (OK, a settled channel flip, a
   // preview after its dwell, a typed number).
   Ms settle = kSettleMs;
+  // A game (Live Events): the feeds are its sources, and a picture that
+  // doesn't change moves on to one not tried yet.
+  bool game = false;
 };
 
 struct Action {
@@ -129,11 +175,15 @@ struct Action {
     // A short toast (`text`), e.g. "Playing a backup feed (2 of 3)".
     Toast,
     // Source reliability: feed `feed` worked (`worked`) or failed (`text`
-    // says why; `unplayable` when this TV can't play it).
+    // says why; `unplayable` when this TV can't play it; `detail`, when
+    // set, is the short reason Sources shows: "black picture").
     RecordFeed,
     // A playback log line: `text` is the event, `detail` the rest; `feed` is
     // the feed it is about (npos for none). Never contains a link.
     Log,
+    // No feed shows a picture but the sound plays: it plays on (unchecked)
+    // and the viewer is asked what to do (`text`).
+    NoPicture,
   };
   static constexpr size_t npos = static_cast<size_t>(-1);
 
@@ -196,6 +246,12 @@ class Recovery {
   void restartedAnotherWay(Ms now);
   // A pause by the viewer never counts as a stall.
   Actions setPaused(Ms now, bool paused);
+  // Every frame: the picture check's verdict for the stream handed last,
+  // and the numbers behind it for the log ("I 432 B, 16 kbps").
+  Actions videoCheck(Ms now, media::Verdict verdict, std::string_view detail = {});
+  // The LG relay's connection to the source closed after `lastedMs` with
+  // `bytes`; `reopened`: the relay opened it again.
+  Actions sourceClosed(Ms now, Ms lastedMs, int64_t bytes, bool reopened);
 
   // Every frame: the actions that fell due.
   Actions tick(Ms now);
@@ -208,6 +264,8 @@ class Recovery {
   const std::vector<FeedInfo>& feeds() const { return feeds_; }
   size_t feedIndex() const { return index_; }
   bool sawFirstFrame() const { return sawFirstFrame_; }
+  // No feed showed a picture; the sound plays on, unchecked (NoPicture).
+  bool listening() const { return listening_; }
   const std::string& note() const { return note_; }
 
  private:
@@ -230,9 +288,18 @@ class Recovery {
   void beginTrouble(Ms since, std::string cause, Ms grace, Actions& out, bool quiet = false);
   void recoveredByItself(Ms now, Actions& out);
   void scheduleStartupFailure(Ms now, std::string reason);
-  void startupFailed(Ms now, const std::string& reason, Actions& out, bool unplayable = false);
+  // `retries`: at most this many retries (-1: the feed kind's); `picture`:
+  // a picture problem (the sound plays); `why`: Sources' short reason.
+  void startupFailed(Ms now, const std::string& reason, Actions& out, bool unplayable = false, int retries = -1,
+                     bool picture = false, const std::string& why = {});
   void recover(Ms now, const std::string& reason, Actions& out);
-  void moveToNext(Ms now, const std::string& reason, Actions& out);
+  // `picture`: moving on because of a picture problem (the note says so;
+  // with none left, the sound plays on).
+  void moveToNext(Ms now, const std::string& reason, Actions& out, bool picture = false);
+  void pictureFailed(Ms now, media::Verdict v, Actions& out);
+  void failedNoRetry(Ms now, const std::string& reason, const std::string& why, bool picture, Actions& out);
+  void noPictureAnywhere(Ms now, Actions& out);
+  bool keepsClosing(Ms now) const;
   bool allowRecovery(Ms now);
   void giveUp(const std::string& message, Actions& out);
   void markTried(size_t feed);
@@ -268,6 +335,23 @@ class Recovery {
   double bufferEnd_ = 0;
   Ms bufferEndAt_ = 0;
   bool paused_ = false;
+  bool buffering_ = false;
+
+  // The picture check, this stream.
+  media::Verdict verdict_ = media::Verdict::Unknown;
+  Ms verdictSince_ = 0;
+  bool realPicture_ = false;  // the check has seen a real picture
+  bool staticNoted_ = false;
+  bool listening_ = false;
+  // Connections the relay closed on this stream.
+  struct Closed {
+    Ms at = 0, lasted = 0;
+    int64_t bytes = 0;
+  };
+  std::vector<Closed> closed_;
+  bool keptClosing_ = false;
+  bool game_ = false;
+  std::map<std::string, int> pictureReconnects_;  // by feed id, this tune
 
   int reconnectsOnFeed_ = 0;
   std::vector<Ms> recoveries_;

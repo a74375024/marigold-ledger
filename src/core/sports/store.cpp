@@ -44,6 +44,7 @@ std::vector<ListingChannel> listingChannels(const std::set<std::string>& lineup,
     channel.inLineup = lineup.count(id) > 0;
     channel.spanish = info.category == LineupCategory::spanish || info.market == std::string("US-ES");
     channel.rank = stationRank(info, markets, channel.inLineup);
+    channel.sportsChannel = info.category == LineupCategory::sports && info.kind == catalog::ChannelKind::channel;
     out.push_back(std::move(channel));
   }
   return out;
@@ -63,6 +64,12 @@ std::optional<matcher::GuideListing> listingFor(const ListingChannel& channel, c
   listing.end = end;
   listing.rank = channel.rank;
   if (matcher::looksLikeGame(title)) return listing;
+  if (channel.sportsChannel && matcher::namesTennisEvent(title)) {
+    // "Center Court Live" / "Vienna-ATP & Basel-ATP Semifinals": matched
+    // with those tournaments' matches.
+    listing.tennisCoverage = true;
+    return listing;
+  }
   if (overview && text::count(*overview) > 12 && (sports || matcher::isGenericSportsTitle(rawTitle)) &&
       matcher::isGenericSportsTitle(title)) {
     // "NBA Basketball": the description names the venue ("From Chase

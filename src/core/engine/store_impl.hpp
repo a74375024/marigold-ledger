@@ -151,6 +151,9 @@ struct Store::Impl {
   // Raw channel id -> when this TV last couldn't play it (playback
   // cannotPlayHere): tried after the channel's other versions for a while.
   std::map<std::string, time::Seconds> unplayable;
+  // Entry or raw channel id -> when the viewer chose to keep listening to it
+  // without a picture: no picture check for a while.
+  std::map<std::string, time::Seconds> audioOnly;
   // Raw channel id -> when it last failed to play (this run only): a
   // direct version that failed lately lets a server one that played lead.
   std::map<std::string, time::Seconds> failedAt;

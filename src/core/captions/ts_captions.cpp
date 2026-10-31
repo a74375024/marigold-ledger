@@ -10,7 +10,6 @@ namespace {
 constexpr size_t kPacket = 188;
 constexpr uint8_t kSync = 0x47;
 constexpr size_t kLockBytes = 2 * kPacket + 1;  // to see three sync bytes in a row
-constexpr size_t kMaxSection = 1024;     // PAT and PMT sections are at most 1024 bytes
 constexpr size_t kMaxSei = 64u << 10;    // caption SEI is tens of bytes
 constexpr size_t kMaxUnitPairs = 256;    // cc_count is at most 31 per message
 constexpr size_t kMaxHeld = 1024;
@@ -18,16 +17,6 @@ constexpr size_t kPesReserve = 16u << 10;
 constexpr size_t kPesShrink = 256u << 10;  // capacity given back after a huge PES
 constexpr int64_t kWrap = int64_t{1} << 33;
 constexpr size_t kNone = static_cast<size_t>(-1);
-
-// MPEG-2 CRC-32 over a whole section, CRC included: 0 when intact.
-uint32_t crc32(const uint8_t* p, size_t n) {
-  uint32_t crc = 0xFFFFFFFFu;
-  for (size_t i = 0; i < n; ++i) {
-    crc ^= static_cast<uint32_t>(p[i]) << 24;
-    for (int b = 0; b < 8; ++b) crc = (crc & 0x80000000u) ? (crc << 1) ^ 0x04C11DB7u : crc << 1;
-  }
-  return crc;
-}
 
 // The next 00 00 01 at or after `from`, or kNone.
 size_t findStartCode(const uint8_t* b, size_t from, size_t end) {
@@ -44,11 +33,36 @@ size_t findStartCode(const uint8_t* b, size_t from, size_t end) {
 
 int64_t floorDiv(int64_t a, int64_t b) { return a >= 0 ? a / b : -((-a + b - 1) / b); }
 
+// An H.264 slice header's ue(v) fields, bit by bit (no emulation prevention:
+// the first few bytes of a slice header never hold 00 00 03).
+struct Bits {
+  const uint8_t* p;
+  size_t n;
+  size_t at = 0;
+  int bit() {
+    if (at >= 8 * n) return -1;
+    int b = (p[at / 8] >> (7 - at % 8)) & 1;
+    ++at;
+    return b;
+  }
+  int64_t ue() {
+    int zeros = 0, b = 0;
+    while ((b = bit()) == 0)
+      if (++zeros > 31) return -1;
+    if (b < 0) return -1;
+    int64_t v = 0;
+    for (int i = 0; i < zeros; ++i) {
+      int x = bit();
+      if (x < 0) return -1;
+      v = (v << 1) | x;
+    }
+    return (int64_t{1} << zeros) - 1 + v;
+  }
+};
+
 }  // namespace
 
 TsCaptions::TsCaptions() {
-  patSection_.buf.reserve(kMaxSection);
-  pmtSection_.buf.reserve(kMaxSection);
   rbsp_.reserve(256);
   unitPairs_.reserve(32);
   held_.reserve(64);
@@ -58,10 +72,8 @@ TsCaptions::TsCaptions() {
 void TsCaptions::reset() {
   carryLen_ = 0;
   locked_ = false;
-  patSection_.buf.clear();
-  patSection_.open = false;
-  pmtSection_.buf.clear();
-  pmtSection_.open = false;
+  patSection_.reset();
+  pmtSection_.reset();
   pmtPid_ = -1;
   videoPid_ = -1;
   codec_ = Codec::None;
@@ -69,6 +81,12 @@ void TsCaptions::reset() {
   lastCc_ = -1;
   havePrev90_ = false;
   haveNewest_ = false;
+  base_ = newestMedia_ = newestDts_ = lastDts_ = 0;
+  frameMs_ = 33;
+  sawDts_ = haveKey_ = false;
+  keyMedia_ = firstPtsMs_ = 0;
+  jumps_ = 0;
+  unitKey_ = discontinuity_ = false;
   haveOut_ = false;
   units_ = 0;
   held_.clear();
@@ -157,10 +175,11 @@ void TsCaptions::packet(const uint8_t* p) {
   if (!(control & 0x01) || off >= kPacket) return;  // no payload
   const uint8_t* payload = p + off;
   size_t n = kPacket - off;
+  size_t size = 0;
   if (pid == 0) {
-    section(patSection_, payload, n, start, true);
+    if (const uint8_t* sec = patSection_.feed(payload, n, start, &size)) readPat(sec, size);
   } else if (pid == pmtPid_) {
-    section(pmtSection_, payload, n, start, false);
+    if (const uint8_t* sec = pmtSection_.feed(payload, n, start, &size)) readPmt(sec, size);
   } else if (pid == videoPid_) {
     video(payload, n, start, cc, discontinuity);
   }
@@ -168,81 +187,34 @@ void TsCaptions::packet(const uint8_t* p) {
 
 // --- PAT and PMT ---------------------------------------------------------------
 
-void TsCaptions::section(Section& s, const uint8_t* p, size_t n, bool start, bool isPat) {
-  if (start) {
-    size_t pointer = p[0];
-    if (1 + pointer > n) {
-      s.open = false;
-      return;
-    }
-    s.buf.clear();
-    s.open = true;
-    p += 1 + pointer;
-    n -= 1 + pointer;
-  } else if (!s.open) {
-    return;
-  }
-  size_t room = kMaxSection - s.buf.size();
-  s.buf.insert(s.buf.end(), p, p + std::min(n, room));
-  if (s.buf.size() < 3) return;
-  size_t total = 3 + (((s.buf[1] & 0x0F) << 8) | s.buf[2]);
-  if (total > kMaxSection || total < 12) {
-    s.open = false;
-    return;
-  }
-  if (s.buf.size() < total) return;
-  s.open = false;
-  sectionDone(s.buf.data(), total, isPat);
-}
-
-void TsCaptions::sectionDone(const uint8_t* p, size_t n, bool isPat) {
-  if (crc32(p, n) != 0) return;
-  if (isPat) {
-    readPat(p, n);
-  } else {
-    readPmt(p, n);
-  }
-}
-
 void TsCaptions::readPat(const uint8_t* p, size_t n) {
-  if (p[0] != 0x00) return;
-  for (size_t i = 8; i + 4 <= n - 4; i += 4) {
-    int program = (p[i] << 8) | p[i + 1];
-    if (program == 0) continue;  // the network PID
-    int pid = ((p[i + 2] & 0x1F) << 8) | p[i + 3];
-    if (pid != pmtPid_) {
-      pmtPid_ = pid;
-      pmtSection_.open = false;
-    }
-    return;
+  int pid = media::ts::patFirstProgram(p, n);
+  if (pid >= 0 && pid != pmtPid_) {
+    pmtPid_ = pid;
+    pmtSection_.reset();
   }
 }
 
 void TsCaptions::readPmt(const uint8_t* p, size_t n) {
-  if (p[0] != 0x02) return;
-  size_t end = n - 4;
-  size_t i = 12 + (((p[10] & 0x0F) << 8) | p[11]);
-  while (i + 5 <= end) {
-    int type = p[i];
-    int pid = ((p[i + 1] & 0x1F) << 8) | p[i + 2];
-    size_t info = ((p[i + 3] & 0x0F) << 8) | p[i + 4];
-    Codec codec = type == 0x1B ? Codec::H264 : type == 0x24 ? Codec::Hevc : type == 0x02 ? Codec::Mpeg2 : Codec::None;
+  if (!media::ts::parsePmt(p, n, pmt_)) return;
+  for (const media::ts::Stream& s : pmt_.streams) {
+    Codec codec = s.type == 0x1B ? Codec::H264 : s.type == 0x24 ? Codec::Hevc : s.type == 0x02 ? Codec::Mpeg2 : Codec::None;
     if (codec != Codec::None) {
-      if (pid != videoPid_ || codec != codec_) {
-        videoPid_ = pid;
+      if (s.pid != videoPid_ || codec != codec_) {
+        videoPid_ = s.pid;
         codec_ = codec;
         dropPes();
         lastCc_ = -1;
       }
       return;
     }
-    i += 5 + info;
   }
 }
 
 // --- PES -----------------------------------------------------------------------
 
 void TsCaptions::video(const uint8_t* p, size_t n, bool start, int cc, bool discontinuity) {
+  if (discontinuity) discontinuity_ = true;  // a PTS jump may follow
   if (lastCc_ >= 0 && !discontinuity) {
     if (cc == lastCc_) return;                   // a repeated packet
     if (cc != ((lastCc_ + 1) & 0x0F)) dropPes();  // lost packets: this PES is damaged
@@ -276,6 +248,8 @@ void TsCaptions::startPes() {
   scan_ = 0;
   haveNal_ = false;
   havePts_ = false;
+  haveDts_ = false;
+  unitKey_ = false;
   unitPairs_.clear();
 }
 
@@ -312,6 +286,17 @@ void TsCaptions::parsePes() {
                     (h[13] >> 1);
       ptsMs_ = unwrapMs(pts);
       havePts_ = true;
+      if ((h[7] & 0xC0) == 0xC0 && h[8] >= 10) {
+        // The decode time comes before the presentation time, never far.
+        int64_t dts = (static_cast<int64_t>(h[14] & 0x0E) << 29) | (static_cast<int64_t>(h[15]) << 22) |
+                      (static_cast<int64_t>(h[16] & 0xFE) << 14) | (static_cast<int64_t>(h[17]) << 7) |
+                      (h[18] >> 1);
+        int64_t before = ((pts - dts) % kWrap + kWrap) % kWrap;
+        if (before < kWrap / 2) {
+          dtsMs_ = floorDiv(prev90_ - before, 90);
+          haveDts_ = true;
+        }
+      }
     }
     pesHeader_ = true;
     scan_ = start;
@@ -333,11 +318,8 @@ void TsCaptions::scanUnits() {
       scan_ = s;  // its header byte isn't here yet
       return;
     }
-    if (haveNal_) unit(nal_, s);
-    nal_ = s + 3;
-    haveNal_ = true;
-    scan_ = s + 3;
-    uint8_t h = b[nal_];
+    size_t at = s + 3;
+    uint8_t h = b[at];
     bool picture = false;
     switch (codec_) {
       case Codec::H264: picture = (h & 0x1F) >= 1 && (h & 0x1F) <= 5; break;
@@ -345,7 +327,18 @@ void TsCaptions::scanUnits() {
       case Codec::Mpeg2: picture = h >= 0x01 && h <= 0xAF; break;
       case Codec::None: break;
     }
+    // Until the first picture a decoder can start on, an H.264 slice's
+    // type is read from its header: wait for its first bytes.
+    if (picture && !haveKey_ && codec_ == Codec::H264 && (h & 0x1F) == 1 && end - at < 6) {
+      scan_ = s;
+      return;
+    }
+    if (haveNal_) unit(nal_, s);
+    nal_ = at;
+    haveNal_ = true;
+    scan_ = at;
     if (picture) {
+      if (!haveKey_ && codec_ != Codec::Mpeg2) unitKey_ = keyPicture(b + at, end - at);
       // Caption data comes before the first slice: the rest is never copied.
       unitDone_ = true;
       accessUnitDone();
@@ -367,6 +360,8 @@ void TsCaptions::unit(size_t from, size_t to) {
       if (n >= 2 && ((p[0] >> 1) & 0x3F) == 39) sei(p + 2, n - 2);
       break;
     case Codec::Mpeg2:
+      // The picture header's picture_coding_type: 1 = I.
+      if (p[0] == 0x00 && n >= 3) unitKey_ = ((p[2] >> 3) & 0x07) == 1;
       // Picture user data: "GA94", user_data_type_code 3, cc_data.
       if (p[0] == 0xB2 && n >= 6 && std::memcmp(p + 1, "GA94", 4) == 0 && p[5] == 0x03) ccData(p + 6, n - 6);
       break;
@@ -445,20 +440,63 @@ int64_t TsCaptions::unwrapMs(int64_t pts90) {
   return floorDiv(pts90, 90);
 }
 
+// A picture a decoder can start on: H.264 IDR or I slice, HEVC IRAP. `p`
+// is the slice NAL from its header byte, `n` the bytes of it at hand.
+bool TsCaptions::keyPicture(const uint8_t* p, size_t n) const {
+  if (n == 0) return false;
+  if (codec_ == Codec::Hevc) {
+    int type = (p[0] >> 1) & 0x3F;
+    return type >= 16 && type <= 23;
+  }
+  if (codec_ != Codec::H264) return false;
+  int type = p[0] & 0x1F;
+  if (type == 5) return true;
+  if (type != 1) return false;
+  Bits bits{p + 1, n - 1};
+  if (bits.ue() < 0) return false;  // first_mb_in_slice
+  int64_t slice = bits.ue();
+  return slice >= 0 && (slice % 5 == 2 || slice % 5 == 4);  // I, SI
+}
+
 void TsCaptions::accessUnitDone() {
   int64_t pts = havePts_ ? ptsMs_ : (haveNewest_ ? newestMs_ : 0);
+  int64_t dts = havePts_ && haveDts_ ? dtsMs_ : pts;
   ++units_;
-  if (haveNewest_ && pts < newestMs_ - kPtsJumpMs) {
-    // The clock went back (a splice or a new stream): finish the old timeline.
-    release(true);
-    newestMs_ = pts;
-    haveOut_ = false;
+  if (!haveNewest_) {
+    // The first picture: media time 0.
+    base_ = -pts;
+    firstPtsMs_ = pts;
+  } else {
+    int64_t jump = pts - newestMs_;
+    int64_t limit = discontinuity_ ? kDiscontinuityJumpMs : kPtsJumpMs;
+    if (jump < -limit || jump > limit) {
+      // A new timeline (a source reopened, a splice): what the old one holds
+      // goes first, and media time carries on from it, as the player's does.
+      release(true);
+      base_ = newestMedia_ + frameMs_ - pts;
+      newestMs_ = pts;
+      haveOut_ = false;
+      ++jumps_;
+    }
   }
+  discontinuity_ = false;
+  int64_t media = pts + base_;
+  int64_t mediaDts = dts + base_;
+  if (haveNewest_ && mediaDts > lastDts_ && mediaDts - lastDts_ <= 100) frameMs_ = mediaDts - lastDts_;
+  lastDts_ = mediaDts;
   if (!haveNewest_ || pts > newestMs_) newestMs_ = pts;
+  if (!haveNewest_ || media > newestMedia_) newestMedia_ = media;
+  if (!haveNewest_ || mediaDts > newestDts_) newestDts_ = mediaDts;
+  if (havePts_ && haveDts_) sawDts_ = true;
   haveNewest_ = true;
+  if (unitKey_ && !haveKey_) {
+    haveKey_ = true;
+    keyMedia_ = media;
+  }
+  unitKey_ = false;
   for (const CcPair& c : unitPairs_) {
-    CcPair pair{pts, c.field, c.b1, c.b2};
-    if (haveOut_ && pts < lastOutMs_) {
+    CcPair pair{pts, c.field, c.b1, c.b2, media};
+    if (haveOut_ && media < lastOutMs_) {
       ready_.push_back(pair);  // later than the window allows: too late to reorder
     } else {
       held_.push_back(Held{units_, pair});
@@ -472,15 +510,21 @@ void TsCaptions::release(bool all) {
   while (!held_.empty()) {
     const Held* first = &held_[0];
     for (const Held& h : held_) {
-      int64_t a = h.pair.ptsMs, b = first->pair.ptsMs;
+      int64_t a = h.pair.mediaMs, b = first->pair.mediaMs;
       if (a < b || (a == b && h.unit < first->unit)) first = &h;
     }
-    if (!all && units_ - first->unit < static_cast<uint64_t>(kReorderUnits) &&
-        newestMs_ - first->pair.ptsMs <= kReorderMs) {
-      break;
+    if (!all) {
+      int64_t behind = newestMedia_ - first->pair.mediaMs;
+      uint64_t later = units_ - first->unit;
+      // With decode times: every picture shown before this one has arrived
+      // once the newest one's DTS reaches its PTS.
+      bool hold = sawDts_ ? first->pair.mediaMs > newestDts_ && later < static_cast<uint64_t>(kReorderCapUnits) &&
+                                behind <= kReorderCapMs
+                          : later < static_cast<uint64_t>(kReorderUnits) && behind <= kReorderMs;
+      if (hold) break;
     }
     uint64_t unit = first->unit;
-    lastOutMs_ = first->pair.ptsMs;
+    lastOutMs_ = first->pair.mediaMs;
     haveOut_ = true;
     for (const Held& h : held_) {
       if (h.unit == unit) ready_.push_back(h.pair);

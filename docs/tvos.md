@@ -33,9 +33,11 @@ tvOS 17 and newer is supported (Apple TV HD and every Apple TV 4K).
 
 The key hints show what the Siri Remote has: Hold OK for a channel's
 actions and ⏯ for Live Events. Search and Settings are in the left rail's
-strip (◀ to the menu). Search has Marigold's own A–Z keyboard, the same as
-on LG and Fire TV: ring presses move one key, swipes move faster and stop
-at the grid's edge, and only the centre click types; 🎤 Speak hands over
+strip (◀ to the menu). Search has Marigold's own keyboard, the same as on
+LG and Fire TV (the letters, and a 123 key for a phone keypad; ⏯ changes
+the page, as on Apple's keyboard): ring presses move one key, swipes move
+faster and stop at the keys' edge, and only the centre click types. It
+looks in your lineup and Live Events first; 🎤 Speak hands over
 to Apple's keyboard (the hidden text field) for dictation. A TV's own remote over HDMI
 that has page, number or colour keys adds them to the hints the first time
 they are pressed, as on Android.

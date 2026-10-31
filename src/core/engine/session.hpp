@@ -27,6 +27,7 @@
 
 #include "core/engine/host.hpp"
 #include "core/engine/model.hpp"
+#include "core/media/picture.hpp"
 #include "core/playback/recovery.hpp"
 #include "core/report/playback_log.hpp"
 
@@ -36,7 +37,8 @@ class Store;
 
 // The player's flags, read every tick.
 struct PlayerState {
-  bool picture = false;    // frames are coming (or the decoder reported in)
+  bool picture = false;    // a frame was drawn (webOS: the decoder reported in)
+  bool playing = false;    // the player's clock runs: the sound plays
   bool buffering = false;
   bool failed = false;
   bool ended = false;
@@ -45,6 +47,20 @@ struct PlayerState {
   // that report that at all (`reportsLoading`).
   bool loaded = false, reportsLoading = false;
   double position = 0, bufferEnd = 0;
+  // The picture check. What the stream itself says, where something reads
+  // it (`streamChecked`: the LG relay), and the numbers behind it...
+  bool streamChecked = false;
+  media::Verdict stream = media::Verdict::Unknown;
+  std::string streamDetail;
+  // ... and what the player says: the video tracks it lists (-1 not known
+  // yet), one it can't decode, its frame counter stopped while its clock
+  // runs.
+  int videoTracks = -1;
+  bool videoUnsupported = false;
+  bool framesStalled = false;
+  // The picture and sound, for the log ("1920x1080 59.94p · h264 High
+  // 8-bit · aac"); "" not known yet.
+  std::string facts;
 };
 
 class Player {
@@ -71,6 +87,13 @@ class Player {
   virtual std::optional<Retry> note() { return std::nullopt; }
   // The provider stream was closed (a relay serving it can stop).
   virtual void streamClosed() {}
+  // The connections to the source a relay closed since the last call (webOS:
+  // the relay reopens a continuous source that closes). Every frame.
+  struct SourceClosed {
+    int64_t lastedMs = 0, bytes = 0;
+    bool reopened = false;  // the relay opened it again
+  };
+  virtual std::vector<SourceClosed> sourceClosed() { return {}; }
   virtual void stop() = 0;
   virtual PlayerState state() const = 0;
 };
@@ -137,6 +160,14 @@ class Session {
   bool ready() const { return rec_.sawFirstFrame(); }
   bool failed() const { return rec_.phase() == playback::Recovery::Phase::Failed; }
   const std::string& failMessage() const { return failMessage_; }
+  // No feed shows a picture but the sound plays on: the player asks what to
+  // do (its card says `noPictureMessage()`).
+  bool noPicture() const { return noPicture_; }
+  const std::string& noPictureMessage() const { return noPictureMessage_; }
+  // "Keep listening": the card goes, and the channel plays as sound only,
+  // unchecked, for a week (Store::markAudioOnly).
+  void keepListening();
+  void dismissNoPicture() { noPicture_ = false; }
   // The small note at the top right ("Reconnecting…"); empty = none.
   const std::string& note() const { return rec_.note(); }
   uint32_t tunedAt() const { return tunedAt_; }
@@ -173,6 +204,9 @@ class Session {
   bool begin(const std::string& entryId, std::vector<Feed> feeds, const std::vector<std::string>& flip);
   void apply(const playback::Actions& actions);
   void playFeed(size_t feed, uint64_t token);
+  std::vector<playback::FeedInfo> feedInfos(const std::string& entryId) const;
+  bool expectsVideo() const;
+  void pictureCheck(uint32_t now, const PlayerState& s, bool picture);
   void watched();
   void rememberGame();
   void logEvent(std::string_view event, std::string_view detail = {});
@@ -191,6 +225,9 @@ class Session {
   std::vector<Feed> feeds_;
   bool full_ = false;
   std::string failMessage_;
+  bool noPicture_ = false;
+  std::string noPictureMessage_;
+  bool factsLogged_ = false;  // the picture's facts are in the log (this attempt)
   std::set<std::string> quickTried_;  // Emby quick starts tried this tune
   std::string quickPending_;          // a quick start not yet shown a picture
   uint32_t tunedAt_ = 0;

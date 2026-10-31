@@ -73,6 +73,16 @@ final class Video {
   private static final Object lock = new Object();
   private static boolean active, ready, playing, failed, ended, firstFrame, audioUnsupported, buffering;
   private static long bufferingSince;
+  // The picture check: the video tracks listed (-1 not yet), one that can't
+  // be decoded, and frames that stopped being drawn while the clock runs.
+  private static int videoTracks = -1;
+  private static boolean videoUnsupported, framesStalled;
+  // UI thread: the video decoder's rendered-frame count when last read, and
+  // since when it hasn't moved while the position did.
+  private static int renderedLast = -1;
+  private static long stillSince;
+  private static double stillFrom;
+  private static String facts = "";
   private static double position, bufferEnd;
   private static int width, height;
   private static float pixelRatio = 1f;
@@ -135,6 +145,9 @@ final class Video {
       synchronized (lock) {
         active = true;
         ready = playing = failed = ended = firstFrame = audioUnsupported = false;
+        videoTracks = -1;
+        videoUnsupported = framesStalled = false;
+        facts = "";
         buffering = true;
         bufferingSince = SystemClock.elapsedRealtime();
         position = bufferEnd = 0;
@@ -145,6 +158,8 @@ final class Video {
         textVersion++;
       }
       Bridge.keepScreenOn(true);
+      renderedLast = -1;
+      stillSince = 0;
       start();
       tick();
     });
@@ -160,6 +175,8 @@ final class Video {
       Bridge.keepScreenOn(false);
       synchronized (lock) {
         active = ready = playing = failed = ended = firstFrame = buffering = false;
+        videoUnsupported = framesStalled = false;
+        videoTracks = -1;
         width = height = 0;
       }
     });
@@ -191,18 +208,33 @@ final class Video {
     });
   }
 
-  /** Any thread. Fills flags, buffering ms, position, buffer end, width, height; returns the error. */
+  /**
+   * Any thread. Fills flags, buffering ms, position, buffer end, width, height and the video tracks
+   * listed (-1 not yet); returns the error.
+   */
   static String state(double[] out) {
     synchronized (lock) {
       int flags = (active ? 1 : 0) | (ready ? 2 : 0) | (playing ? 4 : 0) | (failed ? 8 : 0) | (ended ? 16 : 0)
-          | (firstFrame ? 32 : 0) | (audioUnsupported ? 64 : 0);
+          | (firstFrame ? 32 : 0) | (audioUnsupported ? 64 : 0) | (framesStalled ? 128 : 0)
+          | (videoUnsupported ? 256 : 0);
       out[0] = flags;
       out[1] = buffering ? SystemClock.elapsedRealtime() - bufferingSince : 0;
       out[2] = position;
       out[3] = bufferEnd;
       out[4] = width;
       out[5] = height;
+      if (out.length > 6) out[6] = videoTracks;
       return error;
+    }
+  }
+
+  /**
+   * Any thread. What plays, for the playback log: "width\theight\tframe rate\tvideo type\tvideo
+   * codecs\taudio type"; "" before the first frame.
+   */
+  static String facts() {
+    synchronized (lock) {
+      return facts;
     }
   }
 
@@ -302,12 +334,57 @@ final class Video {
   private static void tick() {
     ui.removeCallbacks(ticker);
     if (player == null || url.isEmpty()) return;
+    boolean stalled = framesStalled();
+    String what = factsNow();
     synchronized (lock) {
       position = player.getCurrentPosition() / 1000.0;
       bufferEnd = player.getBufferedPosition() / 1000.0;
       playing = player.isPlaying();
+      framesStalled = stalled;
+      if (facts.isEmpty() && firstFrame) facts = what;
     }
     ui.postDelayed(ticker, 250);
+  }
+
+  // The picture check: the video decoder's rendered-frame count stopped for
+  // 2 s while the position moved on (a frozen or undecodable picture under
+  // running sound). Only once a first frame was drawn.
+  private static boolean framesStalled() {
+    androidx.media3.exoplayer.DecoderCounters c = player.getVideoDecoderCounters();
+    boolean drawn;
+    synchronized (lock) {
+      drawn = firstFrame;
+    }
+    if (c == null || !drawn || !player.isPlaying()) {
+      stillSince = 0;
+      renderedLast = -1;
+      return false;
+    }
+    c.ensureUpdated();
+    int rendered = c.renderedOutputBufferCount;
+    long now = SystemClock.elapsedRealtime();
+    double at = player.getCurrentPosition() / 1000.0;
+    if (rendered != renderedLast) {
+      renderedLast = rendered;
+      stillSince = 0;
+      return false;
+    }
+    if (stillSince == 0) {
+      stillSince = now;
+      stillFrom = at;
+      return false;
+    }
+    return now - stillSince >= 2000 && at - stillFrom >= 1.5;
+  }
+
+  // What plays, once the formats are known (see facts()).
+  private static String factsNow() {
+    androidx.media3.common.Format v = player.getVideoFormat();
+    if (v == null) return "";
+    androidx.media3.common.Format a = player.getAudioFormat();
+    return v.width + "\t" + v.height + "\t" + (v.frameRate > 0 ? v.frameRate : 0) + "\t"
+        + (v.sampleMimeType == null ? "" : v.sampleMimeType) + "\t" + (v.codecs == null ? "" : v.codecs) + "\t"
+        + (a == null || a.sampleMimeType == null ? "" : a.sampleMimeType);
   }
 
   // The picture fitted inside the rectangle asked for, keeping its shape.
@@ -386,6 +463,8 @@ final class Video {
     @Override
     public void onTracksChanged(Tracks tracks) {
       boolean audio = false, playable = false;
+      int video = 0;
+      boolean videoPlayable = false;
       StringBuilder text = new StringBuilder();
       textGroups.clear();
       for (Tracks.Group g : tracks.getGroups()) {
@@ -402,12 +481,23 @@ final class Video {
                 .append(channel == androidx.media3.common.Format.NO_VALUE ? 0 : channel).append('\n');
           }
         }
+        // The picture check: a stream with no video track, or only ones this
+        // device can't decode.
+        if (g.getType() == C.TRACK_TYPE_VIDEO) {
+          video++;
+          if (g.isSupported()) videoPlayable = true;
+        }
         if (g.getType() != C.TRACK_TYPE_AUDIO) continue;
         audio = true;
         if (g.isSupported()) playable = true;
       }
       synchronized (lock) {
         audioUnsupported = audio && !playable;
+        // Tracks come empty before the stream is read: not known yet.
+        if (!tracks.getGroups().isEmpty()) {
+          videoTracks = video;
+          videoUnsupported = video > 0 && !videoPlayable;
+        }
         textTracks = text.toString();
       }
       applyText();
