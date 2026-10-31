@@ -117,3 +117,16 @@ Everything in `docs/m4-test.md` › Picture check (Build 115) applies, from ExoP
 | Frozen | A stream whose picture freezes while the sound and clock go on | Rendered frames stop for 2 s → after 15 s (8 s before a real picture) one reconnect, then the next version |
 | No picture anywhere | Every version sound only | The card with Try another source and Keep listening, as on LG |
 | Radio | A radio channel | Plays when isPlaying; no check |
+
+## In-player guide (Build 116)
+
+Everything in `docs/m4-test.md` › In-player guide (Build 116) applies, except the pointer rows.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Column | Left in the player, Left again at the first show at Now | The neighborhoods inside the card; Up/Down walk them and the grid scrolls behind; select on another one lands on its top at Now |
+| Lists | Left in the column; Down to Favorites, select | The lists over the card; Favorites opens on its neighborhoods |
+| Keys | ⏪ ⏩ on the grid | The window moves 90 minutes, as before |
+| Hints | The legend on a Fire TV remote | No "123 jumps to a channel"; "OK" for select |
+| Back order | Back from the lists, again and again | The column, then the grid, then the guide closes |
+| Flip list | A channel picked in Favorites there, then Up/Down in the player | Through Favorites |

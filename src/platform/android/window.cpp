@@ -264,6 +264,8 @@ bool Window::leaveOnFirstBack() const { return false; }
 // keys); their keys are learned as they are pressed.
 RemoteKeys Window::remoteKeys() const { return impl_->amazon ? RemoteKeys::fireTv() : RemoteKeys{}; }
 
+void Window::systemCursor(bool /*shown*/) {}
+
 int Window::drawableWidth() const { return impl_->drawableW; }
 int Window::drawableHeight() const { return impl_->drawableH; }
 const std::string& Window::runtime() const { return impl_->runtime; }

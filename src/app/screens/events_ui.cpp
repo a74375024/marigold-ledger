@@ -126,14 +126,17 @@ void sideLine(ui::Ctx& c, const EventSide& s, Rect r, bool focused, float alpha,
   if (!s.score.empty()) {
     right -= kMarkW;
     if (s.score.find(' ') != std::string::npos) {
-      // Sets: one column each, the set on now bold.
-      std::vector<std::string> sets;
-      for (size_t i = 0; i < s.score.size();) {
-        size_t j = s.score.find(' ', i);
-        if (j == std::string::npos) j = s.score.size();
-        if (j > i) sets.push_back(s.score.substr(i, j - i));
-        i = j + 1;
+      // Sets: one column each, the set on now bold (split with the tile).
+      std::vector<std::string> split;
+      if (s.sets.empty()) {
+        for (size_t i = 0; i < s.score.size();) {
+          size_t j = s.score.find(' ', i);
+          if (j == std::string::npos) j = s.score.size();
+          if (j > i) split.push_back(s.score.substr(i, j - i));
+          i = j + 1;
+        }
       }
+      const std::vector<std::string>& sets = s.sets.empty() ? split : s.sets;
       float cx = right + kMarkW;
       for (size_t k = sets.size(); k-- > 0;) {
         bool now = live && k + 1 == sets.size();
@@ -147,7 +150,8 @@ void sideLine(ui::Ctx& c, const EventSide& s, Rect r, bool focused, float alpha,
       ui::label(c, s.score, right - w, r.y + 2, Weight::Bold, 25, soft, w + 2);
       scoreLeft = right - w;
       if (!s.pens.empty()) {
-        std::string pens = "(" + s.pens + ")";
+        std::string made;
+        const std::string& pens = s.pensText.empty() ? (made = "(" + s.pens + ")") : s.pensText;
         float pw = ui::textWidth(c, pens, Weight::Bold, 16);
         ui::label(c, pens, scoreLeft - pw - 8, r.y + 7, Weight::Bold, 16, soft.withAlpha(soft.a * 0.85f));
         scoreLeft -= pw + 8;
@@ -357,8 +361,9 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool mixed) {
     }
     if (!t.statusExtra.empty()) {
       Color extra = t.soon ? (focused ? theme::hex(0x9A5B00) : theme::hex(kDelayed)) : ink.withAlpha(ink.a * 0.7f);
-      px += ui::label(c, " \xc2\xb7 " + t.statusExtra, px, ty + 1, t.soon ? Weight::Bold : Weight::Regular, kStatusPx, extra,
-                      x + w - px);
+      std::string made;
+      const std::string& line = t.textMade ? t.extraLine : (made = " \xc2\xb7 " + t.statusExtra);
+      px += ui::label(c, line, px, ty + 1, t.soon ? Weight::Bold : Weight::Regular, kStatusPx, extra, x + w - px);
     }
   }
   float right = x + w;
@@ -374,9 +379,9 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool mixed) {
     ui::labelIn(c, t.tag, {tr.x + 6, tr.y, tr.w - 12, tr.h}, Weight::Bold, 13, theme::white(), Align::Center);
     right -= tw + 8;
   }
-  std::string comp = t.competition;
-  if (comp.empty()) comp = !t.sport.empty() && mixed ? t.sport : t.sport.empty() && !t.highSchool ? "LIVE EVENT" : "";
-  if (t.highSchool) comp = comp.empty() ? "HIGH SCHOOL" : "HIGH SCHOOL \xc2\xb7 " + comp;
+  // The top line's competition, made with the tile.
+  std::string made;
+  const std::string& comp = t.textMade ? (mixed ? t.topLineMixed : t.topLine) : (made = tileTopLine(t, mixed));
   float room = right - px - 14;
   if (!comp.empty() && room > 40)
     ui::label(c, comp, right - room, ty + 3, Weight::Medium, 14, ink.withAlpha(ink.a * 0.55f), room, Align::Right);

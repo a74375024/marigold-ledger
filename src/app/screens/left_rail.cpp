@@ -137,13 +137,13 @@ void menu(ui::Ctx& c, const std::vector<rail::Item>& items, rail::Item current, 
 }
 
 void column(ui::Ctx& c, const std::string& section, const char* word, const std::vector<Entry>& entries, int focus,
-            int origin, int hover, float top, float first, float alpha) {
+            int origin, int hover, float top, float first, float alpha, float x0) {
   alpha = std::clamp(alpha, 0.0f, 1.0f);
   std::string head = section;
   for (char& ch : head) ch = static_cast<char>(ch >= 'a' && ch <= 'z' ? ch - 32 : ch);
-  ui::labelIn(c, head, {kColumnX, top, kColumnW, 40}, Weight::Bold, 17, theme::white(0.55f * alpha));
-  ui::labelIn(c, word, {kColumnX, top, kColumnW, 40}, Weight::Medium, 16, theme::white(0.4f * alpha), Align::Right);
-  c.g.fill({kColumnX + kColumnW + 14, top, 1, kColumnBottom - top}, theme::white(0.1f * alpha));
+  ui::labelIn(c, head, {x0, top, kColumnW, 40}, Weight::Bold, 17, theme::white(0.55f * alpha));
+  ui::labelIn(c, word, {x0, top, kColumnW, 40}, Weight::Medium, 16, theme::white(0.4f * alpha), Align::Right);
+  c.g.fill({x0 + kColumnW + 14, top, 1, kColumnBottom - top}, theme::white(0.1f * alpha));
   // The list scrolls to keep the focus in view.
   int n = static_cast<int>(entries.size());
   int visible = std::max(1, static_cast<int>((kColumnBottom - first + kEntryStep - kEntryH) / kEntryStep));
@@ -151,7 +151,7 @@ void column(ui::Ctx& c, const std::string& section, const char* word, const std:
   float y = first;
   for (int i = from; i < n && i < from + visible; ++i, y += kEntryStep) {
     const Entry& e = entries[static_cast<size_t>(i)];
-    Rect pill{kColumnX - 12, y, kColumnW + 4, kEntryH};
+    Rect pill{x0 - 12, y, kColumnW + 4, kEntryH};
     bool f = i == focus;
     c.hit(pill, kHitColumn + i);
     if (f) c.g.fill(pill, theme::white(alpha), kEntryH * 0.5f);
@@ -171,6 +171,53 @@ void column(ui::Ctx& c, const std::string& section, const char* word, const std:
     }
     ui::labelIn(c, e.title, {x, y, right - x, kEntryH}, Weight::Bold, 22, f ? theme::black(alpha) : theme::white(0.8f * alpha));
   }
+}
+
+void listsButton(ui::Ctx& c, float x, float top, bool hover, float alpha, int id) {
+  const char* word = "\xe2\x97\x80 Lists";
+  float w = std::max(92.0f, ui::textWidth(c, word, Weight::Bold, 16) + 28);
+  Rect r{x + kColumnW + 6 - w, top + 2, w, 36};
+  c.hit(r, id);
+  if (hover) c.g.fill(r, theme::white(alpha), 18);
+  else c.g.stroke(r, theme::white(0.22f * alpha), 18, 1.5f);
+  ui::labelIn(c, word, r, Weight::Bold, 16, hover ? theme::black(alpha) : theme::white(0.6f * alpha), Align::Center);
+}
+
+void lists(ui::Ctx& c, Rect card, const std::vector<rail::Item>& items, rail::Item current, int focus, int hover,
+           const std::string& note, float t) {
+  t = std::clamp(t, 0.0f, 1.0f);
+  if (t <= 0.01f) return;
+  // The card dims under it (a click there closes it); the picture beside
+  // the card stays clear.
+  c.g.fill(card, theme::black(0.55f * t), 30);
+  c.hit(card, kHitOutside);
+  c.g.pushClip(card);
+  float dx = std::round(card.x - kListsW * (1 - t));
+  Rect panel{dx, card.y, kListsW, card.h};
+  c.g.fill(panel, theme::hex(kNavColour), 30);
+  c.g.fill({dx + kListsW - 30, card.y, 30, card.h}, theme::hex(kNavColour));  // square on the card's side
+  c.hit(panel, kHitNothing);
+  // Its right edge: a hairline, then a soft shadow over the card.
+  c.g.fill({dx + kListsW, card.y + 30, 1, card.h - 60}, theme::white(0.14f * t));
+  for (int k = 0; k < 4; ++k)
+    c.g.fill({dx + kListsW + 1 + 11 * static_cast<float>(k), card.y + 30, 11, card.h - 60},
+             theme::black(0.28f * t * (1.0f - 0.25f * static_cast<float>(k))));
+  float y0 = card.y + 96;  // the header, in the timeline row
+  ui::labelIn(c, "LISTS", {dx + 40, y0, kListsW - 80, 40}, Weight::Bold, 17, theme::white(0.55f));
+  for (size_t i = 0; i < items.size(); ++i) {
+    float y = y0 + 74 + 72 * static_cast<float>(i);  // the centre line
+    bool f = static_cast<int>(i) == focus;
+    bool sel = items[i] == current;
+    c.hit({dx, y - 36, kListsW, 72}, kHitMenu + static_cast<int>(i));
+    if (f) c.g.fill({dx + 20, y - 30, kListsW - 44, 60}, theme::white(), 30);
+    else if (static_cast<int>(i) == hover) c.g.fill({dx + 20, y - 30, kListsW - 44, 60}, theme::white(0.12f), 30);
+    Color col = f ? theme::black() : sel ? theme::white() : theme::white(0.66f);
+    icon(c, items[i], dx + 36, y - 16, col);
+    ui::labelIn(c, rail::title(items[i]), {dx + 86, y - 30, kListsW - 110, 60}, Weight::Bold, 26, col);
+    if (sel && !f) c.g.fill({dx + 6, y - 14, 4, 28}, theme::white(), 2);
+  }
+  ui::label(c, note, dx + 40, card.y + card.h - 156, Weight::Medium, 18, theme::white(0.45f), kListsW - 70);
+  c.g.popClip();
 }
 
 }  // namespace marigold::app::left_rail

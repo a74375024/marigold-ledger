@@ -16,6 +16,7 @@
 
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -92,6 +93,13 @@ struct PodiumDriver {
   std::optional<std::string> color;  // team color hex
 };
 
+// Titles already read (Input::titles).
+struct TitleMemo;
+std::shared_ptr<TitleMemo> newTitleMemo();
+// Emptied when it holds more than `most` titles (they come and go through
+// the day).
+void trimTitleMemo(TitleMemo& memo, size_t most);
+
 struct Settings {
   // "Show games not in my channels".
   bool showsUnwatchable = true;
@@ -128,6 +136,11 @@ struct Input {
   std::function<bool(const std::string& channelID)> feedAbroad;
   // A finished session's top three (RaceData.top3: race_data::RaceData::podiumHook).
   std::function<std::vector<PodiumDriver>(const std::string& kind, Seconds start)> podium;
+  // Marigold: what titles say, kept from one board to the next by the
+  // caller (one board at a time; newTitleMemo()). Reading a title and the
+  // studio-show test depend on the title and its row only, so each is
+  // worked out once. Unset: every time.
+  std::shared_ptr<TitleMemo> titles;
 };
 
 // MARK: View model

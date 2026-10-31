@@ -32,4 +32,15 @@ Image trimTransparent(Image src, uint8_t threshold = 8);
 enum class Tone : uint8_t { normal, light, mixed };
 Tone toneOf(const Image& image);
 
+// What a logo is made of, measured once on the full-size decode (before
+// trimming and shrinking), for logos::fillsCard().
+struct Shape {
+  // The visible part (alpha above the trim threshold), in source pixels;
+  // 0 x 0 when nothing is visible.
+  int w = 0, h = 0;
+  // One flat colour over the whole visible box: a blank tile.
+  bool plain = false;
+};
+Shape shapeOf(const Image& image, uint8_t threshold = 8);
+
 }  // namespace marigold::px

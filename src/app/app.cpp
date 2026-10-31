@@ -136,27 +136,33 @@ void App::handle(const platform::Event& e) {
       break;
     case Type::KeyDown: {
       Key key = e.key;
-      if (key == Key::CursorShown || key == Key::CursorHidden) {
-        pointerShown_ = key == Key::CursorShown;
-        dirty_ = true;
+      if (key == Key::CursorShown) {
+        // The system put its arrow up. Still the jolt of a key press: down
+        // again. Later it may be the hand: leave it, movement decides (hiding
+        // it then stopped all motion on one TV, so it could never come back).
+        arrowUp_ = true;
+        if (pointer_.shownByKey(window_.ticks())) {
+          hideArrow();
+        } else if (arrowHidden_) {
+          window_.systemCursor(true);
+          arrowHidden_ = false;
+        }
+        break;
+      }
+      if (key == Key::CursorHidden) {
+        arrowUp_ = false;
+        arrowHidden_ = false;
+        if (pointer_.hidden()) pointerAway();
         break;
       }
       if (key == Key::Unknown) break;
       if (keys_.saw(key)) dirty_ = true;  // its hints appear
-      if (pointerShown_ && key != Key::Ok) pointerShown_ = false;  // arrows take over
+      // Any key (OK too) puts the pointer away: the keys take over.
+      if (pointer_.key(window_.ticks())) pointerAway();
+      hideArrow();
       if (key == Key::Ok) {
-        Screen* top = nav_.top();
-        if (!top || !top->holdsOk()) {
-          // No hold menu here: act now, not on release.
-          if (!e.repeat) dispatch({Key::Ok, false, false});
-          break;
-        }
-        if (!e.repeat) {
-          okDown_ = true;
-          okLongSent_ = false;
-          okDownAt_ = window_.ticks();
-        }
-        break;  // reported on release or after the hold time (frame())
+        pressOk(e.repeat);
+        break;
       }
       KeyEvent k{key, e.repeat, false};
       k.swipe = e.swipe;
@@ -172,7 +178,15 @@ void App::handle(const platform::Event& e) {
       break;
     }
     case Type::PointerMove: {
-      pointerShown_ = true;
+      arrowUp_ = true;  // motion comes only with the system's arrow up
+      bool was = pointer_.active();
+      // Away, it takes real movement to come back (pointer_mode.hpp).
+      if (!pointer_.moved(e.x, e.y, window_.ticks())) break;
+      if (!was) {
+        dirty_ = true;
+        if (arrowHidden_) window_.systemCursor(true);
+        arrowHidden_ = false;
+      }
       pointerX_ = e.x * gfx::kLayoutWidth / static_cast<float>(std::max(1, g_.drawableWidth()));
       pointerY_ = e.y * gfx::kLayoutHeight / static_cast<float>(std::max(1, g_.drawableHeight()));
       // Last registered region wins: panels are drawn over the grid.
@@ -187,6 +201,13 @@ void App::handle(const platform::Event& e) {
       break;
     }
     case Type::PointerDown: {
+      // With the pointer away a click is the OK key: on the focused item,
+      // whatever the arrow is over.
+      if (!pointer_.click(window_.ticks())) {
+        hideArrow();
+        pressOk(false);
+        break;
+      }
       // A click is OK. Only where OK has a hold menu does a slow click count
       // as holding it; elsewhere it clicks on release, however slow.
       Screen* top = nav_.top();
@@ -218,6 +239,33 @@ void App::handle(const platform::Event& e) {
     default:
       break;
   }
+}
+
+void App::pressOk(bool repeat) {
+  Screen* top = nav_.top();
+  if (!top || !top->holdsOk()) {
+    // No hold menu here: act now, not on release.
+    if (!repeat) dispatch({Key::Ok, false, false});
+    return;
+  }
+  if (!repeat) {
+    okDown_ = true;
+    okLongSent_ = false;
+    okDownAt_ = window_.ticks();
+  }
+  // Reported on release or after the hold time (run()).
+}
+
+void App::pointerAway() {
+  dirty_ = true;  // hover highlights go
+  if (Screen* top = nav_.top()) top->pointerGone();
+}
+
+void App::hideArrow() {
+  if (!arrowUp_) return;
+  arrowUp_ = false;
+  arrowHidden_ = true;
+  window_.systemCursor(false);
 }
 
 void App::drawToast(ui::Ctx& c) {
@@ -259,7 +307,7 @@ void App::drawReminder(ui::Ctx& c) {
 
 void App::frame() {
   hits_.clear();
-  ui::Ctx c{g_, t_, logos_.get(), &icons_, time::now(), ms_, &zone_, &hits_, pointerShown_, store_->settings().clock24};
+  ui::Ctx c{g_, t_, logos_.get(), &icons_, time::now(), ms_, &zone_, &hits_, pointer_.active(), store_->settings().clock24};
   g_.beginFrame(ui::theme::hex(ui::theme::kBackground));
   nav_.draw(c);
   drawToast(c);

@@ -862,6 +862,11 @@ void Store::refreshAll() {
   m.providerRunning = m.outsideRunning = false;
   // Search's builds were dropped with the rest.
   m.searchGuide.busy = m.searchGuide.quickBusy = m.searchBoard.busy = false;
+  // So were Live Events' (one may still run: the next board has an index of
+  // its own).
+  m.ev.rebuilding = m.ev.restoring = m.ev.boardBusy = false;
+  m.ev.boardCameras = std::make_shared<sports::cameras::CameraIndex>();
+  m.ev.boardTitles = sports::board::newTitleMemo();
   m.pendingGuide.clear();
   m.pendingGuideSet.clear();
   for (auto& [id, st] : m.guideState) {

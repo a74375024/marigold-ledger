@@ -24,6 +24,8 @@ struct Window::Impl {
   bool transparent = false;
   uint32_t wakeEvent = 0;
   SDL_Event current;  // the last event, for Event::native
+  // SDL_webOSCursorVisibility, when this TV's SDL has it.
+  SDL_bool (*cursorVisibility)(SDL_bool) = nullptr;
 
   void makeSurfaceTransparent();
 };
@@ -81,6 +83,15 @@ bool Window::open(const char* title) {
   // events from the Magic Remote (Legacy, measured on a C9). Keep it on: the
   // arrow drawn is the system's own.
   SDL_ShowCursor(SDL_ENABLE);
+  // To take that arrow away when the keys take over, LG's SDL has
+  // SDL_webOSCursorVisibility (RetroArch calls it on every arrow; the
+  // compositor shows the arrow again when the remote moves). The SDK's SDL
+  // is not the TV's, and a firmware without it must still open: look it up.
+  if (void* self = dlopen(nullptr, RTLD_NOW)) {
+    void* sym = dlsym(self, "SDL_webOSCursorVisibility");
+    std::memcpy(&m.cursorVisibility, &sym, sizeof m.cursorVisibility);
+  }
+  MLOG_I("window", "pointer: SDL_webOSCursorVisibility %s", m.cursorVisibility ? "present" : "absent");
   m.makeSurfaceTransparent();
 
   m.context = SDL_GL_CreateContext(m.window);
@@ -245,6 +256,10 @@ bool Window::leave() { return false; }
 bool Window::leaveOnFirstBack() const { return false; }
 
 RemoteKeys Window::remoteKeys() const { return RemoteKeys::lg(); }
+
+void Window::systemCursor(bool shown) {
+  if (impl_->cursorVisibility) impl_->cursorVisibility(shown ? SDL_TRUE : SDL_FALSE);
+}
 
 int Window::drawableWidth() const { return impl_->drawableW; }
 int Window::drawableHeight() const { return impl_->drawableH; }

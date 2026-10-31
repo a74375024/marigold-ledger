@@ -219,6 +219,8 @@ class Schedule {
   void noteWatchable(const std::set<std::string>& leagues, Seconds now);
 
   Published publish(const Context& ctx) const;
+  // publish()'s games alone (a live scores round needs no rosters).
+  std::vector<SportsGame> games(const Context& ctx) const;
   // Teams to pick from: the schedule's, plus every school for college leagues.
   std::vector<SportsTeam> teams(const League& league) const;
 
@@ -268,6 +270,7 @@ class Schedule {
 
  private:
   bool start(const Context& ctx, bool force, std::optional<std::set<std::string>> only);
+  std::vector<SportsGame> gamesOf(const std::vector<League>& active, Seconds now) const;
   bool skip(const std::string& league, Seconds now) const;
   void finishLeague();
   void finish();

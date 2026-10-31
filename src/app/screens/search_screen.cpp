@@ -277,6 +277,8 @@ class SearchScreen : public Screen {
     return inResults() ? resultsKey(e) : keyboardKey(e);
   }
 
+  void pointerGone() override { pointer_ = 0; }
+
   void hover(int id) override {
     pointer_ = id;
     if (nav_.mode() == rail::Mode::Menu) {
@@ -1327,8 +1329,10 @@ class SearchScreen : public Screen {
         app_.store().rememberSearch({g->name, "c:" + entryId});
     }
     Playback& p = app_.playback();
-    // Already in the corner: the same stream goes full screen, with sound.
-    if (!(p.active() && p.entry() == entryId && !p.failed()) && !p.tune(entryId)) {
+    // Already in the corner: the same stream goes full screen, with sound
+    // (tune() keeps it). CH+ / CH- and the player's guide go through My
+    // Lineup, not a list another screen or a game's preview left behind.
+    if (!p.tune(entryId, views::lineupList(*app_.store().channels(), entryId))) {
       app_.toast("This channel has no working feed right now");
       layout();
       return;
@@ -1684,8 +1688,9 @@ class SearchScreen : public Screen {
       case preview::Pace::Step::Tune: break;
     }
     p.setCorner(top_bar::kPreview, true);
-    bool event = app_.store().isEvent(id);
-    if (!(event ? p.tune(id, app_.store().eventFlipList(id)) : p.tune(id))) p.stop();
+    // A channel goes through My Lineup (OK then plays it full screen as it is).
+    Store& s = app_.store();
+    if (!(s.isEvent(id) ? p.tune(id, s.eventFlipList(id)) : p.tune(id, views::lineupList(*s.channels(), id)))) p.stop();
   }
 
   void stopPreview() {

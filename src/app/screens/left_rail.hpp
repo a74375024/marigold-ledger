@@ -64,7 +64,21 @@ struct Entry {
   std::string title;
   int live = 0;  // "2 live" (Live Events' sports)
 };
+// `x`: the column's left edge (the guide in the player draws it inside
+// its card).
 void column(ui::Ctx& c, const std::string& section, const char* word, const std::vector<Entry>& entries, int focus,
-            int origin, int hover, float top, float first, float alpha);
+            int origin, int hover, float top, float first, float alpha, float x = kColumnX);
+
+// The guide in the player (Build 116). "◀ Lists" in the column's header,
+// a button for the pointer (`hover`: it is on it) registered as `id`.
+void listsButton(ui::Ctx& c, float x, float top, bool hover, float alpha, int id);
+// The lists over the left of `card`, the menu in miniature in the
+// navigation colour, `t` (0 to 1) of the way in: the card dims under it,
+// the current list has the bar, `hover` (the pointer) a soft highlight,
+// `note` (what Back does) near the bottom. Pointer ids: kHitMenu + index,
+// kHitOutside on the dimmed card, kHitNothing on the panel.
+constexpr float kListsW = 312;
+void lists(ui::Ctx& c, ui::Rect card, const std::vector<rail::Item>& items, rail::Item current, int focus, int hover,
+           const std::string& note, float t);
 
 }  // namespace marigold::app::left_rail

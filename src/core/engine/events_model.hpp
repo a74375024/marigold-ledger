@@ -35,6 +35,10 @@ struct EventSide {
   // country chip until they load.
   std::vector<std::string> flags;
   bool plain = false;    // a person named only in a title: initials in a plain circle
+  // Made with the tile, so drawing makes no strings: the score's sets when
+  // it has several ("6 4 3"), and "(4)" for the shootout.
+  std::vector<std::string> sets;
+  std::string pensText;
 };
 
 struct EventLeader {  // a golf leaderboard line
@@ -100,6 +104,11 @@ struct EventTile {
   std::string whereLine;   // "On ESPN, in your lineup · 3 backup feeds from your provider"
   std::string venue;
   time::Seconds start = 0;
+  // Made with the tile (tileText()), so drawing makes no strings: the top
+  // line's competition in a sport's own row and in a row of several sports
+  // (tileTopLine()), and " · in 25 m" after the start.
+  std::string topLine, topLineMixed, extraLine;
+  bool textMade = false;
 };
 
 // The tile's top line: a sport icon's name ("CRICKET"; empty for "other",
@@ -112,6 +121,13 @@ std::string tileCompetition(const sports::SportsEvent* event, const std::string&
 // "Rams at Seahawks" (never a score): "A at B" only with the second side at
 // home (not tennis, soccer's home first, or a "vs" title); else the title.
 std::string matchup(const EventTile& t);
+
+// The tile's top line after its state: the competition; else the sport in a
+// row of several sports, "LIVE EVENT" for a sport not known; a high-school
+// event's marker first.
+std::string tileTopLine(const EventTile& t, bool mixed);
+// Makes the text a tile draws (topLine, topLineMixed, extraLine).
+void tileText(EventTile& t);
 
 struct EventGroup {
   std::string title;  // "Live", "Later Today", "Sat"; empty for none
@@ -129,9 +145,10 @@ struct EventRow {
 struct EventsBoard {
   uint64_t version = 0;
   std::vector<EventRow> rows;
-  bool loading = false;   // the schedule is still coming
-  // An old board (from last time) shown while the fresh one is made.
-  bool updating = false;
+  // Still loading with nothing to show yet: the board's placeholders.
+  bool loading = false;
+  // Still loading, some rows in: placeholder rows after them.
+  bool more = false;
   bool scoresOn = true;
   // Where each tile is, by id: the first one in the rows (index()).
   struct Place {

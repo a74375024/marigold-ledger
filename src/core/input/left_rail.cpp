@@ -35,6 +35,10 @@ bool hasColumn(Item i) { return isSection(i) && i != Item::Recent; }
 
 bool atBottom(Item i) { return i == Item::MySports || i == Item::Options; }
 
+float topScroll(float top, float contentH, float visible) {
+  return std::clamp(top, 0.0f, std::max(0.0f, contentH - visible));
+}
+
 Nav::Nav(Item section) : items_(rail::items(false)), section_(section) {}
 
 void Nav::setItems(std::vector<Item> items) {

@@ -279,3 +279,98 @@ TEST_CASE("views: typed digits tune at once when no longer channel number starts
   CHECK(digitsSettled("9", ch));          // nothing starts with 9: "No channel 9" at once
   CHECK(digitsSettled("1234", ch));       // four digits is the most
 }
+
+TEST_CASE("views: the player's guide keeps to the list the channel came from while it holds it") {
+  Channels ch = sample();
+  ch.lineupConfigured = true;
+  // Picked in the guide's Favorites: that list.
+  CHECK(views::playerList(ch, {"c2"}, "c2") == std::vector<std::string>{"c2"});
+  // Nothing playing yet: a list with a channel in it.
+  CHECK(views::playerList(ch, {"c2"}, "") == std::vector<std::string>{"c2"});
+}
+
+TEST_CASE("views: the player's guide after Search is My Lineup, never a list left behind") {
+  Channels ch = sample();
+  ch.lineupConfigured = true;
+  // A game's flip list (Live Events, or a game Search previewed), then a
+  // channel from Search: none of its ids are channels, so the guide was empty.
+  std::vector<std::string> games = {"ev:1", "ev:2"};
+  CHECK(views::grouped(ch, games).lines.empty());
+  CHECK(views::playerList(ch, games, "c2") == std::vector<std::string>{"c0", "c2", "c3"});
+  // A guide filter that doesn't have the channel: My Lineup, with it in.
+  CHECK(views::playerList(ch, {"c0"}, "c3") == std::vector<std::string>{"c0", "c2", "c3"});
+  // No list at all (a reminder, the app opening on a channel).
+  CHECK(views::playerList(ch, {}, "c0") == std::vector<std::string>{"c0", "c2", "c3"});
+  CHECK(views::playerList(ch, games, "") == std::vector<std::string>{"c0", "c2", "c3"});
+}
+
+TEST_CASE("views: the lineup list for a channel from Search") {
+  Channels ch = sample();
+  // Not set up yet: every channel shown in the guide.
+  CHECK(views::lineupList(ch, "c1") == std::vector<std::string>{"c0", "c1", "c2", "c3", "c4"});
+  ch.lineupConfigured = true;
+  CHECK(views::lineupList(ch, "c0") == std::vector<std::string>{"c0", "c2", "c3"});
+  // Outside the lineup (Search finds it): every channel, so it is in the list.
+  CHECK(views::lineupList(ch, "c4") == std::vector<std::string>{"c0", "c1", "c2", "c3", "c4"});
+  // In neither (a hidden group's): the lineup.
+  CHECK(views::lineupList(ch, "c5") == std::vector<std::string>{"c0", "c2", "c3"});
+  // What the mini guide then shows: the lineup under its neighborhoods.
+  CHECK(kinds(views::grouped(ch, views::playerList(ch, {"ev:1"}, "c2"))) ==
+        std::vector<std::string>{"#Sports", "0", "#News", "2", "#Entertainment", "3"});
+}
+
+TEST_CASE("views: the player's lists, Favorites only under neighborhoods that hold a favorite") {
+  Channels ch = sample();
+  ch.lineupConfigured = true;
+  ch.favorites = {0, 2};
+  std::vector<std::string> favs = views::playerTab(ch, views::Tab::Favorites);
+  CHECK(favs == std::vector<std::string>{"c0", "c2"});
+  views::List l = views::playerGrid(ch, views::Tab::Favorites, favs);
+  CHECK(kinds(l) == std::vector<std::string>{"#Sports", "0", "#News", "2"});
+  REQUIRE(l.sections.size() == 2);
+  CHECK(l.sections[0].title == "Sports");
+  CHECK(l.sections[1].title == "News");
+  // My Lineup and All Channels whole, under all their neighborhoods.
+  CHECK(views::playerTab(ch, views::Tab::Lineup) == std::vector<std::string>{"c0", "c2", "c3"});
+  CHECK(views::playerTab(ch, views::Tab::All) == std::vector<std::string>{"c0", "c1", "c2", "c3", "c4"});
+  CHECK(views::playerGrid(ch, views::Tab::All, views::playerTab(ch, views::Tab::All)).sections.size() == 4);
+  // Recent: in watch order, no neighborhoods (Left goes to the lists).
+  views::List recent = views::playerGrid(ch, views::Tab::Recent, views::playerTab(ch, views::Tab::Recent));
+  CHECK(kinds(recent) == std::vector<std::string>{"3", "0"});
+  CHECK(recent.sections.empty());
+  CHECK(views::playerTab(ch, views::Tab::Events).empty());
+}
+
+TEST_CASE("views: the player's guide opens again on the list the channel was picked from") {
+  Channels ch = sample();
+  ch.lineupConfigured = true;
+  ch.favorites = {0, 2};
+  // Picked in Favorites (in the player's guide or the main one): the flip
+  // list CH+ / CH- and Up / Down then go through is Favorites'...
+  std::vector<std::string> flip =
+      views::flipList(ch, views::playerGrid(ch, views::Tab::Favorites, views::playerTab(ch, views::Tab::Favorites)));
+  CHECK(flip == std::vector<std::string>{"c0", "c2"});
+  // ...and the guide opens on Favorites again, named so.
+  views::PlayerList open = views::playerOpen(ch, flip, "c2", views::Tab::Favorites, flip);
+  CHECK(open.tab == views::Tab::Favorites);
+  CHECK(open.ids == flip);
+  // Flipped to the other favorite in the player: still Favorites.
+  CHECK(views::playerOpen(ch, flip, "c0", views::Tab::Favorites, flip).tab == views::Tab::Favorites);
+  // Recent, picked in a guide: Recent, in the order it was picked from.
+  std::vector<std::string> recent = {"c3", "c0"};
+  CHECK(views::playerOpen(ch, recent, "c3", views::Tab::Recent, recent).tab == views::Tab::Recent);
+  // Another screen played since with its own list (Search: My Lineup):
+  // that list, not the remembered name.
+  std::vector<std::string> lineup = views::lineupList(ch, "c2");
+  open = views::playerOpen(ch, lineup, "c2", views::Tab::Favorites, flip);
+  CHECK(open.tab == views::Tab::Lineup);
+  CHECK(open.ids == lineup);
+  // Search found a channel outside the lineup: every channel, named so.
+  CHECK(views::playerOpen(ch, views::lineupList(ch, "c1"), "c1", views::Tab::Lineup, {}).tab == views::Tab::All);
+  // A game's list left behind: My Lineup, with the channel playing.
+  open = views::playerOpen(ch, {"ev:1"}, "c3", views::Tab::Favorites, {"ev:1"});
+  CHECK(open.tab == views::Tab::Lineup);
+  CHECK(open.ids == std::vector<std::string>{"c0", "c2", "c3"});
+  // Nothing remembered, but the list is Favorites': named so.
+  CHECK(views::playerOpen(ch, flip, "c0", views::Tab::Lineup, {}).tab == views::Tab::Favorites);
+}

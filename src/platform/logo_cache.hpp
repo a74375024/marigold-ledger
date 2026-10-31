@@ -26,6 +26,9 @@ struct Texture {
   unsigned id = 0;  // 0 = not ready
   int w = 0, h = 0;
   px::Tone tone = px::Tone::normal;  // how it reads on a light background
+  // Measured once after the decode, before trimming: whether it can stand
+  // alone on a channel card (logos::fillsCard()).
+  px::Shape shape;
 };
 
 class LogoCache {
@@ -51,8 +54,9 @@ class LogoCache {
   void abandonLoads();
 
   size_t textureBytes() const { return bytes_; }
-  // For the channel report: "shown", "failed", "loading", "waiting" (asked
-  // for, not started) or "not drawn yet".
+  // For the channel report: "shown", "shown, low quality" (fillsCard()
+  // says no: drawn small next to the name, or the name instead), "failed",
+  // "loading", "waiting" (asked for, not started) or "not drawn yet".
   std::string status(const std::string& url) const;
 
   // Largest logo kept, in pixels (fits the hero; rows draw it smaller).
@@ -73,7 +77,7 @@ class LogoCache {
   void start(const std::string& url);
   void fetch(const std::string& key, std::shared_ptr<Result> r, size_t index);
   void finish(const std::string& url, const std::shared_ptr<Result>& r);
-  void upload(Entry& e, const px::Image& im, px::Tone tone);
+  void upload(Entry& e, const px::Image& im, px::Tone tone, const px::Shape& shape);
   void evict();
   void trimDisk();
   std::string fileFor(const std::string& url) const;

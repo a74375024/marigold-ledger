@@ -7,10 +7,13 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "app/store/store.hpp"
 #include "core/engine/session.hpp"
 #include "core/engine/subtitles.hpp"
+#include "core/engine/views.hpp"
 #include "platform/gfx.hpp"
 
 namespace marigold::app {
@@ -62,6 +65,16 @@ class Playback : public engine::Session {
   // have gone through the relay (webOS, not a server-opened stream).
   void subtitlesBegin(unsigned relaySession, bool relayPossible);
 
+  // The guide list the channel playing was picked from (a tune with its
+  // flip list just before): the guide in the player opens on it and names
+  // it while that flip list stands (views::playerOpen).
+  void pickedFrom(engine::views::Tab tab) {
+    pickedTab_ = tab;
+    pickedFlip_ = flipList();
+  }
+  engine::views::Tab pickedTab() const { return pickedTab_; }
+  const std::vector<std::string>& pickedFlip() const { return pickedFlip_; }
+
  private:
   Playback(App& app, std::shared_ptr<engine::Subtitles> subtitles);
   gfx::Rect window() const;
@@ -82,6 +95,8 @@ class Playback : public engine::Session {
   bool muted_ = false;
   uint32_t reapplyAt_[3] = {0, 0, 0};
   bool reapplyOnReady_ = false;
+  engine::views::Tab pickedTab_ = engine::views::Tab::Lineup;
+  std::vector<std::string> pickedFlip_;
 };
 
 }  // namespace marigold::app

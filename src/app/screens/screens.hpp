@@ -21,8 +21,10 @@ namespace marigold::app {
 
 // Full screen playback of whatever Playback holds.
 std::unique_ptr<Screen> makePlayer(App& app);
-// Left in the player: the channels of the flip list, with what's on.
-std::unique_ptr<Screen> makeMiniGuide(App& app);
+// Left in the player: the list the channel playing came from, with what's
+// on (Build 116: its neighborhoods and the lists on Left). `list`: open on
+// that list's neighborhoods instead (the games rail's lists picked it).
+std::unique_ptr<Screen> makeMiniGuide(App& app, std::optional<rail::Item> list = std::nullopt);
 // Program detail card for a show that has not started.
 std::unique_ptr<Screen> makeProgramDetail(App& app, const std::string& entryId, const Listing& l);
 // Search (Build 113), a section of the left rail over the guide or Live
@@ -90,8 +92,9 @@ std::unique_ptr<Screen> makeEventsBoard(App& app, std::function<void(rail::Item,
 std::unique_ptr<Screen> makeEventDetail(App& app, const std::string& eventId);
 // Every channel and feed for one game.
 std::unique_ptr<Screen> makeWhereToWatch(App& app, const std::string& eventId);
-// Left in the player while watching a game: that sport's games.
-std::unique_ptr<Screen> makeEventGuide(App& app);
+// Left in the player while watching a game: that sport's games. `sports`
+// opens it on its SPORTS column (the guide's lists picked Live Events).
+std::unique_ptr<Screen> makeEventGuide(App& app, bool sports = false);
 // Down while watching a race: its cameras.
 std::unique_ptr<Screen> makeCameraPanel(App& app);
 // My Sports setup: leagues, favourite teams, review. `onboarding` is

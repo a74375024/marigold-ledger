@@ -107,6 +107,64 @@ std::vector<std::string> flipList(const Channels& ch, const List& list) {
   return out;
 }
 
+namespace {
+
+std::vector<std::string> idsOf(const Channels& ch, const std::vector<int>& rows) {
+  std::vector<std::string> out;
+  out.reserve(rows.size());
+  for (int i : rows)
+    if (const GuideChannel* g = at(ch, i)) out.push_back(g->id);
+  return out;
+}
+
+bool holds(const std::vector<std::string>& ids, const std::string& id) {
+  return std::find(ids.begin(), ids.end(), id) != ids.end();
+}
+
+}  // namespace
+
+std::vector<std::string> lineupList(const Channels& ch, const std::string& playing) {
+  std::vector<std::string> lineup = idsOf(ch, ch.lineupConfigured ? ch.lineup : ch.browse);
+  if (!ch.lineupConfigured || playing.empty() || holds(lineup, playing)) return lineup;
+  std::vector<std::string> all = idsOf(ch, ch.browse);
+  return holds(all, playing) ? all : lineup;
+}
+
+std::vector<std::string> playerList(const Channels& ch, const std::vector<std::string>& flip,
+                                    const std::string& playing) {
+  // Nothing playing: the list as long as it has a channel in it.
+  bool usable = playing.empty()
+                    ? std::any_of(flip.begin(), flip.end(), [&ch](const std::string& id) { return ch.byId.count(id) > 0; })
+                    : ch.byId.count(playing) > 0 && holds(flip, playing);
+  return usable ? flip : lineupList(ch, playing);
+}
+
+PlayerList playerOpen(const Channels& ch, const std::vector<std::string>& flip, const std::string& playing, Tab picked,
+                      const std::vector<std::string>& pickedFlip) {
+  std::vector<std::string> ids = playerList(ch, flip, playing);
+  if (ids == flip && !flip.empty() && flip == pickedFlip && picked != Tab::Events) return {picked, std::move(ids)};
+  // Played without a remembered list (Search, the main guide before):
+  // named by what it holds.
+  Tab tab = Tab::Lineup;
+  if (!ids.empty() && ids == idsOf(ch, ch.favorites)) tab = Tab::Favorites;
+  else if (ch.lineupConfigured && ids == idsOf(ch, ch.browse)) tab = Tab::All;
+  return {tab, std::move(ids)};
+}
+
+std::vector<std::string> playerTab(const Channels& ch, Tab tab) {
+  return tab == Tab::Events ? std::vector<std::string>{} : idsOf(ch, tabRows(ch, tab, {}));
+}
+
+List playerGrid(const Channels& ch, Tab tab, const std::vector<std::string>& ids) {
+  if (tab != Tab::Recent) return grouped(ch, ids);
+  List out;
+  for (const std::string& id : ids) {
+    auto it = ch.byId.find(id);
+    if (it != ch.byId.end() && at(ch, it->second)) out.lines.push_back({Line::Kind::Channel, it->second, {}});
+  }
+  return out;
+}
+
 std::vector<Count> onNowCounts(const Channels& ch, const std::vector<int>& rows, const Listings* li, time::Seconds now) {
   using K = Filter::Kind;
   std::vector<Count> out;
@@ -205,6 +263,44 @@ std::vector<EventLine> eventGuide(const EventsBoard& board, size_t row) {
       out.push_back({"", &t});
     }
   }
+  return out;
+}
+
+BoardFocus boardFocus(const std::vector<EventRow>& rows, const std::string& rowId, const std::string& tileId, int row,
+                      int tile) {
+  auto count = [&](size_t r) {
+    int n = 0;
+    for (const EventGroup& g : rows[r].groups) n += static_cast<int>(g.tiles.size());
+    return n;
+  };
+  auto find = [&](size_t r) {
+    int i = 0;
+    for (const EventGroup& g : rows[r].groups)
+      for (const EventTile& t : g.tiles) {
+        if (t.id == tileId) return i;
+        ++i;
+      }
+    return -1;
+  };
+  BoardFocus out;
+  if (rows.empty()) return out;
+  int sameRow = -1;
+  for (size_t r = 0; r < rows.size() && sameRow < 0; ++r)
+    if (!rowId.empty() && rows[r].id == rowId) sameRow = static_cast<int>(r);
+  if (sameRow >= 0) {
+    int at = tileId.empty() ? -1 : find(static_cast<size_t>(sameRow));
+    out.row = sameRow;
+    out.tile = at >= 0 ? at : std::clamp(tile, 0, std::max(0, count(static_cast<size_t>(sameRow)) - 1));
+    return out;
+  }
+  if (!tileId.empty()) {
+    for (size_t r = 0; r < rows.size(); ++r) {
+      int at = find(r);
+      if (at >= 0) return {static_cast<int>(r), at};
+    }
+  }
+  out.row = std::clamp(row, 0, static_cast<int>(rows.size()) - 1);
+  out.tile = std::clamp(tile, 0, std::max(0, count(static_cast<size_t>(out.row)) - 1));
   return out;
 }
 

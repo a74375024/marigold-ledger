@@ -242,9 +242,24 @@ LogoSpec spec(std::string_view name, const std::optional<std::string>& core, boo
     if (auto outside = iptvOrg->url(epgID, name, directoryIptvOrg)) add(*outside, "public database");
   }
   if (!provider.empty()) add(provider, "provider");
-  out.style = LogoSpec::Style::named;
+  // Marigold: these stand alone too when the one that loads is good
+  // (fillsCard()); a local keeps its name beside its network's logo.
+  bool alone = !out.urls.empty() && category != catalog::LineupCategory::local;
+  out.style = alone ? LogoSpec::Style::logoOnly : LogoSpec::Style::named;
   out.isWest = isWest;
   return out;
+}
+
+bool fillsCard(const px::Shape& shape) {
+  // The guide cell's logo box, and how far a logo may be blown up in it.
+  constexpr double kCardW = 154, kCardH = 60, kMaxUpscale = 2;
+  constexpr int kMinSide = 48;
+  if (shape.w <= 0 || shape.h <= 0 || shape.plain) return false;
+  if (std::max(shape.w, shape.h) < kMinSide) return false;  // a favicon-sized speck
+  if (shape.h > 2 * shape.w) return false;                   // a sliver in a wide card
+  if (shape.w > 10 * shape.h) return false;                  // a thread across it
+  double scale = std::min(kCardW / shape.w, kCardH / shape.h);
+  return scale <= kMaxUpscale;
 }
 
 std::optional<IptvOrgIndex::Saved> IptvOrgIndex::build(std::string_view channelsCsv,

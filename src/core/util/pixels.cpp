@@ -112,4 +112,56 @@ Tone toneOf(const Image& im) {
   return Tone::normal;
 }
 
+Shape shapeOf(const Image& im, uint8_t threshold) {
+  Shape out;
+  if (im.empty() || im.rgba.size() < static_cast<size_t>(im.w) * static_cast<size_t>(im.h) * 4) return out;
+  auto at = [&im](int x, int y) {
+    return &im.rgba[(static_cast<size_t>(y) * static_cast<size_t>(im.w) + static_cast<size_t>(x)) * 4];
+  };
+  int minX = im.w, minY = im.h, maxX = -1, maxY = -1;
+  for (int y = 0; y < im.h; ++y) {
+    for (int x = 0; x < im.w; ++x) {
+      if (at(x, y)[3] <= threshold) continue;
+      minX = std::min(minX, x);
+      maxX = std::max(maxX, x);
+      minY = std::min(minY, y);
+      maxY = std::max(maxY, y);
+    }
+  }
+  if (maxX < 0) return out;
+  out.w = maxX - minX + 1;
+  out.h = maxY - minY + 1;
+  // Plain: the box is (nearly) all solid and (nearly) all one colour. A
+  // one-colour wordmark on transparency is not: its letters leave holes.
+  size_t box = static_cast<size_t>(out.w) * static_cast<size_t>(out.h);
+  size_t solid = 0;
+  double sum[3] = {0, 0, 0};
+  for (int y = minY; y <= maxY; ++y) {
+    for (int x = minX; x <= maxX; ++x) {
+      const uint8_t* p = at(x, y);
+      if (p[3] < 128) continue;
+      ++solid;
+      for (int i = 0; i < 3; ++i) sum[i] += p[i];
+    }
+  }
+  if (solid * 100 < box * 97) return out;
+  double mean[3] = {sum[0] / static_cast<double>(solid), sum[1] / static_cast<double>(solid),
+                    sum[2] / static_cast<double>(solid)};
+  size_t off = 0;
+  for (int y = minY; y <= maxY; ++y) {
+    for (int x = minX; x <= maxX; ++x) {
+      const uint8_t* p = at(x, y);
+      if (p[3] < 128) continue;
+      for (int i = 0; i < 3; ++i) {
+        if (std::fabs(p[i] - mean[i]) > 40) {
+          ++off;
+          break;
+        }
+      }
+    }
+  }
+  out.plain = off * 100 < solid;
+  return out;
+}
+
 }  // namespace marigold::px

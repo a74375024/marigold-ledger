@@ -124,6 +124,8 @@ TEST_CASE("iptv-org index from the two CSV files") {
   CHECK(named.urls == std::vector<std::string>{"https://example.invalid/main.png",
                                                "https://example.invalid/p.png"});
   CHECK(named.sources == std::vector<std::string>{"public database", "provider"});
+  // It stands alone once a good one loads, like a curated one (Build 116).
+  CHECK(named.style == LogoSpec::Style::logoOnly);
 
   CHECK_FALSE(IptvOrgIndex::build("name\nx\n", logos));                     // columns missing
   CHECK_FALSE(IptvOrgIndex::build("id,name,country\nA.uk,A,UK\n", logos));  // nothing in the US
@@ -229,4 +231,54 @@ TEST_CASE("logos: hand-picked logos for free streaming channels no database has"
   CHECK(bowling.urls[0] == *handPicked("Bowling TV"));
   CHECK(bowling.urls[1] == provider);
   CHECK(bowling.sources == std::vector<std::string>{"hand-picked", "provider"});
+}
+
+TEST_CASE("logos: any channel with a logo to try may show it alone, a local keeps its name") {
+  const std::string provider = "https://example.invalid/p.png";
+  // The provider's logo only: alone once it loads and passes fillsCard().
+  LogoSpec onlyProvider = spec("Dream Channel", std::nullopt, false, false, std::nullopt, std::nullopt, provider,
+                               std::nullopt, LineupCategory::entertainment, nullptr);
+  CHECK(onlyProvider.style == LogoSpec::Style::logoOnly);
+  CHECK(onlyProvider.sources == std::vector<std::string>{"provider"});
+  // Another country's channel too.
+  CHECK(spec("Kanal Eins", std::nullopt, false, false, std::nullopt, std::nullopt, provider, std::nullopt,
+             LineupCategory::international, nullptr)
+            .style == LogoSpec::Style::logoOnly);
+  // Nothing to try: the name.
+  CHECK(spec("Dream Channel", std::nullopt, false, false, std::nullopt, std::nullopt, "", std::nullopt,
+             LineupCategory::entertainment, nullptr)
+            .style == LogoSpec::Style::named);
+  // A local with no call sign: its network's logo beside its name, which
+  // tells it from the network's other stations.
+  LogoSpec local = spec("FOX 5 Testville", std::nullopt, false, false, std::nullopt, 5, provider, std::nullopt,
+                        LineupCategory::local, nullptr);
+  CHECK(local.style == LogoSpec::Style::named);
+  CHECK(local.urls == std::vector<std::string>{base(networkLogos().at("FOX")), provider});
+}
+
+TEST_CASE("fillsCard: good logos stand alone whatever their source, poor ones keep the name") {
+  auto shape = [](int w, int h, bool plain = false) {
+    px::Shape s;
+    s.w = w;
+    s.h = h;
+    s.plain = plain;
+    return s;
+  };
+  // Typical database, library and provider logos (visible box, source pixels).
+  CHECK(fillsCard(shape(512, 131)));  // a wide wordmark
+  CHECK(fillsCard(shape(141, 42)));   // small but sharp enough
+  CHECK(fillsCard(shape(297, 48)));   // a strip
+  CHECK(fillsCard(shape(512, 512)));  // square
+  CHECK(fillsCard(shape(215, 282)));  // a bit taller than wide
+  CHECK(fillsCard(shape(64, 64)));    // a square provider icon
+  CHECK(fillsCard(shape(77, 20)));    // twice its size to fill the width: still fine
+  // Poor: nothing visible, a blank tile, a speck, a sliver, a thread, blown up.
+  CHECK_FALSE(fillsCard(shape(0, 0)));
+  CHECK_FALSE(fillsCard(shape(400, 225, true)));
+  CHECK_FALSE(fillsCard(shape(32, 32)));
+  CHECK_FALSE(fillsCard(shape(47, 20)));
+  CHECK_FALSE(fillsCard(shape(60, 130)));
+  CHECK_FALSE(fillsCard(shape(400, 20)));
+  CHECK_FALSE(fillsCard(shape(70, 24)));  // 2.2 times its size to fill the card
+  CHECK_FALSE(fillsCard(shape(50, 28)));  // 2.1 times
 }

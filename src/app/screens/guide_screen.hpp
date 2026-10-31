@@ -29,6 +29,7 @@ class GuideScreen : public Screen {
   void draw(ui::Ctx& c) override;
   bool tick(uint32_t ms) override;
   void hover(int id) override;
+  void pointerGone() override { pointer_ = 0; }
   void shown() override;
   bool keepsPreview() const override { return true; }
 
@@ -99,6 +100,7 @@ class GuideScreen : public Screen {
   bool click();
   void closeRail();
   void restorePlace();
+  void toSection(int index);
   void syncSlides();
   void settleSlides(uint32_t ms);
   hints::Rail railHint() const;

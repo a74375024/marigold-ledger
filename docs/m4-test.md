@@ -98,7 +98,6 @@ The guide's lists and the playback session now come from the shared engine. Each
 | Guide tabs | My Lineup, Favorites, Recent, All Channels | Same channels, order and neighborhood headers as before; Recent has no headers |
 | Filters | Filter › Sports on now, a neighborhood, a provider group | No counts beside the choices; the grid shows only those channels; Back clears it |
 | Search | Type a channel name, a channel number and a local station ("nbc") | Exact name first, then the number, then names that start with it |
-| Mini guide | Down in the player | The list the channel was picked from, under its headers, the playing one focused |
 | Flip and LAST | CH+ / CH− past the end of the list, then ▶ Last channel | Wraps around; LAST goes back to the channel watched before |
 | Flip quickly | CH+ three times fast | The banner changes to each channel at once; only the one stopped on starts (about half a second later) |
 | Backup takes over | A channel whose first feed fails | Same retries, then the next feed; the banner reads "Tuning in", then after about 7 s "Still trying · HD"; no "back on" on a first start |
@@ -433,8 +432,6 @@ Off until turned on; then on for every channel that has them until turned off. M
 | Subtitles on LG | Turn subtitles on while watching | They appear without the channel restarting |
 | Banner | Press OK in the player | The banner sits on a rounded, translucent card; no dark fade over the picture |
 | Panels | Sources, Subtitles, Quick settings, the cameras panel | Floating cards inset from the edges, no fades |
-| Mini guide | Left in the player | A 600-wide card; Left again adds the categories beside it and the card widens; it narrows again when they close |
-| Live Events rail | Left while watching a game | 600 wide; Left again for sports (a red dot where something is live); Right does nothing (other ways to watch are under Sources) |
 
 ## Live Events tiles: scoreboard rows (Build 108)
 
@@ -466,7 +463,9 @@ Off until turned on; then on for every channel that has them until turned off. M
 | Other countries | A match only on another country's foreign-language feeds | Not in Live now; under More events |
 | Failing groups | A group whose feeds keep failing to start this week | Its tiles after the others in their row (the report's group_starts says "1 of 4 started") |
 
-## Player controls and the guide in the player (Build 110)
+## Player controls (Build 110)
+
+The guide in the player: In-player guide (Build 116).
 
 | Area | How to check | Pass |
 |---|---|---|
@@ -489,11 +488,6 @@ Off until turned on; then on for every channel that has them until turned off. M
 | Reminder while watching | Let a reminder fire, press OK | Tunes in place; Back once leaves the player |
 | Pointer (LG) | Wave the remote | The controls show with nothing highlighted; a click on the picture closes them; the wheel over a button doesn't flip |
 | Apple TV swipes | Controls up, swipe along the buttons at a slant | Moves along the buttons; no channel change |
-| Guide | Left while watching | A full-height grid on the left, the game playing on the right: 2½ hours, the playing channel marked WATCHING, tabs Now / Tonight / Tomorrow and the categories (Up from the top row) |
-| Guide time | Right to the edge, then Back | The window slides later; Back returns to now; Back again closes |
-| Guide OK | OK on a show on now; OK on a later show; hold OK on a later show | Tunes and closes; opens details (Watch tunes in place); sets a reminder with a notice |
-| Guide numbers | Type a channel number in the guide | Jumps to that row without tuning |
-| Guide pointer | Click a show, the ▶ arrow, a tab, and beside the guide | Focuses or opens it; the window slides; the tab applies; the guide closes |
 
 ## Channel rows (Build 111)
 
@@ -735,3 +729,108 @@ The relay reopens a continuous source that closes (up to 6 times without 30 s of
 | Keeps closing | A PPV event feed that reopens every ~2.4 s after its picture | "source keeps closing · 4 connections in 9 s", no Xtream retries, no reconnects: a game is on its next source within ~8–10 s, a channel on its next version. Sources says "the source keeps closing" |
 | The relay gives up | A source whose connections last 5–9 s each until the relay stops | "source keeps closing · …; the relay gave up" and the next feed, not a reconnect of a stream that "played" |
 | A real run | A source that played 30 s or more, then closes | Reconnected as before ("played" credit kept) |
+
+## Pointer and keys (Build 116)
+
+A key press puts the Magic Remote's pointer away; only real movement brings it back (more than 12 px in 200 ms, none counted in the first 350 ms after a key). Check on both LG TVs (the C1 and the other one).
+
+| Area | How to check | Pass |
+|---|---|---|
+| Arrows hide it | Point at the guide, then press an arrow | The arrow goes (or stays up but does nothing), no hover highlight is left, focus moves from where it was by the arrow |
+| No stealing | After an arrow, hold the remote as you normally do, hand resting, for 10 s; press arrows a few times | Focus moves only with the arrows; nothing under the arrow is focused, highlighted or opened (the player's controls do not open) |
+| Other keys too | OK, Back, a digit, a colour key, CH+/CH- while pointing | Each acts on the focused item as a key; the pointer is away afterwards |
+| OK with the arrow still up | On the TV that leaves its arrow up, press arrows, then OK without moving the remote | OK opens the focused item, not the one under the arrow |
+| Moving brings it back | After arrows, move the remote across the screen | The arrow follows and hovering focuses again, as before |
+| Clicks and the wheel | With the pointer back, click a rail icon, a programme and a setting; turn the wheel | As in Build 115 |
+| Cursor sleeps | Point, then leave the remote on the table until the arrow disappears | No highlight left; OK acts on the focused item |
+| Log | Start the app | One line "pointer: SDL_webOSCursorVisibility present" (or "absent"); nothing per key or motion |
+| Other platforms | Fire TV, Android TV, Apple TV | Unchanged |
+
+## Fixes (Build 116)
+
+The guide in the player lists the list the channel was picked from only while that list has the channel playing; otherwise My Lineup (every channel when the lineup doesn't have it). Search plays its channels with My Lineup as the list CH+ / CH- go through. Picking a neighborhood scrolls it to the top of the grid.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Player guide after Search | Search a channel, OK on it, Left in the player | The guide in the player shows My Lineup under its neighborhoods, the channel playing focused (WATCHING), never "No channels in this list." |
+| After a game | Watch a game from Live Events, Back, Search a channel, OK, Left | The same: My Lineup with the channel focused (not the games' list, not empty) |
+| Search preview | In Search, rest on a live game until it plays in the corner, then on a channel until it plays, OK, Left | My Lineup with the channel focused; CH+ / CH- move through My Lineup, never to a game |
+| Outside your lineup | Search shows EVERYTHING; OK on a channel marked "Outside your lineup", Left | Every channel's list with that channel focused |
+| Back within 2 minutes | From that player, Back (Search with the stream in the corner), OK again, Left | The same stream full screen, no re-tune; the guide as above |
+| Other ways in | Open the player from the guide (My Lineup, Favorites, a filter), Recent, a number typed in the player, a reminder card | From the guide: that list with the channel focused; a channel the list doesn't have (a number, a reminder): My Lineup with it focused |
+| Pick in the player's guide | Pick another channel there, then CH+ / CH- | They move through the list the guide showed |
+| Neighborhood at the top | My Lineup, Left to the column, Down several neighborhoods, OK | The picked neighborhood's header sits at the top of the grid with its first channel focused (not the last neighborhood with one or two rows of the new one at the bottom) |
+| Walking the column | Up/Down in the column | Each neighborhood scrolls to the top behind the column |
+| Near the end | OK on the last neighborhood (a short one) | The grid scrolls as far as it goes: the last rows fill the bottom, the header as high as it can be, its first channel focused |
+| First neighborhood | Back up to the first neighborhood, OK | The list's very top (the setup prompt too, before a lineup is set up) |
+| Return rule | Open the column mid-neighborhood, walk away and back, OK | Exactly where you were (row, show, time, scroll) |
+| Favorites, All Channels | The same on Favorites and All Channels (setting on) | The same: the picked neighborhood at the top |
+| Pointer (LG) | Click a neighborhood in the column; the wheel over the column | Same as OK and Up/Down: the neighborhood at the top |
+| Live Events | SPORTS: OK on another sport | Its row at the top of the board, as before |
+
+## Logos (Build 116)
+
+A channel's card shows its logo alone whenever the logo that loads is good, wherever it comes from; the name stays only for poor logos (tiny, blurry when blown up, a blank tile, a thin sliver) and for locals.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Good logos fill the card | In My Lineup, find BBC News, PokerGO, LiveNOW from FOX, SportsGrid, NBC Sports Bay Area, PBS Kids | Each card shows only the logo, as large as the curated ones (CNN, ESPN); no small logo with the name to its right |
+| Provider logos | A channel whose only logo is the provider's (e.g. WE tv, theGrio) | A clear logo fills the card; a tiny or blank one sits small next to the name |
+| While loading | Scroll quickly to channels not seen yet | The name shows centred until the logo arrives, then the logo replaces it in place (no jump to a small logo first) |
+| No logo | A channel whose logo fails to load (e.g. a 4K show channel) | Its name, readable, as before |
+| Locals | Your CBS, ABC, NBC, PBS stations; a local with no call sign (a second PBS station) | Unchanged: logo, call sign and network number; a second PBS station still shows its name next to the PBS logo |
+| Mini guide | Open the guide in the player | Same channels show the logo; a poor logo shows the name in its place |
+| Search, Live Events, banner | Search for a channel; open a game's where-to-watch; change channel | The logo where it is good, the channel name where it is poor; the same channel reads the same everywhere |
+| Restart | Restart the app (logos come from the disk cache) | The same channels fill their cards as before the restart |
+| Channel report | Export it | logo_status says "shown" for logos that fill a card and "shown, low quality" for the ones kept next to the name |
+
+## In-player guide (Build 116)
+
+Left in the player opens the guide in its card, as before, without the pills along its top: the top line names the list and the focused row's neighborhood. Left at the first show at Now opens that list's neighborhoods inside the card and Left again the lists: the main guide's path, with its return rule. The picture never changes until OK.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Open | Left while watching a channel picked in My Lineup | The 1240-wide card, a third of the picture clear at the right with its sound; "MY LINEUP · LOCAL" (the playing channel's neighborhood) and the clock on the top line; 2½ hours; the playing channel focused, marked WATCHING; no pills; the legend starts "◀ Neighborhoods" |
+| Top line | Up and Down across neighborhoods | Its neighborhood follows the focused row; no number of channels anywhere |
+| Now ▼ | Up from the top row, OK, Down, OK | "Now ▼" in the timeline row opens Now, Tonight (before 7 PM) and Tomorrow; OK goes there and the button reads "Tomorrow ▼"; Back from the times returns to the grid |
+| Left, not at the edge | Right once, then Left; ▶ to a later time, then Left on the first show | The earlier show; earlier in time first. The column opens only from the first show at Now |
+| Column | Left at the first show at Now | The neighborhoods inside the card on the playing channel's (red dot), "MY LINEUP" and "◀ Lists" in its header, as the main guide's; the grid pushes right and shows 1½ hours; the card and the picture don't move |
+| Walking | Down, Down | The grid scrolls behind to each neighborhood's first channel at the top; the top line follows; the details say "OK: Sports, from the top" (on the one you came from, "OK: back where you were"); nothing tunes |
+| Return rule | OK on another neighborhood; again OK on your own after walking away; again Back | Its top at Now; exactly where you were (row, show, time); exactly where you were |
+| Lists | Left in the column | The lists over the left of the card, the card dimmed, the picture clear: My Lineup (with the bar), Favorites, Recent, Live Events; All Channels only with Settings › Guide › All Channels tab on; no Live Events with Settings › Live Events › Game schedule off |
+| Favorites | The lists, Favorites, OK | Favorites' grid and its column: only the neighborhoods that hold a favorite, on the playing channel's; OK there lands on the playing channel |
+| Recent | The lists, Recent, OK; then Left at its first show | Recent's grid in watch order, no column; Left opens the lists directly; Back there returns to the grid |
+| All Channels | The lists, All Channels (setting on) | Its column, as My Lineup's |
+| Live Events | The lists, Live Events | The games rail with SPORTS open in the column's look ("2 live", red dot, "◀ Lists"); Up/Down walk sports and the games follow; OK or Right on a sport lands on its games (on the one it opened on, as they were); Left goes back to the lists; never a score |
+| Back order | Open the lists, then Back again and again | The lists, the column, typed digits, a later time, then the guide closes |
+| Flip list | The lists, Favorites, OK on another favorite on now; then Up/Down and CH+ / CH- | They go through Favorites |
+| Opening again | Left again after that, and after a channel from Search | Favorites with the playing channel focused (WATCHING); after Search, My Lineup |
+| Unchanged | A later show: OK, hold OK; type a number; the ▶ arrow | Its details; the REMINDER chip and the notice; the digits box over the clock in the top line, the row jumped to; the window slides |
+| Games | Left while watching a game | The games rail, without scores; Left on a game opens SPORTS; Left again the lists; picking My Lineup there opens the guide on its neighborhoods |
+| Pointer (LG) | Move the remote | The list name becomes a button, "◀ MY LINEUP · LOCAL"; a click opens the neighborhoods (on Recent, the lists); "Now ▼", shows and the arrows click as before; a click beside the card closes the guide |
+| Pointer, column | Hover a neighborhood, click one, turn the wheel, click "◀ Lists", click a show | A soft highlight; the return rule; the wheel walks the column; the lists open; the column closes on that show |
+| Pointer, lists | Hover a list, click it; click the dimmed card | A soft highlight; that list opens; the lists close (as Back) |
+| Pointer away | With the column open, press an arrow, then rest the hand | No highlight left; OK acts on the focused neighborhood |
+| Hints | LG, then a remote without number keys | "123 jumps to a channel" only with number keys; with the column open "OK or ▶ Go · Back: Stay · ◀ Lists" (with the pointer: what clicks and the wheel do) |
+
+## Live Events opening (Build 116)
+
+Opening Live Events with a large provider (tens of thousands of channels, big event groups) no longer stalls while the schedule, scores and the fresh board come in. The matcher's rebuild and the board are made on a worker from a snapshot and put in at once; a burst of answers makes one board; the screen shows each board as it is and keeps the focus on its game. A board kept from before shows only when its games were worked out under 15 minutes ago, the same day, and then made again from the clock; otherwise the board's placeholders show until fresh games are in. Fresh boards have the same tiles, rows and order as Build 115's.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Old board | Leave Live Events (or the app) for over 15 minutes, or until after midnight; open Live Events | No tiles from before: placeholders in the board's layout (row titles and tiles as flat shapes, no text or numbers) pulse slowly; Left opens SPORTS, Back the menu; the focus never lands on a placeholder |
+| Rows come in | Watch the placeholders as the games load | Real rows replace them from the top as soon as the first board is made; placeholder rows stay after them until the load ends, then go (no empty rows) |
+| Nothing comes | Open with the network unplugged | The placeholders stop after 20 s and the board says "No games this week in your sports." (no endless pulse) |
+| New board | Close Live Events and open it again within a few minutes | The last board shows at once; within a minute of being made it shows as is, else placeholders for a moment while it is made again from the clock |
+| Clock | Open on a board made 10 minutes ago, with a game that ended meanwhile and one that started | The ended game is gone (or Likely over for its usual overrun); the started one is LIVE; no LIVE the clock contradicts; "in N m" counts from now |
+| Keys | Left/Right/Up/Down while the schedule, scores and fresh board come in | They answer at once; no freeze when a new board appears |
+| Same board | Compare with Build 115 on the same provider and moment | Same rows, groups, tiles and order; same tile text, pills and footers |
+| Focus | Rest on a game in a sport's row while a new board comes in (a Live now row appears above, or a game is added before it) | The focus stays on the same game in the same row; the board doesn't jump |
+| Game gone | The focused game leaves its row (it ends) | The focus stays in that row at the same place |
+| SPORTS column | Open SPORTS, wait for a new board, Back | Back on the same game |
+| Scores | Watch the board while scores come in for several leagues | Each round shows within a couple of seconds; moving around stays smooth while it does |
+| Your changes | Filter › Games not on my channels; Settings › Show scores; My Sports | The board changes right away |
+| Long rows | Up/Down into Time not listed or More events (thousands of tiles) | The focus moves at once |
+| Timing log | Keep Live Events open a few minutes, then send a log | At most one "events timing …" line a minute (boards, perMin, boardMax, tiles, rebuilds, rebuildMax, uiMax) and one "events board frames=… frameMax=… refreshes=… refreshMax=…" line; counts and milliseconds only, no titles or links |
+| Account change | Add or remove a provider while Live Events is loading | The board follows the new list (never stuck on the old one) |

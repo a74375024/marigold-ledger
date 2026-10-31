@@ -179,3 +179,28 @@ TEST_CASE("left rail: the strip with All Channels keeps the menu's focus in rang
   n.close();
   CHECK(n.mode() == Mode::Content);
 }
+
+TEST_CASE("left rail: a neighborhood picked in the column scrolls to the top of the view") {
+  // The guide's grid: a 30 px header, then 92 px rows; 604 px in view.
+  // Three neighborhoods of 10 rows, then one of 2 at the end.
+  const float visible = 604, header = 30, row = 92;
+  std::vector<float> tops;
+  float y = 0;
+  for (int rows : {10, 10, 10, 2}) {
+    tops.push_back(y);
+    y += header + static_cast<float>(rows) * row;
+  }
+  const float content = y;
+  // Its header at the top, whether the list was above or below it (not
+  // just brought into view at the bottom, under the one before).
+  CHECK(topScroll(tops[1], content, visible) == tops[1]);
+  CHECK(topScroll(tops[2], content, visible) == tops[2]);
+  // The first: the list's start.
+  CHECK(topScroll(tops[0], content, visible) == 0);
+  // The last one can't reach the top: the last full page, as high as it goes.
+  CHECK(topScroll(tops[3], content, visible) == content - visible);
+  CHECK(topScroll(tops[3], content, visible) < tops[3]);
+  // A list shorter than the view never scrolls.
+  CHECK(topScroll(200, 500, visible) == 0);
+  CHECK(topScroll(-10, content, visible) == 0);
+}

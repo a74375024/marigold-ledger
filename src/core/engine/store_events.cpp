@@ -1,13 +1,18 @@
 // Live Events in the store (the "Sports events" parts of LiveTVStore in
 // tvOS): the schedule and live scores, asked for only while a Live Events
 // screen is open; the rebuild that matches games to channels and provider
-// feeds (on a worker); the board snapshot; feeds for a game in automatic
+// feeds, and the board made from it, each on a worker from a snapshot and
+// put in by the tick (events_build.hpp); feeds for a game in automatic
 // backup order, starting on the source used last time (6 hours); reminders.
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <mutex>
 
 #include "core/engine/store.hpp"
+#include "core/engine/events_build.hpp"
 #include "core/engine/store_impl.hpp"
 #include "core/catalog/catalog.hpp"
 #include "core/report/live_events_report.hpp"
@@ -59,6 +64,20 @@ std::string matchup(const EventTile& t) {
   return t.sides[0].name + (t.sides[1].home && !t.sides[0].home ? " at " : " vs ") + t.sides[1].name;
 }
 
+std::string tileTopLine(const EventTile& t, bool mixed) {
+  std::string comp = t.competition;
+  if (comp.empty()) comp = !t.sport.empty() && mixed ? t.sport : t.sport.empty() && !t.highSchool ? "LIVE EVENT" : "";
+  if (t.highSchool) comp = comp.empty() ? "HIGH SCHOOL" : "HIGH SCHOOL \xc2\xb7 " + comp;
+  return comp;
+}
+
+void tileText(EventTile& t) {
+  t.topLine = tileTopLine(t, false);
+  t.topLineMixed = tileTopLine(t, true);
+  t.extraLine = t.statusExtra.empty() ? std::string() : " \xc2\xb7 " + t.statusExtra;
+  t.textMade = true;
+}
+
 namespace {
 
 namespace sb = sports::board;
@@ -72,9 +91,22 @@ constexpr const char* kSeenFile = "sport-feeds.json";
 constexpr const char* kResultFile = "live-events.json";
 constexpr uint32_t kCheckMs = 15000;       // rebuild / listings check while open
 constexpr uint32_t kBoardRefreshMs = 30000;  // clock texts ("in 25 m")
-// Opened with events older than this: "Updating" until the fresh ones are in.
-constexpr time::Seconds kBoardStaleAfter = 30 * 60;
-constexpr uint32_t kUpdatingAtMostMs = 60000;
+// Boards asked for by scores, a rebuild or the clock: not sooner than this
+// after the last began (your own changes don't wait).
+constexpr uint32_t kBoardGapMs = 1500;
+constexpr uint32_t kTimingLogMs = 60000;
+
+using Clock = std::chrono::steady_clock;
+
+// Shown on opening without waiting for a board made now (its clock texts
+// are a minute at most behind, as between the board's own refreshes).
+constexpr time::Seconds kBoardShownFor = 60;
+
+// Which lineup a copy or the whip-around list was made from: its revision
+// and size (a reset empties it without a new revision).
+uint64_t lineupKeyOf(const Store::Impl& m) {
+  return (static_cast<uint64_t>(static_cast<uint32_t>(m.lineupRevision)) << 32) ^ m.lineup.entries.size();
+}
 
 // "4 min", "9 h", "2 days": how old the board is, for the log.
 std::string ageText(time::Seconds s) {
@@ -116,8 +148,20 @@ EventSide toSide(const sb::SideLine& s) {
   if (s.rank) o.rank = std::to_string(*s.rank);
   if (!s.sets.empty()) o.score = str::join(s.sets, " ");
   else o.score = s.score.value_or("");
+  if (o.score.find(' ') != std::string::npos) {
+    // Sets: a column each on the tile.
+    for (size_t i = 0; i < o.score.size();) {
+      size_t j = o.score.find(' ', i);
+      if (j == std::string::npos) j = o.score.size();
+      if (j > i) o.sets.push_back(o.score.substr(i, j - i));
+      i = j + 1;
+    }
+  }
   o.home = s.home;
-  if (s.pens) o.pens = std::to_string(*s.pens);
+  if (s.pens) {
+    o.pens = std::to_string(*s.pens);
+    o.pensText = "(" + o.pens + ")";
+  }
   o.leads = s.leads.value_or(false);
   o.trails = s.leads && !*s.leads;
   o.ball = s.possession;
@@ -206,6 +250,7 @@ EventTile toTile(const sb::Tile& t, const sports::SportsEvent* event, const time
     o.soon = until > 0 && until <= 3600;
   }
   (void)zone;
+  tileText(o);
   return o;
 }
 
@@ -236,14 +281,17 @@ void Store::saveEvents() {
   EventsState& e = impl_->ev;
   Files& st = host_.files;
   if (e.schedule.takeDirty()) {
-    std::string text = sports::schedule::toJson(e.schedule.saved());
+    // Made into text and written on a worker; the newest save wins.
+    auto saved = std::make_shared<const sports::schedule::Saved>(e.schedule.saved());
     std::string path = st.path(kScheduleFile);
-    host_.pool.post([path, text] {
-      std::FILE* f = std::fopen((path + ".tmp").c_str(), "wb");
-      if (!f) return;
-      std::fwrite(text.data(), 1, text.size(), f);
-      std::fclose(f);
-      std::rename((path + ".tmp").c_str(), path.c_str());
+    std::shared_ptr<events_build::Writes> writes = e.scheduleWrites;
+    uint64_t turn = 0;
+    {
+      std::lock_guard<std::mutex> lock(writes->mu);
+      turn = ++writes->asked;
+    }
+    host_.pool.post([path, saved, writes, turn] {
+      events_build::writeFile(path, sports::schedule::toJson(*saved), writes.get(), turn);
     }, nullptr, http::Priority::Background);
   }
   st.write(kRemindersFile, e.reminders.toJson());
@@ -270,18 +318,22 @@ void Store::eventsOpen(bool open) {
   if (!open && eventsOpen_ == 0) impl_->eventsUsedAt = time::now();
   if (open && before == 0) {
     liveEventsOpened();
-    // An old board (saved last time, or built hours ago) says it's updating.
+    // Games worked out over 15 minutes ago (or another day) never show:
+    // placeholders until they're worked out again. Newer ones show as made
+    // again from the clock now.
     time::Seconds now = time::now();
     e.checkedSinceOpen = false;
     e.noteBoard = true;
-    if (e.events.empty() || !e.eventsBuiltAt) {
+    bool keep = !e.events->empty() && events_build::keptBoardShows(e.eventsBuiltAt, now, host_.zone());
+    if (e.events->empty() || !e.eventsBuiltAt) {
       e.logNotes.push_back("opened; no board yet");
     } else {
       time::Seconds age = std::max<time::Seconds>(0, now - e.eventsBuiltAt);
-      e.updating = age > kBoardStaleAfter;
-      e.updatingUntilMs = host_.ms() + kUpdatingAtMostMs;
-      e.logNotes.push_back("opened; the board is from " + ageText(age) + " ago" + (e.updating ? "; updating" : ""));
+      e.logNotes.push_back("opened; the board is from " + ageText(age) + " ago" + (keep ? "" : "; placeholders until new"));
     }
+    e.freshAfter = keep ? 0 : now;
+    if (!keep) e.lastFingerprint.clear();  // worked out again, even with nothing new
+    if (!keep || now - e.boardMadeAt > kBoardShownFor || e.boardSerial != e.eventsSerial) showPlaceholders();
     // Opened: new sport feeds seen, the schedule if due, scores, listings.
     if (sports::noteSportFeeds(e.seen, e.seenCheckedAt, impl_->catalog->events, time::now()))
       e.schedule.leaguesChanged(scheduleContext());
@@ -344,18 +396,12 @@ void Store::pumpScores(uint32_t ms) {
   time::Seconds now = time::now();
   if (!e.scoresRound) {
     sports::scores::RoundInput in;
-    in.games = e.schedule.publish(scheduleContext()).games;
+    in.games = e.schedule.games(scheduleContext());
     in.watching = host_.playingFull();
     in.showsScores = settings_.showScores;
     in.now = now;
     in.zone = host_.zone();
-    for (const auto& [id, tile] : e.board.tiles) {
-      auto ev = e.board.events.find(id);
-      if (ev == e.board.events.end() || !ev->second.game) continue;
-      const sports::League* league = sports::leagueByShort(ev->second.game->leagueShort);
-      if ((ev->second.game->isTennis() && tile.watchable) || (league && league->everyGame))
-        in.watchableListed.insert(ev->second.game->id);
-    }
+    in.watchableListed = e.watchableListed;  // worked out with the board
     e.scores.beginRound(in);
     e.scoresRound = true;
   }
@@ -368,7 +414,7 @@ void Store::pumpScores(uint32_t ms) {
     if (!req) {
       e.scoresRound = false;
       e.scoresAt = ms + static_cast<uint32_t>(e.scores.waitSeconds()) * 1000u;
-      if (e.scores.revision() != e.statusesRevision) e.boardDirty = true;
+      if (e.scores.revision() != e.statusesRevision) e.boardStale = true;
       return;
     }
     if (req->waitMs > 0) {
@@ -386,146 +432,267 @@ void Store::pumpScores(uint32_t ms) {
     EventsState& ev = impl_->ev;
     ev.scoresBusy = false;
     ev.scores.onResponse(r.status, *body, time::now(), r.retryAfterS);
-    if (ev.scores.revision() != ev.statusesRevision) ev.boardDirty = true;
+    if (ev.scores.revision() != ev.statusesRevision) ev.boardStale = true;
   });
 }
 
 // ------------------------------------------------------------ rebuild
 
+namespace events_build {
+
+void writeFile(const std::string& path, const std::string& text, Writes* order, uint64_t turn) {
+  // A name of its own while it's written: a job dropped at an account
+  // change and the one after it never share one.
+  static std::atomic<unsigned> serial{0};
+  std::string tmp = path + ".tmp" + std::to_string(++serial);
+  std::FILE* f = std::fopen(tmp.c_str(), "wb");
+  if (!f) return;
+  bool ok = std::fwrite(text.data(), 1, text.size(), f) == text.size();
+  ok = std::fclose(f) == 0 && ok;
+  std::unique_lock<std::mutex> lock;
+  if (order) {
+    lock = std::unique_lock<std::mutex>(order->mu);
+    ok = ok && turn == order->asked;  // a newer one is on its way
+  }
+  if (!ok || std::rename(tmp.c_str(), path.c_str()) != 0) std::remove(tmp.c_str());
+}
+
+namespace {
+
+double msSince(Clock::time_point t) { return std::chrono::duration<double, std::milli>(Clock::now() - t).count(); }
+
+}  // namespace
+
+RebuildMade rebuild(RebuildJob& job) {
+  RebuildMade made;
+  Clock::time_point start = Clock::now();
+  ss::RebuildInput& in = job.in;
+  const LineupCopy& lineup = *job.lineup;
+  // Every row by id.
+  std::unordered_map<std::string, EntryInfo> infos;
+  infos.reserve(job.catalog->entries.size());
+  for (const EntryInfo& info : job.catalog->entries) infos.emplace(info.id, info);
+  // The guide's game listings when due (sports, local and Spanish channels
+  // of the lineup and the browse list).
+  if (job.readListings) {
+    std::vector<ss::ListingChannel> chans = ss::listingChannels(lineup.lineupIDs, lineup.browseIDs, infos, job.markets);
+    std::vector<ss::ListingInput> inputs;
+    inputs.reserve(chans.size());
+    for (const ss::ListingChannel& lc : chans) {
+      ss::ListingInput li;
+      li.channel = lc;
+      auto p = job.programs.find(lc.id);
+      if (p != job.programs.end()) li.programs = p->second.get();
+      inputs.push_back(li);
+    }
+    made.listings = std::move(ss::extractListings(inputs, in.now).listings);
+    in.listings = *made.listings;
+  } else {
+    in.listings = std::move(job.listings);
+  }
+  if (job.previous) in.previous = *job.previous;
+  in.channelIndex = sports::network_map::channelIndex(lineup.lineupIDs, lineup.lineupEntries, lineup.browseEntries,
+                                                      lineup.entries, infos, {}, in.rosters, job.markets);
+  // F1 sessions are also on the F1 channels, while the schedule has one.
+  if (job.f1) {
+    if (!job.f1Sources)
+      made.f1Sources = sports::special_feeds::f1ChannelSources(lineup.entries, infos, job.hiddenGroups, "Other",
+                                                               lineup.lineupIDs);
+    in.f1Sources = job.f1Sources ? *job.f1Sources : *made.f1Sources;
+  }
+  made.prepMs = msSince(start);
+  Clock::time_point match = Clock::now();
+  made.result = ss::rebuild(in);
+  made.matchMs = msSince(match);
+  made.lastSaved = job.lastSaved;
+  if (made.result) {
+    // Saved for an instant board next launch.
+    Clock::time_point save = Clock::now();
+    if (auto saved = ss::resultToSave(made.result->events, job.catalog->events, in.listings, true, time::now(),
+                                      made.lastSaved)) {
+      if (!job.savePath.empty()) writeFile(job.savePath, ss::toJson(*saved));
+      made.saved = true;
+    }
+    made.saveMs = msSince(save);
+  }
+  return made;
+}
+
+}  // namespace events_build
+
 void Store::rebuildEvents() {
   Impl& m = *impl_;
   EventsState& e = m.ev;
-  if (e.rebuilding || m.channels->empty()) return;
+  if (e.rebuilding || e.restoring || m.channels->empty()) return;
   time::Seconds now = time::now();
   sports::schedule::Context ctx = scheduleContext();
   sports::schedule::Published pub = e.schedule.publish(ctx);
   std::vector<sports::League> active = sports::activeLeagues(e.mySports, e.seen, now);
   std::vector<sports::matcher::RosterLeague> rosters = ss::rosterLeagues(active, pub.rosters);
-
-  // Read the guide's game listings when due (sports, local and Spanish
-  // channels of the lineup and the browse list).
-  // Every row by id: made only when it's needed (listings due, or something
-  // changed), not on every check.
-  std::unordered_map<std::string, EntryInfo> infos;
-  auto needInfos = [&] {
-    if (!infos.empty()) return;
-    infos.reserve(m.catalog->entries.size());
-    for (const EntryInfo& info : m.catalog->entries) infos.emplace(info.id, info);
-  };
   sports::StationMarkets markets = sports::stationMarkets(m.prefs);
-  if (!e.listingsAt || now - *e.listingsAt > ss::kListingsStale) {
-    needInfos();
-    std::vector<std::string> browse;
-    for (const Channel& c : m.lineup.browseEntries) browse.push_back(c.id);
-    std::vector<ss::ListingChannel> chans = ss::listingChannels(m.lineup.lineupIDs, browse, infos, markets);
-    std::vector<ss::ListingInput> inputs;
-    for (const ss::ListingChannel& lc : chans) {
-      ss::ListingInput in;
-      in.channel = lc;
-      auto p = m.programs.find(lc.id);
-      if (p != m.programs.end()) in.programs = p->second.get();
-      inputs.push_back(in);
-    }
-    ss::ExtractedListings ex = ss::extractListings(inputs, now);
-    e.listings = std::move(ex.listings);
-    e.listingsAt = now;
-    ++e.listingsRevision;
-  }
+  // The guide's game listings are read again when due (on the worker): a
+  // new listings revision, so a rebuild follows.
+  bool readListings = !e.listingsAt || now - *e.listingsAt > ss::kListingsStale;
 
   ss::Fingerprint fp;
   fp.eventsRevision = m.catalogRevision;
   fp.scheduleRevision = e.scheduleRevision;
   fp.entriesRevision = m.lineupRevision;
-  fp.listingsRevision = e.listingsRevision;
+  fp.listingsRevision = e.listingsRevision + (readListings ? 1 : 0);
   fp.preferSpanish = m.prefs.countries.count("US-ES") > 0;
   fp.enabled = settings_.scheduleEnabled;
   fp.schools = pub.schools.size();
   std::string key = ss::fingerprint(fp, now);
-  if (key == e.lastFingerprint) {
+  if (!readListings && key == e.lastFingerprint) {
     e.checkedSinceOpen = true;  // nothing new to build from
     return;
   }
   e.lastFingerprint = key;
-  needInfos();
 
-  auto in = std::make_shared<ss::RebuildInput>();
-  in->games = std::move(pub.games);
-  in->schools = std::move(pub.schools);
-  in->rosters = rosters;
-  in->preferSpanish = fp.preferSpanish;
-  // Shared with the live catalog (immutable once installed), not copied.
-  in->sharedEvents = std::shared_ptr<const std::vector<catalog::LiveEvent>>(m.catalog, &m.catalog->events);
-  in->sharedTraits =
-      std::shared_ptr<const std::unordered_map<std::string, catalog::ChannelTraits>>(m.catalog, &m.catalog->traits);
-  in->listings = e.listings;
-  in->previous = e.events;
-  in->channelIndex = sports::network_map::channelIndex(m.lineup.lineupIDs, m.lineup.lineupEntries, m.lineup.browseEntries,
-                                                       m.lineup.entries, infos, {}, rosters, markets);
-  in->now = now;
-  in->zone = host_.zone();
-  // Every raw channel has traits: they answer "does it still exist".
-  auto traits = in->sharedTraits;
-  in->channelExists = [traits](const std::string& id) { return traits->count(id) > 0; };
-  in->isCameraName = sports::special_feeds::isCameraName;
-  // F1 sessions are also on the F1 channels, while the schedule has one.
-  if (sports::special_feeds::wantsF1Sources(in->games)) {
-    std::set<std::string> lineupIds(m.lineup.lineupIDs.begin(), m.lineup.lineupIDs.end());
-    std::string f1Key = sports::special_feeds::f1ChannelsKey(m.lineupRevision, m.lineup.entries.size(), lineupIds,
-                                                           m.hiddenGroups);
-    if (f1Key != e.f1Key) {
-      e.f1Key = f1Key;
-      e.f1Sources = sports::special_feeds::f1ChannelSources(m.lineup.entries, infos, m.hiddenGroups, "Other", lineupIds);
-    }
-    in->f1Sources = e.f1Sources;
+  // What the rebuild reads of the lineup: copied once per lineup.
+  uint64_t lineupKey = lineupKeyOf(m);
+  if (!e.lineupCopy || e.lineupCopyKey != lineupKey) {
+    auto copy = std::make_shared<events_build::LineupCopy>();
+    copy->lineupIDs = m.lineup.lineupIDs;
+    copy->lineupEntries = m.lineup.lineupEntries;
+    copy->browseEntries = m.lineup.browseEntries;
+    copy->entries = m.lineup.entries;
+    for (const Channel& c : m.lineup.browseEntries) copy->browseIDs.push_back(c.id);
+    e.lineupCopy = std::move(copy);
+    e.lineupCopyKey = lineupKey;
   }
+  auto job = std::make_shared<events_build::RebuildJob>();
+  ss::RebuildInput& in = job->in;
+  in.games = std::move(pub.games);
+  in.schools = std::move(pub.schools);
+  in.rosters = std::move(rosters);
+  in.preferSpanish = fp.preferSpanish;
+  // Shared with the live catalog (immutable once installed), not copied.
+  in.sharedEvents = std::shared_ptr<const std::vector<catalog::LiveEvent>>(m.catalog, &m.catalog->events);
+  in.sharedTraits =
+      std::shared_ptr<const std::unordered_map<std::string, catalog::ChannelTraits>>(m.catalog, &m.catalog->traits);
+  in.now = now;
+  in.zone = host_.zone();
+  // Every raw channel has traits: they answer "does it still exist".
+  auto traits = in.sharedTraits;
+  in.channelExists = [traits](const std::string& id) { return traits->count(id) > 0; };
+  in.isCameraName = sports::special_feeds::isCameraName;
   auto stop = m.stopJobs;
-  in->shouldStop = [stop]() -> std::optional<std::string> {
+  in.shouldStop = [stop]() -> std::optional<std::string> {
     if (stop->load()) return std::string("closing");
     return std::nullopt;
   };
+  job->previous = e.events;
+  job->catalog = m.catalog;
+  job->lineup = e.lineupCopy;
+  job->markets = markets;
+  job->readListings = readListings;
+  if (readListings) job->programs = m.programs;  // the lists are shared, not copied
+  else job->listings = e.listings;
+  std::string f1Key;
+  if (sports::special_feeds::wantsF1Sources(in.games)) {
+    job->f1 = true;
+    f1Key = sports::special_feeds::f1ChannelsKey(m.lineupRevision, m.lineup.entries.size(), m.lineup.lineupIDs,
+                                                m.hiddenGroups);
+    if (f1Key == e.f1Key) job->f1Sources = e.f1Sources;
+    else job->hiddenGroups = m.hiddenGroups;
+  }
+  job->savePath = host_.files.path(kResultFile);
+  job->lastSaved = e.lastSaved;
   e.rebuilding = true;
   e.rebuildStartMs = host_.ms();
-  auto out = std::make_shared<std::optional<ss::RebuildResult>>();
+  auto made = std::make_shared<events_build::RebuildMade>();
   uint64_t gen = m.generation;
-  host_.pool.post([in, out] { *out = ss::rebuild(*in); },
-                   [this, gen, out] {
-                     EventsState& ev = impl_->ev;
-                     ev.rebuilding = false;
-                     if (gen != impl_->generation || !*out) return;
-                     ev.events = std::move((*out)->events);
-                     ev.schedule.noteWatchable((*out)->watchableLeagues, time::now());
-                     ev.boardDirty = true;
-                     ev.eventsBuiltAt = time::now();
-                     ev.checkedSinceOpen = true;
-                     ev.noteBoard = true;
-                     const sports::matcher::Stats& st = (*out)->stats;
-                     ev.hidden = st.hidden;
-                     MLOG_I("events", "rebuilt: %zu events", ev.events.size());
-                     uint32_t took = host_.ms() - ev.rebuildStartMs;
-                     char secs[16];
-                     std::snprintf(secs, sizeof secs, "%.1f", took / 1000.0);
-                     auto n = [](int v) { return std::to_string(v); };
-                     ev.logNotes.push_back(
-                         "rebuilt in " + std::string(secs) + " s; " + std::to_string(ev.events.size()) + " events from " +
-                         n(st.events) + " feed titles and " + n(st.games) + " scheduled games; hidden: " +
-                         n(st.shows) + " shows, " + n(st.replays) + " replays, " + n(st.stale) + " leftovers, " +
-                         n(st.pastCards) + " past fight cards; " + n(st.mergedPlain) + " duplicate feeds merged");
-                     // Saved for an instant board next launch.
-                     std::vector<sports::matcher::GuideListing> listings = ev.listings;
-                     if (auto saved = ss::resultToSave(ev.events, impl_->catalog->events, listings, true, time::now(),
-                                                       ev.lastSaved))
-                       host_.files.write(kResultFile, ss::toJson(*saved));
-                   },
-                   http::Priority::Normal);
+  host_.pool.post([job, made] { *made = events_build::rebuild(*job); },
+                  [this, gen, made, now, f1Key] {
+                    Clock::time_point start = Clock::now();
+                    EventsState& ev = impl_->ev;
+                    ev.rebuilding = false;
+                    if (gen != impl_->generation) return;
+                    if (made->listings) {
+                      ev.listings = std::move(*made->listings);
+                      ev.listingsAt = now;
+                      ++ev.listingsRevision;
+                    }
+                    if (made->f1Sources) {
+                      ev.f1Key = f1Key;
+                      ev.f1Sources = std::move(*made->f1Sources);
+                    }
+                    if (!made->result) return;
+                    ev.lastSaved = made->lastSaved;
+                    // The last list is freed on a worker (unless a board job still reads it).
+                    auto old = std::move(ev.events);
+                    ev.events = std::make_shared<const std::vector<sports::SportsEvent>>(std::move(made->result->events));
+                    ++ev.eventsSerial;
+                    host_.pool.post([old]() mutable { old.reset(); }, nullptr, http::Priority::Background);
+                    ev.schedule.noteWatchable(made->result->watchableLeagues, time::now());
+                    ev.boardStale = true;
+                    ev.eventsBuiltAt = time::now();
+                    ev.checkedSinceOpen = true;
+                    ev.noteBoard = true;
+                    sports::matcher::Stats& st = made->result->stats;
+                    ev.hidden = std::move(st.hidden);
+                    MLOG_I("events", "rebuilt: %zu events", ev.events->size());
+                    uint32_t took = host_.ms() - ev.rebuildStartMs;
+                    char secs[16];
+                    std::snprintf(secs, sizeof secs, "%.1f", took / 1000.0);
+                    auto n = [](int v) { return std::to_string(v); };
+                    ev.logNotes.push_back(
+                        "rebuilt in " + std::string(secs) + " s; " + std::to_string(ev.events->size()) + " events from " +
+                        n(st.events) + " feed titles and " + n(st.games) + " scheduled games; hidden: " +
+                        n(st.shows) + " shows, " + n(st.replays) + " replays, " + n(st.stale) + " leftovers, " +
+                        n(st.pastCards) + " past fight cards; " + n(st.mergedPlain) + " duplicate feeds merged");
+                    ++ev.timing.rebuilds;
+                    ev.timing.rebuildMax = std::max(ev.timing.rebuildMax, made->prepMs + made->matchMs + made->saveMs);
+                    ev.timing.uiMax = std::max(ev.timing.uiMax, events_build::msSince(start));
+                  },
+                  http::Priority::Normal);
 }
 
 // ------------------------------------------------------------ board
 
-namespace {
+namespace events_build {
 
-sb::ChannelFor makeChannelFor(const Store& store, const Store::Impl& m, std::shared_ptr<const Channels> ch) {
-  return [&m, ch](const sports::EventSource& src) -> std::optional<sb::ChannelLabel> {
-    if (const GuideChannel* g = ch->find(src.channelID)) {
+BoardMade board(const BoardInput& in) {
+  Clock::time_point start = Clock::now();
+  BoardMade made;
+  made.index = in.index;
+  if (!made.index) {
+    auto index = std::make_shared<ChannelIndex>();
+    index->reserve(in.channels->size());
+    for (size_t i = 0; i < in.channels->size(); ++i) index->emplace((*in.channels)[i].id, i);
+    made.index = std::move(index);
+  }
+  const ChannelIndex& index = *made.index;
+  const std::vector<Channel>& channels = *in.channels;
+  sb::Input b;
+  b.events = *in.events;
+  b.families = in.catalog->families;
+  if (!in.proWrestling) {
+    // Pro wrestling only when picked in My Sports.
+    auto wrestling = [](const std::string& league) { return league == catalog::kProWrestling; };
+    b.events.erase(std::remove_if(b.events.begin(), b.events.end(), [&](const auto& ev) { return wrestling(ev.league); }),
+                   b.events.end());
+    b.families.erase(std::remove_if(b.families.begin(), b.families.end(),
+                                    [&](const catalog::EventFamily& f) { return wrestling(f.league); }),
+                     b.families.end());
+  }
+  if (!in.highSchool) {
+    // High-school games only when picked in My Sports (the board leaves out
+    // their games; their provider groups go too).
+    b.families.erase(std::remove_if(b.families.begin(), b.families.end(),
+                                    [](const catalog::EventFamily& f) { return sports::store::highSchoolFamily(f.id); }),
+                     b.families.end());
+  }
+  b.prefs = in.prefs;
+  b.statuses = in.statuses;
+  b.finalSeen = in.finalSeen;
+  b.whips = in.whips;
+  b.now = in.now;
+  b.zone = in.zone;
+  b.settings = in.settings;
+  b.channelFor = [&in, &index, &channels](const sports::EventSource& src) -> std::optional<sb::ChannelLabel> {
+    if (const GuideChannel* g = in.guide->find(src.channelID)) {
       sb::ChannelLabel l;
       l.id = g->id;
       l.name = g->name;
@@ -533,9 +700,9 @@ sb::ChannelFor makeChannelFor(const Store& store, const Store::Impl& m, std::sha
       if (!g->logoUrl.empty()) l.logoUrls.push_back(g->logoUrl);
       return l;
     }
-    auto it = m.indexByID.find(src.channelID);
-    if (it == m.indexByID.end()) return std::nullopt;
-    const Channel& c = (*m.channels)[it->second];
+    auto it = index.find(src.channelID);
+    if (it == index.end()) return std::nullopt;
+    const Channel& c = channels[it->second];
     sb::ChannelLabel l;
     l.id = c.id;
     l.name = c.displayName();
@@ -543,79 +710,52 @@ sb::ChannelFor makeChannelFor(const Store& store, const Store::Impl& m, std::sha
     if (!c.imageUrl.empty()) l.logoUrls.push_back(c.imageUrl);
     return l;
   };
-  (void)store;
-}
-
-}  // namespace
-
-void Store::buildBoard() {
-  Impl& m = *impl_;
-  EventsState& e = m.ev;
-  time::Seconds now = time::now();
-  sb::Input in;
-  in.events = e.events;
-  in.families = m.catalog->families;
-  if (!sports::proWrestlingOn(e.mySports)) {
-    // Pro wrestling only when picked in My Sports.
-    auto wrestling = [](const std::string& league) { return league == catalog::kProWrestling; };
-    in.events.erase(std::remove_if(in.events.begin(), in.events.end(),
-                                   [&](const auto& ev) { return wrestling(ev.league); }),
-                    in.events.end());
-    in.families.erase(std::remove_if(in.families.begin(), in.families.end(),
-                                     [&](const catalog::EventFamily& f) { return wrestling(f.league); }),
-                      in.families.end());
-  }
-  if (!sports::highSchoolOn(e.mySports)) {
-    // High-school games only when picked in My Sports (the board leaves out
-    // their games; their provider groups go too).
-    in.families.erase(std::remove_if(in.families.begin(), in.families.end(),
-                                     [](const catalog::EventFamily& f) { return sports::store::highSchoolFamily(f.id); }),
-                      in.families.end());
-  }
-  in.prefs = e.mySports;
-  in.statuses = e.scores.statuses();
-  in.finalSeen = e.scores.finalSeen();
-  in.whips = sb::whipChannels(m.lineup.entries, m.lineup.lineupIDs);
-  in.now = now;
-  in.zone = host_.zone();
-  in.settings.showsUnwatchable = settings_.showUnwatchable;
-  in.settings.showsScores = settings_.showScores;
-  in.settings.twelveHour = !settings_.clock24;
-  in.channelFor = makeChannelFor(*this, m, channels_);
-  in.isCameraName = sports::special_feeds::isCameraName;
-  in.cameraRace = sports::special_feeds::cameraRace;
-  std::set<std::string> failing;
-  for (const auto& [family, starts] : m.groupStarts)
-    if (groupKeepsFailing(family)) failing.insert(family);
-  if (!failing.empty()) {
-    in.feedFails = [&m, &failing](const std::string& id) {
-      auto t = m.catalog->traits.find(id);
-      return t != m.catalog->traits.end() && t->second.familyKey && failing.count(*t->second.familyKey) > 0;
+  b.isCameraName = sports::special_feeds::isCameraName;
+  b.cameraRace = sports::special_feeds::cameraRace;
+  const catalog::CatalogResult& cat = *in.catalog;
+  if (!in.failing.empty()) {
+    b.feedFails = [&cat, &in](const std::string& id) {
+      auto t = cat.traits.find(id);
+      return t != cat.traits.end() && t->second.familyKey && in.failing.count(*t->second.familyKey) > 0;
     };
   }
-  in.feedAbroad = [&m](const std::string& id) {
+  b.feedAbroad = [&cat, &in](const std::string& id) {
     static const std::set<std::string> kEnglish = {"US", "UK", "CA", "AU", "IE", "NZ"};
-    auto t = m.catalog->traits.find(id);
-    if (t == m.catalog->traits.end() || !t->second.market) return false;
+    auto t = cat.traits.find(id);
+    if (t == cat.traits.end() || !t->second.market) return false;
     const std::string& market = *t->second.market;
-    return !kEnglish.count(market) && !m.prefs.includes(market);
+    return !kEnglish.count(market) && !in.lineupPrefs.includes(market);
   };
-  in.podium = e.race.podiumHook();
-  e.raceSeen = e.race.revision();
-  e.board = sb::build(in);
-  // Race weekends on the board ask for drivers and results (spaced and
-  // capped by the rules behind this call).
-  sports::race_data::refreshForBoard(e.race, e.board, settings_.showScores, now);
-  e.statusesRevision = e.scores.revision();
-  e.boardDirty = false;
-  e.boardBuiltMs = host_.ms();
+  b.podium = in.podium;
+  if (in.titles) {
+    // Titles that come and go through the day: kept to a few boards' worth.
+    sb::trimTitleMemo(*in.titles, 4 * in.events->size() + 4096);
+    b.titles = in.titles;
+  }
+  made.board = sb::build(b);
+  const sb::Board& board = made.board;
+  for (const auto& [id, tile] : board.tiles) {
+    auto ev = board.events.find(id);
+    if (ev == board.events.end() || !ev->second.game) continue;
+    const sports::League* league = sports::leagueByShort(ev->second.game->leagueShort);
+    if ((ev->second.game->isTennis() && tile.watchable) || (league && league->everyGame))
+      made.watchableListed.insert(ev->second.game->id);
+  }
 
+  // A race with onboard feeds says so where the game detail goes.
+  auto hasCameras = [&](const sports::SportsEvent& event) {
+    if (channels.empty() || !in.cameras) return false;
+    in.cameras->update(channels, in.camerasKey);
+    std::vector<Channel> feeds;
+    for (const sports::EventSource& src : event.sources) {
+      auto it = index.find(src.channelID);
+      if (it != index.end()) feeds.push_back(channels[it->second]);
+    }
+    return !in.cameras->cameras(event, feeds).empty();
+  };
   auto out = std::make_shared<EventsBoard>();
-  out->version = events_->version + 1;
-  out->loading = e.schedule.fetching() && e.events.empty();
-  out->updating = e.updating && !out->loading;
-  out->scoresOn = settings_.showScores;
-  for (const sb::Row& r : e.board.rows) {
+  out->scoresOn = in.settings.showsScores;
+  for (const sb::Row& r : board.rows) {
     EventRow row;
     row.id = r.id;
     row.title = r.title;
@@ -625,12 +765,12 @@ void Store::buildBoard() {
     for (const sb::Group& g : r.groups) {
       EventGroup group;
       group.title = g.label;
+      group.tiles.reserve(g.tiles.size());
       for (const sb::Tile& t : g.tiles) {
-        auto ev = e.board.events.find(t.id);
-        EventTile tile = toTile(t, ev == e.board.events.end() ? nullptr : &ev->second, host_.zone());
-        // A race with onboard feeds says so where the game detail goes.
-        if (tile.detail.empty() && ev != e.board.events.end() && ev->second.game && ev->second.game->isRacing() &&
-            hasCameras(t.id))
+        auto ev = board.events.find(t.id);
+        EventTile tile = toTile(t, ev == board.events.end() ? nullptr : &ev->second, in.zone);
+        if (tile.detail.empty() && ev != board.events.end() && ev->second.game && ev->second.game->isRacing() &&
+            hasCameras(ev->second))
           tile.detail = "Onboard cameras";
         group.tiles.push_back(std::move(tile));
       }
@@ -651,14 +791,106 @@ void Store::buildBoard() {
         t.leagueChip = f.leagueChip;
         t.heroTitle = f.name;
         t.heroStatus = f.countText;
+        tileText(t);
         group.tiles.push_back(std::move(t));
       }
       row.groups.push_back(std::move(group));
     }
+    for (const EventGroup& g : row.groups) made.tiles += g.tiles.size();
     if (!row.groups.empty()) out->rows.push_back(std::move(row));
   }
   out->index();
+  made.events = std::move(out);
+  made.madeAt = in.now;
+  made.ms = msSince(start);
+  return made;
+}
+
+}  // namespace events_build
+
+std::shared_ptr<events_build::BoardInput> Store::boardInput() {
+  Impl& m = *impl_;
+  EventsState& e = m.ev;
+  auto in = std::make_shared<events_build::BoardInput>();
+  in->events = e.events;
+  in->catalog = m.catalog;
+  in->guide = channels_;
+  in->channels = m.channels;
+  if (e.channelIndex && e.channelIndexOf.lock() == m.channels) in->index = e.channelIndex;
+  in->proWrestling = sports::proWrestlingOn(e.mySports);
+  in->highSchool = sports::highSchoolOn(e.mySports);
+  in->prefs = e.mySports;
+  in->statuses = e.scores.statuses();
+  in->finalSeen = e.scores.finalSeen();
+  // Whip-around channels: once per lineup.
+  uint64_t lineupKey = lineupKeyOf(m);
+  if (e.whipsKey != lineupKey) {
+    e.whips = sb::whipChannels(m.lineup.entries, m.lineup.lineupIDs);
+    e.whipsKey = lineupKey;
+  }
+  in->whips = e.whips;
+  in->now = time::now();
+  in->zone = host_.zone();
+  in->settings.showsUnwatchable = settings_.showUnwatchable;
+  in->settings.showsScores = settings_.showScores;
+  in->settings.twelveHour = !settings_.clock24;
+  for (const auto& [family, starts] : m.groupStarts)
+    if (groupKeepsFailing(family)) in->failing.insert(family);
+  in->lineupPrefs = m.prefs;
+  in->podium = e.race.podiumHook();
+  in->cameras = e.boardCameras;
+  in->titles = e.boardTitles;
+  in->camerasKey = std::to_string(m.catalogRevision) + "|" + std::to_string(m.channels->size());
+  return in;
+}
+
+void Store::startBoard(uint32_t ms) {
+  Impl& m = *impl_;
+  EventsState& e = m.ev;
+  std::shared_ptr<events_build::BoardInput> in = boardInput();
+  e.raceSeen = e.race.revision();
+  e.statusesRevision = e.scores.revision();
+  e.boardDirty = e.boardStale = false;
+  e.boardBusy = true;
+  e.boardStartMs = e.boardBuiltMs = ms;
+  auto made = std::make_shared<events_build::BoardMade>();
+  uint64_t gen = m.generation, serial = e.eventsSerial;
+  host_.pool.post([in, made] { *made = events_build::board(*in); },
+                  [this, gen, serial, in, made] {
+                    EventsState& ev = impl_->ev;
+                    ev.boardBusy = false;
+                    if (gen != impl_->generation) return;
+                    ev.boardDoneSerial = serial;
+                    ev.channelIndex = made->index;
+                    ev.channelIndexOf = in->channels;
+                    ev.boardDone = made;  // put in by the tick
+                  },
+                  eventsOpen_ > 0 ? http::Priority::Visible : http::Priority::Normal);
+}
+
+void Store::putBoard() {
+  Impl& m = *impl_;
+  EventsState& e = m.ev;
+  std::shared_ptr<events_build::BoardMade> made = std::move(e.boardDone);
+  // The old board goes back with the job's shell, and is freed on a worker.
+  std::swap(e.board, made->board);
+  e.watchableListed.swap(made->watchableListed);
+  std::shared_ptr<EventsBoard> out = std::move(made->events);
+  out->version = events_->version + 1;
+  boardFlags(*out);
+  e.boardMadeAt = made->madeAt;
+  e.boardSerial = e.boardDoneSerial;
+  e.retired.push_back(std::move(events_));
   events_ = out;
+  size_t tiles = made->tiles;
+  double took = made->ms;
+  host_.pool.post([made]() mutable { made.reset(); }, nullptr, http::Priority::Background);
+  // Race weekends on the board ask for drivers and results (spaced and
+  // capped by the rules behind this call).
+  sports::race_data::refreshForBoard(e.race, e.board, settings_.showScores, time::now());
+  ++e.timing.boards;
+  e.timing.tiles = tiles;
+  e.timing.boardMax = std::max(e.timing.boardMax, took);
   if (e.noteBoard && eventsOpen_ > 0) {
     // The board's size after an open or a rebuild, when it changed.
     e.noteBoard = false;
@@ -669,7 +901,7 @@ void Store::buildBoard() {
       if (r.id == "live") live = r.count;
     }
     std::string note = "board: " + std::to_string(e.board.events.size()) + " games in " + std::to_string(rows) +
-                       " rows, " + std::to_string(live) + " live now" + (out->updating ? "; updating" : "");
+                       " rows, " + std::to_string(live) + " live now" + (out->more ? "; more coming" : "");
     if (note != e.lastBoardNote) {
       e.lastBoardNote = note;
       e.logNotes.push_back(std::move(note));
@@ -677,13 +909,53 @@ void Store::buildBoard() {
   }
 }
 
+std::shared_ptr<const EventsBoard> Store::boardNow() {
+  std::shared_ptr<events_build::BoardInput> in = boardInput();
+  in->cameras = std::make_shared<sports::cameras::CameraIndex>();  // not the worker's
+  in->titles.reset();
+  events_build::BoardMade made = events_build::board(*in);
+  made.events->version = events_->version;
+  boardFlags(*made.events);
+  return made.events;
+}
+
+void Store::boardFlags(EventsBoard& out) const {
+  const Impl& m = *impl_;
+  const EventsState& e = m.ev;
+  // Open and still coming in: the list, the saved board, the schedule, a
+  // rebuild, or games worked out since an open on old ones.
+  bool coming = eventsOpen_ > 0 && (m.loading || e.restoring || e.schedule.fetching() || e.rebuilding ||
+                                    !e.checkedSinceOpen || e.eventsBuiltAt < e.freshAfter);
+  out.loading = (coming && out.rows.empty()) || (e.schedule.fetching() && e.events->empty());
+  out.more = coming && !out.rows.empty();
+}
+
+void Store::showPlaceholders() {
+  auto out = std::make_shared<EventsBoard>();
+  out->version = events_->version + 1;
+  out->loading = true;
+  out->scoresOn = settings_.showScores;
+  impl_->ev.retired.push_back(std::move(events_));
+  events_ = out;
+}
+
+namespace events_build {
+
+bool keptBoardShows(time::Seconds builtAt, time::Seconds now, const time::Zone& zone) {
+  if (builtAt <= 0 || now < builtAt || now - builtAt >= kKeptBoardFor) return false;
+  time::Civil a = zone.toLocal(builtAt), b = zone.toLocal(now);
+  return a.year == b.year && a.month == b.month && a.day == b.day;
+}
+
+}  // namespace events_build
+
 void Store::buildLiveEventsReport(std::function<void(std::shared_ptr<std::string>)> done) {
   const Impl& m = *impl_;
   const EventsState& e = m.ev;
   // Copies of what the report reads; the worker owns them.
   struct Job {
     std::shared_ptr<const CatalogResult> catalog;
-    std::vector<sports::SportsEvent> events;
+    std::shared_ptr<const std::vector<sports::SportsEvent>> events;
     std::map<std::string, std::string> hidden;
     sb::Board board;
     std::map<std::string, std::string> starts;
@@ -711,7 +983,7 @@ void Store::buildLiveEventsReport(std::function<void(std::shared_ptr<std::string
       [job, out] {
         report::LiveEventsReportInput in;
         in.catalog = job->catalog.get();
-        in.events = &job->events;
+        in.events = job->events.get();
         in.hidden = &job->hidden;
         in.board = &job->board;
         in.groupStarts = [job](const std::string& f) {
@@ -736,6 +1008,13 @@ std::vector<std::string> Store::takeEventsLog() {
 void Store::eventsTick(uint32_t ms) {
   Impl& m = *impl_;
   EventsState& e = m.ev;
+  // The tick's own time, for the timing log, however it returns.
+  struct Timed {
+    Store& store;
+    uint32_t ms;
+    Clock::time_point start = Clock::now();
+    ~Timed() { store.noteEventsTiming(ms, start); }
+  } timed{*this, ms};
   // Reminders: checked every 15 s anywhere in the app.
   if (ms >= e.nextReminderMs) {
     e.nextReminderMs = ms + sports::Reminders::kCheckSeconds * 1000u;
@@ -748,49 +1027,138 @@ void Store::eventsTick(uint32_t ms) {
   }
   pumpRace(ms);
   pumpPhotos(ms);
-  if (eventsOpen_ <= 0 && !e.events.empty()) return;
+  // A board made on a worker goes in; boards no screen holds any more are
+  // freed on a worker.
+  if (e.boardDone) putBoard();
+  for (auto it = e.retired.begin(); it != e.retired.end();) {
+    if (it->use_count() > 1) {
+      ++it;
+      continue;
+    }
+    std::shared_ptr<const EventsBoard> old = std::move(*it);
+    it = e.retired.erase(it);
+    host_.pool.post([old]() mutable { old.reset(); }, nullptr, http::Priority::Background);
+  }
+  // Closed: only the launch's first pass (the saved list in, a rebuild and a
+  // board from it).
+  if (eventsOpen_ <= 0 && !e.events->empty() && !e.launchPass) return;
   if (m.channels->empty()) return;
   if (eventsOpen_ > 0) {
     pumpSchedule(ms);
     pumpScores(ms);
   }
   if (!e.restoredTried) {
+    // The list saved last time, read on a worker: shown until the rebuild.
     e.restoredTried = true;
     if (auto text = host_.files.read(kResultFile)) {
-      if (auto saved = ss::savedResultFromJson(*text)) {
-        if (auto r = ss::restore(*saved, m.catalog->events, time::now())) {
-          e.events = std::move(r->events);
-          if (e.listings.empty()) e.listings = std::move(r->listings);
-          e.boardDirty = true;
-          e.eventsBuiltAt = saved->savedAt;
-          time::Seconds age = std::max<time::Seconds>(0, time::now() - saved->savedAt);
-          if (eventsOpen_ > 0 && age > kBoardStaleAfter && !e.updating) {
-            e.updating = true;
-            e.updatingUntilMs = host_.ms() + kUpdatingAtMostMs;
-          }
-          e.logNotes.push_back("saved board from " + ageText(age) + " ago shown until the rebuild");
-        }
-      }
+      e.restoring = true;
+      struct Restore {
+        std::string text;
+        std::optional<ss::Restored> restored;
+        time::Seconds savedAt = 0;
+      };
+      auto job = std::make_shared<Restore>();
+      job->text = std::move(*text);
+      auto catalog = m.catalog;
+      uint64_t gen = m.generation;
+      host_.pool.post(
+          [job, catalog] {
+            if (auto saved = ss::savedResultFromJson(job->text)) {
+              job->savedAt = saved->savedAt;
+              job->restored = ss::restore(*saved, catalog->events, time::now());
+            }
+            job->text.clear();
+          },
+          [this, gen, job] {
+            EventsState& ev = impl_->ev;
+            ev.restoring = false;
+            if (gen != impl_->generation) return;
+            ev.launchPass = true;  // the next tick rebuilds and makes the board, open or not
+            if (!job->restored) return;
+            ev.events = std::make_shared<const std::vector<sports::SportsEvent>>(std::move(job->restored->events));
+            ++ev.eventsSerial;
+            if (ev.listings.empty()) ev.listings = std::move(job->restored->listings);
+            ev.boardDirty = true;
+            ev.eventsBuiltAt = job->savedAt;
+            time::Seconds age = std::max<time::Seconds>(0, time::now() - job->savedAt);
+            // Opened before it was in: shown (made from the clock) only while new.
+            if (eventsOpen_ > 0 && events_build::keptBoardShows(job->savedAt, time::now(), host_.zone()))
+              ev.freshAfter = 0;
+            ev.logNotes.push_back("saved board from " + ageText(age) + " ago shown until the rebuild");
+          },
+          http::Priority::Visible);
     }
   }
+  if (e.restoring) return;
+  e.launchPass = false;
   if (ms >= e.nextCheckMs) {
     e.nextCheckMs = ms + kCheckMs;
     rebuildEvents();
   }
-  // "Updating" ends once the channel list, the schedule and a rebuild from
-  // them are in (or after a minute).
+  // Loading since the open ends once the channel list, the schedule and a
+  // rebuild from them are in.
   if (m.loading || e.schedule.fetching() || e.rebuilding) e.checkedSinceOpen = false;
-  if (e.updating && (e.checkedSinceOpen || ms >= e.updatingUntilMs)) {
-    e.updating = false;
-    e.boardDirty = true;
-    e.noteBoard = true;
+  // One board at a time: asked for meanwhile, the next starts once it is in.
+  // Scores, a rebuild and the clock wait a moment after the last began, so
+  // a burst of answers makes one board; your own changes don't wait.
+  if (e.scores.revision() != e.statusesRevision) e.boardStale = true;
+  if (eventsOpen_ > 0 && ms - e.boardBuiltMs > kBoardRefreshMs) e.boardStale = true;
+  if (eventsOpen_ > 0) {
+    // Loading ended or began since the board shown was made: its
+    // placeholders come or go.
+    EventsBoard flags;
+    flags.rows.resize(events_->rows.empty() ? 0 : 1);
+    boardFlags(flags);
+    if (flags.loading != events_->loading || flags.more != events_->more) e.boardStale = true;
   }
-  if (e.boardDirty || (eventsOpen_ > 0 && ms - e.boardBuiltMs > kBoardRefreshMs) ||
-      e.scores.revision() != e.statusesRevision)
-    buildBoard();
+  // Games too old to show (an open on old ones) wait to be worked out again.
+  bool fresh = e.eventsBuiltAt >= e.freshAfter;
+  if (fresh && !e.boardBusy && (e.boardDirty || (e.boardStale && ms - e.boardStartMs >= kBoardGapMs))) startBoard(ms);
+}
+
+// The timing log: counts and milliseconds, a line at most every minute
+// while boards are made (never a title or a link).
+void Store::noteEventsTiming(uint32_t ms, std::chrono::steady_clock::time_point start) {
+  EventsState::Timing& t = impl_->ev.timing;
+  t.uiMax = std::max(t.uiMax, std::chrono::duration<double, std::milli>(Clock::now() - start).count());
+  if (!t.since) t.since = ms;
+  if (ms - t.since < kTimingLogMs) return;
+  if (t.boards || t.rebuilds) {
+    double minutes = (ms - t.since) / 60000.0;
+    MLOG_I("events", "timing boards=%d perMin=%.1f boardMax=%.0fms tiles=%zu rebuilds=%d rebuildMax=%.0fms uiMax=%.1fms",
+           t.boards, t.boards / minutes, t.boardMax, t.tiles, t.rebuilds, t.rebuildMax, t.uiMax);
+  }
+  t = EventsState::Timing{};
+  t.since = ms;
 }
 
 // ------------------------------------------------------------ lookups
+
+namespace {
+
+sb::ChannelFor makeChannelFor(const Store::Impl& m, std::shared_ptr<const Channels> ch) {
+  return [&m, ch](const sports::EventSource& src) -> std::optional<sb::ChannelLabel> {
+    if (const GuideChannel* g = ch->find(src.channelID)) {
+      sb::ChannelLabel l;
+      l.id = g->id;
+      l.name = g->name;
+      l.display = g->name;
+      if (!g->logoUrl.empty()) l.logoUrls.push_back(g->logoUrl);
+      return l;
+    }
+    auto it = m.indexByID.find(src.channelID);
+    if (it == m.indexByID.end()) return std::nullopt;
+    const Channel& c = (*m.channels)[it->second];
+    sb::ChannelLabel l;
+    l.id = c.id;
+    l.name = c.displayName();
+    l.display = c.displayName();
+    if (!c.imageUrl.empty()) l.logoUrls.push_back(c.imageUrl);
+    return l;
+  };
+}
+
+}  // namespace
 
 std::vector<std::string> Store::eventNotes(const std::string& eventId) const {
   const EventsState& e = impl_->ev;
@@ -832,7 +1200,7 @@ WhereToWatch Store::whereToWatch(const std::string& eventId) const {
   WhereToWatch w;
   auto ev = m.ev.board.events.find(eventId);
   if (ev == m.ev.board.events.end()) return w;
-  sb::WherePanel p = sb::wherePanel(m.ev.board, ev->second, makeChannelFor(*this, m, channels_),
+  sb::WherePanel p = sb::wherePanel(m.ev.board, ev->second, makeChannelFor(m, channels_),
                                     [this](const std::string& feed) {
                                       std::vector<Feed> f = feedsFor({feed});
                                       return f.empty() ? std::string() : f.front().label;
@@ -879,6 +1247,8 @@ std::optional<GameBanner> Store::gameBanner(const std::string& entryId, time::Se
     // Who, not how it's going.
     s.score.clear();
     s.pens.clear();
+    s.sets.clear();
+    s.pensText.clear();
     s.leads = s.trails = s.ball = false;
     b.sides.push_back(std::move(s));
   }
@@ -913,8 +1283,8 @@ std::vector<std::string> Store::eventFlipList(const std::string& eventId) const 
 
 std::vector<std::string> Store::eventBackups(const std::string& entryId) const {
   const EventsState& e = impl_->ev;
-  if (e.events.empty()) return {};
-  return ss::eventBackupFeeds(entryId, e.events, ss::backupIndex(e.events), time::now());
+  if (e.events->empty()) return {};
+  return ss::eventBackupFeeds(entryId, *e.events, ss::backupIndex(*e.events), time::now());
 }
 
 std::vector<Feed> Store::eventFeeds(const std::string& eventId, const std::string& via) const {

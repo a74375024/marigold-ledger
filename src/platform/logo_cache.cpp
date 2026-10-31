@@ -53,6 +53,7 @@ bool writeFileAtomic(const std::string& path, const std::string& data) {
 struct LogoCache::Result {
   std::optional<px::Image> image;
   px::Tone tone = px::Tone::normal;
+  px::Shape shape;
   bool onDisk = false;
 };
 
@@ -92,7 +93,7 @@ std::string LogoCache::status(const std::string& url) const {
   auto it = entries_.find(url);
   if (it == entries_.end()) return "not drawn yet";
   switch (it->second.state) {
-    case State::Ready: return "shown";
+    case State::Ready: return fillsCard(it->second.tex.shape) ? "shown" : "shown, low quality";
     case State::Failed: return "failed";
     case State::Loading: return "loading";
     case State::Wanted: return "waiting";
@@ -138,7 +139,7 @@ void LogoCache::start(const std::string& url) {
         std::string bytes;
         if (!readFile(path, bytes)) return;
         r->onDisk = true;
-        r->image = image::decode(bytes, kMaxW, kMaxH);
+        r->image = image::decode(bytes, kMaxW, kMaxH, &r->shape);
         if (r->image) r->tone = px::toneOf(*r->image);
         if (!r->image) unlink(path.c_str());  // corrupt: fetch it again
         else utime(path.c_str(), nullptr);    // freshen for the disk LRU
@@ -166,7 +167,7 @@ void LogoCache::fetch(const std::string& key, std::shared_ptr<Result> r, size_t 
   std::string path = fileFor(key);
   q.afterTransfer = [r, path](http::Response& resp) {
     if (!resp.ok || resp.status != 200) return;
-    r->image = image::decode(resp.body, kMaxW, kMaxH);
+    r->image = image::decode(resp.body, kMaxW, kMaxH, &r->shape);
     if (r->image) r->tone = px::toneOf(*r->image);
     if (r->image) writeFileAtomic(path, resp.body);
     resp.body.clear();
@@ -195,7 +196,7 @@ void LogoCache::finish(const std::string& url, const std::shared_ptr<Result>& r)
     e.retryAt = time::now() + kRetryAfterS;
     return;
   }
-  upload(e, *r->image, r->tone);
+  upload(e, *r->image, r->tone, r->shape);
   e.state = State::Ready;
   evict();
   if (writtenSinceTrim_ > diskBudget_ / 4) {
@@ -204,11 +205,12 @@ void LogoCache::finish(const std::string& url, const std::shared_ptr<Result>& r)
   }
 }
 
-void LogoCache::upload(Entry& e, const px::Image& im, px::Tone tone) {
+void LogoCache::upload(Entry& e, const px::Image& im, px::Tone tone, const px::Shape& shape) {
   e.tex.id = gfx::uploadTexture(im, e.tex.id);
   e.tex.w = im.w;
   e.tex.h = im.h;
   e.tex.tone = tone;
+  e.tex.shape = shape;
   bytes_ -= e.bytes;
   e.bytes = im.rgba.size();
   bytes_ += e.bytes;

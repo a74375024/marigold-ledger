@@ -14,7 +14,8 @@ namespace marigold::image {
 constexpr long kMaxPixels = 4096L * 4096L;
 
 // Decodes `bytes` and shrinks the result to fit maxW x maxH. Thread safe.
-std::optional<px::Image> decode(std::string_view bytes, int maxW, int maxH);
+// With `shape`, also measures the full-size image (px::shapeOf) first.
+std::optional<px::Image> decode(std::string_view bytes, int maxW, int maxH, px::Shape* shape = nullptr);
 
 // The platform's decoder: PNG, JPEG, GIF (first frame) and WebP, full size,
 // RGBA with straight alpha. It may refuse sources over kMaxPixels. Thread safe.

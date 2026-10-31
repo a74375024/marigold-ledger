@@ -129,3 +129,26 @@ TEST_CASE("hints: setup screens use each remote's own keys") {
   CHECK(marigold::hints::setup(RemoteKeys::fireTv(), false).keys.size() == 2);
   CHECK(marigold::hints::setup(RemoteKeys(), true).keys.size() == 2);
 }
+
+TEST_CASE("hints: the guide in the player, per remote and place") {
+  const std::string dot = " \xc2\xb7 ";
+  RemoteKeys lg = RemoteKeys::lg();
+  CHECK(playerGuide(lg, PlayerGuide::Now) == "\xe2\x97\x80 Neighborhoods" + dot + "\xe2\x96\xb2\xe2\x96\xbc channels" + dot +
+                                                 "\xe2\x96\xb6 later" + dot + "OK watch" + dot + "Back closes" + dot +
+                                                 "123 jumps to a channel");
+  // Recent: Left goes to the lists.
+  CHECK(playerGuide(lg, PlayerGuide::Now, false).rfind("\xe2\x97\x80 Lists", 0) == 0);
+  CHECK(playerGuide(lg, PlayerGuide::Later).find("Hold OK remind" + dot + "Back to now") != std::string::npos);
+  CHECK(playerGuide(lg, PlayerGuide::Column) == "OK or \xe2\x96\xb6 Go" + dot + "Back: Stay" + dot + "\xe2\x97\x80 Lists");
+  CHECK(playerGuide(lg, PlayerGuide::Column, true, true).rfind("Click: go", 0) == 0);
+  CHECK(playerGuide(lg, PlayerGuide::Lists).find("Back: neighborhoods") != std::string::npos);
+  CHECK(playerGuide(lg, PlayerGuide::Lists, false).find("Back: the grid") != std::string::npos);
+  CHECK(playerGuide(lg, PlayerGuide::GameLists).find("Back: sports") != std::string::npos);
+  CHECK(playerGuide(lg, PlayerGuide::Games).rfind("\xe2\x97\x80 Sports", 0) == 0);
+  // No number keys: no "123"; the Siri Remote clicks.
+  CHECK(playerGuide(RemoteKeys::fireTv(), PlayerGuide::Now).find("123") == std::string::npos);
+  RemoteKeys siri = RemoteKeys::appleTv();
+  CHECK(playerGuide(siri, PlayerGuide::Now).find("Click watch") != std::string::npos);
+  CHECK(playerGuide(siri, PlayerGuide::Later).find("Click and hold remind") != std::string::npos);
+  CHECK(playerGuide(siri, PlayerGuide::Sports).rfind("Click or \xe2\x96\xb6 its games", 0) == 0);
+}

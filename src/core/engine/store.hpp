@@ -7,6 +7,7 @@
 // ETag, and short EPG only for rows on screen that have no full guide.
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -53,6 +54,9 @@ namespace marigold::engine {
 
 struct Fetched;
 struct OpenStream;
+namespace events_build {
+struct BoardInput;
+}
 
 // A country / language of the channel list, for the lineup setup.
 struct MarketSummary {
@@ -411,6 +415,9 @@ class Store {
   // Live Events lines for the playback log since the last call (opened,
   // rebuilt, the board's size). Counts only, never titles or links.
   std::vector<std::string> takeEventsLog();
+  // The board made here and now, on this thread, from what the store holds
+  // (what the next one made on a worker shows), for checks. Nothing changes.
+  std::shared_ptr<const EventsBoard> boardNow();
 
   const Settings& settings() const { return settings_; }
   void setSettings(const Settings& s);
@@ -492,7 +499,14 @@ class Store {
   void loadEvents();
   void eventsTick(uint32_t ms);
   void rebuildEvents();
-  void buildBoard();
+  std::shared_ptr<events_build::BoardInput> boardInput();
+  void startBoard(uint32_t ms);
+  void putBoard();
+  // The board's loading and "more to come" flags (EventsBoard).
+  void boardFlags(EventsBoard& out) const;
+  // Placeholders in place of the board (Live Events opened on old games).
+  void showPlaceholders();
+  void noteEventsTiming(uint32_t ms, std::chrono::steady_clock::time_point start);
   void pumpSchedule(uint32_t ms);
   void pumpScores(uint32_t ms);
   void saveEvents();

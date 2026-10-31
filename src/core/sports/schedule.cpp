@@ -1099,6 +1099,20 @@ Published Schedule::publish(const Context& ctx) const {
   Published out;
   if (!ctx.enabled) return out;
   std::vector<League> active = activeLeagues(ctx.prefs, ctx.seen, ctx.now);
+  out.games = gamesOf(active, ctx.now);
+  out.updatedAt = saved_.fetchedAt;
+  out.rosters = saved_.rosters;
+  if (anyCollege(active) && saved_.schools) out.schools = *saved_.schools;
+  return out;
+}
+
+std::vector<SportsGame> Schedule::games(const Context& ctx) const {
+  if (!ctx.enabled) return {};
+  return gamesOf(activeLeagues(ctx.prefs, ctx.seen, ctx.now), ctx.now);
+}
+
+std::vector<SportsGame> Schedule::gamesOf(const std::vector<League>& active, Seconds now) const {
+  std::vector<SportsGame> out;
   std::set<std::string> shorts = shortsOf(active);
   // A game of a league asked for on its own isn't also kept from the
   // all-soccer listing (the same ESPN event under another id).
@@ -1113,16 +1127,12 @@ Published Schedule::publish(const Context& ctx) const {
       elsewhere.insert(eventOf(g.id));
     }
   }
-  for (SportsGame& g : keeping(saved_.games, ctx.now - kSavedFor)) {
+  for (SportsGame& g : keeping(saved_.games, now - kSavedFor)) {
     if (!shorts.count(g.leagueShort)) continue;
     if (g.leagueShort == kSoccerAll && elsewhere.count(eventOf(g.id))) continue;
-    out.games.push_back(std::move(g));
+    out.push_back(std::move(g));
   }
-  std::stable_sort(out.games.begin(), out.games.end(),
-                   [](const SportsGame& a, const SportsGame& b) { return a.start < b.start; });
-  out.updatedAt = saved_.fetchedAt;
-  out.rosters = saved_.rosters;
-  if (anyCollege(active) && saved_.schools) out.schools = *saved_.schools;
+  std::stable_sort(out.begin(), out.end(), [](const SportsGame& a, const SportsGame& b) { return a.start < b.start; });
   return out;
 }
 

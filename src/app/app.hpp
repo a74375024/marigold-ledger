@@ -9,6 +9,7 @@
 #include <string>
 
 #include "app/screen.hpp"
+#include "core/input/pointer_mode.hpp"
 #include "core/util/time.hpp"
 #include "platform/gfx.hpp"
 #include "platform/http.hpp"
@@ -76,6 +77,12 @@ class App {
  private:
   void handle(const platform::Event& e);
   void dispatch(const KeyEvent& k);
+  // OK went down (the key, or a click with the pointer away).
+  void pressOk(bool repeat);
+  // The keys took over from the pointer: the top screen forgets its target.
+  void pointerAway();
+  // Asks the system to take its arrow down, when it may be up.
+  void hideArrow();
   void frame();
   void suspend();
   void drawToast(ui::Ctx& c);
@@ -111,7 +118,11 @@ class App {
 
   RemoteKeys keys_;
 
-  bool pointerShown_ = false;
+  pointer::Mode pointer_;
+  // The system's arrow may be on screen (it moved, or the system said so),
+  // and whether it is down because we asked.
+  bool arrowUp_ = true;
+  bool arrowHidden_ = false;
   float pointerX_ = 0, pointerY_ = 0;
   std::vector<ui::HitRegion> hits_;
 

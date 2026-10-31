@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "core/catalog/types.hpp"
+#include "core/util/pixels.hpp"
 #include "core/util/time.hpp"
 
 namespace marigold::logos {
@@ -51,11 +52,15 @@ class IptvOrgIndex {
 
 struct LogoSpec {
   enum class Style {
-    // Curated logo, shown alone (name only if it fails to load).
+    // The logo alone, filling the cell, once one loads that fillsCard()
+    // passes (whatever its source); a small logo next to the name when the
+    // one that loads is poor; the name while none has loaded.
     logoOnly,
     // A local station: logo, call sign, network and number.
     local,
-    // Logo (if any) next to the channel's name.
+    // Logo (if any) next to the channel's name: a channel with no logo to
+    // try, or a local with no call sign (its logo is its network's, so the
+    // name tells it apart).
     named,
   };
 
@@ -88,9 +93,10 @@ std::optional<std::string> logoSetFile(std::string_view name);
 // TV"), when there is one.
 std::optional<std::string> handPicked(std::string_view name);
 
-// Logos for a guide row. National channels whose logo is curated show the
-// logo alone; locals show a logo with the call sign and "FOX 2"; anything
-// else shows a logo (when one loads) next to its name. `core` / `callsign`
+// Logos for a guide row. Locals show a logo with the call sign and "FOX 2";
+// any other channel with a logo to try shows it alone when the one that
+// loads is good (fillsCard()), whether curated, from the public database or
+// the provider's; a channel with none shows its name. `core` / `callsign`
 // come from the catalog; `provider` is the logo the provider gave (empty for
 // none). `iptvOrg` may be null.
 LogoSpec spec(std::string_view name, const std::optional<std::string>& core, bool isWest,
@@ -99,6 +105,14 @@ LogoSpec spec(std::string_view name, const std::optional<std::string>& core, boo
               const std::optional<std::string>& epgID,
               std::optional<catalog::LineupCategory> category, const IptvOrgIndex* iptvOrg,
               const std::string& directoryIptvOrg = std::string());
+
+// Whether a loaded logo is good enough to stand alone on a channel card with
+// no name beside it (the guide's channel cell has about 154 x 60 for it):
+// something visible, not a blank one-colour tile, not a speck, not a thin
+// sliver or thread, and not blown up more than twice to fill the card. The
+// mini guide, Search, Live Events and the player use the same rule to show
+// a logo or, in its place, the channel's name.
+bool fillsCard(const px::Shape& shape);
 
 // A small CSV reader (quoted fields, doubled quotes, CRLF).
 std::vector<std::vector<std::string>> csvRows(std::string_view text);

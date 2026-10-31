@@ -33,6 +33,13 @@ bool atBottom(Item i);
 
 enum class Mode { Content, Column, Menu };
 
+// Where a list scrolls for Scroll and Top: the neighborhood's start (`top`,
+// its header) at the top of the view, not just brought into view at its
+// bottom. Near the list's end, as high as it goes (the last full page);
+// never above the list's start. `contentH` is the whole list's height,
+// `visible` the view's.
+float topScroll(float top, float contentH, float visible);
+
 // What the screen does after a key or a click.
 struct Step {
   enum class Do {

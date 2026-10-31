@@ -104,9 +104,16 @@ float chipWidth(Ctx& c, const std::string& s, int px, Weight w = Weight::Bold);
 float coastChip(Ctx& c, bool west, float x, float y, int px);
 
 // A channel logo fitted inside `r` (aspect kept, centred), or the fallback
-// name in a pill until the logo is ready (or if there is none).
+// name in a pill until the logo is ready (or if there is none, or the one
+// that loaded is too poor to stand for the channel: logos::fillsCard()).
 void logo(Ctx& c, const std::string& url, const std::string& fallback, Rect r,
           bool onLight = false, float opacity = 1);
+
+// How a channel card should read now: its logo loaded and good enough to
+// fill the card alone (Ready), loaded but poor (Poor: small, next to the
+// name), or not loaded (yet, or at all).
+enum class LogoState { None, Ready, Poor };
+LogoState logoState(Ctx& c, const std::string& url);
 
 // Progress bar (radius = h/2).
 void progress(Ctx& c, Rect r, double fraction, Color track = theme::white(0.18f),

@@ -157,6 +157,34 @@ std::optional<Hint> pickAnotherSource(const RemoteKeys& k) {
   return std::nullopt;
 }
 
+std::string playerGuide(const RemoteKeys& k, PlayerGuide place, bool column, bool pointer) {
+  const char* dot = " \xc2\xb7 ";
+  std::string ok = k.clickpad ? "Click" : "OK";
+  std::string digits = k.digits ? std::string(dot) + "123 jumps to a channel" : std::string();
+  switch (place) {
+    case PlayerGuide::Now:
+      return std::string(kLeft) + (column ? " Neighborhoods" : " Lists") + dot + kUp + kDown + " channels" + dot + kRight +
+             " later" + dot + ok + " watch" + dot + "Back closes" + digits;
+    case PlayerGuide::Later:
+      return std::string(kUp) + kDown + " channels" + dot + kLeft + kRight + " earlier and later" + dot + ok + " details" +
+             dot + (k.clickpad ? "Click and hold" : "Hold OK") + " remind" + dot + "Back to now" + digits;
+    case PlayerGuide::Column:
+      if (pointer)
+        return std::string("Click: go") + dot + "Wheel: walk" + dot + "Click the grid: close" + dot +
+               "Click beside the guide: close it";
+      return ok + " or " + kRight + " Go" + dot + "Back: Stay" + dot + kLeft + " Lists";
+    case PlayerGuide::Lists:
+    case PlayerGuide::GameLists:
+      return std::string(kUp) + kDown + " lists" + dot + ok + " or " + kRight + " open" + dot +
+             (place == PlayerGuide::GameLists ? "Back: sports" : column ? "Back: neighborhoods" : "Back: the grid");
+    case PlayerGuide::Times: return std::string(kUp) + kDown + " times" + dot + ok + " go" + dot + "Back: the grid";
+    case PlayerGuide::Games:
+      return std::string(kLeft) + " Sports" + dot + kUp + kDown + " games" + dot + ok + " switch" + dot + "Back closes";
+    case PlayerGuide::Sports: return ok + " or " + kRight + " its games" + dot + "Back: Stay" + dot + kLeft + " Lists";
+  }
+  return {};
+}
+
 std::vector<Tip> gettingAround(const RemoteKeys& k) {
   std::string ok = k.clickpad ? "Click" : "OK";
   std::vector<Tip> tips = {

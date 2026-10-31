@@ -37,6 +37,9 @@ class Screen {
   virtual void draw(ui::Ctx& c) = 0;
   // Pointer moved over a region this screen registered.
   virtual void hover(int /*id*/) {}
+  // The keys took over from the pointer (or the system hid it): forget what
+  // it was on, so OK acts on the focus and no hover highlight is left.
+  virtual void pointerGone() {}
   // The system keyboard sent the whole field value (or closed).
   virtual void text(const std::string& /*value*/, bool /*closed*/, bool /*confirmed*/) {}
   // Called on the top screen once per loop; true while animating (the app

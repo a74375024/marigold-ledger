@@ -60,6 +60,39 @@ List grouped(const Channels& ch, const std::vector<std::string>& ids);
 // through in the player.
 std::vector<std::string> flipList(const Channels& ch, const List& list);
 
+// The channels the player's guide lists (and CH+ / CH- go through) while
+// `playing` plays: the list it was picked from (`flip`) when that holds it,
+// else lineupList(). A list another screen left behind (a game's, from Live
+// Events or a Search preview, or a guide filter without this channel)
+// never empties the guide or loses the channel playing.
+std::vector<std::string> playerList(const Channels& ch, const std::vector<std::string>& flip,
+                                    const std::string& playing);
+// My Lineup (every channel before it's set up), or every channel when the
+// lineup doesn't have `playing` (Search finds channels outside it): what a
+// channel played from a screen without a list of its own goes through.
+std::vector<std::string> lineupList(const Channels& ch, const std::string& playing);
+
+// The guide in the player (Build 116) names the list it shows and lists
+// it again when it opens: the one the channel playing was picked from in a
+// guide (`picked`, remembered with the flip list it played with,
+// `pickedFlip`) while CH+ / CH- still go through that list and it holds
+// the channel; else playerList()'s list, named for what it is (Favorites,
+// All Channels) or My Lineup.
+struct PlayerList {
+  Tab tab = Tab::Lineup;
+  std::vector<std::string> ids;
+};
+PlayerList playerOpen(const Channels& ch, const std::vector<std::string>& flip, const std::string& playing, Tab picked,
+                      const std::vector<std::string>& pickedFlip);
+// A list picked in the player guide's lists, whole: My Lineup (every
+// channel before it's set up), Favorites, Recent (most recent first) or
+// All Channels.
+std::vector<std::string> playerTab(const Channels& ch, Tab tab);
+// Laid out for the player's guide: under their neighborhoods (a list's
+// neighborhoods are only those holding one of its channels), Recent in
+// watch order without any.
+List playerGrid(const Channels& ch, Tab tab, const std::vector<std::string>& ids);
+
 // What the filter menu shows beside each choice.
 struct Count {
   std::string title;
@@ -98,6 +131,16 @@ struct EventLine {
   const EventTile* tile = nullptr;  // into the board
 };
 std::vector<EventLine> eventGuide(const EventsBoard& board, size_t row);
+
+// Where the board's focus goes when a new board comes in under it (the
+// rows as shown, after any filter): the same game in the same row (by id);
+// that row at the same place when the game left it; the game in another
+// row when its row is gone; else the same place, kept inside the rows.
+struct BoardFocus {
+  int row = 0, tile = 0;
+};
+BoardFocus boardFocus(const std::vector<EventRow>& rows, const std::string& rowId, const std::string& tileId, int row,
+                      int tile);
 
 // Typed channel digits can't become a longer channel number ("702" when no
 // channel is 7020-7029, or 4 digits): tune now rather than wait for more.

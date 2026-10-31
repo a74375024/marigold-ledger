@@ -478,6 +478,47 @@ struct Context {
   std::map<std::string, std::string> familyNames;
 };
 
+}  // namespace
+
+struct TitleMemo {
+  std::unordered_map<std::string, titles::Title> read;
+  std::unordered_map<std::string, bool> studio;
+};
+
+std::shared_ptr<TitleMemo> newTitleMemo() { return std::make_shared<TitleMemo>(); }
+
+void trimTitleMemo(TitleMemo& memo, size_t most) {
+  if (memo.read.size() + memo.studio.size() > most) memo = TitleMemo{};
+}
+
+namespace {
+
+// titles::read, once per title and row while the caller keeps the memo.
+titles::Title readTitle(const Input& in, const std::string& title, const std::string& league) {
+  if (!in.titles) return titles::read(title, league);
+  std::string key = league + '\x1f' + title;
+  auto it = in.titles->read.find(key);
+  if (it != in.titles->read.end()) return it->second;
+  titles::Title read = titles::read(title, league);
+  in.titles->read.emplace(std::move(key), read);
+  return read;
+}
+
+// A studio show (pregame, countdown, weigh-ins), not a game.
+bool studioShow(const Input& in, const SportsEvent& e) {
+  auto test = [&e] {
+    return matcher::isStudioShow(e.title) || (!e.teams && matcher::isTeamSportShow(e.title, e.league)) ||
+           matcher::isNetworkAndSport(e.title);
+  };
+  if (!in.titles) return test();
+  std::string key = e.league + (e.teams ? "\x1f" "1" : "\x1f" "0") + e.title;
+  auto it = in.titles->studio.find(key);
+  if (it != in.titles->studio.end()) return it->second;
+  bool studio = test();
+  in.titles->studio.emplace(std::move(key), studio);
+  return studio;
+}
+
 Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, const Context& ctx,
                std::optional<Seconds> endedAt, const WhipInfo* whip) {
   const Input& in = ctx.in;
@@ -505,7 +546,7 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
     std::string full = game.customTitle.value_or(event.title);
     place.title = std::string(str::trimUnicode(text::components(full, ":").front()));
   } else {
-    titles::Title read = titles::read(event.title, event.league);
+    titles::Title read = readTitle(in, event.title, event.league);
     place.tag = read.stage;
     // Men's / Women's with the sport, so the sport still shows: "VOLLEY · WOMEN'S".
     if (read.stage && (*read.stage == "Men's" || *read.stage == "Women's") && !event.leagueShort.empty())
@@ -1148,9 +1189,7 @@ Board build(const Input& in) {
   // on the board (the guide, My Lineup and search have them).
   for (const SportsEvent& e : all) {
     if (e.game || str::startsWith(e.id, "whip|")) continue;
-    if (matcher::isStudioShow(e.title) || (!e.teams && matcher::isTeamSportShow(e.title, e.league)) ||
-        matcher::isNetworkAndSport(e.title))
-      board.studio.insert(e.id);
+    if (studioShow(in, e)) board.studio.insert(e.id);
   }
   auto stateOf = [&](const SportsEvent& e) {
     auto it = states.find(e.id);

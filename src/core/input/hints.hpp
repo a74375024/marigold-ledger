@@ -76,6 +76,15 @@ Hint playerSources(const RemoteKeys& k);
 std::optional<Hint> playerOptions(const RemoteKeys& k);
 std::optional<Hint> pickAnotherSource(const RemoteKeys& k);
 
+// The guide in the player (Build 116): its legend line, by where the focus
+// is: the grid at Now or at a later time, the neighborhood column (with
+// `pointer`: what the LG pointer's clicks and wheel do), the lists, the
+// times under "Now ▼", and the games rail, its SPORTS column and the lists
+// over it. `column`: the list has neighborhoods (Recent has none, so Left
+// goes to the lists and Back there to the grid).
+enum class PlayerGuide { Now, Later, Column, Lists, Times, Games, Sports, GameLists };
+std::string playerGuide(const RemoteKeys& k, PlayerGuide place, bool column = true, bool pointer = false);
+
 // The one-time "Getting around" card: six keys.
 struct Tip {
   Hint key;

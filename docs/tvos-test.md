@@ -126,3 +126,17 @@ Everything in `docs/m4-test.md` › Picture check (Build 115) applies, from VLC'
 | Frozen | A stream whose displayed pictures stop while the clock runs (an HEVC 4K feed on an Apple TV HD) | After 15 s (8 s at the start) one reconnect, then the next version |
 | Radio | A radio channel | Plays with the sound alone (VLC's clock running), no check |
 | No picture anywhere | Every version sound only | The card with Try another source and Keep listening |
+
+## In-player guide (Build 116)
+
+Everything in `docs/m4-test.md` › In-player guide (Build 116) applies, except the pointer rows; a click is OK.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Swipe at the edge | Left in the player, then a short swipe left on the first show at Now | The column opens (a swipe left at the edge counts as Left) |
+| Long swipe | From a later show, one long swipe left | It stops at the first show; the next swipe opens the column |
+| One swipe, one step | A long swipe down in the column, then in the lists | One neighborhood, one list per swipe; at the column's end it goes no further |
+| Click | Click on another neighborhood; click on a list | Its top at Now; that list's column |
+| Back | Back (the Menu button) in the lists, the column, the grid | The column, the grid, then the guide closes |
+| Hints | The legend | "Click watch", "Click and hold remind", "Click or ▶ Go" |
+| Flip list | A channel picked in Favorites there, then a swipe up or down in the player | Through Favorites |

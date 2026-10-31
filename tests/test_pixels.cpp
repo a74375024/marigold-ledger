@@ -101,3 +101,36 @@ TEST_CASE("logo tone: white shapes vanish on a white cell, colour and solid boxe
   CHECK(toneOf(toneImage(40, 0xFFFFFF, 0, 0, 0x0A2A6B)) == Tone::normal);  // white on its own blue box
   CHECK(toneOf(marigold::px::Image{}) == Tone::normal);
 }
+
+TEST_CASE("shapeOf: the visible box at full size, and blank one-colour tiles") {
+  // A 40 x 10 mark in a 100 x 60 canvas with wide transparent margins.
+  Image framed = solid(100, 60, 0, 0, 0, 0);
+  auto at = [&framed](int x, int y) {
+    return &framed.rgba[(static_cast<size_t>(y) * 100 + static_cast<size_t>(x)) * 4];
+  };
+  for (int y = 20; y < 30; ++y)
+    for (int x = 30; x < 70; ++x) {
+      uint8_t* p = at(x, y);
+      p[0] = 255;
+      p[3] = ((x + y) % 3) ? 255 : 0;  // letters leave holes
+    }
+  Shape s = shapeOf(framed);
+  CHECK(s.w == 40);
+  CHECK(s.h == 10);
+  CHECK_FALSE(s.plain);  // one colour, but a wordmark on transparency
+
+  Shape tile = shapeOf(solid(64, 64, 40, 40, 40, 255));
+  CHECK(tile.w == 64);
+  CHECK(tile.h == 64);
+  CHECK(tile.plain);
+
+  // A solid box with a mark in another colour is a logo.
+  Image boxed = solid(20, 20, 0, 0, 200, 255);
+  for (int i = 0; i < 40; ++i) boxed.rgba[static_cast<size_t>(i) * 4] = 255;
+  CHECK_FALSE(shapeOf(boxed).plain);
+
+  Shape none = shapeOf(solid(8, 8, 255, 255, 255, 0));
+  CHECK(none.w == 0);
+  CHECK(none.h == 0);
+  CHECK(shapeOf(Image{}).w == 0);
+}

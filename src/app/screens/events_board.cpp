@@ -6,8 +6,14 @@
 // pushes the rows right; Back opens the menu. A small filter button ends the
 // first row's header. A live game in your channels plays in the guide's
 // preview corner once focus rests on it. Scores refresh only while this
-// board (or the event guide in the player) is open.
+// board (or the event guide in the player) is open. A new board (made on a
+// worker) is shown as it is, never copied; each row's layout and text are
+// worked out when it comes in, and the focus stays on its game. While the
+// games load, placeholders in the board's own layout stand where rows will
+// be (all of them until the first rows are in, then after those), pulsing
+// slowly, for 20 s at most.
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
 #include "app/app.hpp"
@@ -18,9 +24,11 @@
 #include "app/screens/screens.hpp"
 #include "app/screens/top_bar.hpp"
 #include "app/store/store.hpp"
+#include "core/engine/views.hpp"
 #include "core/input/hints.hpp"
 #include "core/input/preview_pace.hpp"
 #include "core/sports/my_sports.hpp"
+#include "core/util/log.hpp"
 
 namespace marigold::app {
 namespace {
@@ -42,6 +50,12 @@ constexpr float kTileGap = 24;
 constexpr float kGroupGap = 32;
 constexpr int kHitTile = 100000;  // + row * 1000 + tile
 constexpr int kHitFilter = 51;    // the rail's ids are left_rail::kHit*, 1-499
+constexpr uint32_t kPulseStepMs = 250;       // placeholders drawn again this often (the pulse is 1.2 s)
+constexpr uint32_t kLoadingAtMostMs = 20000;  // then the empty board, not endless placeholders
+constexpr uint32_t kLogMs = 60000;        // the timing log's line, at most this often
+
+using Clock = std::chrono::steady_clock;
+double msSince(Clock::time_point t) { return std::chrono::duration<double, std::milli>(Clock::now() - t).count(); }
 
 class EventsBoardScreen : public Screen {
  public:
@@ -84,11 +98,23 @@ class EventsBoardScreen : public Screen {
       refresh();
       app_.invalidate();
     }
-    bool pulse = skeletonShown_ && ui::skeletonMoved(ms, pulseStep_);
     bool sliding = push_.moving(ms) || menu_.moving(ms);
     wake_ = 0;
+    // Placeholders: drawn again a few times a second for their pulse,
+    // asleep in between; gone after kLoadingAtMostMs.
+    bool pulse = false;
+    if (placeholders()) {
+      uint32_t step = ms / kPulseStepMs;
+      pulse = skeletonShown_ && step != pulseStep_;
+      pulseStep_ = step;
+      wakeFor((step + 1) * kPulseStepMs);
+      wakeFor(loadingSince_ + kLoadingAtMostMs);
+    } else if (skeletonShown_) {
+      pulse = true;  // their time is up: the board without them
+    }
     previewTick(ms);
-    return pulse || sliding || promptAt_ != 0 || board_->updating;
+    logStats(ms);
+    return pulse || sliding || promptAt_ != 0;
   }
   uint32_t wakeAt() const override { return wake_; }
 
@@ -129,19 +155,19 @@ class EventsBoardScreen : public Screen {
     }
     switch (k) {
       case Key::Up:
-        if (row_ == 0 || rows_.empty()) filterFocus_ = true;
+        if (row_ == 0 || rows().empty()) filterFocus_ = true;
         else setRow(row_ - 1);
         return true;
       case Key::Down:
-        if (row_ + 1 < static_cast<int>(rows_.size())) setRow(row_ + 1);
+        if (row_ + 1 < static_cast<int>(rows().size())) setRow(row_ + 1);
         return true;
       case Key::Left:
         if (tile_ > 0) {
           --tile_;
         } else {
           // A row's first tile: SPORTS (the menu when there are no rows).
-          place_ = {row_, tile_, focusId_};
-          nav_.leftEdge(row_, static_cast<int>(rows_.size()));
+          place_ = {row_, tile_, focusId_, focusRow_};
+          nav_.leftEdge(row_, static_cast<int>(rows().size()));
           syncSlides();
         }
         return true;
@@ -169,6 +195,8 @@ class EventsBoardScreen : public Screen {
     }
   }
 
+  void pointerGone() override { pointer_ = 0; }
+
   void hover(int id) override {
     pointer_ = id;
     if (nav_.mode() == rail::Mode::Menu) {
@@ -181,7 +209,7 @@ class EventsBoardScreen : public Screen {
     if (nav_.mode() == rail::Mode::Column) return;
     if (id >= kHitTile) {
       int r = (id - kHitTile) / 1000, t = (id - kHitTile) % 1000;
-      if (r < static_cast<int>(rows_.size())) {
+      if (r < static_cast<int>(rows().size())) {
         row_ = r;
         tile_ = t;
         filterFocus_ = false;
@@ -192,6 +220,14 @@ class EventsBoardScreen : public Screen {
   }
 
   void draw(ui::Ctx& c) override {
+    Clock::time_point start = Clock::now();
+    drawBoard(c);
+    stats_.frameMax = std::max(stats_.frameMax, msSince(start));
+    ++stats_.frames;
+  }
+
+ private:
+  void drawBoard(ui::Ctx& c) {
     skeletonShown_ = false;
     // Under everything: the pointer off any target (the strip's pill goes).
     c.hit({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight}, left_rail::kHitNothing);
@@ -217,32 +253,51 @@ class EventsBoardScreen : public Screen {
     if (menu > 0.01f) left_rail::menu(c, nav_.items(), rail::Item::Events, nav_.menuFocus(), menu);
   }
 
- private:
+  // The timing log: a line at most every minute while the board is drawn.
+  // Counts and milliseconds only.
+  void logStats(uint32_t ms) {
+    if (!stats_.since) stats_.since = ms;
+    if (ms - stats_.since < kLogMs) return;
+    if (stats_.frames || stats_.refreshes) {
+      MLOG_I("events", "board frames=%d frameMax=%.1fms refreshes=%d refreshMax=%.1fms tiles=%zu", stats_.frames,
+             stats_.frameMax, stats_.refreshes, stats_.refreshMax, tiles_);
+    }
+    stats_ = Stats{};
+    stats_.since = ms;
+  }
+
   static bool inRange(int id, int base) { return id >= base && id < base + 100; }
+
+  void wakeFor(uint32_t at) {
+    if (!wake_ || at < wake_) wake_ = at;
+  }
+
+  // Still loading (for kLoadingAtMostMs at most): placeholders show.
+  bool placeholders() const {
+    return (board_->loading || board_->more) && loadingSince_ && app_.ms() - loadingSince_ < kLoadingAtMostMs;
+  }
 
   // ---------------------------------------------------------------- left rail
 
   void openColumn(bool fromMenu) {
-    place_ = {row_, tile_, focusId_};
-    nav_.openColumn(row_, static_cast<int>(rows_.size()), fromMenu);
+    place_ = {row_, tile_, focusId_, focusRow_};
+    nav_.openColumn(row_, static_cast<int>(rows().size()), fromMenu);
     syncSlides();
   }
 
   // The same game tile the column opened on (found again if the board was
   // rebuilt meanwhile).
   void restorePlace() {
-    row_ = std::clamp(place_.row, 0, std::max(0, static_cast<int>(rows_.size()) - 1));
-    tile_ = place_.tile;
-    std::vector<const EventTile*> tiles = flat(row_);
-    for (size_t t = 0; t < tiles.size(); ++t) {
-      if (tiles[t]->id == place_.id) tile_ = static_cast<int>(t);
-    }
+    engine::views::BoardFocus f = engine::views::boardFocus(rows(), place_.rowId, place_.id, place_.row, place_.tile);
+    row_ = f.row;
+    tile_ = f.tile;
     focusId_ = place_.id;
+    focusRow_ = place_.rowId;
   }
 
   void apply(const rail::Step& s, bool fromMenu) {
     using Do = rail::Step::Do;
-    int n = static_cast<int>(rows_.size());
+    int n = static_cast<int>(rows().size());
     switch (s.what) {
       case Do::None: break;
       case Do::Scroll:
@@ -331,39 +386,69 @@ class EventsBoardScreen : public Screen {
     left_ = left_rail::kRestLeft + (left_rail::kPushLeft - left_rail::kRestLeft) * push_.at(ms);
   }
 
+  // A new board: shown as it is (a filter's rows are its own copies), its
+  // rows laid out once, the focus kept on its game.
   void refresh() {
+    Clock::time_point start = Clock::now();
     board_ = app_.store().events();
     version_ = board_->version;
-    rows_ = filteredRows();
-    // Keep the focus on the same game when it is still there.
-    if (!focusId_.empty()) {
-      for (size_t r = 0; r < rows_.size(); ++r) {
-        std::vector<const EventTile*> tiles = flat(static_cast<int>(r));
-        for (size_t t = 0; t < tiles.size(); ++t) {
-          if (tiles[t]->id == focusId_ && static_cast<int>(r) == row_) {
-            tile_ = static_cast<int>(t);
-            return;
-          }
-        }
-      }
-    }
-    row_ = std::clamp(row_, 0, std::max(0, static_cast<int>(rows_.size()) - 1));
-    tile_ = std::clamp(tile_, 0, std::max(0, static_cast<int>(flat(row_).size()) - 1));
+    // A load's placeholders count from when they first showed.
+    if (!board_->loading && !board_->more) loadingSince_ = 0;
+    else if (!loadingSince_) loadingSince_ = std::max<uint32_t>(1, app_.ms());
+    filtered_ = filtered() ? filteredRows() : std::vector<EventRow>();
+    layoutRows();
+    engine::views::BoardFocus f = engine::views::boardFocus(rows(), focusRow_, focusId_, row_, tile_);
+    row_ = f.row;
+    tile_ = f.tile;
+    stats_.refreshMax = std::max(stats_.refreshMax, msSince(start));
+    ++stats_.refreshes;
   }
 
-  std::vector<const EventTile*> flat(int row) const {
-    std::vector<const EventTile*> out;
-    if (row < 0 || row >= static_cast<int>(rows_.size())) return out;
-    for (const EventGroup& g : rows_[static_cast<size_t>(row)].groups)
-      for (const EventTile& t : g.tiles) out.push_back(&t);
-    return out;
+  // The rows shown: the board's own, or a filter's.
+  const std::vector<EventRow>& rows() const { return filtered() ? filtered_ : board_->rows; }
+
+  // Each row's tiles in order, where they sit, its height and header text:
+  // worked out when the rows change, not as they are drawn.
+  void layoutRows() {
+    const std::vector<EventRow>& all = rows();
+    layout_.assign(all.size(), RowLayout{});
+    tiles_ = 0;
+    for (size_t r = 0; r < all.size(); ++r) {
+      const EventRow& row = all[r];
+      RowLayout& l = layout_[r];
+      float x = 0;
+      bool firstGroup = true;
+      for (const EventGroup& g : row.groups) {
+        if (!firstGroup) x += kGroupGap;
+        firstGroup = false;
+        if (!g.title.empty()) l.labels = true;
+        for (const EventTile& t : g.tiles) {
+          l.tiles.push_back(&t);
+          l.x.push_back(x);
+          x += events_ui::kTileW + kTileGap;
+        }
+      }
+      l.end = x;
+      l.height = kRowHeader + (l.labels ? kGroupLabel : 0) + events_ui::kTileH + kRowGap;
+      l.mixed = mixed(row);
+      l.summary = "\xc2\xb7 " + std::to_string(row.count);
+      if (row.live > 0) l.live = "\xc2\xb7 " + std::to_string(row.live) + " live";
+      tiles_ += l.tiles.size();
+    }
+  }
+
+  const std::vector<const EventTile*>& flat(int row) const {
+    static const std::vector<const EventTile*> kNone;
+    if (row < 0 || row >= static_cast<int>(layout_.size())) return kNone;
+    return layout_[static_cast<size_t>(row)].tiles;
   }
 
   const EventTile* focused() {
-    std::vector<const EventTile*> tiles = flat(row_);
+    const std::vector<const EventTile*>& tiles = flat(row_);
     if (tiles.empty()) return nullptr;
     tile_ = std::clamp(tile_, 0, static_cast<int>(tiles.size()) - 1);
     focusId_ = tiles[static_cast<size_t>(tile_)]->id;
+    focusRow_ = rows()[static_cast<size_t>(row_)].id;
     return tiles[static_cast<size_t>(tile_)];
   }
 
@@ -371,10 +456,10 @@ class EventsBoardScreen : public Screen {
     // Keep roughly the same column when moving between rows.
     float x = tileX(row_, tile_);
     row_ = r;
-    std::vector<const EventTile*> tiles = flat(row_);
+    size_t n = flat(row_).size();
     int best = 0;
     float bestDist = 1e9f;
-    for (size_t i = 0; i < tiles.size(); ++i) {
+    for (size_t i = 0; i < n; ++i) {
       float d = std::fabs(tileX(row_, static_cast<int>(i)) - x);
       if (d < bestDist) {
         bestDist = d;
@@ -386,20 +471,10 @@ class EventsBoardScreen : public Screen {
 
   // Tile x before scrolling: tiles 24 apart, an extra 32 between groups.
   float tileX(int row, int index) const {
-    if (row < 0 || row >= static_cast<int>(rows_.size())) return 0;
-    float x = 0;
-    int i = 0;
-    bool firstGroup = true;
-    for (const EventGroup& g : rows_[static_cast<size_t>(row)].groups) {
-      if (!firstGroup) x += kGroupGap;
-      firstGroup = false;
-      for (size_t k = 0; k < g.tiles.size(); ++k) {
-        if (i == index) return x;
-        x += events_ui::kTileW + kTileGap;
-        ++i;
-      }
-    }
-    return x;
+    if (row < 0 || row >= static_cast<int>(layout_.size())) return 0;
+    const RowLayout& l = layout_[static_cast<size_t>(row)];
+    if (index >= 0 && static_cast<size_t>(index) < l.x.size()) return l.x[static_cast<size_t>(index)];
+    return l.end;
   }
 
   void close() {
@@ -409,7 +484,7 @@ class EventsBoardScreen : public Screen {
 
   void select(const EventTile& t) {
     // An event channel family: its first feed, Up/Down surfs the others.
-    if (row_ < static_cast<int>(rows_.size()) && rows_[static_cast<size_t>(row_)].families) {
+    if (row_ < static_cast<int>(rows().size()) && rows()[static_cast<size_t>(row_)].families) {
       std::vector<std::string> feeds = app_.store().familyFeeds(t.id);
       Playback& p = app_.playback();
       if (feeds.empty() || !p.tune(feeds.front(), feeds)) {
@@ -534,9 +609,11 @@ class EventsBoardScreen : public Screen {
   void setFilter(Show show, const std::string& sport) {
     show_ = show;
     sport_ = show == Show::Sport ? sport : std::string();
-    rows_ = filteredRows();
+    filtered_ = filtered() ? filteredRows() : std::vector<EventRow>();
+    layoutRows();
     row_ = tile_ = 0;
     focusId_.clear();
+    focusRow_.clear();
     filterFocus_ = false;
   }
 
@@ -599,7 +676,7 @@ class EventsBoardScreen : public Screen {
   // The guide's corner preview, for a game that is on now in your channels.
   bool previewable(const EventTile& t) const {
     if (!app_.store().settings().previewChannels || !t.watchable || !isLive(t)) return false;
-    return !(row_ < static_cast<int>(rows_.size()) && rows_[static_cast<size_t>(row_)].families);
+    return !(row_ < static_cast<int>(rows().size()) && rows()[static_cast<size_t>(row_)].families);
   }
 
   // After focus rests on a live game (the guide's delay), it plays in the
@@ -617,7 +694,7 @@ class EventsBoardScreen : public Screen {
     switch (pace_.step(t->id, p.entry() == t->id, ms)) {
       case preview::Pace::Step::Idle: return;
       case preview::Pace::Step::Wait:  // waiting out the delay, asleep
-        wake_ = pace_.due();
+        wakeFor(pace_.due());
         return;
       case preview::Pace::Step::Tune: break;
     }
@@ -636,7 +713,7 @@ class EventsBoardScreen : public Screen {
     float x = kHeroX, y = 44;
     if (!t) {
       ui::label(c, "Live Events", x, y + 40, Weight::Bold, 44, theme::white());
-      if (board_->loading) {
+      if (placeholders()) {
         // Still loading: placeholders where the game's title and status go.
         skeletonShown_ = true;
         ui::Color block = ui::skeleton(c);
@@ -674,8 +751,8 @@ class EventsBoardScreen : public Screen {
     ui::label(c, t->whereLine, wx, y + 2, Weight::Regular, 22, theme::white(0.8f), x + 1240 - wx);
   }
 
-  // The filter button at the end of the first row's header line, its chip
-  // and "Updating…" to its left (the tab row they sat in is gone).
+  // The filter button at the end of the first row's header line, and its
+  // chip to its left (the tab row they sat in is gone).
   void drawTop(ui::Ctx& c) {
     Rect button{kRight - 40, kBoardTop - 6, 40, 40};
     bool focusedButton = filterFocus_ && nav_.mode() == rail::Mode::Content;
@@ -685,28 +762,16 @@ class EventsBoardScreen : public Screen {
       std::string text = "\xe2\x97\x8f " + filterTitle() + "  \xc3\x97";
       right -= ui::chipWidth(c, text, 19);
       ui::chip(c, text, right, kBoardTop - 1, 19, theme::hex(theme::kNowLine, 0.3f), theme::white());
-      right -= 20;
-    }
-    if (board_->updating) {
-      // An old board while the fresh one is made (never a count).
-      const char* text = "Updating\xe2\x80\xa6";
-      float tw = ui::textWidth(c, text, Weight::Medium, 22);
-      ui::label(c, text, right - tw, kBoardTop, Weight::Medium, 22, theme::white(0.6f));
-      ui::spinner(c, right - tw - 22, kBoardTop + 14, 11);
     }
   }
 
-  float rowHeight(const EventRow& r) const {
-    bool labels = std::any_of(r.groups.begin(), r.groups.end(), [](const EventGroup& g) { return !g.title.empty(); });
-    return kRowHeader + (labels ? kGroupLabel : 0) + events_ui::kTileH + kRowGap;
-  }
 
   void drawRows(ui::Ctx& c) {
-    if (rows_.empty() && board_->loading) {
-      drawLoadingRows(c);
+    if (rows().empty() && placeholders()) {
+      drawLoadingRows(c, kBoardTop);
       return;
     }
-    if (rows_.empty()) {
+    if (rows().empty()) {
       const char* empty = !filtered()           ? "No games this week in your sports."
                           : show_ == Show::Live ? "No games on right now. Back shows them all."
                                                 : "None this week. Back shows every game.";
@@ -716,7 +781,7 @@ class EventsBoardScreen : public Screen {
     // The focused row sits at the top of the board area.
     float y = kBoardTop;
     float scroll = 0;
-    for (int r = 0; r < row_; ++r) scroll += rowHeight(rows_[static_cast<size_t>(r)]);
+    for (int r = 0; r < row_; ++r) scroll += layout_[static_cast<size_t>(r)].height;
     // At rest a scrolled row runs under the strip; with SPORTS open it stops
     // at the column's rule.
     float clipX = left_rail::kStripW + (left_ - left_rail::kRestLeft) *
@@ -724,21 +789,24 @@ class EventsBoardScreen : public Screen {
                                            (left_rail::kPushLeft - left_rail::kRestLeft);
     c.g.pushClip({clipX, kBoardTop - 10, gfx::kLayoutWidth - clipX, kBoardBottom - kBoardTop + 10});
     y -= scroll;
-    for (size_t r = 0; r < rows_.size(); ++r) {
-      const EventRow& row = rows_[r];
-      float h = rowHeight(row);
+    for (size_t r = 0; r < rows().size(); ++r) {
+      const EventRow& row = rows()[r];
+      float h = layout_[r].height;
       if (y > kBoardBottom) break;
       if (y + h >= kBoardTop) drawRow(c, row, static_cast<int>(r), y);
       y += h;
     }
+    // More to come: placeholder rows after the ones in.
+    if (board_->more && placeholders()) drawLoadingRows(c, y);
     c.g.popClip();
   }
 
-  // Rows of tile-shaped placeholders down the board while the week's games load.
-  void drawLoadingRows(ui::Ctx& c) {
+  // Rows of tile-shaped placeholders from `y` down the board while the
+  // week's games load: a row's title, then its tiles where tiles go. Flat
+  // shapes only (no text); nothing on them takes the focus.
+  void drawLoadingRows(ui::Ctx& c, float y) {
     skeletonShown_ = true;
     ui::Color block = ui::skeleton(c);
-    float y = kBoardTop;
     while (y + kRowHeader < kBoardBottom) {
       c.g.fill({left_, y + 4, 220, 22}, block, 11);
       float tileY = y + kRowHeader;
@@ -749,19 +817,18 @@ class EventsBoardScreen : public Screen {
   }
 
   void drawRow(ui::Ctx& c, const EventRow& row, int r, float y) {
+    const RowLayout& l = layout_[static_cast<size_t>(r)];
     float hx = left_;
     hx += ui::label(c, row.title, hx, y, Weight::Bold, 25, theme::white()) + 10;
-    std::string summary = "\xc2\xb7 " + std::to_string(row.count);
     if (row.families) {
       // Event channels: never how many (they are channels).
     } else if (row.live > 0) {
-      hx += ui::label(c, summary, hx, y + 3, Weight::Medium, 22, theme::white(0.6f)) + 10;
-      ui::label(c, "\xc2\xb7 " + std::to_string(row.live) + " live", hx, y + 3, Weight::Medium, 22, theme::hex(0xF4B4AE));
+      hx += ui::label(c, l.summary, hx, y + 3, Weight::Medium, 22, theme::white(0.6f)) + 10;
+      ui::label(c, l.live, hx, y + 3, Weight::Medium, 22, theme::hex(0xF4B4AE));
     } else {
-      ui::label(c, summary, hx, y + 3, Weight::Medium, 22, theme::white(0.6f));
+      ui::label(c, l.summary, hx, y + 3, Weight::Medium, 22, theme::white(0.6f));
     }
-    bool labels = std::any_of(row.groups.begin(), row.groups.end(), [](const EventGroup& g) { return !g.title.empty(); });
-    float tileY = y + kRowHeader + (labels ? kGroupLabel : 0);
+    float tileY = y + kRowHeader + (l.labels ? kGroupLabel : 0);
     // Horizontal scroll: the focused tile stays in view.
     float scrollX = 0;
     if (r == row_) {
@@ -787,7 +854,7 @@ class EventsBoardScreen : public Screen {
           bool f = !filterFocus_ && nav_.mode() == rail::Mode::Content && r == row_ && index == tile_;
           Rect rect{tx, tileY, events_ui::kTileW, events_ui::kTileH};
           c.hit(rect, kHitTile + r * 1000 + std::min(index, 999));
-          events_ui::tile(c, t, rect, f, mixed(row));
+          events_ui::tile(c, t, rect, f, l.mixed);
         }
         x += events_ui::kTileW + kTileGap;
         ++index;
@@ -810,8 +877,8 @@ class EventsBoardScreen : public Screen {
   void drawColumn(ui::Ctx& c, float alpha) {
     // SPORTS, inside the board: each row's sport and how many are live.
     std::vector<left_rail::Entry> entries;
-    entries.reserve(rows_.size());
-    for (const EventRow& row : rows_) entries.push_back({row.title, row.live});
+    entries.reserve(rows().size());
+    for (const EventRow& row : rows()) entries.push_back({row.title, row.live});
     int hover = c.pointerActive && inRange(pointer_, left_rail::kHitColumn) ? pointer_ - left_rail::kHitColumn : -1;
     left_rail::column(c, "Live Events", "Sports", entries, nav_.index(), nav_.origin(), hover, kBoardTop,
                       kBoardTop + 52, alpha);
@@ -820,7 +887,22 @@ class EventsBoardScreen : public Screen {
   // Where the focus was when SPORTS opened (the return rule).
   struct Place {
     int row = 0, tile = 0;
-    std::string id;
+    std::string id, rowId;
+  };
+  // A row as laid out (layoutRows()).
+  struct RowLayout {
+    std::vector<const EventTile*> tiles;  // in order, across its groups
+    std::vector<float> x;                 // each tile's x before scrolling
+    float end = 0;                        // past the last tile
+    float height = 0;
+    bool labels = false;  // group titles above the tiles
+    bool mixed = false;   // tiles name their sport (mixed())
+    std::string summary, live;  // "· 12", "· 3 live"
+  };
+  struct Stats {
+    int frames = 0, refreshes = 0;
+    double frameMax = 0, refreshMax = 0;
+    uint32_t since = 0;
   };
 
   uint32_t promptAt_ = 0;
@@ -834,12 +916,16 @@ class EventsBoardScreen : public Screen {
   float left_ = left_rail::kRestLeft;  // the rows' left edge
   int pointer_ = 0;  // what the pointer is on (a hit id) while it shows
   std::shared_ptr<const EventsBoard> board_;
-  std::vector<EventRow> rows_;  // the board's rows, filtered
+  std::vector<EventRow> filtered_;  // a filter's rows (rows()); none for all events
+  std::vector<RowLayout> layout_;   // rows()'s
+  size_t tiles_ = 0;
+  uint32_t loadingSince_ = 0;  // placeholders first shown (app ms; 0: none)
+  Stats stats_;
   Show show_ = Show::All;
   std::string sport_;  // a "sport|..." row id
   uint64_t version_ = ~0ull;
   int row_ = 0, tile_ = 0;
-  std::string focusId_;
+  std::string focusId_, focusRow_;  // the focused game and its row (ids)
   bool filterFocus_ = false;  // on the filter button
   float rowScroll_ = 0;
   preview::Pace pace_{true};  // the corner: after a rest, each game once

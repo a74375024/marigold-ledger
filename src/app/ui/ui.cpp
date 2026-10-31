@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 
+#include "core/logos/logos.hpp"
 #include "platform/icons.hpp"
 #include "platform/logo_cache.hpp"
 
@@ -55,7 +56,8 @@ void logo(Ctx& c, const std::string& url, const std::string& fallback, Rect r, b
           float opacity) {
   logos::Texture tex;
   if (c.logos && !url.empty()) tex = c.logos->get(url);
-  if (tex.id && tex.w > 0 && tex.h > 0) {
+  // A poor logo (a speck, a blank tile) gives way to the name when there is one.
+  if (tex.id && tex.w > 0 && tex.h > 0 && (fallback.empty() || logos::fillsCard(tex.shape))) {
     float s = std::min(r.w / static_cast<float>(tex.w), r.h / static_cast<float>(tex.h));
     float w = std::round(static_cast<float>(tex.w) * s), h = std::round(static_cast<float>(tex.h) * s);
     Rect at{std::round(r.x + (r.w - w) * 0.5f), std::round(r.y + (r.h - h) * 0.5f), w, h};
@@ -77,6 +79,13 @@ void logo(Ctx& c, const std::string& url, const std::string& fallback, Rect r, b
   while (px > 12 && c.t.measure(fallback, Weight::Bold, px) > r.w - 8) --px;
   Color col = onLight ? theme::black(0.85f * opacity) : theme::white(0.9f * opacity);
   labelIn(c, fallback, r, Weight::Bold, px, col, Align::Center);
+}
+
+LogoState logoState(Ctx& c, const std::string& url) {
+  if (!c.logos || url.empty()) return LogoState::None;
+  logos::Texture tex = c.logos->get(url);
+  if (!tex.id || tex.w <= 0 || tex.h <= 0) return LogoState::None;
+  return logos::fillsCard(tex.shape) ? LogoState::Ready : LogoState::Poor;
 }
 
 void progress(Ctx& c, Rect r, double fraction, Color track, Color fill) {

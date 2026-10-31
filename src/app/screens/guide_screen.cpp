@@ -373,6 +373,20 @@ void GuideScreen::restorePlace() {
   requestVisibleListings();
 }
 
+// A neighborhood walked to or picked in the column: its first channel, its
+// header at the top of the grid (the first one: the list's very top, with
+// the setup prompt), or as high as the end of the list lets it go.
+// ensureVisible() alone left it at the bottom, under the one before.
+void GuideScreen::toSection(int index) {
+  const Section& sec = sections_[static_cast<size_t>(index)];
+  focusLine_ = std::min(static_cast<int>(lines_.size()) - 1, sec.firstLine + 1);
+  if (const GuideChannel* g = focusedChannel()) focusId_ = g->id;
+  float top = index == 0 ? 0.0f : lines_[static_cast<size_t>(sec.firstLine)].y;
+  scroll_ = rail::topScroll(top, contentH_, kGridBottom - kGridTop);
+  ensureVisible();
+  requestVisibleListings();
+}
+
 void GuideScreen::apply(const rail::Step& s, bool fromMenu) {
   using Do = rail::Step::Do;
   int n = static_cast<int>(sections_.size());
@@ -380,23 +394,15 @@ void GuideScreen::apply(const rail::Step& s, bool fromMenu) {
     case Do::None: break;
     case Do::Scroll:
       // The grid scrolls behind the column, as it did behind JUMP TO.
-      if (s.index < n) {
-        focusLine_ = std::min(static_cast<int>(lines_.size()) - 1, sections_[static_cast<size_t>(s.index)].firstLine + 1);
-        if (const GuideChannel* g = focusedChannel()) focusId_ = g->id;
-        ensureVisible();
-        requestVisibleListings();
-      }
+      if (s.index < n) toSection(s.index);
       break;
     case Do::Restore: restorePlace(); break;
     case Do::Top:
       // Another neighborhood: its first channel, at Now.
       if (s.index < n) {
-        focusLine_ = std::min(static_cast<int>(lines_.size()) - 1, sections_[static_cast<size_t>(s.index)].firstLine + 1);
-        if (const GuideChannel* g = focusedChannel()) focusId_ = g->id;
         windowStart_ = nowWindow();
         focusTime_ = time::now();
-        ensureVisible();
-        requestVisibleListings();
+        toSection(s.index);
       }
       break;
     case Do::Open: open(s.item, fromMenu); break;
@@ -543,6 +549,7 @@ void GuideScreen::watch(const std::string& entryId) {
     app_.toast("This channel has no working feed right now");
     return;
   }
+  p.pickedFrom(tab_);  // the guide in the player opens on this list
   p.setFull();
   app_.nav().push(makePlayer(app_));
 }
@@ -1442,7 +1449,11 @@ void GuideScreen::drawChannelCell(ui::Ctx& c, const GuideChannel& g, Rect r, boo
   c.g.fill(r, focused ? theme::white() : theme::white(0.07f), 14);
   Color fg = focused ? theme::black() : theme::white();
   Color sub = focused ? theme::black(0.65f) : theme::white(0.65f);
-  switch (g.style) {
+  // A logo that loaded but is too poor to stand alone sits next to the name.
+  GuideChannel::Style style = g.style;
+  if (style == GuideChannel::Style::LogoOnly && ui::logoState(c, g.logoUrl) == ui::LogoState::Poor)
+    style = GuideChannel::Style::Named;
+  switch (style) {
     case GuideChannel::Style::LogoOnly:
       ui::logo(c, g.logoUrl, g.name, {r.x + 14, r.y + 12, r.w - 28, r.h - 24}, focused);
       break;

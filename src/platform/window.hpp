@@ -92,6 +92,11 @@ class Window {
   // known). The app adds the ones it sees pressed.
   RemoteKeys remoteKeys() const;
 
+  // webOS: asks the system to take its Magic Remote arrow off the screen,
+  // or to put it back (it also comes back by itself when the remote moves).
+  // A no-op where the TV's SDL lacks the call, and on other platforms.
+  void systemCursor(bool shown);
+
   int drawableWidth() const;
   int drawableHeight() const;
   // What runs underneath, for Help and the logs: the TV's SDL version on

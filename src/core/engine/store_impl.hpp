@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "core/engine/store.hpp"
+#include "core/engine/events_build.hpp"
 #include "core/catalog/catalog.hpp"
 #include "core/catalog/lineup.hpp"
 #include "core/catalog/markets.hpp"
@@ -54,7 +55,9 @@ struct EventsState {
   sports::SportFeedsSeen seen;
   std::optional<time::Seconds> seenCheckedAt;
 
-  std::vector<sports::SportsEvent> events;  // last rebuild
+  // The last rebuild's (or the saved list's), shared with the workers.
+  std::shared_ptr<const std::vector<sports::SportsEvent>> events =
+      std::make_shared<const std::vector<sports::SportsEvent>>();
   std::vector<sports::matcher::GuideListing> listings;
   std::optional<time::Seconds> listingsAt;
   int listingsRevision = 0;
@@ -62,7 +65,19 @@ struct EventsState {
   std::string lastFingerprint, lastSaved;
   bool rebuilding = false;
   uint32_t nextCheckMs = 0;
-  bool restoredTried = false;
+  bool restoredTried = false, restoring = false;  // the saved list is read on a worker
+  bool launchPass = false;  // it's in: the next tick rebuilds and makes the board, open or not
+  // Opened with games too old to show (events_build::keptBoardShows): boards
+  // wait for games worked out at or after this.
+  time::Seconds freshAfter = 0;
+  time::Seconds boardMadeAt = 0;  // the clock the board shown was made by
+  // Which games (`events`) the board shown, and the one being made, were made from.
+  uint64_t eventsSerial = 1, boardSerial = 0, boardDoneSerial = 0;
+  // The saved schedule's writes (on workers, the newest wins).
+  std::shared_ptr<events_build::Writes> scheduleWrites = std::make_shared<events_build::Writes>();
+  // What the rebuild reads of the lineup, copied once per lineup.
+  std::shared_ptr<const events_build::LineupCopy> lineupCopy;
+  uint64_t lineupCopyKey = ~0ull;  // the lineup it was copied from (its revision and size)
 
   // Requests in flight.
   bool scheduleBusy = false;
@@ -75,15 +90,43 @@ struct EventsState {
   int statusesRevision = -1;
 
   sports::board::Board board;
+  std::set<std::string> watchableListed;  // the board's (events_build::BoardMade)
   uint32_t boardBuiltMs = 0;
+  // The board is made on a worker from a snapshot and put in by the tick,
+  // one at a time: asked for again meanwhile, the next starts once it is in.
+  // `boardDirty`: made again now (opened, a setting, My Sports); `boardStale`:
+  // soon, but not sooner than a moment after the last began (scores, a
+  // rebuild, the clock), so a burst of answers makes one board.
   bool boardDirty = true;
+  bool boardStale = false;
+  bool boardBusy = false;
+  uint32_t boardStartMs = 0;
+  std::shared_ptr<events_build::BoardMade> boardDone;
+  std::shared_ptr<const events_build::ChannelIndex> channelIndex;  // of channelIndexOf
+  std::weak_ptr<const std::vector<Channel>> channelIndexOf;
+  std::vector<sports::board::WhipChannel> whips;  // whip-around channels, once per lineup
+  uint64_t whipsKey = ~0ull;
+  // The board jobs' own (one at a time): the race cameras' index and what
+  // the titles say.
+  std::shared_ptr<sports::cameras::CameraIndex> boardCameras = std::make_shared<sports::cameras::CameraIndex>();
+  std::shared_ptr<sports::board::TitleMemo> boardTitles = sports::board::newTitleMemo();
+  // The boards put in before, freed on a worker once no screen holds them.
+  std::vector<std::shared_ptr<const EventsBoard>> retired;
+  // The timing log (counts and milliseconds), a line at most every minute.
+  struct Timing {
+    uint32_t since = 0;
+    int boards = 0, rebuilds = 0;
+    size_t tiles = 0;
+    double boardMax = 0, rebuildMax = 0, uiMax = 0;
+  };
+  Timing timing;
 
   // When the events shown were made (a rebuild, or the saved list's time;
-  // 0: none). Opened with older ones, the board says "Updating" until the
-  // fresh channel list, schedule and rebuild are in (a minute at most).
+  // 0: none). Opened, the board loads until the fresh channel list, schedule
+  // and rebuild are in (checkedSinceOpen).
   time::Seconds eventsBuiltAt = 0;
-  bool updating = false, checkedSinceOpen = false;
-  uint32_t updatingUntilMs = 0, rebuildStartMs = 0;
+  bool checkedSinceOpen = false;
+  uint32_t rebuildStartMs = 0;
   // The last rebuild's reasons for the feeds no tile took (raw feed id ->
   // why), for the Live Events report.
   std::map<std::string, std::string> hidden;
