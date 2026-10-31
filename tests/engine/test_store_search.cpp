@@ -40,6 +40,7 @@ TEST_CASE("engine: recent searches are saved by name, eight kept, and the switch
     store.rememberSearch({"", "c:none"});  // nothing picked: not kept
     for (int i = 0; i < 10; ++i) store.rememberSearch({"Channel " + std::to_string(i), "c:" + std::to_string(i)});
     CHECK(store.recentSearches().size() == se::kRecentKept);
+    tv.pool.drain();  // written on a worker
     std::string saved = tv.files.read("lists.json").value_or("");
     CHECK(saved.find("Channel 9") != std::string::npos);
     CHECK(saved.find("sn2\"") == std::string::npos);  // pushed out: only eight

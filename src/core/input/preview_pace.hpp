@@ -6,6 +6,7 @@
 // focus moves, and with the pointer the rest counts from its last move.
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 
@@ -33,6 +34,8 @@ class Pace {
   void moved(uint32_t ms) { since_ = ms; }
   // When focus came to the item it is on.
   uint32_t since() const { return since_; }
+  // While it waits (Step::Wait): when it may tune.
+  uint32_t due() const { return std::max(since_ + kDelayMs, last_ + kGapMs); }
   // Forget the items tried (a new list).
   void reset() {
     tried_.clear();

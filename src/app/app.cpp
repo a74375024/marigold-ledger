@@ -281,6 +281,9 @@ void App::run() {
     bool okHeld = okDown_ && !okLongSent_;
     // Idle: sleep until an event, a worker result or the next clock minute.
     int timeout = animating ? 0 : okHeld ? 50 : dirty_ ? 0 : 500;
+    // A screen waiting for a moment is woken then (not drawn meanwhile).
+    if (uint32_t due = top ? top->wakeAt() : 0; due && timeout > 0)
+      timeout = std::min(timeout, due > ms_ ? static_cast<int>(std::min<uint32_t>(due - ms_, 500)) : 0);
     platform::Event e;
     if (window_.nextEvent(e, timeout)) {
       handle(e);

@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "core/util/time.hpp"
@@ -132,6 +133,33 @@ struct EventsBoard {
   // An old board (from last time) shown while the fresh one is made.
   bool updating = false;
   bool scoresOn = true;
+  // Where each tile is, by id: the first one in the rows (index()).
+  struct Place {
+    uint32_t row = 0, group = 0, tile = 0;
+  };
+  std::unordered_map<std::string, Place> places;
+
+  void index() {
+    places.clear();
+    for (size_t r = 0; r < rows.size(); ++r)
+      for (size_t g = 0; g < rows[r].groups.size(); ++g)
+        for (size_t t = 0; t < rows[r].groups[g].tiles.size(); ++t)
+          places.emplace(rows[r].groups[g].tiles[t].id,
+                         Place{static_cast<uint32_t>(r), static_cast<uint32_t>(g), static_cast<uint32_t>(t)});
+  }
+  // The first tile with that id (a scan when the board wasn't index()ed).
+  const EventTile* tile(const std::string& id) const {
+    if (places.empty()) {
+      for (const EventRow& r : rows)
+        for (const EventGroup& g : r.groups)
+          for (const EventTile& t : g.tiles)
+            if (t.id == id) return &t;
+      return nullptr;
+    }
+    auto it = places.find(id);
+    if (it == places.end()) return nullptr;
+    return &rows[it->second.row].groups[it->second.group].tiles[it->second.tile];
+  }
 };
 
 // Where to Watch: every way to see one game.

@@ -2,9 +2,11 @@
 // store_events.cpp (Live Events). UI thread only.
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <string>
@@ -30,6 +32,7 @@
 #include "core/sports/player_photos.hpp"
 #include "core/sports/race_data.hpp"
 #include "core/sports/my_sports.hpp"
+#include "core/sports/network_map.hpp"
 #include "core/sports/reminders.hpp"
 #include "core/sports/schedule.hpp"
 #include "core/sports/scores.hpp"
@@ -45,6 +48,7 @@ struct EventsState {
   sports::schedule::Schedule schedule;
   sports::scores::LiveScores scores;
   sports::MySportsPrefs mySports;
+  int mySportsRevision = 0;  // bumped when My Sports changes (Search's index)
   sports::Reminders reminders;
   sports::store::SourceMemory memory;
   sports::SportFeedsSeen seen;
@@ -233,9 +237,44 @@ struct Store::Impl {
   std::shared_ptr<std::atomic<bool>> stopJobs = std::make_shared<std::atomic<bool>>(false);
 
   uint64_t publishVersion = 0;
-  // Search's index and what it was made from (store_search.cpp).
+  // Search's index (store_search.cpp): the guide's part and the board's,
+  // each made on a worker and put in by tick(), then joined.
+  using SearchKey = std::array<uint64_t, 3>;
+  struct SearchMade {
+    std::shared_ptr<const search::Index> index;
+    SearchKey key{};
+    bool quick = false;
+    double ms = 0;
+    int catalogRevision = 0;
+    sports::StationMarkets markets;
+    std::shared_ptr<const std::vector<search::TeamEntry>> teams;
+    std::string teamsKey;
+  };
+  struct SearchPart {
+    std::shared_ptr<const search::Index> index;
+    SearchKey key{};    // what it was made from
+    bool quick = false;  // the channels' names only (Search opened before any)
+    int catalogRevision = 0;
+    sports::StationMarkets markets;
+    bool busy = false, quickBusy = false;
+    std::shared_ptr<SearchMade> done, quickDone;  // made, not put in yet
+  };
+  SearchPart searchGuide, searchBoard;
   std::shared_ptr<const search::Index> searchIndex;
-  std::string searchKey;
+  // The board part's teams, made once per team lists.
+  std::shared_ptr<const std::vector<search::TeamEntry>> searchTeams;
+  std::string searchTeamsKey;
+  // Made ahead in the background: when there is none, and after a guide job.
+  bool searchWarm = false, searchGuideJobs = false;
+  uint32_t searchWarmAt = 0;
+  // lists.json, written on a worker for recent searches (the newest text
+  // wins; one written synchronously since supersedes it).
+  struct ListsWriter {
+    std::mutex mu, fileMu;
+    std::string pending;
+    uint64_t seq = 0, pendingSeq = 0, written = 0;
+  };
+  std::shared_ptr<ListsWriter> listsWriter = std::make_shared<ListsWriter>();
   bool channelsDirty = false, listingsDirty = false;
   // A first list is sorted but its rows aren't on screen yet (the lineup
   // works them out on a worker): Ready only once they're published, so the

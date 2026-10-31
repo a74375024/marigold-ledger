@@ -86,8 +86,11 @@ class EventsBoardScreen : public Screen {
     }
     bool pulse = skeletonShown_ && ui::skeletonMoved(ms, pulseStep_);
     bool sliding = push_.moving(ms) || menu_.moving(ms);
-    return previewTick(ms) || pulse || sliding || promptAt_ != 0 || board_->updating;
+    wake_ = 0;
+    previewTick(ms);
+    return pulse || sliding || promptAt_ != 0 || board_->updating;
   }
+  uint32_t wakeAt() const override { return wake_; }
 
   bool key(const KeyEvent& e) override {
     Key k = e.key;
@@ -602,23 +605,24 @@ class EventsBoardScreen : public Screen {
   // After focus rests on a live game (the guide's delay), it plays in the
   // corner; focus on a game that isn't on ends the preview. Moving up to
   // the tabs or the sports column leaves it playing.
-  bool previewTick(uint32_t ms) {
+  void previewTick(uint32_t ms) {
     Playback& p = app_.playback();
-    if (app_.nav().top() != this || filterFocus_ || nav_.mode() != rail::Mode::Content) return false;
+    if (app_.nav().top() != this || filterFocus_ || nav_.mode() != rail::Mode::Content) return;
     const EventTile* t = focused();
     if (!t || !previewable(*t)) {
       if (p.active() && !p.full()) p.stop();
       pace_.step("", false, ms);
-      return false;
+      return;
     }
     switch (pace_.step(t->id, p.entry() == t->id, ms)) {
-      case preview::Pace::Step::Idle: return false;
-      case preview::Pace::Step::Wait: return true;  // waiting out the delay
+      case preview::Pace::Step::Idle: return;
+      case preview::Pace::Step::Wait:  // waiting out the delay, asleep
+        wake_ = pace_.due();
+        return;
       case preview::Pace::Step::Tune: break;
     }
     p.setCorner(top_bar::kPreview);
     if (!p.tune(t->id, app_.store().eventFlipList(t->id))) p.stop();
-    return false;
   }
 
   void stopPreview() {
@@ -820,6 +824,7 @@ class EventsBoardScreen : public Screen {
   };
 
   uint32_t promptAt_ = 0;
+  uint32_t wake_ = 0;  // the preview's rest ends then (wakeAt())
   bool skeletonShown_ = false;  // placeholders on screen: the pulse redraws
   uint32_t pulseStep_ = 0;
   std::function<void(rail::Item, bool)> go_;

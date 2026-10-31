@@ -349,8 +349,10 @@ class Store {
   bool toggleShowReminder(const std::string& entryId, const Listing& l);
   // The same show later on any channel with loaded listings.
   std::vector<ProgramHit> otherAirings(const std::string& entryId, const Listing& l) const;
-  // Search (store_search.cpp): what a query looks through, made again when
-  // the channels, listings, board or teams have changed.
+  // Search (store_search.cpp): what a query looks through. Never waits:
+  // when the channels, listings, board, teams or My Sports have changed it
+  // starts making the part they're in on a worker and returns the index it
+  // has (tick() puts the new one in). Before any, an empty one.
   std::shared_ptr<const search::Index> searchIndex() const;
   // Recent searches, newest first (search::kRecentKept are kept).
   const std::vector<search::Recent>& recentSearches() const;
@@ -395,6 +397,9 @@ class Store {
  private:
   void saveAccounts();
   void saveLists();
+  // The same on a worker (recent searches): the newest list is written.
+  void saveListsLater();
+  std::string listsText() const;
   void saveM3uStreams();
   void setPrefs(const catalog::LineupPrefs& p);
   std::string currentSignature() const;
@@ -456,6 +461,10 @@ class Store {
   bool serverOpened(const std::string& channelId) const;
   std::vector<Feed> feedsFor(const std::vector<std::string>& rawIds) const;
   std::vector<std::string> eventBackups(const std::string& entryId) const;
+  // Search's index (store_search.cpp).
+  void startSearchBuilds(bool forSearch) const;
+  bool installSearch() const;
+  bool searchTick(uint32_t ms);
   // Live Events (store_events.cpp).
   void loadEvents();
   void eventsTick(uint32_t ms);

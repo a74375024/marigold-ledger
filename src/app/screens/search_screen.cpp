@@ -13,10 +13,13 @@
 // here with the stream in the corner. Results don't move while focus is in
 // them. Never a score, and finished games only with Show scores on.
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -35,6 +38,7 @@
 #include "core/input/preview_pace.hpp"
 #include "core/input/search_keys.hpp"
 #include "core/sports/my_sports.hpp"
+#include "core/util/log.hpp"
 #include "core/util/strings.hpp"
 
 namespace marigold::app {
@@ -58,6 +62,7 @@ constexpr uint32_t kDigitsMs = 1500;      // number keys: the pause that ends a 
 constexpr uint32_t kReturnMs = 120000;    // Back from the player within this: the corner
 constexpr uint32_t kRestoreMs = 300000;   // reopened within this: the last query
 constexpr uint32_t kRefreshMs = 3000;     // new data redraws the lists at most this often
+constexpr uint32_t kLogMs = 10000;        // the timing log's line, at most this often
 constexpr int kHitKeyboard = 1000, kHitCorner = 1600, kHitPill = 1601, kHitCells = 2000;
 
 // The last query, for reopening within five minutes.
@@ -78,6 +83,17 @@ struct Cell {
   Listing listing;    // shows
   time::Seconds also = 0;
   bool top = false;   // the band's top result card
+  // What it shows, made by label() after a layout, each minute and when
+  // the data changes: drawing makes no text.
+  struct Label {
+    bool missing = false;  // its channel, game or team is gone: only the box
+    std::string title, line, tag, ok;
+    bool live = false, west = false, logo = false;
+    std::string logoUrl, logoName;  // a channel's or show's logo; a game's channel
+    std::vector<EventSide> sides;   // a game's two badges, or a team's one
+    std::string cardTag, cardTitle, cardLineOk;  // the top result's card
+    std::string cornerLogo, cornerName, cornerTitle, cornerLine;  // the corner's
+  } label;
 };
 
 enum class RowKind { Band, Tiles, Chips, List };
@@ -101,6 +117,15 @@ std::string whenText(const ui::Ctx& c, time::Seconds t) {
   if (d > 0 && d <= 3600) return "in " + std::to_string((d + 59) / 60) + " min";
   std::string day = ui::dayWord(c, t);
   return (day.empty() ? std::string("Today") : day) + " " + ui::clock(c, t);
+}
+
+using Clock = std::chrono::steady_clock;
+double msSince(Clock::time_point t) { return std::chrono::duration<double, std::milli>(Clock::now() - t).count(); }
+
+// The same query for what it finds (the shows kept for it).
+bool sameQuery(const se::Query& a, const se::Query& b) {
+  return a.text == b.text && a.tokens == b.tokens && a.when == b.when && a.exactOnly == b.exactOnly &&
+         a.digits == b.digits && a.regional == b.regional;
 }
 
 std::string recentId(const Cell& cell) {
@@ -136,7 +161,10 @@ class SearchScreen : public Screen {
     if (gLast.set && app_.ms() - gLast.at < kRestoreMs) query_ = gLast.query;
     search(true);
   }
-  ~SearchScreen() override { app_.store().eventsOpen(false); }
+  ~SearchScreen() override {
+    logStats(app_.ms(), true);
+    app_.store().eventsOpen(false);
+  }
 
   void shown() override {
     Playback& p = app_.playback();
@@ -152,6 +180,7 @@ class SearchScreen : public Screen {
       }
     }
     watchedAt_ = 0;
+    labelsDirty_ = true;  // a panel may have set a reminder or followed a team
     if (!inResults()) search(true);
   }
 
@@ -165,26 +194,44 @@ class SearchScreen : public Screen {
   }
 
   bool tick(uint32_t ms) override {
-    bool busy = false;
+    bool draw = false;
+    wake_ = 0;
+    // The shows once typing pauses, added to what each letter found.
     if (showsAt_) {
       if (ms >= showsAt_) {
         showsAt_ = 0;
-        search(true);
+        search(true, true);
+        draw = true;
+      } else {
+        wakeFor(showsAt_);
       }
-      busy = true;
     }
-    if (!digits_.empty() && digitsTick(ms)) busy = true;
-    // New channels, guide or board: the lists again (never under the focus,
-    // and at most every few seconds while the guide is still loading).
-    if ((app_.store().events()->version != eventsVersion_ || app_.store().channels()->version != channelsVersion_ ||
-         app_.store().listings()->version != listingsVersion_) &&
-        !inResults() && ms - refreshedAt_ >= kRefreshMs) {
-      refreshedAt_ = ms;
-      search(!showsAt_);
+    if (!digits_.empty() && digitsTick(ms)) draw = true;
+    // New channels, guide, board or index: the lists again (never under the
+    // focus, and at most every few seconds while the guide is still loading).
+    Store& s = app_.store();
+    bool fresh = s.events()->version != eventsVersion_ || s.channels()->version != channelsVersion_ ||
+                 s.listings()->version != listingsVersion_ || s.searchIndex() != index_;
+    if (fresh && !inResults()) {
+      if (ms - refreshedAt_ >= kRefreshMs) {
+        refreshedAt_ = ms;
+        search(!showsAt_);
+        draw = true;
+      } else {
+        wakeFor(refreshedAt_ + kRefreshMs);
+      }
     }
-    if (previewTick(ms)) busy = true;
-    return busy || menu_.moving(ms);
+    // The rows' text is made again for new data (the rows stay put).
+    if (labeled_ != versions()) {
+      labelsDirty_ = true;
+      draw = true;
+    }
+    previewTick(ms);
+    logStats(ms, false);
+    return draw || menu_.moving(ms);
   }
+
+  uint32_t wakeAt() const override { return wake_; }
 
   bool key(const KeyEvent& e) override {
     Key k = e.key;
@@ -235,6 +282,8 @@ class SearchScreen : public Screen {
   }
 
   void draw(ui::Ctx& c) override {
+    Clock::time_point start = Clock::now();
+    if (labelsDirty_ || c.now / 60 != labelMinute_) labelAll(c);
     c.g.fill({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight}, theme::hex(theme::kBackground));
     c.hit({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight}, left_rail::kHitNothing);
     kb::Look look;
@@ -256,6 +305,9 @@ class SearchScreen : public Screen {
     left_rail::strip(c, nav_.items(), rail::Item::Search, hover);
     float m = menu_.at(c.ms);
     if (m > 0.01f) left_rail::menu(c, nav_.items(), rail::Item::Search, nav_.menuFocus(), m);
+    double ms = msSince(start);
+    stats_.frameMax = std::max(stats_.frameMax, ms);
+    if (ms >= 50) ++stats_.over;
   }
 
  private:
@@ -291,14 +343,25 @@ class SearchScreen : public Screen {
     return q;
   }
 
-  // Runs the query (`shows`: the guide's shows too, after the pause) and
-  // lays out the rows, unless focus is in them.
-  void search(bool shows) {
+  // Runs the query and lays out the rows, unless focus is in them. Each
+  // letter looks through everything but the guide's shows; `shows` adds
+  // them (after the pause; at once for one character). `keep`: what this
+  // query found on this index stays, so the pause's pass looks only
+  // through the shows. The shows found stay while the query and the
+  // guide's listings do (a data refresh doesn't look again).
+  void search(bool shows, bool keep = false) {
+    Clock::time_point start = Clock::now();
     Store& s = app_.store();
     eventsVersion_ = s.events()->version;
     channelsVersion_ = s.channels()->version;
     listingsVersion_ = s.listings()->version;
-    index_ = s.searchIndex();
+    std::shared_ptr<const se::Index> index = s.searchIndex();
+    bool newIndex = index != index_;
+    index_ = std::move(index);
+    if (showsIndex_ && showsIndex_->showTitles.get() != index_->showTitles.get()) {
+      showsIndex_.reset();
+      shows_.reset();
+    }
     se::Query q = parsed();
     if (!shows && q.length() >= 2 && !showsAt_) showsAt_ = app_.ms() + kShowsDelayMs;
     else if (shows) showsAt_ = 0;
@@ -307,14 +370,60 @@ class SearchScreen : public Screen {
     o.zone = app_.zone();
     o.showScores = s.settings().showScores;
     o.shows = shows || q.length() < 2;
-    found_ = se::run(*index_, q, o);
+    if (!keep || newIndex || !find_ || !sameQuery(find_->query, q)) {
+      Clock::time_point t = Clock::now();
+      find_ = se::find(*index_, q, o);
+      double ms = msSince(t);
+      ++stats_.keys;
+      stats_.runSum += ms;
+      stats_.runMax = std::max(stats_.runMax, ms);
+    }
+    se::FoundShows none;
+    const se::FoundShows* found = &none;
+    if (o.shows && q.length() >= 2) {
+      if (!shows_ || !showsIndex_ || !sameQuery(showsQuery_, q)) {
+        Clock::time_point t = Clock::now();
+        shows_ = se::findShows(*index_, q, o);
+        showsIndex_ = index_;
+        showsQuery_ = q;
+        ++stats_.shows;
+        stats_.showsMax = std::max(stats_.showsMax, msSince(t));
+      }
+      found = &*shows_;
+    }
+    found_ = se::merge(*index_, *find_, *found);
     showsIn_ = o.shows;
-    if (!inResults()) layout();
+    labelsDirty_ = true;
+    if (!inResults()) {
+      Clock::time_point t = Clock::now();
+      layout();
+      stats_.layoutMax = std::max(stats_.layoutMax, msSince(t));
+    }
+    if (msSince(start) >= 50) ++stats_.over;
+  }
+
+  // The timing log: a line every few seconds while keys are typed. Counts
+  // and milliseconds only, never what was typed.
+  void logStats(uint32_t ms, bool last) {
+    if (!stats_.since) stats_.since = ms;
+    if (!last && ms - stats_.since < kLogMs) return;
+    if (stats_.keys || stats_.shows) {
+      MLOG_I("search", "keys n=%d runMax=%.1fms runAvg=%.1fms showsMax=%.1fms layoutMax=%.1fms frameMax=%.1fms over50=%d",
+             stats_.keys, stats_.runMax, stats_.keys ? stats_.runSum / stats_.keys : 0.0, stats_.showsMax,
+             stats_.layoutMax, stats_.frameMax, stats_.over);
+    }
+    stats_ = Stats{};
+    stats_.since = ms;
+  }
+
+  void wakeFor(uint32_t at) {
+    if (!wake_ || at < wake_) wake_ = at;
   }
 
   // ---------------------------------------------------------------- layout
 
   void layout() {
+    labelsDirty_ = true;
     rows_.clear();
     if (!digits_.empty()) layoutDigits();
     else if (!page_.empty()) layoutPage();
@@ -701,7 +810,7 @@ class SearchScreen : public Screen {
   // LG's number keys from an empty field: the channel, the numbers that
   // start with the digits, and a team those digits also start ("49").
   void layoutDigits() {
-    se::Digits d = se::digits(*index_, digits_);
+    const se::Digits d = digitsNow();
     if (!d.channel.empty()) {
       Cell c;
       c.kind = CellKind::Channel;
@@ -716,9 +825,11 @@ class SearchScreen : public Screen {
       also.push_back(c);
     }
     if (d.waits && !d.team.empty()) {
+      // Teams and games only: the shows aren't looked through here.
       se::Options o;
       o.now = time::now();
       o.showScores = app_.store().settings().showScores;
+      o.shows = false;
       se::Results r = se::run(*index_, se::parse(digits_), o);
       std::vector<Cell> teams;
       for (const se::Item& it : r.teams) teams.push_back(cellOf(it));
@@ -891,30 +1002,47 @@ class SearchScreen : public Screen {
     layout();
   }
 
-  // The number plays when it is complete: after a pause, or at once when
-  // no longer number starts with it; never by itself when the digits also
-  // start a team or channel name (OK plays it).
-  // True while it waits out the pause.
+  // The number plays when it is complete: after a pause (asleep until
+  // then), or at once when no longer number starts with it; never by itself
+  // when the digits also start a team or channel name (OK plays it). True
+  // when it played or gave up.
   bool digitsTick(uint32_t ms) {
-    se::Digits d = se::digits(*index_, digits_);
+    const se::Digits& d = digitsNow();
     if (d.waits) return false;
-    if (ms - digitsAt_ < kDigitsMs && !views::digitsSettled(digits_, *app_.store().channels())) return true;
-    std::string number = digits_;
-    digits_.clear();
-    if (d.channel.empty()) {
-      app_.toast("No channel " + number);
-      layout();
+    if (ms - digitsAt_ < kDigitsMs && !digitsSettled()) {
+      wakeFor(digitsAt_ + kDigitsMs);
       return false;
     }
-    watchChannel(d.channel, true);
-    return false;
+    std::string number = digits_, channel = d.channel;
+    digits_.clear();
+    if (channel.empty()) {
+      app_.toast("No channel " + number);
+      layout();
+      return true;
+    }
+    watchChannel(channel, true);
+    return true;
+  }
+
+  // The digits' channel, numbers and team: once per digit typed.
+  const se::Digits& digitsNow() { return digitsCache_.of(index_, digits_); }
+
+  // No longer number starts with the digits (once per digit and channel list).
+  bool digitsSettled() {
+    uint64_t version = app_.store().channels()->version;
+    if (settledFor_ != digits_ || settledVersion_ != version) {
+      settledFor_ = digits_;
+      settledVersion_ = version;
+      settled_ = views::digitsSettled(digits_, *app_.store().channels());
+    }
+    return settled_;
   }
 
   // Keys while LG's number box shows. OK watches the channel, unless the
   // focus was moved to a grid key (or the pointer clicks one): a letter
   // carries on the name ("49…"). ▼ goes to the name the digits start.
   bool digitsKey(const KeyEvent& e) {
-    se::Digits d = se::digits(*index_, digits_);
+    const se::Digits d = digitsNow();
     switch (e.key) {
       case Key::Ok: {
         Grid::Spot spot;
@@ -983,6 +1111,7 @@ class SearchScreen : public Screen {
 
   void select(const Cell& c) {
     Store& s = app_.store();
+    labelsDirty_ = true;  // a reminder set shows on the row
     switch (c.kind) {
       case CellKind::Channel:
         if (const GuideChannel* g = s.channels()->find(c.id)) remember(c, g->name);
@@ -1408,21 +1537,22 @@ class SearchScreen : public Screen {
 
   // Only in the results: after a 2 s rest on something on now, muted.
   // Moving on drops the corner to the new item's card at once.
-  bool previewTick(uint32_t ms) {
+  void previewTick(uint32_t ms) {
     Playback& p = app_.playback();
-    if (app_.nav().top() != this) return false;
+    if (app_.nav().top() != this) return;
     const Cell* c = inResults() ? focusedCell() : nullptr;
     std::string id = c ? previewId(*c) : std::string();
     if (p.active() && !p.full() && p.entry() != id) p.stop();
     switch (pace_.step(id, !id.empty() && p.entry() == id, ms)) {
-      case preview::Pace::Step::Idle: return false;
-      case preview::Pace::Step::Wait: return true;
+      case preview::Pace::Step::Idle: return;
+      case preview::Pace::Step::Wait:  // asleep until the rest is over
+        wakeFor(pace_.due());
+        return;
       case preview::Pace::Step::Tune: break;
     }
     p.setCorner(top_bar::kPreview, true);
     bool event = app_.store().isEvent(id);
     if (!(event ? p.tune(id, app_.store().eventFlipList(id)) : p.tune(id))) p.stop();
-    return false;
   }
 
   void stopPreview() {
@@ -1459,16 +1589,15 @@ class SearchScreen : public Screen {
   void drawRows(ui::Ctx& c) {
     // The pill of a chip's page, over the band.
     if (!page_.empty()) {
-      std::string text = page_.title + "  \xc3\x97";
-      float w = ui::chipWidth(c, text, 20);
+      float w = ui::chipWidth(c, pillText_, 20);
       c.hit({kX, 34, w, 30}, kHitPill);
-      ui::chip(c, text, kX, 34, 20, theme::hex(theme::kNowLine, 0.3f), theme::white());
+      ui::chip(c, pillText_, kX, 34, 20, theme::hex(theme::kNowLine, 0.3f), theme::white());
     }
     if (!found_.showing.empty() && page_.empty() && digits_.empty() && !found_.query.text.empty()) {
-      ui::label(c, "Showing " + found_.showing, kX, 40, Weight::Bold, 26, theme::white(), kBandW);
+      ui::label(c, showingText_, kX, 40, Weight::Bold, 26, theme::white(), kBandW);
     }
     if (found_.nothing && showsIn_ && page_.empty() && digits_.empty()) {
-      ui::label(c, "Nothing for \xe2\x80\x9c" + query_ + "\xe2\x80\x9d", kX, 96, Weight::Bold, 34, theme::white(), kBandW);
+      ui::label(c, nothingText_, kX, 96, Weight::Bold, 34, theme::white(), kBandW);
       ui::paragraph(c, "Not in your channels or the guide right now. Try a channel name or number, a show or a team.",
                     kX, 150, kBandW, Weight::Regular, 24, theme::white(0.7f), 3);
     }
@@ -1568,171 +1697,218 @@ class SearchScreen : public Screen {
     c.g.fill(box, f ? theme::white() : theme::white(0.07f), 18);
     Color ink = f ? theme::black() : theme::white();
     Color sub = f ? theme::black(0.65f) : theme::white(0.7f);
-    std::string ok = f ? okText(cell) : std::string();
-    float okW = ok.empty() ? 0 : ui::textWidth(c, ok, Weight::Bold, 20) + 24;
+    const Cell::Label& l = cell.label;
+    bool ok = f && !l.ok.empty();
+    float okW = ok ? ui::textWidth(c, l.ok, Weight::Bold, 20) + 24 : 0;
     if (cell.top) {
       drawTopCard(c, cell, box, f, ok);
       return;
     }
     float tx = box.x + 22, right = box.x + box.w - 22 - okW;
-    if (!ok.empty()) ui::labelIn(c, ok, {right + 12, box.y, okW - 12, box.h}, Weight::Bold, 20, ink, Align::Right);
-    std::string title, line;
-    bool west = false;  // a West feed: its WEST chip
-    bool live = false;
-    std::string tag;
+    if (ok) ui::labelIn(c, l.ok, {right + 12, box.y, okW - 12, box.h}, Weight::Bold, 20, ink, Align::Right);
+    if (l.missing) return;
     switch (cell.kind) {
-      case CellKind::Channel: {
-        const GuideChannel* g = app_.store().channels()->find(cell.id);
-        if (!g) return;
-        ui::logo(c, g->logoUrl, g->name, {tx, box.y + (box.h - 54) * 0.5f, 96, 54}, f);
+      case CellKind::Channel:
+        ui::logo(c, l.logoUrl, l.logoName, {tx, box.y + (box.h - 54) * 0.5f, 96, 54}, f);
         tx += 116;
-        title = g->name;
-        line = channelLine(c, *g, live);
-        west = g->west;
         break;
-      }
-      case CellKind::Show: {
-        const GuideChannel* g = app_.store().channels()->find(cell.entryId);
-        if (g) ui::logo(c, g->logoUrl, g->name, {tx, box.y + (box.h - 48) * 0.5f, 84, 48}, f);
+      case CellKind::Show:
+        if (l.logo) ui::logo(c, l.logoUrl, l.logoName, {tx, box.y + (box.h - 48) * 0.5f, 84, 48}, f);
         tx += 104;
-        title = cell.listing.title;
-        live = cell.listing.isOn(c.now);
-        tag = se::showTag(se::fold(title));
-        line = showLine(c, cell, g);
         break;
-      }
-      case CellKind::Game: {
-        const EventTile* t = app_.store().eventTile(cell.id);
-        if (!t) return;
-        tx += badges(c, *t, tx, box.y + (box.h - 52) * 0.5f, 52, f);
-        title = matchup(*t);
-        live = liveTile(*t);
-        line = gameLine(c, *t);
-        break;
-      }
-      case CellKind::Team: {
-        const se::TeamEntry* t = team(cell.id);
-        if (!t) return;
-        tx += teamBadge(c, *t, tx, box.y + (box.h - 52) * 0.5f, f) + 18;
-        title = t->name + (app_.store().followsTeam(t->key) ? " \xe2\x98\x85" : "");
-        line = teamLine(c, *t, live);
-        break;
-      }
-      case CellKind::Genre:
-        title = cell.title;
-        line = "Live now and later today";
-        break;
-      case CellKind::Follow:
-        title = "\xe2\x98\x85 Follow your teams";
-        line = "Their games show up here first. OK opens My Sports.";
-        break;
+      case CellKind::Game: tx += badges(c, l, tx, box.y + (box.h - 52) * 0.5f, 52, f); break;
+      case CellKind::Team: tx += teamBadge(c, l, tx, box.y + (box.h - 52) * 0.5f, f) + 18; break;
       default: break;
     }
     float ty = box.y + box.h * 0.5f - 36;
     float lx = tx;
-    if (live) lx += ui::chip(c, "LIVE", lx, ty + 4, 17, theme::hex(theme::kLive), theme::white()) + 10;
-    if (west) lx += ui::coastChip(c, true, lx, ty + 4, 17) + 10;
-    if (!tag.empty()) lx += ui::chip(c, tag, lx, ty + 4, 17, f ? theme::black(0.15f) : theme::white(0.18f), ink) + 10;
-    ui::label(c, title, lx, ty, Weight::Bold, 26, ink, right - lx);
-    ui::label(c, line, tx, ty + 38, Weight::Medium, 22, sub, right - tx);
+    if (l.live) lx += ui::chip(c, "LIVE", lx, ty + 4, 17, theme::hex(theme::kLive), theme::white()) + 10;
+    if (l.west) lx += ui::coastChip(c, true, lx, ty + 4, 17) + 10;
+    if (!l.tag.empty()) lx += ui::chip(c, l.tag, lx, ty + 4, 17, f ? theme::black(0.15f) : theme::white(0.18f), ink) + 10;
+    ui::label(c, l.title, lx, ty, Weight::Bold, 26, ink, right - lx);
+    ui::label(c, l.line, tx, ty + 38, Weight::Medium, 22, sub, right - tx);
   }
 
   // The top result: a type tag, a big title and what's on, beside the corner.
-  void drawTopCard(ui::Ctx& c, const Cell& cell, Rect box, bool f, const std::string& ok) {
-    Store& s = app_.store();
+  void drawTopCard(ui::Ctx& c, const Cell& cell, Rect box, bool f, bool ok) {
+    const Cell::Label& l = cell.label;
+    if (l.missing) return;
     Color ink = f ? theme::black() : theme::white();
     Color sub = f ? theme::black(0.65f) : theme::white(0.75f);
-    std::string tag, title, line;
-    bool live = false;
     float tx = box.x + 22, ty = box.y + 64;
     switch (cell.kind) {
-      case CellKind::Channel: {
-        const GuideChannel* g = s.channels()->find(cell.id);
-        if (!g) return;
-        tag = "CHANNEL" + std::string(g->number ? " \xc2\xb7 " + std::to_string(*g->number) : "") +
-              (g->inLineup ? " \xc2\xb7 MY LINEUP" : "");
-        ui::logo(c, g->logoUrl, g->name, {tx, ty, 112, 64}, f);
+      case CellKind::Channel:
+        ui::logo(c, l.logoUrl, l.logoName, {tx, ty, 112, 64}, f);
         tx += 132;
-        title = g->name;
-        line = channelLine(c, *g, live);
         break;
-      }
-      case CellKind::Game: {
-        const EventTile* t = s.eventTile(cell.id);
-        if (!t) return;
-        tag = "GAME" + (t->league.empty() ? std::string() : " \xc2\xb7 " + t->league) +
-              (t->favorite ? " \xc2\xb7 YOUR TEAM \xe2\x98\x85" : "");
-        tx += badges(c, *t, tx, ty, 64, f);
-        title = matchup(*t);
-        live = liveTile(*t);
-        line = gameLine(c, *t);
-        break;
-      }
-      case CellKind::Team: {
-        const se::TeamEntry* t = team(cell.id);
-        if (!t) return;
-        tag = "TEAM \xc2\xb7 " + t->league;
-        tx += teamBadge(c, *t, tx, ty, f) + 18;
-        title = t->name;
-        line = teamLine(c, *t, live);
-        break;
-      }
-      case CellKind::Show: {
-        const GuideChannel* g = s.channels()->find(cell.entryId);
-        std::string rep = se::showTag(se::fold(cell.listing.title));
-        tag = "SHOW" + (rep.empty() ? std::string() : " \xc2\xb7 " + rep);
-        if (g) ui::logo(c, g->logoUrl, g->name, {tx, ty, 112, 64}, f);
+      case CellKind::Game: tx += badges(c, l, tx, ty, 64, f); break;
+      case CellKind::Team: tx += teamBadge(c, l, tx, ty, f) + 18; break;
+      case CellKind::Show:
+        if (l.logo) ui::logo(c, l.logoUrl, l.logoName, {tx, ty, 112, 64}, f);
         tx += 132;
-        title = cell.listing.title;
-        live = cell.listing.isOn(c.now);
-        line = showLine(c, cell, g);
-        break;
-      }
-      case CellKind::Genre:
-        tag = cell.id.rfind("genre:", 0) == 0 ? "GENRE" : cell.id.rfind("sport:", 0) == 0 ? "SPORT" : "LEAGUE";
-        title = cell.title;
-        line = "Live now and later today";
         break;
       default: break;
     }
-    ui::label(c, tag, box.x + 22, box.y + 18, Weight::Bold, 18, sub, box.w - 44);
+    ui::label(c, l.cardTag, box.x + 22, box.y + 18, Weight::Bold, 18, sub, box.w - 44);
     // A long title wraps to two lines here only.
-    ui::paragraph(c, title, tx, ty, box.x + box.w - 22 - tx, Weight::Bold, 32, ink, 2, 1.15f);
+    ui::paragraph(c, l.cardTitle, tx, ty, box.x + box.w - 22 - tx, Weight::Bold, 32, ink, 2, 1.15f);
     float lx = box.x + 22, ly = box.y + box.h - 48;
-    if (live) lx += ui::chip(c, "LIVE", lx, ly + 2, 18, theme::hex(theme::kLive), theme::white()) + 10;
-    if (!ok.empty()) line += (line.empty() ? "" : " \xc2\xb7 ") + ok;
-    ui::label(c, line, lx, ly, Weight::Medium, 22, sub, box.x + box.w - 22 - lx);
+    if (l.live) lx += ui::chip(c, "LIVE", lx, ly + 2, 18, theme::hex(theme::kLive), theme::white()) + 10;
+    ui::label(c, ok ? l.cardLineOk : l.line, lx, ly, Weight::Medium, 22, sub, box.x + box.w - 22 - lx);
   }
 
   // Two side badges (or the sport's mark). Returns the width used.
-  float badges(ui::Ctx& c, const EventTile& t, float x, float y, float size, bool f) {
-    if (t.sides.size() == 2) {
-      events_ui::badge(c, t.sides[0], x, y, size, f);
-      events_ui::badge(c, t.sides[1], x + size + 8, y, size, f);
+  float badges(ui::Ctx& c, const Cell::Label& l, float x, float y, float size, bool f) {
+    if (l.sides.size() == 2) {
+      events_ui::badge(c, l.sides[0], x, y, size, f);
+      events_ui::badge(c, l.sides[1], x + size + 8, y, size, f);
       return 2 * size + 28;
     }
-    ui::logo(c, t.channelLogo, t.channelName, {x, y, size * 1.6f, size}, f);
+    ui::logo(c, l.logoUrl, l.logoName, {x, y, size * 1.6f, size}, f);
     return size * 1.6f + 18;
   }
 
-  float teamBadge(ui::Ctx& c, const se::TeamEntry& t, float x, float y, bool f) {
-    // The badge the board has for it, when it has a game; else initials.
+  float teamBadge(ui::Ctx& c, const Cell::Label& l, float x, float y, bool f) {
+    if (!l.sides.empty()) events_ui::badge(c, l.sides.front(), x, y, 52, f);
+    return 52;
+  }
+
+  // The badge the board has for a team, when it has a game; else initials.
+  EventSide teamSide(const se::TeamEntry& t) const {
     for (const std::string& gid : {t.liveGame, t.nextGame}) {
       const EventTile* g = app_.store().eventTile(gid);
       if (!g || g->sides.size() != 2) continue;
       for (const EventSide& s : g->sides) {
         if (se::fold(s.name).empty() || t.names.empty()) continue;
-        if (t.names.front().find(se::fold(s.name)) != std::string::npos) {
-          events_ui::badge(c, s, x, y, 52, f);
-          return 52;
-        }
+        if (t.names.front().find(se::fold(s.name)) != std::string::npos) return s;
       }
     }
     EventSide side;
     side.abbr = se::initials(se::words(se::fold(t.name)));
     for (char& ch : side.abbr) ch = static_cast<char>(ch >= 'a' && ch <= 'z' ? ch - 32 : ch);
-    events_ui::badge(c, side, x, y, 52, f);
-    return 52;
+    return side;
+  }
+
+  // The data a cell's text is made from: made again when it moves on.
+  std::array<uint64_t, 3> versions() const {
+    Store& s = app_.store();
+    return {s.events()->version, s.channels()->version, s.listings()->version};
+  }
+
+  // Every row's text, and the lines over the band (drawn as they are).
+  void labelAll(const ui::Ctx& c) {
+    labelsDirty_ = false;
+    labelMinute_ = c.now / 60;
+    labeled_ = versions();
+    ++labelGeneration_;
+    for (Row& r : rows_)
+      for (Cell& cell : r.cells) label(c, cell);
+    pillText_ = page_.empty() ? std::string() : page_.title + "  \xc3\x97";
+    showingText_ = found_.showing.empty() ? std::string() : "Showing " + found_.showing;
+    nothingText_ = "Nothing for \xe2\x80\x9c" + query_ + "\xe2\x80\x9d";
+  }
+
+  void label(const ui::Ctx& c, Cell& cell) {
+    Store& s = app_.store();
+    Cell::Label& l = cell.label;
+    l = Cell::Label{};
+    l.ok = okText(cell);
+    // The board's tile for the corner's card (a game, a team's game).
+    const EventTile* corner = nullptr;
+    switch (cell.kind) {
+      case CellKind::Channel: {
+        const GuideChannel* g = s.channels()->find(cell.id);
+        if (!g) {
+          l.missing = true;
+          break;
+        }
+        l.logo = true;
+        l.logoUrl = l.cornerLogo = g->logoUrl;
+        l.logoName = l.cornerName = l.cornerTitle = g->name;
+        l.title = l.cardTitle = g->name;
+        l.line = channelLine(c, *g, l.live);
+        l.west = g->west;
+        l.cardTag = "CHANNEL" + std::string(g->number ? " \xc2\xb7 " + std::to_string(*g->number) : "") +
+                    (g->inLineup ? " \xc2\xb7 MY LINEUP" : "");
+        views::NowNext nn = views::nowAndNext(*s.listings(), g->id, c.now);
+        if (nn.now) l.cornerLine = nn.now->title;
+        break;
+      }
+      case CellKind::Show: {
+        const GuideChannel* g = s.channels()->find(cell.entryId);
+        if (g) {
+          l.logo = true;
+          l.logoUrl = l.cornerLogo = g->logoUrl;
+          l.logoName = l.cornerName = g->name;
+        }
+        const Listing& x = cell.listing;
+        l.title = l.cardTitle = l.cornerTitle = x.title;
+        l.live = x.isOn(c.now);
+        l.tag = se::showTag(se::fold(x.title));
+        l.line = showLine(c, cell, g);
+        l.cardTag = "SHOW" + (l.tag.empty() ? std::string() : " \xc2\xb7 " + l.tag);
+        l.cornerLine = x.isOn(c.now) ? "Now until " + ui::clock(c, x.end) : whenText(c, x.start);
+        if (!x.isOn(c.now))
+          l.cornerLine += s.hasShowReminder(cell.entryId, x.start) ? " \xc2\xb7 Reminder set \xe2\x9c\x93" : " \xc2\xb7 OK: Remind me";
+        break;
+      }
+      case CellKind::Game: {
+        const EventTile* t = s.eventTile(cell.id);
+        if (!t) {
+          l.missing = true;
+          break;
+        }
+        corner = t;
+        if (t->sides.size() == 2) l.sides = t->sides;
+        l.logoUrl = t->channelLogo;
+        l.logoName = t->channelName;
+        l.title = l.cardTitle = matchup(*t);
+        l.live = liveTile(*t);
+        l.line = gameLine(c, *t);
+        l.cardTag = "GAME" + (t->league.empty() ? std::string() : " \xc2\xb7 " + t->league) +
+                    (t->favorite ? " \xc2\xb7 YOUR TEAM \xe2\x98\x85" : "");
+        break;
+      }
+      case CellKind::Team: {
+        const se::TeamEntry* t = team(cell.id);
+        if (!t) {
+          l.missing = true;
+          break;
+        }
+        l.sides = {teamSide(*t)};
+        l.title = t->name + (s.followsTeam(t->key) ? " \xe2\x98\x85" : "");
+        l.cardTitle = l.cornerTitle = t->name;
+        l.line = teamLine(c, *t, l.live);
+        l.cardTag = "TEAM \xc2\xb7 " + t->league;
+        corner = s.eventTile(teamGame(*t));
+        break;
+      }
+      case CellKind::Genre:
+        l.title = l.cardTitle = l.cornerTitle = cell.title;
+        l.line = "Live now and later today";
+        l.cardTag = cell.id.rfind("genre:", 0) == 0 ? "GENRE" : cell.id.rfind("sport:", 0) == 0 ? "SPORT" : "LEAGUE";
+        break;
+      case CellKind::Follow:
+        l.title = "\xe2\x98\x85 Follow your teams";
+        l.line = "Their games show up here first. OK opens My Sports.";
+        l.cornerTitle = cell.title;
+        break;
+      default: l.cornerTitle = cell.title; break;
+    }
+    l.cardLineOk = l.line;
+    if (!l.ok.empty()) l.cardLineOk += (l.line.empty() ? "" : " \xc2\xb7 ") + l.ok;
+    if (const EventTile* t = corner) {
+      l.cornerTitle = matchup(*t);
+      l.cornerLogo = t->channelLogo;
+      l.cornerName = t->channelName;
+      if (!t->watchable)
+        l.cornerLine = std::string(t->footer == "Streaming only" ? "Streaming only" : "Not in your channels") +
+                       " \xc2\xb7 OK: Where to Watch";
+      else if (t->finished) l.cornerLine = "Ended";
+      else if (liveTile(*t)) l.cornerLine = "LIVE " + t->status;
+      else if (t->start)
+        l.cornerLine = whenText(c, t->start) + (s.hasReminder(t->id) ? " \xc2\xb7 Reminder set \xe2\x9c\x93" : " \xc2\xb7 OK: Remind me");
+    }
   }
 
   // "230 · LIVE Bulls at Harbor Kings · Q3" or "24 · The Evening Report".
@@ -1813,9 +1989,12 @@ class SearchScreen : public Screen {
     if (!digits_.empty()) {
       c.g.fill(r, theme::hex(0x1C1F25, 0.96f), 16);
       ui::labelIn(c, digits_, {r.x, r.y, r.w, r.h - 50}, Weight::Bold, 64, theme::white(), Align::Center);
-      se::Digits d = se::digits(*index_, digits_);
-      ui::labelIn(c, d.waits ? "OK: Watch channel " + digits_ : "Plays when the number is complete",
-                  {r.x, r.y + r.h - 70, r.w, 40}, Weight::Medium, 20, theme::white(0.7f), Align::Center);
+      if (digitsLineFor_ != digits_ || digitsLineIndex_ != index_) {
+        digitsLineFor_ = digits_;
+        digitsLineIndex_ = index_;
+        digitsLine_ = digitsNow().waits ? "OK: Watch channel " + digits_ : "Plays when the number is complete";
+      }
+      ui::labelIn(c, digitsLine_, {r.x, r.y + r.h - 70, r.w, 40}, Weight::Medium, 20, theme::white(0.7f), Align::Center);
       return;
     }
     Playback& p = app_.playback();
@@ -1829,60 +2008,27 @@ class SearchScreen : public Screen {
     }
     if (p.active() && !p.full() && p.ready()) {
       top_bar::preview(c, p, "", "");
-      // A caption naming what plays, and that it is muted.
-      std::string caption = cornerCaption(cell);
+      // A caption naming what plays, and that it is muted (made again when
+      // what plays, the cell or the rows' text change).
+      if (captionEntry_ != p.entry() || captionCell_ != cell || captionGeneration_ != labelGeneration_) {
+        captionEntry_ = p.entry();
+        captionCell_ = cell;
+        captionGeneration_ = labelGeneration_;
+        caption_ = cornerCaption(cell);
+      }
       float x = r.x;
       x += ui::chip(c, "MUTED", x, r.y + r.h + 10, 15, theme::white(0.18f), theme::white()) + 10;
-      ui::label(c, caption, x, r.y + r.h + 8, Weight::Medium, 20, theme::white(0.8f), r.x + r.w - x);
+      ui::label(c, caption_, x, r.y + r.h + 8, Weight::Medium, 20, theme::white(0.8f), r.x + r.w - x);
       return;
     }
     c.g.fill(r, theme::white(0.05f), 16);
     c.g.stroke(r, theme::white(0.15f), 16, 1);
     if (!cell) return;
     // The card: a logo or badges, the title and its time (no video).
-    std::string logo, name, title, line;
-    Store& s = app_.store();
-    const EventTile* t = nullptr;
-    switch (cell->kind) {
-      case CellKind::Channel:
-        if (const GuideChannel* g = s.channels()->find(cell->id)) {
-          logo = g->logoUrl;
-          name = title = g->name;
-          views::NowNext nn = views::nowAndNext(*s.listings(), g->id, c.now);
-          if (nn.now) line = nn.now->title;
-        }
-        break;
-      case CellKind::Show:
-        if (const GuideChannel* g = s.channels()->find(cell->entryId)) {
-          logo = g->logoUrl;
-          name = g->name;
-        }
-        title = cell->listing.title;
-        line = cell->listing.isOn(c.now) ? "Now until " + ui::clock(c, cell->listing.end) : whenText(c, cell->listing.start);
-        if (!cell->listing.isOn(c.now))
-          line += s.hasShowReminder(cell->entryId, cell->listing.start) ? " \xc2\xb7 Reminder set \xe2\x9c\x93" : " \xc2\xb7 OK: Remind me";
-        break;
-      case CellKind::Team:
-        if (const se::TeamEntry* tm = team(cell->id)) {
-          title = tm->name;
-          t = s.eventTile(teamGame(*tm));
-        }
-        break;
-      case CellKind::Game: t = s.eventTile(cell->id); break;
-      default: title = cell->title; break;
-    }
-    if (t) {
-      title = matchup(*t);
-      logo = t->channelLogo;
-      name = t->channelName;
-      if (!t->watchable) line = std::string(t->footer == "Streaming only" ? "Streaming only" : "Not in your channels") + " \xc2\xb7 OK: Where to Watch";
-      else if (t->finished) line = "Ended";
-      else if (liveTile(*t)) line = "LIVE " + t->status;
-      else if (t->start) line = whenText(c, t->start) + (s.hasReminder(t->id) ? " \xc2\xb7 Reminder set \xe2\x9c\x93" : " \xc2\xb7 OK: Remind me");
-    }
-    if (!logo.empty() || !name.empty()) ui::logo(c, logo, name, {r.x + 24, r.y + 24, 120, 56});
-    ui::paragraph(c, title, r.x + 24, r.y + 96, r.w - 48, Weight::Bold, 26, theme::white(), 2, 1.2f);
-    ui::label(c, line, r.x + 24, r.y + r.h - 44, Weight::Medium, 20, theme::white(0.7f), r.w - 48);
+    const Cell::Label& l = cell->label;
+    if (!l.cornerLogo.empty() || !l.cornerName.empty()) ui::logo(c, l.cornerLogo, l.cornerName, {r.x + 24, r.y + 24, 120, 56});
+    ui::paragraph(c, l.cornerTitle, r.x + 24, r.y + 96, r.w - 48, Weight::Bold, 26, theme::white(), 2, 1.2f);
+    ui::label(c, l.cornerLine, r.x + 24, r.y + r.h - 44, Weight::Medium, 20, theme::white(0.7f), r.w - 48);
   }
 
   std::string cornerCaption(const Cell* cell) {
@@ -1901,7 +2047,7 @@ class SearchScreen : public Screen {
   void drawKeyBar(ui::Ctx& c) {
     hints::Bar bar;
     if (!digits_.empty()) {
-      se::Digits d = se::digits(*index_, digits_);
+      const se::Digits& d = digitsNow();
       bar = hints::search(app_.remoteKeys(), hints::SearchPlace::Digits, false,
                           {digits_, d.waits ? d.team : std::string()});
     } else {
@@ -1919,6 +2065,12 @@ class SearchScreen : public Screen {
   std::string query_;
   bool exactOnly_ = false;
   std::shared_ptr<const se::Index> index_;
+  // What the query found (each letter), the shows (after the pause, on
+  // the index they were found on) and the two merged.
+  std::optional<se::Found> find_;
+  std::optional<se::FoundShows> shows_;
+  std::shared_ptr<const se::Index> showsIndex_;
+  se::Query showsQuery_;
   se::Results found_;
   bool showsIn_ = false;
   uint32_t showsAt_ = 0;
@@ -1936,6 +2088,30 @@ class SearchScreen : public Screen {
   preview::Pace pace_{true};
   uint32_t watchedAt_ = 0;  // when OK went full screen from here
   uint32_t refreshedAt_ = 0;
+  uint32_t wake_ = 0;  // tick() has something due then (wakeAt())
+  // The number box: its digits worked out once per digit.
+  se::DigitsCache digitsCache_;
+  std::string settledFor_;
+  uint64_t settledVersion_ = 0;
+  bool settled_ = false;
+  std::string digitsLine_, digitsLineFor_;
+  std::shared_ptr<const se::Index> digitsLineIndex_;
+  // The rows' text (label()), and what it was made from.
+  bool labelsDirty_ = true;
+  time::Seconds labelMinute_ = 0;
+  std::array<uint64_t, 3> labeled_{};
+  uint64_t labelGeneration_ = 0;
+  std::string pillText_, showingText_, nothingText_;
+  std::string caption_, captionEntry_;
+  const Cell* captionCell_ = nullptr;
+  uint64_t captionGeneration_ = 0;
+  // The timing log (logStats()).
+  struct Stats {
+    int keys = 0, shows = 0, over = 0;  // over: passes and frames of 50 ms or more
+    double runMax = 0, runSum = 0, showsMax = 0, layoutMax = 0, frameMax = 0;
+    uint32_t since = 0;
+  };
+  Stats stats_;
 };
 
 }  // namespace

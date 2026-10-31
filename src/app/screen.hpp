@@ -42,6 +42,11 @@ class Screen {
   // Called on the top screen once per loop; true while animating (the app
   // then draws every frame instead of waiting for events).
   virtual bool tick(uint32_t /*ms*/) { return false; }
+  // After tick(): when it next has something due (app ms; 0 = nothing).
+  // A screen that is only waiting (a pause in typing, a preview's rest)
+  // returns false from tick() and this, and the app sleeps until then
+  // instead of drawing every frame.
+  virtual uint32_t wakeAt() const { return 0; }
   virtual bool opaque() const { return true; }
   // A corner preview may keep playing under this screen (the guide). Under
   // any other full screen it stops.

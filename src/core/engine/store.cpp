@@ -395,7 +395,23 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
   }
 }
 
-Store::~Store() { *impl_->stopJobs = true; }
+Store::~Store() {
+  *impl_->stopJobs = true;
+  // Recent searches not on file yet are written now.
+  Impl::ListsWriter& w = *impl_->listsWriter;
+  std::string text;
+  uint64_t seq = 0;
+  {
+    std::lock_guard<std::mutex> lock(w.mu);
+    text.swap(w.pending);
+    std::swap(seq, w.pendingSeq);
+  }
+  std::lock_guard<std::mutex> lock(w.fileMu);
+  if (seq > w.written) {
+    host_.files.write(kListsFile, text);
+    w.written = seq;
+  }
+}
 
 void Store::saveAccounts() {
   sources::EncodedAccounts enc = sources::encodeAccounts(impl_->accounts);
@@ -408,6 +424,49 @@ void Store::saveAccounts() {
 }
 
 void Store::saveLists() {
+  std::string text = listsText();
+  Impl::ListsWriter& w = *impl_->listsWriter;
+  uint64_t seq = 0;
+  {
+    // Supersedes a write still waiting for a worker.
+    std::lock_guard<std::mutex> lock(w.mu);
+    seq = ++w.seq;
+    w.pending.clear();
+    w.pendingSeq = 0;
+  }
+  std::lock_guard<std::mutex> lock(w.fileMu);
+  host_.files.write(kListsFile, text);
+  w.written = seq;
+}
+
+void Store::saveListsLater() {
+  std::shared_ptr<Impl::ListsWriter> w = impl_->listsWriter;
+  {
+    std::lock_guard<std::mutex> lock(w->mu);
+    w->pending = listsText();
+    w->pendingSeq = ++w->seq;
+  }
+  // Each job writes the newest list, if a job before it hasn't: a burst of
+  // changes is written once or twice.
+  Files* files = &host_.files;
+  host_.pool.post(
+      [w, files] {
+        std::string text;
+        uint64_t seq = 0;
+        {
+          std::lock_guard<std::mutex> lock(w->mu);
+          text.swap(w->pending);
+          std::swap(seq, w->pendingSeq);
+        }
+        std::lock_guard<std::mutex> lock(w->fileMu);
+        if (seq <= w->written) return;
+        files->write(kListsFile, text);
+        w->written = seq;
+      },
+      nullptr, http::Priority::Background);
+}
+
+std::string Store::listsText() const {
   const Impl& m = *impl_;
   json::Value v = json::Value::object();
   v.set("favorites", stringArray(std::vector<std::string>(m.favorites.begin(), m.favorites.end())));
@@ -455,7 +514,7 @@ void Store::saveLists() {
     groups.set(k, row);
   }
   if (!m.groupStarts.empty()) v.set("groupStarts", groups);
-  host_.files.write(kListsFile, json::write(v));
+  return json::write(v);
 }
 
 void Store::saveM3uStreams() {
@@ -760,6 +819,8 @@ void Store::refreshAll() {
   m.loading = false;
   m.activeGuideFetches = 0;
   m.providerRunning = m.outsideRunning = false;
+  // Search's builds were dropped with the rest.
+  m.searchGuide.busy = m.searchGuide.quickBusy = m.searchBoard.busy = false;
   m.pendingGuide.clear();
   m.pendingGuideSet.clear();
   for (auto& [id, st] : m.guideState) {
@@ -2998,6 +3059,8 @@ bool Store::tick(uint32_t ms) {
     publishListings();
     changed = true;
   }
+  // Search's index parts made on a worker go in.
+  if (searchTick(ms)) changed = true;
   // Status line while the list updates and guides build: updating, then
   // updated (or couldn't) for a few seconds.
   m.lastTick = ms;

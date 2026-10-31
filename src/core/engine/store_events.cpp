@@ -657,6 +657,7 @@ void Store::buildBoard() {
     }
     if (!row.groups.empty()) out->rows.push_back(std::move(row));
   }
+  out->index();
   events_ = out;
   if (e.noteBoard && eventsOpen_ > 0) {
     // The board's size after an open or a rebuild, when it changed.
@@ -824,13 +825,7 @@ std::vector<std::string> Store::eventNotes(const std::string& eventId) const {
 
 bool Store::isEvent(const std::string& id) const { return impl_->ev.board.events.count(id) > 0; }
 
-const EventTile* Store::eventTile(const std::string& id) const {
-  for (const EventRow& r : events_->rows)
-    for (const EventGroup& g : r.groups)
-      for (const EventTile& t : g.tiles)
-        if (t.id == id) return &t;
-  return nullptr;
-}
+const EventTile* Store::eventTile(const std::string& id) const { return events_->tile(id); }
 
 WhereToWatch Store::whereToWatch(const std::string& eventId) const {
   const Impl& m = *impl_;
@@ -1013,6 +1008,7 @@ void Store::setMySports(const sports::MySportsPrefs& prefs) {
   EventsState& e = impl_->ev;
   sports::MySportsChange change = sports::compare(e.mySports, prefs);
   e.mySports = prefs;
+  ++e.mySportsRevision;
   host_.files.write(kMySportsFile, sports::toJson(prefs));
   if (change.leaguesChanged) e.schedule.leaguesChanged(scheduleContext());
   e.lastFingerprint.clear();
