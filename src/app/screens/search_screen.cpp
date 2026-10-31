@@ -286,7 +286,7 @@ class SearchScreen : public Screen {
     std::string keep = focus_ >= 0 && focus_ < static_cast<int>(rows_.size()) ? key(rows_[static_cast<size_t>(focus_)]) : "";
     rows_.clear();
     if (!channels_.empty()) {
-      rows_.push_back({Row::Kind::Header, "CHANNELS (" + std::to_string(channels_.size()) + ")", "", {}});
+      rows_.push_back({Row::Kind::Header, "CHANNELS", "", {}});  // never how many
       for (const std::string& id : channels_) rows_.push_back({Row::Kind::Channel, "", id, {}});
     }
     if (!events_.empty()) {

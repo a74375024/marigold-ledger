@@ -29,14 +29,23 @@ Hint cap(std::string text, std::string label) {
   return h;
 }
 
+// The rail's line: the way to the left and what Back does (the colour keys,
+// OK and Hold OK do what they did before the rail).
+std::string railLine(const RemoteKeys& k, Rail rail, const char* column) {
+  const char* dot = " \xc2\xb7 ";
+  if (rail == Rail::Column)
+    return std::string(k.clickpad ? "Click" : "OK") + " or " + kRight + " Go" + dot + "Back: Stay" + dot + kLeft + " Menu";
+  return std::string(kLeft) + " " + (rail == Rail::NoColumn ? "Menu" : column) + dot + "Back: Menu";
+}
+
 }  // namespace
 
-Bar guide(const RemoteKeys& k, bool inLineup) {
+Bar guide(const RemoteKeys& k, bool inLineup, Rail rail) {
   Bar b;
   if (k.colour) {
     b.keys = {colour(Colour::Red, "Sources"),
               colour(Colour::Green, inLineup ? "Remove from My Lineup" : "Add to My Lineup"),
-              colour(Colour::Yellow, "Live Events"), colour(Colour::Blue, "Options")};
+              colour(Colour::Yellow, "Live Events"), colour(Colour::Blue, "Settings")};
   } else {
     // Menu does what holding OK does: the channel's panel (Watch, Remind Me,
     // My Lineup, Sources).
@@ -44,25 +53,23 @@ Bar guide(const RemoteKeys& k, bool inLineup) {
     if (k.playPause) b.keys.push_back(icons({"key-playpause"}, "Live Events"));
     if (k.seek) b.keys.push_back(icons({"key-rewind", "key-forward"}, "Page"));
   }
-  std::string right;
-  auto add = [&right](const std::string& s) { right += (right.empty() ? "" : " \xc2\xb7 ") + s; };
-  if (k.channel) add(std::string("CH ") + kUp + kDown + " page");
-  if (k.digits) add("0\xe2\x80\x93" "9 go to channel");
-  if (k.colour) add("Hold OK: more");
-  else add(std::string(kUp) + (k.playPause ? " Search & Options" : " Live Events, Search & Options"));
-  b.right = right;
+  b.right = railLine(k, rail, "Neighborhoods");
+  // Without colour keys, Hold OK is one of the keys already.
+  if (k.colour && rail != Rail::Column) b.right += " \xc2\xb7 Hold OK: more";
   return b;
 }
 
-Bar eventsBoard(const RemoteKeys& k) {
+Bar eventsBoard(const RemoteKeys& k, Rail rail) {
   Bar b;
   if (k.colour) {
-    b.keys = {colour(Colour::Red, "Where to Watch"), colour(Colour::Yellow, "Guide"), colour(Colour::Blue, "Options")};
+    b.keys = {colour(Colour::Red, "Where to Watch"), colour(Colour::Yellow, "Guide"), colour(Colour::Blue, "Settings")};
   } else {
     if (k.menu) b.keys.push_back(icons({"key-menu"}, "Where to Watch"));
-    b.keys.push_back(k.playPause ? icons({"key-playpause"}, "Guide") : cap("Back", "Guide"));
+    // Back opens the menu now; My Lineup is in it.
+    if (k.playPause) b.keys.push_back(icons({"key-playpause"}, "Guide"));
   }
-  b.right = std::string("Hold OK: more \xc2\xb7 ") + kLeft + " sports";
+  b.right = railLine(k, rail, "Sports");
+  if (rail != Rail::Column) b.right += " \xc2\xb7 Hold OK: more";
   return b;
 }
 
@@ -78,6 +85,21 @@ Bar setup(const RemoteKeys& k, bool letters) {
   return b;
 }
 
+Bar settings(const RemoteKeys& k, bool inRows, bool choiceRow) {
+  Bar b;
+  std::string ok = k.clickpad ? "Click" : "OK";
+  if (!inRows) {
+    b.keys = {cap(std::string(kUp) + kDown, "Move"), cap(kRight, "Open"), cap("Back", "Close Settings")};
+    if (k.colour) b.right = "Point and click works too";
+    return b;
+  }
+  if (choiceRow) b.keys.push_back(cap(std::string(kLeft) + kRight, "Change"));
+  b.keys.push_back(cap(ok, "Select"));
+  b.keys.push_back(cap("Back", "Categories"));
+  b.right = "Changes save as you go";
+  return b;
+}
+
 Hint playerSources(const RemoteKeys& k) {
   if (k.colour) return colour(Colour::Red, "Sources");
   // Elsewhere Sources is a button in the controls (OK, or Menu).
@@ -85,7 +107,7 @@ Hint playerSources(const RemoteKeys& k) {
 }
 
 std::optional<Hint> playerOptions(const RemoteKeys& k) {
-  if (k.colour) return colour(Colour::Blue, "Options");
+  if (k.colour) return colour(Colour::Blue, "Settings");
   return std::nullopt;  // on the guide
 }
 

@@ -75,7 +75,7 @@ const char* const kForm = R"HTML(
 <section id="wait" class="hide center"><div class="spin"></div><h1>Signing in&hellip;</h1><p class="sub">Look at your TV.</p></section>
 <section id="done" class="hide center"><div class="ok">&#10003;</div><h1>Signed in</h1><p class="sub" id="what"></p>
 <p style="margin-top:22px">You can put your phone down. The rest of setup is on your TV.</p>
-<p class="note">To add another provider later, use Options &rsaquo; Providers on the TV.</p></section>
+<p class="note">To add another provider later, use Settings &rsaquo; Providers on the TV.</p></section>
 <script>
 (function(){
 var kind='xtream',$=function(s){return document.querySelector(s)};

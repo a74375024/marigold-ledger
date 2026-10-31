@@ -5,6 +5,7 @@
 #include <cmath>
 #include <vector>
 
+#include "core/sports/game_banner.hpp"
 #include "platform/icons.hpp"
 #include "platform/logo_cache.hpp"
 
@@ -19,6 +20,7 @@ namespace theme = ui::theme;
 
 constexpr uint32_t kDelayed = 0xE0A100;
 constexpr uint32_t kPostponed = 0xE07A1F;
+constexpr uint32_t kPlayerLive = 0xE5372B;  // the player banner's LIVE
 
 bool isLight(uint32_t rgb) {
   float r = static_cast<float>((rgb >> 16) & 0xff), g = static_cast<float>((rgb >> 8) & 0xff),
@@ -255,6 +257,53 @@ float pill(ui::Ctx& c, const EventTile& t, float x, float y, bool focused) {
     case EventTile::Pill::NoTime: return smallPill(c, "Time not listed", x, y, outline, ink, true);
     case EventTile::Pill::NotStarted: return smallPill(c, "Not started", x, y, outline, ink, true);
     case EventTile::Pill::NotLive: return smallPill(c, "Not live", x, y, outline, ink, true);
+  }
+  return 0;
+}
+
+float mark(ui::Ctx& c, const EventSide& s, float x, float y, float size) {
+  if (!s.flags.empty()) {
+    // The images are square with the flag across the middle: drawn whole.
+    bool pair = s.flags.size() >= 2;
+    float each = pair ? std::round(size * 0.62f) : size, gap = pair ? 4.0f : 0.0f;
+    size_t n = pair ? 2 : 1;
+    std::vector<logos::Texture> tex(n);
+    bool loaded = true;
+    for (size_t i = 0; i < n; ++i) {
+      if (c.logos) tex[i] = c.logos->get(s.flags[i]);
+      loaded = loaded && tex[i].id;
+    }
+    float fy = y + (size - each) * 0.5f;
+    for (size_t i = 0; i < n; ++i) {
+      float fx = x + (each + gap) * static_cast<float>(i);
+      if (loaded) {
+        c.g.image(tex[i].id, {fx, fy, each, each});
+      } else {
+        Rect blank{fx + 1, fy + each * 0.17f, each - 2, each * 0.66f};
+        c.g.fill(blank, theme::white(0.16f), 4);
+        if (!pair && !s.country.empty())
+          ui::labelIn(c, s.country, blank, Weight::Bold, static_cast<int>(size * 0.3f), theme::white(), Align::Center);
+      }
+    }
+    return each * static_cast<float>(n) + gap * static_cast<float>(n - 1);
+  }
+  if (!s.country.empty()) {
+    Rect r{x, y + size * 0.17f, size, size * 0.66f};
+    c.g.fill(r, theme::white(0.16f), 6);
+    ui::labelIn(c, s.country, r, Weight::Bold, static_cast<int>(size * 0.3f), theme::white(), Align::Center);
+    return size;
+  }
+  badge(c, s, x, y, size, false);
+  return size;
+}
+
+float clockPill(ui::Ctx& c, sports::banner::Chip chip, const std::string& text, float x, float y) {
+  using sports::banner::Chip;
+  switch (chip) {
+    case Chip::none: return 0;
+    case Chip::soon: return smallPill(c, text, x, y, theme::hex(kDelayed, 0.92f), theme::black(), false);
+    case Chip::live: return smallPill(c, text, x, y, theme::hex(kPlayerLive), theme::white(), false);
+    case Chip::likelyOver: return smallPill(c, text, x, y, theme::white(0.6f), theme::white(), true);
   }
   return 0;
 }

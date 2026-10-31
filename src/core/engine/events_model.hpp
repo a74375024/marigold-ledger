@@ -145,4 +145,20 @@ struct WhereToWatch {
   std::string note;   // "4 more stations are showing it"
 };
 
+// The player's banner while watching a game: who's playing and where, from
+// what the board already holds (never a score: the sides carry none), and
+// the times its status runs on by the clock (sports::banner::status).
+struct GameBanner {
+  std::string id;                // the board's event
+  std::vector<EventSide> sides;  // two, or none (a title and the sport's icon)
+  std::string title;             // "Rams at Seahawks", "Australian GP · Race"
+  std::string line;              // "NFL · WEEK 8 · SOFI STADIUM"
+  std::string icon, symbol;      // the sport's icon (app/icons name), a glyph until it loads
+  bool favorite = false;         // your team
+  std::optional<time::Seconds> start, end;  // end: the usual length, or the listing's end
+  bool postponed = false;
+  // Where it plays when it isn't a guide channel (an event feed).
+  std::string channelName, channelLogo;
+};
+
 }  // namespace marigold::engine

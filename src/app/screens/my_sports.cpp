@@ -3,7 +3,8 @@
 // teams, a league at a time from the rail on the left, 3. review with
 // "Remind me before my teams play". In first-run setup these are steps 5
 // and 6 of 7 (the reminder switch is on the teams screen, and the summary
-// follows). Nothing is saved until the last step.
+// follows). Nothing is saved until the last step. Settings › Live Events ›
+// My teams starts on step 2 (Back from there closes).
 #include <algorithm>
 #include <map>
 
@@ -43,7 +44,8 @@ struct Pick {
 
 class MySportsSetup : public Screen {
  public:
-  MySportsSetup(App& app, bool onboarding) : Screen(app), onboarding_(onboarding), draft_(app.store().mySports()) {
+  MySportsSetup(App& app, bool onboarding, bool teams)
+      : Screen(app), onboarding_(onboarding), startedOnTeams_(teams), draft_(app.store().mySports()) {
     counts_ = app.store().sportSuggestions();
     // Leagues by section, then the other sports.
     for (const char* section : kSections)
@@ -58,6 +60,7 @@ class MySportsSetup : public Screen {
     initialTeams_ = draft_.teams;
     button_ = nextIndex();
     layoutPicks();
+    if (startedOnTeams_) goTeams();
   }
   ~MySportsSetup() override { app_.store().releaseRosters(); }
 
@@ -341,6 +344,10 @@ class MySportsSetup : public Screen {
       }
       return;
     }
+    if (startedOnTeams_) {
+      app_.nav().pop();
+      return;
+    }
     step_ = 1;
     focus_ = 0;
     button_ = nextIndex();
@@ -352,6 +359,7 @@ class MySportsSetup : public Screen {
     int n = static_cast<int>(teams_.size());
     if (teams_.empty()) loadTeams();
     if (e.key == Key::Back) {
+      if (startedOnTeams_) return false;  // back to Settings
       step_ = 1;
       focus_ = 0;
       button_ = nextIndex();
@@ -593,6 +601,7 @@ class MySportsSetup : public Screen {
   }
 
   bool onboarding_;
+  bool startedOnTeams_;
   sports::MySportsPrefs draft_;
   std::map<std::string, int> counts_;
   std::vector<Pick> picks_;
@@ -613,6 +622,8 @@ class MySportsSetup : public Screen {
 
 }  // namespace
 
-std::unique_ptr<Screen> makeMySports(App& app, bool onboarding) { return std::make_unique<MySportsSetup>(app, onboarding); }
+std::unique_ptr<Screen> makeMySports(App& app, bool onboarding, bool teams) {
+  return std::make_unique<MySportsSetup>(app, onboarding, teams);
+}
 
 }  // namespace marigold::app

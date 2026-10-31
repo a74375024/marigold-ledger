@@ -120,9 +120,9 @@ uint32_t keyColour(hints::Colour colour) {
   return 0;
 }
 
-void keyBar(Ctx& c, const hints::Bar& bar) {
+void keyBar(Ctx& c, const hints::Bar& bar, float left) {
   float y = gfx::kLayoutHeight - 30 - 44;
-  float x = theme::kMarginX;
+  float x = left;
   Color col = theme::white(0.75f);
   for (const hints::Hint& k : bar.keys) {
     if (k.colour != hints::Colour::None) {

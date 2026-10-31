@@ -1,4 +1,5 @@
-// Android and tvOS: Options › Help › Diagnostics shows what the app runs on.
+// Android and tvOS: Settings › Help & info › Diagnostics shows what the app
+// runs on.
 // (The TV's key and video test screen, app/screens/diagnostics_screen.cpp,
 // reads raw SDL events and is webOS only.)
 #include <string>
@@ -57,6 +58,6 @@ class DiagnosticsScreen : public Screen {
 }  // namespace
 
 std::unique_ptr<Screen> makeDiagnostics(App& app) { return std::make_unique<DiagnosticsScreen>(app); }
-const char* diagnosticsTitle() { return "Diagnostics"; }
+const char* diagnosticsDetail() { return "What this TV runs and how the picture is set up"; }
 
 }  // namespace marigold::app

@@ -42,8 +42,8 @@ std::string sourceAnswer(const platform::TsProxy::Source& s) {
 
 // The platform's video player, with the TS proxy in front of HLS feeds where
 // the platform wants it (webOS). Continuous TS feeds go through it too
-// (Options › Play through the app, or with subtitles on), so their captions
-// can be read on the way to the player.
+// (Settings › Advanced › Play through Marigold, or with subtitles on), so
+// their captions can be read on the way to the player.
 class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
  public:
   TvPlayer(App& app, std::function<gfx::Rect()> window, std::shared_ptr<engine::Subtitles> subtitles)

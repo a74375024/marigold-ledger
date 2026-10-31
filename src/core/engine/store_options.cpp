@@ -1,4 +1,4 @@
-// The store behind the Options pages, show reminders and search (tvOS
+// The store behind the Settings pages, show reminders and search (tvOS
 // LiveTVOptionsPanel, LineupEditView, LiveTVGuideSourcesView, the program
 // detail card and LiveTVSearchView). UI thread only.
 #include <algorithm>
@@ -152,9 +152,15 @@ std::string Store::homeMarketName() const {
 
 void Store::cycleHomeMarket() {
   auto next = sports::nextHomeMarket(impl_->prefs);
-  if (!next) return;
+  if (next) setHomeMarket(*next);
+}
+
+void Store::setHomeMarket(const std::string& name) {
   catalog::LineupPrefs p = impl_->prefs;
-  p.homeMarket = *next;
+  if (name == homeMarketName()) return;
+  if (std::none_of(p.markets.begin(), p.markets.end(), [&](const catalog::MarketChoice& m) { return m.name == name; }))
+    return;
+  p.homeMarket = name;
   setPrefs(p);
   // Station ranks are worked out when the game listings are read.
   impl_->ev.listingsAt.reset();
@@ -200,10 +206,8 @@ GuideListingsStatus Store::guideListings() const {
                                           : saved == m.providerSaved.end() ? "Loading the guide for the first time\xe2\x80\xa6"
                                                                            : "Updating\xe2\x80\xa6";
     } else if (saved != m.providerSaved.end()) {
-      const guide::provider::Saved& s = saved->second;
-      p.line = "Listings for " + str::groupedThousands(static_cast<int>(s.programs.size())) + " of " +
-               count(s.channelCount, "channel", "channels") + " (the file lists " +
-               str::groupedThousands(s.guideChannels) + "). Updated " + ago(s.built, now) + ".";
+      // When it was read, never how many channels it covers.
+      p.line = "Updated " + ago(saved->second.built, now) + ".";
     } else if (problem != m.providerProblems.end()) {
       p.line = "Couldn't load the guide: " + problem->second;
     } else {
@@ -223,8 +227,7 @@ GuideListingsStatus Store::guideListings() const {
     out.outsideLine = "Updating outside listings\xe2\x80\xa6 (in the background; waits while you watch)";
   } else if (m.outsideSaved) {
     const guide::Saved& s = *m.outsideSaved;
-    out.outsideLine = "Matched " + str::groupedThousands(static_cast<int>(s.programs.size())) + " of " +
-                      count(s.channelCount, "channel", "channels") + ". Listings updated " + ago(s.built, now) + ".";
+    out.outsideLine = "Listings updated " + ago(s.built, now) + ".";
     if (s.sources) {
       int i = 0, stale = 0;
       for (const auto& [id, st] : *s.sources) {
@@ -232,7 +235,7 @@ GuideListingsStatus Store::guideListings() const {
         std::string line = (st.backup ? "Backup " : "Listings file ") + std::to_string(i) + ": ";
         if (st.problem) line += "couldn't update (" + redact(*st.problem) + ")";
         else if (st.stale.value_or(false)) line += "out of date";
-        else if (st.matched) line += count(*st.matched, "channel", "channels");
+        else if (st.matched) line += *st.matched > 0 ? "in use" : "nothing matched";
         else line += "not used";
         if (st.downloadedAt) line += ", downloaded " + ago(*st.downloadedAt, now);
         if (st.stale.value_or(false) && !st.backup) ++stale;

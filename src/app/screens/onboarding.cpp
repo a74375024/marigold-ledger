@@ -70,7 +70,7 @@ class Welcome : public Screen {
     float y = setup_ui::heading(c, "MARIGOLD", "Welcome",
                                 "Live TV and every game, in one guide. First, add the provider your channels come from.",
                                 780, 110);
-    ui::paragraph(c, "Xtream, Emby / Jellyfin or an M3U playlist. You can add more later in Options.", kLeft, y + 10, 780,
+    ui::paragraph(c, "Xtream, Emby / Jellyfin or an M3U playlist. You can add more later in Settings.", kLeft, y + 10, 780,
                   Weight::Regular, 22, theme::white(0.55f), 2);
     struct Card {
       const char* title;
@@ -177,7 +177,7 @@ class PhoneSignIn : public Screen {
 
   void draw(ui::Ctx& c) override {
     c.g.fill({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight}, theme::hex(theme::kBackground));
-    std::string kick = firstRun_ ? setup_ui::kicker(Step::Provider) : "OPTIONS \xc2\xb7 PROVIDERS";
+    std::string kick = firstRun_ ? setup_ui::kicker(Step::Provider) : "SETTINGS \xc2\xb7 PROVIDERS";
     if (busy_ || signedIn_) drawProgress(c, kick);
     else drawScan(c, kick);
     if (firstRun_) setup_ui::stepBar(c, Step::Provider);
@@ -368,7 +368,7 @@ class PhoneSignIn : public Screen {
     row(1, "Phone connected", "");
     row(signedIn_ ? 1 : 0, signedIn_ ? "Signed in to " + providerName_ : "Signing in to " + providerName_ + "\xe2\x80\xa6", "");
     if (signedIn_) {
-      row(loaded_ ? 1 : 0, loaded_ ? setup_ui::grouped(channels_) + " channels received" : "Getting your channel list",
+      row(loaded_ ? 1 : 0, loaded_ ? "Your channel list is in" : "Getting your channel list",
           loaded_ ? "" : "From " + providerName_);
     }
     float rx = 1080, ry = 300;
@@ -453,7 +453,8 @@ class SetupDone : public Screen {
       std::string value, label;
     };
     std::vector<Stat> stats;
-    stats.push_back({ready_ ? std::to_string(lineup_) : "\xe2\x80\xa6", ready_ ? "channels in My Lineup" : "building My Lineup"});
+    // Never how many channels.
+    stats.push_back({ready_ ? "\xe2\x9c\x93" : "\xe2\x80\xa6", ready_ ? "My Lineup is ready" : "building My Lineup"});
     if (games > 0) stats.push_back({std::to_string(games), "games on your channels today"});
     if (!my.teams.empty()) {
       std::string l = my.teams.size() == 1 ? "favorite team" : "favorite teams";
@@ -475,7 +476,7 @@ class SetupDone : public Screen {
     y += 40;
     ui::paragraph(c,
                   "The keys at the bottom work in the guide. In the player, " + std::string("\xe2\x96\xb2 \xe2\x96\xbc") +
-                      " change channel. Everything you picked here can be changed in Options.",
+                      " change channel. Everything you picked here can be changed in Settings.",
                   kLeft, y, 1400, Weight::Regular, 24, theme::white(0.8f), 2);
     y += 110;
     setup_ui::buttons(c, kLeft, y, {"Start watching", "Go to Live Events"}, button_, kHitButton);

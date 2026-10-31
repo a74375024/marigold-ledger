@@ -164,6 +164,14 @@ Seconds SportsEvent::expectedLength() const {
   return length;
 }
 
+std::optional<Seconds> SportsEvent::scheduledEnd() const {
+  if (!start) return std::nullopt;
+  const Profile& p = profile(league, game ? std::string_view(game->leagueShort) : std::string_view());
+  Seconds end = *start + expectedLength();
+  if (listingEnd && *listingEnd > end && *listingEnd < *start + p.listingCap) end = *listingEnd;
+  return end;
+}
+
 SportsEvent::State SportsEvent::state(Seconds now) const {
   if (game && game->postponed) return State::postponed;
   // The scoreboard's word, while it's believable: a game still "live" half
@@ -188,9 +196,7 @@ SportsEvent::State SportsEvent::state(Seconds now) const {
   if (now < *start) return State::upcoming;
   if (game && game->completed) return State::finished;
   if (feedsEndedAt && now >= *feedsEndedAt) return State::finished;
-  const Profile& p = profile(league, game ? std::string_view(game->leagueShort) : std::string_view());
-  Seconds end = *start + expectedLength();
-  if (listingEnd && *listingEnd > end && *listingEnd < *start + p.listingCap) end = *listingEnd;
+  Seconds end = *scheduledEnd();
   if (now < end) return State::live;
   if (now < end + overrunOf(league, game ? &*game : nullptr)) return State::mayHaveEnded;
   return State::finished;

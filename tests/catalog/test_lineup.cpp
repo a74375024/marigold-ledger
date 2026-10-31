@@ -60,7 +60,6 @@ TEST_CASE("prefs JSON round trip and tolerance") {
   p.suggested = {"e|c"};
   p.builtAt = 1790000000;
   p.homeMarket = "San Francisco–Oakland–San Jose";
-  p.showHidden = true;
   p.requireGuide = false;
   auto back = lineupPrefsFromJson(toJson(p));
   REQUIRE(back);
@@ -72,6 +71,11 @@ TEST_CASE("prefs JSON round trip and tolerance") {
   CHECK(old->categories == defaultOnCategories());
   CHECK(old->countries == std::set<std::string>{"US"});
   CHECK(old->requireGuide);
+  // A field no longer used ("showHidden", saved until Build 112) is ignored.
+  auto hidden = lineupPrefsFromJson("{\"configured\": true, \"showHidden\": true, \"added\": [\"e|a\"]}");
+  REQUIRE(hidden);
+  CHECK(hidden->added == std::set<std::string>{"e|a"});
+  CHECK(toJson(*hidden).find("showHidden") == std::string::npos);
   // A wrong type or an unknown category fails the decode, like Swift's.
   CHECK_FALSE(lineupPrefsFromJson("{\"configured\": \"yes\"}"));
   CHECK_FALSE(lineupPrefsFromJson("{\"categories\": [\"local\", \"bogus\"]}"));

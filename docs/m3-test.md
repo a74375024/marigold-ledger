@@ -17,8 +17,8 @@ Install over the previous build as in `docs/m0-test.md`.
 | Where to Watch | Red key on a tile | Every channel and feed for the game; picking one starts there |
 | Upcoming | OK on a later game | Detail card with Remind Me; at start time a card appears in the corner (OK watches) |
 | Same source | Watch a game, switch away, come back within 6 hours | Starts on the feed you were on |
-| My Sports | Options › My Sports | Pick leagues, favourite teams, reminders; the board follows |
-| Options | Game schedule, Games not in my channels, Show scores | The board follows at once |
+| My Sports | Settings › Live Events › My leagues, My teams | Pick leagues, favourite teams, reminders; the board follows |
+| Settings | Settings › Live Events: Game schedule, Games not on my channels, Show scores | The board follows at once |
 
 Requests: the week's schedule only for the leagues you follow (about once a
 day), and scores once a minute per league with a game on, only while the

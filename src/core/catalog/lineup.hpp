@@ -49,7 +49,6 @@ struct LineupPrefs {
   std::set<std::string> suggested;
   std::set<std::string> added;
   std::set<std::string> removed;
-  bool showHidden = false;
   std::optional<time::Seconds> builtAt;
   // Countries / languages whose channels can be suggested and browsed: "US"
   // (US English), "US-ES" (US Spanish), "MX", "UK"... US English by default;
@@ -78,7 +77,8 @@ struct LineupPrefs {
 };
 
 // Tolerates older saved prefs: missing fields keep their defaults, so an
-// update never resets someone's lineup. Like Swift's decoder, a field of the
+// update never resets someone's lineup, and fields no longer used
+// ("showHidden") are ignored. Like Swift's decoder, a field of the
 // wrong type (or an unknown category) fails the whole decode: nullopt, and
 // the caller starts from LineupPrefs(). Dates are Unix seconds.
 std::string toJson(const LineupPrefs& prefs);

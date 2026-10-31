@@ -32,7 +32,7 @@ tvOS 17 and newer is supported (Apple TV HD and every Apple TV 4K).
 | TV | The system's (Home). The app stays in memory and opens where it was |
 
 The key hints show what the Siri Remote has: Hold OK for a channel's
-actions and ⏯ for Live Events. Options and Search are the icons at the top
+actions and ⏯ for Live Events. Settings and Search are the icons at the top
 right of the guide (Up to the tabs, then Right). A TV's own remote over HDMI
 that has page, number or colour keys adds them to the hints the first time
 they are pressed, as on Android.
@@ -95,7 +95,7 @@ What differs on Apple TV:
   channel starts again when you return.
 - **Log:** the same file in the app's data, and the system log (subsystem
   `org.marigold.app`), redacted the same way.
-- **Diagnostics** (Options › Help) shows the system, GPU, video state and
+- **Diagnostics** (Settings › Help & info) shows the system, GPU, video state and
   the log, as on Android.
 
 ## What has been checked

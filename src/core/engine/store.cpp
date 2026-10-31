@@ -974,9 +974,10 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
     if (!f.formats.empty()) run.formats = f.formats;
     if (!f.problem.empty()) {
       problems.push_back(f.problem);
-      run.state = "Couldn't load channels";
+      run.state = "Couldn't sign in";
     } else {
-      run.state = std::to_string(f.channels.size()) + " channels";
+      // Never a channel count on screen.
+      run.state = "Signed in";
       a.lastChannelCount = static_cast<int>(f.channels.size());
     }
     total += f.channels.size();
@@ -1031,7 +1032,7 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
   auto oldCatalog = showing ? m.catalog : nullptr;
   auto result = std::make_shared<std::pair<std::shared_ptr<std::vector<Channel>>, std::shared_ptr<CatalogResult>>>();
   auto renamedCount = std::make_shared<long>(-1);
-  status_.line = "Sorting " + std::to_string(total) + " channels\xe2\x80\xa6";
+  status_.line = "Sorting your channels\xe2\x80\xa6";
   status_.received = total;
   // The names the area suggestion reads while the list sorts (first run:
   // setup carries on meanwhile).

@@ -36,7 +36,7 @@ inline bool isLocal(int rank) { return rank == home || rank == market; }
 }  // namespace station_rank
 
 // Call signs of your markets, for ranking stations: the home market (picked
-// in Options, else the first) and the others. Base call signs ("KTVU" for
+// in Settings, else the first) and the others. Base call signs ("KTVU" for
 // "KTVU-DT"), upper-cased.
 struct StationMarkets {
   std::set<std::string> home;

@@ -226,6 +226,9 @@ struct SportsEvent {
   // Rough length by sport; past it a game "may have ended", and a while
   // after that it's dropped from Live now.
   Seconds expectedLength() const;
+  // When the clock says it ends: the start plus the usual length, or the
+  // guide listing's end when that's later (within the sport's cap).
+  std::optional<Seconds> scheduledEnd() const;
   // Live for the sport's usual length (or until the guide listing ends, if
   // later), then "may have ended" for half an hour, then gone.
   State state(Seconds now) const;

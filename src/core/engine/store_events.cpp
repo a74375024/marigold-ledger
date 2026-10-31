@@ -11,6 +11,7 @@
 #include "core/engine/store_impl.hpp"
 #include "core/catalog/catalog.hpp"
 #include "core/report/live_events_report.hpp"
+#include "core/sports/game_banner.hpp"
 #include "core/sports/leagues.hpp"
 #include "core/sports/my_sports.hpp"
 #include "core/sports/network_map.hpp"
@@ -146,6 +147,13 @@ std::string glyphFor(const std::string& icon) {
   return "\xe2\x97\x8f";
 }
 
+// "Rams at Seahawks" (never a score): "A at B" only with the second side at
+// home (not tennis, soccer's home first, or a "vs" title); else the title.
+std::string matchup(const EventTile& t) {
+  if (t.sides.size() != 2) return t.title;
+  return t.sides[0].name + (t.sides[1].home && !t.sides[0].home ? " at " : " vs ") + t.sides[1].name;
+}
+
 EventTile toTile(const sb::Tile& t, const sports::SportsEvent* event, const time::Zone& zone) {
   EventTile o;
   o.id = t.id;
@@ -189,12 +197,8 @@ EventTile toTile(const sb::Tile& t, const sports::SportsEvent* event, const time
   o.leagueChip = chip;
   if (o.sides.size() == 2 && !o.sides[0].score.empty() && !o.sides[1].score.empty())
     o.heroTitle = o.sides[0].name + " " + o.sides[0].score + " \xe2\x80\x93 " + o.sides[1].score + " " + o.sides[1].name;
-  else if (o.sides.size() == 2)
-    // "A at B" only with the second side at home (not tennis, soccer's home
-    // first, or a "vs" title).
-    o.heroTitle = o.sides[0].name + (o.sides[1].home && !o.sides[0].home ? " at " : " vs ") + o.sides[1].name;
   else
-    o.heroTitle = o.title;
+    o.heroTitle = matchup(o);
   o.heroStatus = o.status + (o.statusExtra.empty() ? "" : " " + o.statusExtra);
   if (!o.situation.empty()) o.heroStatus += " \xc2\xb7 " + o.situation;
   o.whereLine = o.channelName.empty() ? o.footer : "On " + o.channelName + (o.footer.empty() ? "" : " \xc2\xb7 " + o.footer);
@@ -856,6 +860,45 @@ WhereToWatch Store::whereToWatch(const std::string& eventId) const {
   }
   w.note = p.moreStations.value_or("");
   return w;
+}
+
+std::optional<GameBanner> Store::gameBanner(const std::string& entryId, time::Seconds now) const {
+  const Impl& m = *impl_;
+  std::string id = entryId;
+  if (!m.ev.board.events.count(id)) {
+    // A guide channel (or its other coast's version) showing a game now.
+    std::vector<std::string> ids = {entryId};
+    if (const GuideChannel* g = channels_ ? channels_->find(entryId) : nullptr; g && !g->partner.empty())
+      ids.push_back(g->partner);
+    id = sports::banner::onChannel(m.ev.board, ids, now);
+  }
+  // A studio show isn't a game: the usual banner.
+  auto ev = m.ev.board.events.find(id);
+  const EventTile* t = id.empty() ? nullptr : eventTile(id);
+  if (ev == m.ev.board.events.end() || !t || m.ev.board.studio.count(id)) return std::nullopt;
+  const sports::SportsEvent& e = ev->second;
+  GameBanner b;
+  b.id = id;
+  b.title = matchup(*t);
+  // A race weekend: the session on now (or next) in the title.
+  if (t->sides.empty() && e.game && e.game->isRacing() && e.game->customTitle) b.title = *e.game->customTitle;
+  for (EventSide s : t->sides) {
+    // Who, not how it's going.
+    s.score.clear();
+    s.pens.clear();
+    s.leads = s.trails = s.ball = false;
+    b.sides.push_back(std::move(s));
+  }
+  b.line = sports::banner::line(e, t->tagAlert ? std::string() : t->tag, host_.zone(), !settings_.clock24);
+  b.icon = t->icon;
+  b.symbol = t->symbol;
+  b.favorite = t->favorite;
+  b.start = e.start;
+  b.end = e.scheduledEnd();
+  b.postponed = e.game && e.game->postponed;
+  b.channelName = t->channelName.empty() ? t->pill2 : t->channelName;
+  b.channelLogo = t->channelLogo;
+  return b;
 }
 
 std::vector<std::string> Store::familyFeeds(const std::string& familyId) const {

@@ -34,10 +34,16 @@ struct Bar {
   std::string right;  // the line at the right end
 };
 
+// Where the focus is on the guide or Live Events, for the line at the right
+// of their bars (the left rail, Build 112): the content of a section with a
+// neighborhood column (SPORTS on Live Events), the content of one without
+// (Recent), or the column itself.
+enum class Rail { Content, NoColumn, Column };
+
 // The guide's bottom bar.
-Bar guide(const RemoteKeys& k, bool inLineup);
+Bar guide(const RemoteKeys& k, bool inLineup, Rail rail = Rail::Content);
 // Live Events' bottom bar.
-Bar eventsBoard(const RemoteKeys& k);
+Bar eventsBoard(const RemoteKeys& k, Rail rail = Rail::Content);
 
 // The setup screens (first run, My Lineup, My Sports): how to pick and go
 // back, and on A-to-Z lists the keys that jump a letter, if the remote has
@@ -45,10 +51,15 @@ Bar eventsBoard(const RemoteKeys& k);
 // swipes instead).
 Bar setup(const RemoteKeys& k, bool letters);
 
+// All settings: moving through the categories, or inside one (with
+// "◀▶ Change" on a row of choices). LG's pointer is mentioned on the
+// categories.
+Bar settings(const RemoteKeys& k, bool inRows, bool choiceRow);
+
 // The player: the Sources key (Red on LG; elsewhere a button in the
-// controls OK brings up), Options (only a colour key), and "pick another
-// source" while a feed opens (nothing without either: the controls aren't
-// there yet).
+// controls OK brings up), Quick settings (only a colour key; its label is
+// "Settings"), and "pick another source" while a feed opens (nothing without
+// either: the controls aren't there yet).
 Hint playerSources(const RemoteKeys& k);
 std::optional<Hint> playerOptions(const RemoteKeys& k);
 std::optional<Hint> pickAnotherSource(const RemoteKeys& k);

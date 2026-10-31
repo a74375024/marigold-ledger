@@ -159,7 +159,7 @@ class Session {
   // This tune has shown a picture (a feed switch then reads "Switching to
   // another feed").
   bool hadPicture() const { return hadPicture_; }
-  // Options › Help › Export Playback Log.
+  // Settings › Help & info › Send a report to your phone › Playback log.
   const report::PlaybackLog& log() const { return log_; }
   void clearLog() { log_.clear(); }
   // A "memory" line in the log: the app's memory now, after `what` ("channels

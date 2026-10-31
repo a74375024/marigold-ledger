@@ -23,17 +23,21 @@ using ui::Rect;
 using ui::Weight;
 namespace theme = ui::theme;
 
-// Geometry from LiveTVGuideView (points = layout units).
-constexpr float kLeft = 80;
+// Geometry from LiveTVGuideView (points = layout units), right of the left
+// rail: the hero stays at kHeroX; the timeline and grid start there at rest
+// and are pushed right while the neighborhood column is open. With no tab
+// row, the timeline sits right under the hero.
+constexpr float kHeroX = left_rail::kRestLeft;
+constexpr float kRight = gfx::kLayoutWidth - 80;  // the grid's right edge
 constexpr float kChannelW = 182;
+constexpr float kChannelCol = 190;  // the channel cell and its gap
 constexpr float kGap = 8;
-constexpr float kProgX = kLeft + 190;
-constexpr float kGridW = gfx::kLayoutWidth - kLeft - 80 - 190;
-constexpr int kWindowMinutes = 180;
+constexpr int kRestMinutes = 180;
+constexpr int kColumnMinutes = 120;  // a minute stays about 10 px wide
 constexpr float kRowH = 84;
 constexpr float kHeaderH = 22;
-constexpr float kRulerY = 394;
-constexpr float kGridTop = 446;
+constexpr float kRulerY = 340;
+constexpr float kGridTop = 392;
 constexpr float kGridBottom = 996;
 constexpr float kMinCell = 40;   // narrower segments render as gaps
 constexpr float kTextCell = 110;  // text only from this width
@@ -47,11 +51,9 @@ constexpr uint32_t kPreviewGapMs = top_bar::kPreviewGapMs;
 constexpr uint32_t kDigitsMs = 1500;
 constexpr uint32_t kBackExitMs = 2500;
 
-// Pointer ids.
-constexpr int kHitTab = 10;
-constexpr int kHitButton = 40;
+// Pointer ids (the rail's are left_rail::kHit*, from 200).
 constexpr int kHitTime = 50;
-constexpr int kHitRail = 60;
+constexpr int kHitFilter = 51;
 constexpr int kHitChannel = 1000;
 constexpr int kHitProgram = 100000;  // + line * 64 + program
 
@@ -59,6 +61,31 @@ const char* tabTitle(int t) {
   static const char* kTitles[] = {"My Lineup", "Favorites", "Recent", "Live Events", "All Channels"};
   return kTitles[t];
 }
+
+// The guide's tabs are the rail's guide sections.
+rail::Item itemOf(engine::views::Tab t) {
+  using Tab = engine::views::Tab;
+  switch (t) {
+    case Tab::Favorites: return rail::Item::Favorites;
+    case Tab::Recent: return rail::Item::Recent;
+    case Tab::Events: return rail::Item::Events;
+    case Tab::All: return rail::Item::All;
+    case Tab::Lineup: break;
+  }
+  return rail::Item::Lineup;
+}
+
+engine::views::Tab tabOf(rail::Item i) {
+  using Tab = engine::views::Tab;
+  switch (i) {
+    case rail::Item::Favorites: return Tab::Favorites;
+    case rail::Item::Recent: return Tab::Recent;
+    case rail::Item::All: return Tab::All;
+    default: return Tab::Lineup;
+  }
+}
+
+bool inRange(int id, int base) { return id >= base && id < base + 100; }
 
 std::string durationText(time::Seconds s) {
   long m = static_cast<long>((s + 59) / 60);
@@ -83,11 +110,20 @@ GuideScreen::GuideScreen(App& app) : Screen(app) {
 }
 
 time::Seconds GuideScreen::nowWindow() const { return time::now() / 1800 * 1800; }
-time::Seconds GuideScreen::windowEnd() const { return windowStart_ + kWindowMinutes * 60; }
+time::Seconds GuideScreen::windowEnd() const { return windowStart_ + windowMinutes() * 60; }
+int GuideScreen::windowMinutes() const { return narrow_ ? kColumnMinutes : kRestMinutes; }
+float GuideScreen::progX() const { return left_ + kChannelCol; }
 
-float GuideScreen::xAt(time::Seconds t) const {
-  return kProgX + static_cast<float>(t - windowStart_) * kGridW / (kWindowMinutes * 60.0f);
+float GuideScreen::pxPerSec() const {
+  float left = narrow_ ? left_rail::kPushLeft : left_rail::kRestLeft;
+  return (kRight - left - kChannelCol) / (static_cast<float>(windowMinutes()) * 60.0f);
 }
+
+time::Seconds GuideScreen::drawEnd() const {
+  return windowStart_ + static_cast<time::Seconds>((kRight - progX()) / pxPerSec());
+}
+
+float GuideScreen::xAt(time::Seconds t) const { return progX() + static_cast<float>(t - windowStart_) * pxPerSec(); }
 
 void GuideScreen::shown() {
   refresh(true);
@@ -112,9 +148,10 @@ void GuideScreen::refresh(bool force) {
   chVersion_ = ch->version;
   liVersion_ = li->version;
   if (!chChanged) return;
-  tabs_ = {Tab::Lineup, Tab::Favorites, Tab::Recent, Tab::Events};
-  if (s.settings().allChannelsTab) tabs_.push_back(Tab::All);
-  if (std::find(tabs_.begin(), tabs_.end(), tab_) == tabs_.end()) tab_ = Tab::Lineup;
+  bool all = s.settings().allChannelsTab;
+  nav_.setItems(rail::items(all));
+  if (tab_ == Tab::All && !all) tab_ = Tab::Lineup;
+  nav_.setSection(itemOf(tab_));
   rebuildLines(!force);
 }
 
@@ -158,14 +195,6 @@ void GuideScreen::rebuildLines(bool samePlace) {
   // Keep the focus on the same channel when it is still there, under its
   // new id when the list was sorted again (renamed or merged), else on the
   // row in the same place.
-  auto lineOf = [&](const std::string& id) {
-    for (size_t i = 0; i < lines_.size(); ++i) {
-      if (lines_[i].kind == Line::Kind::Channel && ch_->all[static_cast<size_t>(lines_[i].channel)].id == id) {
-        return static_cast<int>(i);
-      }
-    }
-    return -1;
-  };
   int was = focusLine_;
   int found = lineOf(focusId_);
   if (found < 0 && ch_) {
@@ -187,6 +216,15 @@ void GuideScreen::rebuildLines(bool samePlace) {
   focusLine_ = found;
   if (const GuideChannel* g = focusedChannel()) focusId_ = g->id;
   ensureVisible();
+}
+
+int GuideScreen::lineOf(const std::string& id) const {
+  if (!ch_) return -1;
+  for (size_t i = 0; i < lines_.size(); ++i) {
+    if (lines_[i].kind == Line::Kind::Channel && ch_->all[static_cast<size_t>(lines_[i].channel)].id == id)
+      return static_cast<int>(i);
+  }
+  return -1;
 }
 
 const GuideChannel* GuideScreen::focusedChannel() const {
@@ -239,27 +277,18 @@ void GuideScreen::moveRow(int step) {
       return;
     }
   }
-  if (step < 0) {
-    // Above the first row: the time button sits over the channel column,
-    // the tabs over the shows.
-    const Listing* l = focusedListing();
-    bool nearLeft = !l || xAt(std::max(l->start, windowStart_)) < kProgX + 200;
-    area_ = nearLeft ? Area::Time : Area::Tabs;
-    if (area_ == Area::Tabs) {
-      auto it = std::find(tabs_.begin(), tabs_.end(), tab_);
-      tabFocus_ = static_cast<int>(it - tabs_.begin());
-    }
-  }
+  // Above the first row: the time button (the filter is beside it).
+  if (step < 0) area_ = Area::Time;
 }
 
 void GuideScreen::moveProgram(int step) {
   const GuideChannel* g = focusedChannel();
   const std::vector<Listing>* v = g && li_ ? li_->forChannel(g->id) : nullptr;
   int cur = v && !v->empty() ? programIndex(*v, focusTime_) : -1;
-  float pxPerSec = kGridW / (kWindowMinutes * 60.0f);
+  float perSec = pxPerSec();
   auto visibleWidth = [&](const Listing& l) {
     time::Seconds a = std::max(l.start, windowStart_), b = std::min(l.end, windowEnd());
-    return static_cast<float>(b - a) * pxPerSec;
+    return static_cast<float>(b - a) * perSec;
   };
   if (step > 0) {
     if (cur >= 0) {
@@ -299,18 +328,187 @@ void GuideScreen::moveProgram(int step) {
     if (windowStart_ == nowWindow()) focusTime_ = std::max(focusTime_, time::now());
     return;
   }
-  openRail();
+  leftEdge();
 }
 
-void GuideScreen::openRail() {
-  if (sections_.empty()) return;
-  railReturnLine_ = focusLine_;
-  railIndex_ = 0;
+// ---------------------------------------------------------------- left rail
+
+int GuideScreen::originSection() const {
+  int origin = 0;
   for (size_t i = 0; i < sections_.size(); ++i) {
-    if (sections_[i].firstLine < focusLine_) railIndex_ = static_cast<int>(i);
+    if (sections_[i].firstLine < focusLine_) origin = static_cast<int>(i);
   }
-  railOrigin_ = railIndex_;
-  area_ = Area::Rail;
+  return origin;
+}
+
+// Left from the first show at Now: the column on this neighborhood (the
+// menu where there is none, as on Recent).
+void GuideScreen::leftEdge() {
+  place_ = {focusLine_, focusId_, windowStart_, focusTime_, scroll_};
+  nav_.leftEdge(originSection(), static_cast<int>(sections_.size()));
+  syncSlides();
+}
+
+void GuideScreen::openColumn(bool fromMenu) {
+  place_ = {focusLine_, focusId_, windowStart_, focusTime_, scroll_};
+  area_ = Area::Grid;
+  nav_.openColumn(originSection(), static_cast<int>(sections_.size()), fromMenu);
+  syncSlides();
+}
+
+// Exactly where the focus was when the column opened: row, show, time and
+// scroll (the channel's row again if the list was rebuilt meanwhile).
+void GuideScreen::restorePlace() {
+  focusLine_ = place_.line;
+  const GuideChannel* g = focusLine_ < static_cast<int>(lines_.size()) ? focusedChannel() : nullptr;
+  if (!g || g->id != place_.id) {
+    int found = lineOf(place_.id);
+    if (found >= 0) focusLine_ = found;
+    else focusLine_ = std::min(std::max(focusLine_, 0), static_cast<int>(lines_.size()) - 1);
+  }
+  if (const GuideChannel* now = focusedChannel()) focusId_ = now->id;
+  windowStart_ = std::max(place_.window, nowWindow());
+  focusTime_ = place_.time;
+  scroll_ = place_.scroll;
+  ensureVisible();
+  requestVisibleListings();
+}
+
+void GuideScreen::apply(const rail::Step& s, bool fromMenu) {
+  using Do = rail::Step::Do;
+  int n = static_cast<int>(sections_.size());
+  switch (s.what) {
+    case Do::None: break;
+    case Do::Scroll:
+      // The grid scrolls behind the column, as it did behind JUMP TO.
+      if (s.index < n) {
+        focusLine_ = std::min(static_cast<int>(lines_.size()) - 1, sections_[static_cast<size_t>(s.index)].firstLine + 1);
+        if (const GuideChannel* g = focusedChannel()) focusId_ = g->id;
+        ensureVisible();
+        requestVisibleListings();
+      }
+      break;
+    case Do::Restore: restorePlace(); break;
+    case Do::Top:
+      // Another neighborhood: its first channel, at Now.
+      if (s.index < n) {
+        focusLine_ = std::min(static_cast<int>(lines_.size()) - 1, sections_[static_cast<size_t>(s.index)].firstLine + 1);
+        if (const GuideChannel* g = focusedChannel()) focusId_ = g->id;
+        windowStart_ = nowWindow();
+        focusTime_ = time::now();
+        ensureVisible();
+        requestVisibleListings();
+      }
+      break;
+    case Do::Open: open(s.item, fromMenu); break;
+    case Do::Home: showSection(Tab::Lineup); break;
+    case Do::Exit: backOut(); break;
+  }
+  area_ = Area::Grid;
+  syncSlides();
+}
+
+// A strip item, from the menu or a click on the strip: a section lands on
+// its column (Recent on its grid); the others open their screens as before.
+void GuideScreen::open(rail::Item item, bool fromMenu) {
+  switch (item) {
+    case rail::Item::Search: openSearch(); break;
+    case rail::Item::MySports: app_.nav().push(makeMySports(app_)); break;
+    case rail::Item::Options: openOptions(); break;
+    case rail::Item::Events: openEvents(true); break;
+    default:
+      showSection(tabOf(item));
+      if (rail::hasColumn(item)) openColumn(fromMenu);
+      break;
+  }
+}
+
+void GuideScreen::showSection(Tab t) {
+  nav_.setSection(itemOf(t));
+  area_ = Area::Grid;
+  if (t == tab_) return;
+  tab_ = t;
+  filter_ = Filter::None;
+  // Recent opens newest first; the others keep the channel when it's there.
+  if (t == Tab::Recent) focusId_.clear();
+  rebuildLines();
+  requestVisibleListings();
+}
+
+// What Live Events' strip or menu picked for the guide.
+void GuideScreen::fromEvents(rail::Item item, bool column) {
+  if (item == rail::Item::Options) {
+    openOptions();
+    return;
+  }
+  if (!rail::isSection(item) || item == rail::Item::Events) return;
+  nav_.close();
+  showSection(tabOf(item));
+  if (column && rail::hasColumn(item)) openColumn(true);
+  syncSlides();
+}
+
+// A pointer click (OK while the pointer is on something). True when the
+// rail took it; the content's own clicks are OK as before (hovering moved
+// the focus there).
+bool GuideScreen::click() {
+  int id = pointer_;
+  const std::vector<rail::Item>& items = nav_.items();
+  rail::Mode mode = nav_.mode();
+  auto item = [&](int base) {
+    return items[static_cast<size_t>(std::clamp(id - base, 0, static_cast<int>(items.size()) - 1))];
+  };
+  if (mode == rail::Mode::Menu) {
+    if (inRange(id, left_rail::kHitMenu) && !items.empty()) apply(nav_.pick(item(left_rail::kHitMenu)), true);
+    else if (id == left_rail::kHitOutside) nav_.close();
+    syncSlides();
+    return true;
+  }
+  if (inRange(id, left_rail::kHitStrip) && !items.empty()) {
+    // A section's icon: its column (Recent: its grid). An open column is
+    // put back first.
+    if (mode == rail::Mode::Column) restorePlace();
+    apply(nav_.pick(item(left_rail::kHitStrip)), false);
+    return true;
+  }
+  if (mode != rail::Mode::Column) return id == left_rail::kHitNothing;
+  if (inRange(id, left_rail::kHitColumn)) {
+    apply(nav_.clickColumn(id - left_rail::kHitColumn), false);
+  } else if (id >= kHitChannel) {
+    // The grid: the column closes and that show takes the focus.
+    nav_.close();
+    syncSlides();
+    hover(id);
+  }
+  return true;
+}
+
+// Back to the content as it is, for keys that act there whatever is open
+// (CH paging, Live Events, a channel number): an open column is cancelled.
+void GuideScreen::closeRail() {
+  if (nav_.mode() == rail::Mode::Column) restorePlace();
+  nav_.close();
+  syncSlides();
+}
+
+void GuideScreen::syncSlides() {
+  uint32_t ms = app_.ms();
+  push_.go(nav_.mode() == rail::Mode::Column ? 1.0f : 0.0f, ms);
+  menu_.go(nav_.mode() == rail::Mode::Menu ? 1.0f : 0.0f, ms);
+  settleSlides(ms);
+  app_.invalidate();
+}
+
+// Where the timeline and grid are in the push; the window re-times to two
+// hours (or back to three) once it lands.
+void GuideScreen::settleSlides(uint32_t ms) {
+  left_ = left_rail::kRestLeft + (left_rail::kPushLeft - left_rail::kRestLeft) * push_.at(ms);
+  if (push_.landed(ms)) narrow_ = push_.target() > 0.5f;
+}
+
+hints::Rail GuideScreen::railHint() const {
+  if (nav_.mode() == rail::Mode::Column) return hints::Rail::Column;
+  return rail::hasColumn(nav_.section()) ? hints::Rail::Content : hints::Rail::NoColumn;
 }
 
 void GuideScreen::setWindow(time::Seconds start) {
@@ -326,6 +524,10 @@ bool GuideScreen::focusChannel(const std::string& entryId) {
   for (size_t i = 0; i < lines_.size(); ++i) {
     const Line& l = lines_[i];
     if (l.kind == Line::Kind::Channel && ch_->all[static_cast<size_t>(l.channel)].id == entryId) {
+      // Whatever the rail had open closes (an open column without going
+      // back: the focus moves on).
+      nav_.close();
+      syncSlides();
       focusLine_ = static_cast<int>(i);
       focusId_ = entryId;
       area_ = Area::Grid;
@@ -443,7 +645,7 @@ void GuideScreen::longPress() {
       hide.select = [&app, group] {
         app.store().setGroupHidden(group, true);
         app.nav().pop();
-        app.toast("Hidden. Options \xe2\x80\xba Provider groups shows it again");
+        app.toast("Hidden. Settings \xe2\x80\xba Guide \xe2\x80\xba Groups in All Channels shows it again");
       };
       p.items.push_back(hide);
     }
@@ -501,10 +703,10 @@ void GuideScreen::openFilter() {
                                                 [&app, self](ui::ListPanel& p) {
     p.subtitle = std::string("FILTER \xc2\xb7 ") + tabTitle(static_cast<int>(self->tab_));
     p.title = "Show";
-    auto add = [&](const std::string& title, Filter f, const std::string& section, size_t count) {
+    // Never how many channels each holds.
+    auto add = [&](const std::string& title, Filter f, const std::string& section) {
       ui::PanelItem it{ui::PanelItem::Kind::Check, title};
       it.on = self->filter_ == f && ((f != Filter::Section && f != Filter::Group) || self->filterSection_ == section);
-      it.value = std::to_string(count);
       it.dot = f != Filter::None && f != Filter::Section && f != Filter::Group;
       it.select = [&app, self, f, section] {
         self->filter_ = f;
@@ -515,18 +717,18 @@ void GuideScreen::openFilter() {
       p.items.push_back(it);
     };
     const std::vector<int>& rows = self->tabRows();
-    add("All channels", Filter::None, "", rows.size());
+    add("All channels", Filter::None, "");
     p.items.push_back(ui::PanelItem::header("ON NOW"));
     for (const engine::views::Count& n : engine::views::onNowCounts(*self->ch_, rows, self->li_.get(), time::now()))
-      add(n.title, n.filter.kind, "", n.count);
+      add(n.title, n.filter.kind, "");
     p.items.push_back(ui::PanelItem::header("NEIGHBORHOODS"));
     for (const engine::views::Count& n : engine::views::sectionCounts(*self->ch_, rows))
-      add(n.title, Filter::Section, n.title, n.count);
+      add(n.title, Filter::Section, n.title);
     if (self->tab_ == Tab::All) {
       std::vector<GroupSummary> groups = app.store().groups();
       p.items.push_back(ui::PanelItem::header("PROVIDER GROUPS (" + std::to_string(groups.size()) + ")"));
       for (const GroupSummary& g : groups) {
-        add(g.name, Filter::Group, g.name, static_cast<size_t>(g.count));
+        add(g.name, Filter::Group, g.name);
         ui::PanelItem& it = p.items.back();
         if (g.hidden) it.detail = "Hidden from All Channels";
         std::string name = g.name;
@@ -539,7 +741,9 @@ void GuideScreen::openFilter() {
   }));
 }
 
-void GuideScreen::openOptions() { app_.nav().push(makeOptions(app_)); }
+void GuideScreen::openOptions() { openAllSettings(app_); }
+
+void GuideScreen::openQuickSettings() { app_.nav().push(makeQuickSettings(app_, QuickPlace::Guide)); }
 
 void GuideScreen::openSources() {
   if (const GuideChannel* g = focusedChannel()) app_.nav().push(makeSources(app_, g->id));
@@ -552,6 +756,7 @@ void GuideScreen::openSearch() {
     // Prefer the row in the current tab; else switch to all channels.
     if (!self->focusChannel(id)) {
       self->tab_ = app.store().settings().allChannelsTab ? Tab::All : Tab::Lineup;
+      self->nav_.setSection(itemOf(self->tab_));
       self->filter_ = Filter::None;
       self->rebuildLines();
       if (!self->focusChannel(id)) {
@@ -563,19 +768,14 @@ void GuideScreen::openSearch() {
   }));
 }
 
-void GuideScreen::openEvents() {
-  // The board is its own screen over the guide; closing it picks a tab.
+void GuideScreen::openEvents(bool sports) {
+  // The board is its own screen over the guide, with the same strip; what
+  // its strip picks for the guide comes back here. Yellow there closes it
+  // onto the guide as it was.
+  closeRail();
+  area_ = Area::Grid;
   GuideScreen* self = this;
-  app_.nav().push(makeEventsBoard(app_, [self](int tab) {
-    static const Tab kTabs[] = {Tab::Lineup, Tab::Favorites, Tab::Recent};
-    self->tab_ = kTabs[std::clamp(tab, 0, 2)];
-    self->filter_ = Filter::None;
-    self->rebuildLines();
-    auto it = std::find(self->tabs_.begin(), self->tabs_.end(), self->tab_);
-    self->tabFocus_ = static_cast<int>(it - self->tabs_.begin());
-    self->area_ = tab == 0 ? Area::Grid : Area::Tabs;
-    self->requestVisibleListings();
-  }));
+  app_.nav().push(makeEventsBoard(app_, [self](rail::Item item, bool column) { self->fromEvents(item, column); }, sports));
 }
 
 void GuideScreen::openLineupSetup() { app_.nav().push(makeLineupSetup(app_)); }
@@ -600,13 +800,16 @@ void GuideScreen::requestVisibleListings() {
 
 bool GuideScreen::key(const KeyEvent& e) {
   lastKeyMs_ = app_.ms();
+  settleSlides(app_.ms());
   Key k = e.key;
+  // Other keys hide the pointer, and its target with it.
+  if (k != Key::Ok) pointer_ = 0;
   if (!ch_ || ch_->all.empty()) {
     // Status screen: one button.
     const StoreStatus& st = app_.store().status();
     if (k == Key::Ok && st.phase == StoreStatus::Phase::NoAccounts) app_.nav().push(makeAccounts(app_, false));
     else if (k == Key::Ok && st.phase != StoreStatus::Phase::Loading) app_.store().refreshAll();
-    else if (k == Key::Blue) openOptions();
+    else if (k == Key::Blue) openQuickSettings();
     else if (k == Key::Back) backOut();
     return true;
   }
@@ -615,15 +818,21 @@ bool GuideScreen::key(const KeyEvent& e) {
     digit(d);
     return true;
   }
+  rail::Mode mode = nav_.mode();
   if (e.longPress) {
-    if (area_ == Area::Grid) longPress();
+    bool onRail = inRange(pointer_, left_rail::kHitStrip) || pointer_ == left_rail::kHitNothing;
+    if (area_ == Area::Grid && mode == rail::Mode::Content && !onRail) longPress();
     return true;
   }
+  // A click: the rail's targets first (the strip, the menu, the column).
+  if (k == Key::Ok && pointer_ && click()) return true;
   // Keys a remote without colour or CH keys has (Fire TV): play/pause
   // opens Live Events, rewind and fast forward page.
   if (k == Key::PlayPause || k == Key::Play) k = Key::Yellow;
   if (k == Key::Rewind) k = Key::ChannelUp;
   if (k == Key::FastForward) k = Key::ChannelDown;
+  // The colour keys do what they did before the rail in every state; with
+  // the column open they act on the channel behind it, as in JUMP TO.
   switch (k) {
     case Key::Red: openSources(); return true;
     case Key::Green:
@@ -637,10 +846,11 @@ bool GuideScreen::key(const KeyEvent& e) {
     case Key::Yellow:
       openEvents();
       return true;
-    case Key::Blue: openOptions(); return true;
+    case Key::Blue: openQuickSettings(); return true;
     case Key::ChannelUp:
     case Key::ChannelDown: {
       // A page of rows at a time.
+      closeRail();
       for (int i = 0; i < 5; ++i) moveRow(k == Key::ChannelUp ? -1 : 1);
       area_ = Area::Grid;
       requestVisibleListings();
@@ -649,102 +859,34 @@ bool GuideScreen::key(const KeyEvent& e) {
     default: break;
   }
 
-  if (area_ == Area::Rail) {
-    switch (k) {
-      case Key::Up:
-      case Key::Down: {
-        int n = static_cast<int>(sections_.size());
-        railIndex_ = std::clamp(railIndex_ + (k == Key::Up ? -1 : 1), 0, n - 1);
-        focusLine_ = sections_[static_cast<size_t>(railIndex_)].firstLine + 1;
-        ensureVisible();
-        return true;
-      }
-      case Key::Right:
-      case Key::Ok:
-        area_ = Area::Grid;
-        focusLine_ = std::min(static_cast<int>(lines_.size()) - 1, sections_[static_cast<size_t>(railIndex_)].firstLine + 1);
-        if (const GuideChannel* g = focusedChannel()) focusId_ = g->id;
-        focusTime_ = std::max(time::now(), windowStart_);
-        ensureVisible();
-        requestVisibleListings();
-        return true;
-      case Key::Back:
-      case Key::Left:
-        area_ = Area::Grid;
-        focusLine_ = railReturnLine_;
-        ensureVisible();
-        return true;
-      default: return true;
-    }
+  // The column and the menu: the key path is the rail's (Up/Down from a
+  // swipe or the wheel walk the list).
+  if (mode != rail::Mode::Content) {
+    apply(nav_.key(k), true);
+    return true;
   }
 
-  if (area_ == Area::Tabs || area_ == Area::Buttons) {
-    int nTabs = static_cast<int>(tabs_.size());
+  if (area_ == Area::Time || area_ == Area::Filter) {
     switch (k) {
-      case Key::Left:
-        if (area_ == Area::Buttons) {
-          if (button_ > 0) --button_;
-          else {
-            area_ = Area::Tabs;
-            tabFocus_ = nTabs - 1;
-          }
-        } else if (tabFocus_ > 0) {
-          --tabFocus_;
-        }
+      case Key::Ok:
+        if (area_ == Area::Time) openTimeMenu();
+        else openFilter();
         return true;
       case Key::Right:
-        if (area_ == Area::Tabs) {
-          if (tabFocus_ < nTabs - 1) ++tabFocus_;
-          else {
-            area_ = Area::Buttons;
-            button_ = 0;
-          }
-        } else if (button_ < 2) {
-          ++button_;
-        }
+        area_ = Area::Filter;
         return true;
-      case Key::Down:
-        if (focusLine_ >= 0) area_ = Area::Grid;
-        return true;
-      case Key::Ok:
-        if (area_ == Area::Tabs) {
-          // Moving across tabs only highlights; OK switches.
-          if (tabs_[static_cast<size_t>(tabFocus_)] == Tab::Events) {
-            openEvents();
-            return true;
-          }
-          tab_ = tabs_[static_cast<size_t>(tabFocus_)];
-          filter_ = Filter::None;
-          rebuildLines();
-          if (focusLine_ >= 0) area_ = Area::Grid;
-          requestVisibleListings();
-        } else if (button_ == 0) {
-          openSearch();
-        } else if (button_ == 1) {
-          openFilter();
+      case Key::Left:
+        // Full left from the time button: the menu.
+        if (area_ == Area::Filter) {
+          area_ = Area::Time;
         } else {
-          openOptions();
+          nav_.openMenu();
+          syncSlides();
         }
         return true;
-      case Key::Back:
-        area_ = Area::Grid;
-        return true;
-      default: return true;
-    }
-  }
-
-  if (area_ == Area::Time) {
-    switch (k) {
-      case Key::Ok: openTimeMenu(); return true;
-      case Key::Right:
-        area_ = Area::Tabs;
-        tabFocus_ = 0;
-        return true;
       case Key::Down:
-        if (focusLine_ >= 0) area_ = Area::Grid;
-        return true;
       case Key::Back:
-        area_ = Area::Grid;
+        if (focusLine_ >= 0) area_ = Area::Grid;
         return true;
       default: return true;
     }
@@ -761,7 +903,10 @@ bool GuideScreen::key(const KeyEvent& e) {
       requestVisibleListings();
       return true;
     case Key::Left:
-      if (focusLine_ >= 0 && lines_[static_cast<size_t>(focusLine_)].kind == Line::Kind::Prompt) return true;
+      if (focusLine_ >= 0 && lines_[static_cast<size_t>(focusLine_)].kind == Line::Kind::Prompt) {
+        leftEdge();
+        return true;
+      }
       moveProgram(-1);
       return true;
     case Key::Right:
@@ -789,7 +934,10 @@ bool GuideScreen::key(const KeyEvent& e) {
         returnToNow();
         return true;
       }
-      backOut();
+      // Nothing left to undo: the menu (Back there goes to My Lineup, then
+      // out).
+      nav_.openMenu();
+      syncSlides();
       return true;
     default:
       return false;
@@ -812,6 +960,17 @@ void GuideScreen::backOut() {
 }
 
 void GuideScreen::hover(int id) {
+  pointer_ = id;
+  rail::Mode mode = nav_.mode();
+  if (mode == rail::Mode::Menu) {
+    // Hovering highlights; a click picks, or closes it outside.
+    if (inRange(id, left_rail::kHitMenu)) nav_.hoverMenu(id - left_rail::kHitMenu);
+    return;
+  }
+  // The strip shows the icon's name and moves nothing; with the column open
+  // the grid only takes the focus on a click.
+  if (id < kHitTime || (id >= left_rail::kHitStrip && id < left_rail::kHitEnd)) return;
+  if (mode == rail::Mode::Column) return;
   if (id >= kHitProgram) {
     int line = (id - kHitProgram) / 64;
     int prog = (id - kHitProgram) % 64;
@@ -834,18 +993,8 @@ void GuideScreen::hover(int id) {
     }
     return;
   }
-  if (id >= kHitRail && area_ == Area::Rail) {
-    railIndex_ = std::clamp(id - kHitRail, 0, static_cast<int>(sections_.size()) - 1);
-    return;
-  }
   if (id == kHitTime) area_ = Area::Time;
-  else if (id >= kHitButton && id < kHitButton + 3) {
-    area_ = Area::Buttons;
-    button_ = id - kHitButton;
-  } else if (id >= kHitTab && id < kHitTab + 5) {
-    area_ = Area::Tabs;
-    tabFocus_ = id - kHitTab;
-  }
+  else if (id == kHitFilter) area_ = Area::Filter;
 }
 
 bool GuideScreen::tick(uint32_t ms) {
@@ -875,6 +1024,9 @@ bool GuideScreen::tick(uint32_t ms) {
     app_.invalidate();
   }
   if (!digits_.empty()) animating = true;
+  // The column's push and the menu's slide.
+  settleSlides(ms);
+  if (push_.moving(ms) || menu_.moving(ms)) animating = true;
   // Placeholders pulse (a few redraws a second) while rows load.
   if (skeletonShown_ && ui::skeletonMoved(ms, pulseStep_)) animating = true;
   // The progress screen, the header's spinner and a result fading out move.
@@ -892,7 +1044,7 @@ bool GuideScreen::tick(uint32_t ms) {
   Playback& p = app_.playback();
   const GuideChannel* g = focusedChannel();
   bool onTop = app_.nav().top() == this;
-  if (onTop && g && area_ == Area::Grid && s.settings().previewChannels) {
+  if (onTop && g && area_ == Area::Grid && nav_.mode() == rail::Mode::Content && s.settings().previewChannels) {
     if (previewCandidate_ != g->id) {
       previewCandidate_ = g->id;
       focusSince_ = ms;
@@ -937,14 +1089,24 @@ void GuideScreen::drawGuide(ui::Ctx& c) {
     drawPreview(c);
     return;
   }
+  // Under everything: the pointer off any target (the strip's pill goes).
+  c.hit({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight}, left_rail::kHitNothing);
+  settleSlides(c.ms);
   drawHero(c);
   drawPreview(c);
-  drawTabs(c);
   drawRuler(c);
   drawGrid(c);
-  if (area_ == Area::Rail) drawRail(c);
+  float column = push_.at(c.ms);
+  if (column > 0.01f) drawColumn(c, column);
   const GuideChannel* g = focusedChannel();
-  ui::keyBar(c, hints::guide(app_.remoteKeys(), g && g->inLineup));
+  ui::keyBar(c, hints::guide(app_.remoteKeys(), g && g->inLineup, railHint()), left_);
+  // The strip; the pointer on an icon shows its name.
+  int hover = -1;
+  if (c.pointerActive && nav_.mode() != rail::Mode::Menu && inRange(pointer_, left_rail::kHitStrip))
+    hover = pointer_ - left_rail::kHitStrip;
+  left_rail::strip(c, nav_.items(), nav_.section(), hover);
+  float menu = menu_.at(c.ms);
+  if (menu > 0.01f) left_rail::menu(c, nav_.items(), nav_.section(), nav_.menuFocus(), menu);
   drawDigits(c);
 }
 
@@ -963,7 +1125,7 @@ void GuideScreen::drawStatus(ui::Ctx& c) {
       return;
     case StoreStatus::Phase::Failed:
       title = "Couldn't load channels";
-      message = st.problem.empty() ? "Check the provider in Options." : st.problem;
+      message = st.problem.empty() ? "Check the provider in Settings." : st.problem;
       break;
     case StoreStatus::Phase::Ready:
       title = "No channels";
@@ -1029,22 +1191,24 @@ void GuideScreen::drawHeaderLine(ui::Ctx& c, float x, float y, float right) {
 
 void GuideScreen::drawHero(ui::Ctx& c) {
   const GuideChannel* g = focusedChannel();
-  float x = kLeft, y = 48;
+  float x = kHeroX, y = 48;
   float w = 1240;
+  float right = x + w;
+  float chipsLeft = drawChips(c, right);
   if (g) {
     ui::label(c, g->section, x, y, Weight::Bold, 22, theme::white(0.6f));
   } else if (focusLine_ >= 0 && lines_[static_cast<size_t>(focusLine_)].kind == Line::Kind::Prompt) {
     ui::label(c, "My Lineup", x, y, Weight::Bold, 22, theme::white(0.6f));
   }
   float sx = x + (g ? ui::textWidth(c, g->section, Weight::Bold, 22) + 24 : 0);
-  drawHeaderLine(c, sx, y, x + w);
+  drawHeaderLine(c, sx, y, chipsLeft - 16);
   y += 40;
   if (!g) {
     if (focusLine_ >= 0 && lines_[static_cast<size_t>(focusLine_)].kind == Line::Kind::Prompt) {
       ui::label(c, "Make Live TV yours", x, y + 10, Weight::Bold, 44, theme::white());
       ui::paragraph(c,
                     "Set up My Lineup: your local stations and the channels you watch, in one short "
-                    "guide instead of " + std::to_string(ch_->rawChannels) + " channels.",
+                    "guide instead of every channel your provider has.",
                     x, y + 80, 1200, Weight::Regular, 22, theme::white(0.7f), 2);
     }
     return;
@@ -1125,20 +1289,13 @@ void GuideScreen::drawPreview(ui::Ctx& c) {
   top_bar::preview(c, app_.playback(), g ? g->logoUrl : std::string(), g ? g->name : std::string());
 }
 
-void GuideScreen::drawTabs(ui::Ctx& c) {
-  float x = kLeft, y = 318;
-  for (size_t i = 0; i < tabs_.size(); ++i) {
-    const char* title = tabTitle(static_cast<int>(tabs_[i]));
-    float w = ui::textWidth(c, title, Weight::Bold, 27);
-    bool selected = tabs_[i] == tab_;
-    bool focused = area_ == Area::Tabs && static_cast<int>(i) == tabFocus_;
-    Rect hit{x - 16, y, w + 32, 60};
-    c.hit(hit, kHitTab + static_cast<int>(i));
-    if (focused) c.g.fill(hit, theme::white(), 30);
-    Color col = focused ? theme::black() : selected ? theme::white() : theme::white(0.55f);
-    ui::labelIn(c, title, {x, y, w, 54}, Weight::Bold, 27, col);
-    if (selected && !focused) c.g.fill({x, y + 52, w, 5}, theme::white(), 2.5f);
-    x += w + 44;
+float GuideScreen::drawChips(ui::Ctx& c, float right) {
+  float y = 46;
+  if (later()) {
+    float bw = ui::chipWidth(c, "BACK returns to Now", 18);
+    right -= bw;
+    ui::chip(c, "BACK returns to Now", right, y + 1, 18, theme::hex(theme::kNowLine, 0.35f), theme::white());
+    right -= 12;
   }
   if (filter_ != Filter::None) {
     std::string f = (filter_ == Filter::Section || filter_ == Filter::Group) ? filterSection_
@@ -1146,18 +1303,15 @@ void GuideScreen::drawTabs(ui::Ctx& c) {
                     : filter_ == Filter::NewsNow ? "News on now"
                     : filter_ == Filter::MoviesNow ? "Movies on now"
                                                    : "Kids on now";
-    ui::chip(c, "\xe2\x97\x8f " + f + "  \xc3\x97", x + 10, y + 14, 19, theme::hex(theme::kNowLine, 0.3f), theme::white());
+    std::string text = "\xe2\x97\x8f " + f + "  \xc3\x97";
+    right -= ui::chipWidth(c, text, 19);
+    ui::chip(c, text, right, y, 19, theme::hex(theme::kNowLine, 0.3f), theme::white());
   }
-  if (later()) {
-    float bw = ui::chipWidth(c, "BACK returns to Now", 18);
-    ui::chip(c, "BACK returns to Now", 1600 - bw - 24, y + 16, 18, theme::hex(theme::kNowLine, 0.35f), theme::white());
-  }
-  // Round buttons: search, filter, options.
-  top_bar::buttons(c, area_ == Area::Buttons ? button_ : -1, filter_ != Filter::None, kHitButton);
+  return right;
 }
 
 void GuideScreen::drawRuler(ui::Ctx& c) {
-  // Time button: "Tonight ▼".
+  // Time button: "Tonight ▼", and the filter beside it.
   std::string word;
   if (!later()) word = "Now";
   else {
@@ -1165,18 +1319,18 @@ void GuideScreen::drawRuler(ui::Ctx& c) {
     if (word.empty()) word = "Today";
   }
   word += " \xe2\x96\xbc";
-  bool focused = area_ == Area::Time;
-  float w = ui::chipWidth(c, word, 19) + 10;
-  Rect r{kLeft, kRulerY, w, 40};
+  bool focused = area_ == Area::Time && nav_.mode() == rail::Mode::Content;
+  float w = std::max(104.0f, ui::chipWidth(c, word, 19) + 10);
+  Rect r{left_, kRulerY, w, 40};
   c.hit(r, kHitTime);
   c.g.fill(r, focused ? theme::white() : theme::white(0.1f), 20);
   ui::labelIn(c, word, r, Weight::Bold, 19, focused ? theme::black() : theme::white(), Align::Center);
+  top_bar::filterButton(c, {r.x + r.w + 10, kRulerY, 40, 40}, area_ == Area::Filter && nav_.mode() == rail::Mode::Content,
+                        filter_ != Filter::None, kHitFilter);
 
-  c.g.fill({kProgX, kRulerY + 39, kGridW, 1}, theme::white(0.15f));
-  for (int i = 0; i < kWindowMinutes / 30; ++i) {
-    time::Seconds t = windowStart_ + i * 1800;
+  c.g.fill({progX(), kRulerY + 39, kRight - progX(), 1}, theme::white(0.15f));
+  for (time::Seconds t = windowStart_; xAt(t) + 60 < kRight; t += 1800)
     ui::label(c, ui::clock(c, t, false), xAt(t) + 8, kRulerY + 8, Weight::Medium, 18, theme::white(0.6f));
-  }
 }
 
 void GuideScreen::drawGrid(ui::Ctx& c) {
@@ -1186,10 +1340,12 @@ void GuideScreen::drawGrid(ui::Ctx& c) {
                           : tab_ == Tab::Recent    ? "Channels you watch show up here."
                           : filter_ != Filter::None ? "Nothing matches this filter. Back clears it."
                                                     : "No channels here.";
-    ui::label(c, message, kLeft, kGridTop + 40, Weight::Medium, 26, theme::white(0.6f));
+    ui::label(c, message, left_, kGridTop + 40, Weight::Medium, 26, theme::white(0.6f));
     return;
   }
-  Rect clip{0, kGridTop - 6, gfx::kLayoutWidth, kGridBottom - kGridTop + 12};
+  // Clipped at the grid's left edge, so it never runs under the column.
+  float clipX = left_ - 10;
+  Rect clip{clipX, kGridTop - 6, kRight + 20 - clipX, kGridBottom - kGridTop + 12};
   c.g.pushClip(clip);
   for (size_t i = 0; i < lines_.size(); ++i) {
     float y = kGridTop + lines_[i].y - scroll_;
@@ -1199,7 +1355,7 @@ void GuideScreen::drawGrid(ui::Ctx& c) {
   c.g.popClip();
   // Now line.
   time::Seconds now = c.now;
-  if (area_ != Area::Rail && now >= windowStart_ && now < windowEnd()) {
+  if (now >= windowStart_ && now < drawEnd()) {
     float x = std::round(xAt(now));
     c.g.fill({x - 1.5f, kRulerY + 40, 3, kGridBottom - kRulerY - 40}, theme::hex(theme::kNowLine));
   }
@@ -1207,33 +1363,33 @@ void GuideScreen::drawGrid(ui::Ctx& c) {
 
 void GuideScreen::drawRow(ui::Ctx& c, int lineIndex, float y) {
   const Line& line = lines_[static_cast<size_t>(lineIndex)];
-  bool rowFocused = area_ == Area::Grid && lineIndex == focusLine_;
+  bool rowFocused = area_ == Area::Grid && nav_.mode() == rail::Mode::Content && lineIndex == focusLine_;
   if (line.kind == Line::Kind::Header) {
-    ui::label(c, line.title, kLeft, y, Weight::Bold, 17, theme::white(0.5f));
+    ui::label(c, line.title, left_, y, Weight::Bold, 17, theme::white(0.5f));
     return;
   }
   if (line.kind == Line::Kind::Prompt) {
-    Rect r{kLeft, y, gfx::kLayoutWidth - 2 * kLeft, kRowH};
+    Rect r{left_, y, kRight - left_, kRowH};
     c.hit(r, kHitChannel + lineIndex);
     c.g.fill(r, rowFocused ? theme::white() : theme::white(0.09f), 14);
     Color fg = rowFocused ? theme::black() : theme::white();
     ui::label(c, "Make Live TV yours", r.x + 28, r.y + 14, Weight::Bold, 24, fg);
     ui::label(c, "Set up My Lineup with your local stations and favourite channels.", r.x + 28, r.y + 48,
               Weight::Regular, 18, rowFocused ? theme::black(0.65f) : theme::white(0.65f));
-    float cw = ui::chipWidth(c, "Set Up My Lineup", 20) + 20;
+    float cw = ui::chipWidth(c, "Set up My Lineup", 20) + 20;
     Rect chipR{r.x + r.w - cw - 24, r.y + 21, cw, 42};
     c.g.fill(chipR, rowFocused ? theme::black() : theme::white(), 21);
-    ui::labelIn(c, "Set Up My Lineup", chipR, Weight::Bold, 20, rowFocused ? theme::white() : theme::black(),
+    ui::labelIn(c, "Set up My Lineup", chipR, Weight::Bold, 20, rowFocused ? theme::white() : theme::black(),
                 Align::Center);
     return;
   }
   const GuideChannel& g = ch_->all[static_cast<size_t>(line.channel)];
-  Rect cell{kLeft, y, kChannelW, kRowH};
+  Rect cell{left_, y, kChannelW, kRowH};
   c.hit(cell, kHitChannel + lineIndex);
   drawChannelCell(c, g, cell, rowFocused);
 
   const std::vector<Listing>* v = li_ ? li_->forChannel(g.id) : nullptr;
-  time::Seconds ws = windowStart_, we = windowEnd();
+  time::Seconds ws = windowStart_, we = drawEnd();
   time::Seconds now = c.now;
   bool drewAny = false;
   int focusedProgram = rowFocused && v ? programIndex(*v, focusTime_) : -1;
@@ -1268,7 +1424,7 @@ void GuideScreen::drawRow(ui::Ctx& c, int lineIndex, float y) {
   }
   if (!drewAny) {
     // One cell for the whole row.
-    Rect r{kProgX, y, kGridW - kGap, kRowH};
+    Rect r{progX(), y, kRight - progX() - kGap, kRowH};
     bool focused = rowFocused;
     c.hit(r, kHitProgram + lineIndex * 64);
     c.g.fill(r, focused ? theme::white() : theme::white(0.07f), 12);
@@ -1336,31 +1492,14 @@ void GuideScreen::drawChannelCell(ui::Ctx& c, const GuideChannel& g, Rect r, boo
   }
 }
 
-void GuideScreen::drawRail(ui::Ctx& c) {
-  Rect r{kLeft - 10, kRulerY + 40, 380, std::min(640.0f, kGridBottom - kRulerY - 40)};
-  c.g.fill(r, theme::hex(0x1C1F25, 0.97f), theme::kPanelRadius);
-  ui::label(c, "JUMP TO", r.x + 24, r.y + 20, Weight::Bold, 16, theme::white(0.55f));
-  float y = r.y + 56;
-  float rowH = 54;
-  int visible = static_cast<int>((r.h - 70) / rowH);
-  int first = std::clamp(railIndex_ - visible / 2, 0, std::max(0, static_cast<int>(sections_.size()) - visible));
-  for (int i = first; i < static_cast<int>(sections_.size()) && i < first + visible; ++i) {
-    const Section& s = sections_[static_cast<size_t>(i)];
-    Rect pill{r.x + 14, y, r.w - 28, rowH - 6};
-    bool focused = i == railIndex_;
-    c.hit(pill, kHitRail + i);
-    if (focused) c.g.fill(pill, theme::white(), (rowH - 6) * 0.5f);
-    Color fg = focused ? theme::black() : theme::white();
-    float x = pill.x + 20;
-    if (i == railOrigin_) {
-      c.g.fill({x, pill.y + pill.h * 0.5f - 5, 10, 10}, theme::hex(theme::kNowLine), 5);
-      x += 20;
-    }
-    ui::labelIn(c, s.title, {x, pill.y, pill.w - 90, pill.h}, Weight::Bold, 22, fg);
-    ui::labelIn(c, std::to_string(s.count), {pill.x, pill.y, pill.w - 20, pill.h}, Weight::Medium, 19,
-                focused ? theme::black(0.6f) : theme::white(0.6f), Align::Right);
-    y += rowH;
-  }
+void GuideScreen::drawColumn(ui::Ctx& c, float alpha) {
+  // The neighborhoods, inside the guide; no counts.
+  std::vector<left_rail::Entry> entries;
+  entries.reserve(sections_.size());
+  for (const Section& s : sections_) entries.push_back({s.title, 0});
+  int hover = c.pointerActive && inRange(pointer_, left_rail::kHitColumn) ? pointer_ - left_rail::kHitColumn : -1;
+  left_rail::column(c, rail::title(nav_.section()), "Jump to", entries, nav_.index(), nav_.origin(), hover, kRulerY,
+                    kGridTop, alpha);
 }
 
 void GuideScreen::drawDigits(ui::Ctx& c) {

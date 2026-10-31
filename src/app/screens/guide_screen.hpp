@@ -1,6 +1,7 @@
 // The guide (LiveTVGuideView): hero with the focused show and the preview
-// corner, tabs, the time ruler, the channel grid with neighborhood headers,
-// the neighborhood rail and the colour-key bar.
+// corner, the time ruler, the channel grid with neighborhood headers and the
+// colour-key bar, right of the left rail (Build 112): the strip of sections,
+// the neighborhood column that pushes the grid, and the menu.
 #pragma once
 
 #include <memory>
@@ -9,9 +10,12 @@
 
 #include "app/screen.hpp"
 #include "app/screens/launch_mark.hpp"
+#include "app/screens/left_rail.hpp"
 #include "app/screens/setup_ui.hpp"
 #include "app/store/store.hpp"
 #include "core/engine/views.hpp"
+#include "core/input/hints.hpp"
+#include "core/input/left_rail.hpp"
 
 namespace marigold::app {
 
@@ -33,13 +37,20 @@ class GuideScreen : public Screen {
   void backOut();
   // Focus a channel row (search, number keys, back from the player).
   bool focusChannel(const std::string& entryId);
-  // The Live Events board, over the guide (also from the end of setup).
-  void openEvents();
+  // The Live Events board, over the guide (also from the end of setup);
+  // `sports` opens it on its SPORTS column.
+  void openEvents(bool sports = false);
+  // All settings from the strip's Settings, the gear and the status screen:
+  // the one way in (openAllSettings). Blue: Quick settings.
+  void openOptions();
+  void openQuickSettings();
 
  private:
   using Tab = engine::views::Tab;
   using Filter = engine::views::Filter::Kind;
-  enum class Area { Tabs, Buttons, Time, Grid, Rail };
+  // The column and the menu are the rail's (nav_.mode()); these are the
+  // content's own places.
+  enum class Area { Time, Filter, Grid };
   struct Line {
     enum class Kind { Header, Channel, Prompt } kind = Kind::Channel;
     int channel = -1;  // index into Channels::all
@@ -50,6 +61,13 @@ class GuideScreen : public Screen {
     std::string title;
     int firstLine = 0;
     int count = 0;
+  };
+  // Where the focus was when the column opened (the return rule).
+  struct Place {
+    int line = -1;
+    std::string id;
+    time::Seconds window = 0, time = 0;
+    float scroll = 0;
   };
 
   void refresh(bool force = false);
@@ -66,13 +84,28 @@ class GuideScreen : public Screen {
   void moveRow(int step);
   void moveProgram(int step);
   void ensureVisible();
-  void openRail();
+  int lineOf(const std::string& id) const;
+  // The left rail: the column on the neighborhood the focus is in, a step
+  // of the key path, picking a strip item, the pointer's click, and
+  // closing (cancelling) whatever is open.
+  int originSection() const;
+  void openColumn(bool fromMenu);
+  void leftEdge();
+  void apply(const rail::Step& s, bool fromMenu);
+  void open(rail::Item item, bool fromMenu);
+  void showSection(Tab t);
+  void fromEvents(rail::Item item, bool column);
+  bool click();
+  void closeRail();
+  void restorePlace();
+  void syncSlides();
+  void settleSlides(uint32_t ms);
+  hints::Rail railHint() const;
   void select();
   void longPress();
   void watch(const std::string& entryId);
   void openTimeMenu();
   void openFilter();
-  void openOptions();
   void openSources();
   void openSearch();
   void openLineupSetup();
@@ -81,12 +114,14 @@ class GuideScreen : public Screen {
 
   void drawHero(ui::Ctx& c);
   void drawPreview(ui::Ctx& c);
-  void drawTabs(ui::Ctx& c);
+  // The filter and "BACK returns to Now" chips, right-aligned on the hero's
+  // top line (the tab row they sat in is gone); returns their left edge.
+  float drawChips(ui::Ctx& c, float right);
   void drawRuler(ui::Ctx& c);
   void drawGrid(ui::Ctx& c);
   void drawRow(ui::Ctx& c, int lineIndex, float y);
   void drawChannelCell(ui::Ctx& c, const GuideChannel& g, ui::Rect r, bool focused);
-  void drawRail(ui::Ctx& c);
+  void drawColumn(ui::Ctx& c, float alpha);
   void drawGuide(ui::Ctx& c);
   void drawStatus(ui::Ctx& c);
   // The header's status line (updating, updated, couldn't), fading out when
@@ -96,6 +131,13 @@ class GuideScreen : public Screen {
 
   time::Seconds nowWindow() const;
   time::Seconds windowEnd() const;
+  // Three hours at rest, two with the column open (re-timed once its push
+  // lands); while the grid slides it keeps the old scale and shows what
+  // fits up to the right edge (drawEnd).
+  int windowMinutes() const;
+  float progX() const;
+  float pxPerSec() const;
+  time::Seconds drawEnd() const;
   float xAt(time::Seconds t) const;
   bool later() const { return windowStart_ > nowWindow(); }
 
@@ -103,11 +145,8 @@ class GuideScreen : public Screen {
   std::shared_ptr<const Listings> li_;
   uint64_t chVersion_ = ~0ull, liVersion_ = ~0ull;
 
-  std::vector<Tab> tabs_;
   Tab tab_ = Tab::Lineup;
-  int tabFocus_ = 0;
   Area area_ = Area::Grid;
-  int button_ = 0;  // 0 search, 1 filter, 2 options
 
   std::vector<Line> lines_;
   std::vector<Section> sections_;
@@ -133,7 +172,12 @@ class GuideScreen : public Screen {
   Filter filter_ = Filter::None;
   std::string filterSection_;
 
-  int railIndex_ = 0, railOrigin_ = 0, railReturnLine_ = -1;
+  rail::Nav nav_;
+  Place place_;
+  left_rail::Slide push_, menu_;  // the column's push, the menu's slide
+  float left_ = left_rail::kRestLeft;  // the timeline and grid's left edge
+  bool narrow_ = false;               // the two-hour window (column open)
+  int pointer_ = 0;  // what the pointer is on (a hit id) while it shows
 
   std::string digits_;
   uint32_t digitsAt_ = 0;

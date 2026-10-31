@@ -3,7 +3,7 @@
 // (what's on, later on this channel, where Up and Down go, the keys). OK
 // brings up the controls on the banner, Subtitles first (OK again turns
 // them on or off; Aa or holding OK opens languages and style), then
-// Sources, the guide, the last channel, Favorite, More; Up/Down still flip
+// Sources, the guide, the last channel, Favorite, Settings; Up/Down still flip
 // from there. Changes that stick (subtitles, favorites) say so in a large
 // notice with how to undo them. Back closes what's on top, then asks once
 // before leaving. Under a panel the player draws only the picture and its
@@ -11,6 +11,9 @@
 // at once), LG's Green as a CC key, Exit clearing the screen, and the Magic
 // Remote pointer (the controls with nothing highlighted, a click on the
 // picture opening or closing them, two edge buttons for Guide and Last).
+// A game (a Live Events tile or feed, or a guide channel showing one the
+// board matched) gets a lower card with one line of who's playing instead
+// of the show's title, times and "Later on this channel".
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -18,11 +21,13 @@
 
 #include "app/app.hpp"
 #include "app/playback.hpp"
+#include "app/screens/events_ui.hpp"
 #include "app/screens/screens.hpp"
 #include "app/store/store.hpp"
 #include "core/captions/sentence_case.hpp"
 #include "core/engine/views.hpp"
 #include "core/input/hints.hpp"
+#include "core/sports/game_banner.hpp"
 #include "platform/icons.hpp"
 
 namespace marigold::app {
@@ -49,6 +54,10 @@ constexpr float kBannerBottom = 870;  // the banner's lower edge
 constexpr float kRowY = 952;          // the key guide or the action row
 constexpr float kStripW = 500;        // "Later on this channel"
 constexpr float kCardTop = 656;       // the banner's card
+constexpr float kGameCardTop = 836;   // a game's: one line of who's playing over the keys
+constexpr float kGameMark = 60;       // its logos, flags or sport icon
+constexpr float kGameText = 236;      // where its title and league line start
+constexpr time::Seconds kGameRecheck = 30;  // which game a guide channel shows, asked again
 constexpr uint32_t kRed = 0xE5372B, kBlue = 0x3D7BFF, kGreen = 0x34C759;
 
 // Pointer targets.
@@ -152,7 +161,7 @@ class PlayerScreen : public Screen {
         openSources();
         return true;
       case Key::Blue:
-        app_.nav().push(makeOptions(app_));
+        app_.nav().push(makeQuickSettings(app_, QuickPlace::Player));
         return true;
       case Key::PlayPause:
       case Key::Play:
@@ -276,7 +285,10 @@ class PlayerScreen : public Screen {
       c.g.fill(screen, theme::black());
       if (!p.failed()) ui::spinner(c, gfx::kLayoutWidth * 0.5f, 400, 26);
     }
-    // Under a panel (the guide, Sources, Options): the picture and its
+    // A game: the low card (not while it fails: that banner says why).
+    const GameBanner* game = p.failed() && !pending ? nullptr : gameShown(c);
+    cardTop_ = game ? kGameCardTop : kCardTop;
+    // Under a panel (the guide, Sources, Quick settings): the picture and its
     // captions only, never the banner beside the panel.
     if (c.covered) {
       if (picture) drawSubtitles(c, false);
@@ -293,7 +305,8 @@ class PlayerScreen : public Screen {
       drawFailButtons(c);
     } else if (bannerVisible() || controls) {
       drawScrim(c);
-      drawBanner(c, g, false);
+      if (game) drawGameBanner(c, g, *game);
+      else drawBanner(c, g, false);
       if (controls) drawPills(c, g);
       else drawKeyGuide(c, g);
     }
@@ -346,7 +359,7 @@ class PlayerScreen : public Screen {
   }
   bool bannerVisible() const { return loading() || (app_.ms() >= bannerFrom_ && app_.ms() < bannerUntil_); }
   // Up/Down: Up is the channel above in the list (lower numbers) unless
-  // Options says Up goes to higher numbers, as CH+ does.
+  // Settings › Watching says Up goes to higher numbers, as CH+ does.
   int arrowStep(Key k) const {
     int up = app_.store().settings().upGoesHigher ? 1 : -1;
     return k == Key::Up ? up : -up;
@@ -589,7 +602,7 @@ class PlayerScreen : public Screen {
         notice(was ? "Removed from Favorites" : "Added to Favorites", "OK again to undo", kNoticeMs);
         break;
       }
-      case Pill::More: panel(makeOptions(app_)); break;
+      case Pill::More: panel(makeQuickSettings(app_, QuickPlace::Player)); break;
     }
   }
   // The other version of the channel playing, when it has both.
@@ -720,6 +733,21 @@ class PlayerScreen : public Screen {
     if (next) *next = on.next;
     return on.now;
   }
+  // The game on screen (or the one a channel key is on its way to), or
+  // null for a channel's usual banner. From the board as it is: asked
+  // again when what plays changes, the board is rebuilt, or every 30 s for
+  // which game a guide channel is showing.
+  const GameBanner* gameShown(const ui::Ctx& c) {
+    std::string id = pendingFlip_.empty() ? app_.playback().entry() : pendingFlip_;
+    uint64_t board = app_.store().events() ? app_.store().events()->version : 0;
+    if (id != gameFor_ || board != gameBoard_ || c.now - gameAt_ >= kGameRecheck || c.now < gameAt_) {
+      gameFor_ = id;
+      gameBoard_ = board;
+      gameAt_ = c.now;
+      game_ = id.empty() ? std::nullopt : app_.store().gameBanner(id, c.now);
+    }
+    return game_ ? &*game_ : nullptr;
+  }
   std::string feedLine() const {
     Playback& p = app_.playback();
     if (p.feeds().empty()) return {};
@@ -787,7 +815,7 @@ class PlayerScreen : public Screen {
     float lineH = std::round(static_cast<float>(px) * 1.36f);
     float pad = std::round(static_cast<float>(px) * 0.4f);
     float total = lineH * static_cast<float>(lines.size());
-    float y = set.subtitleTop ? 70.0f : (banner ? kCardTop - 20 : gfx::kLayoutHeight - 70.0f) - total;
+    float y = set.subtitleTop ? 70.0f : (banner ? cardTop_ - 20 : gfx::kLayoutHeight - 70.0f) - total;
     bool sentences = set.subtitleSentenceCase;  // mixed-case text is left as it is
     bool startsSentence = true;
     for (const captions::Line& l : lines) {
@@ -818,7 +846,7 @@ class PlayerScreen : public Screen {
   }
 
   // The banner and its row on one floating card (no fade over the picture).
-  void drawScrim(ui::Ctx& c) { ui::floatingCard(c, {48, kCardTop, gfx::kLayoutWidth - 96, gfx::kLayoutHeight - 28 - kCardTop}); }
+  void drawScrim(ui::Ctx& c) { ui::floatingCard(c, {48, cardTop_, gfx::kLayoutWidth - 96, gfx::kLayoutHeight - 28 - cardTop_}); }
 
   void drawBanner(ui::Ctx& c, const GuideChannel* g, bool failed) {
     Playback& p = app_.playback();
@@ -883,6 +911,99 @@ class PlayerScreen : public Screen {
       shadowed(c, "Next: " + ui::clock(c, next->start) + " " + next->title, rx, y, Weight::Regular, 22,
                theme::white(0.82f), titleRight - rx);
     }
+  }
+
+  // A game's banner ("ID strip"): its logos (flags for players, the sport's
+  // icon for a title), who's playing, your team's star and where it stands
+  // by the clock; under it the league, round and venue; at the right the
+  // channel and, in small type, its times and what's next. Never a score,
+  // clock or result: the broadcaster's bug in the picture has those.
+  void drawGameBanner(ui::Ctx& c, const GuideChannel* g, const GameBanner& b) {
+    float x = kLeft, right = gfx::kLayoutWidth - kLeft;
+    float top = kGameCardTop + 22;  // the title's line
+    sports::banner::Status st = sports::banner::status(b.start, b.end, b.postponed, c.now);
+
+    // At the right: the channel's logo, number and name (East/West), then
+    // the listing times and what's next (before the start, what's on).
+    std::string name = g ? (g->number ? std::to_string(*g->number) + " \xc2\xb7 " : std::string()) + g->name : b.channelName;
+    std::string logoUrl = g ? g->logoUrl : b.channelLogo;
+    bool logo = c.logos && !logoUrl.empty() && c.logos->get(logoUrl).id;
+    bool coast = g && !g->partner.empty();
+    const float logoW = 104, logoH = 44, gap = 14;
+    float nameW = std::min(360.0f, ui::textWidth(c, name, Weight::Bold, 22));
+    float coastW = coast ? ui::chipWidth(c, g->west ? "WEST" : "EAST", 14) : 0;
+    float rowW = (logo ? logoW + gap : 0) + nameW + (coast ? gap + coastW : 0);
+    const Listing* next = nullptr;
+    const Listing* l = g ? current(g->id, c.now, &next) : nullptr;
+    std::vector<std::string> times;
+    using sports::banner::Chip;
+    if (st.chip == Chip::soon) {
+      times.push_back("Starts " + ui::clock(c, *b.start));
+      if (l) times.push_back("on now: " + l->title);
+    } else {
+      if (st.chip == Chip::likelyOver && b.end) times.push_back("was scheduled until " + ui::clock(c, *b.end));
+      else if (l) times.push_back(ui::range(c, l->start, l->end, true));
+      else if (b.start) times.push_back("started " + ui::clock(c, *b.start));
+      // Past the game's own listing, the show the guide has on now is next.
+      const Listing* after = st.chip == Chip::likelyOver && l && b.start && l->start > *b.start ? l : next;
+      if (after) times.push_back("next " + ui::clock(c, after->start) + " " + after->title);
+    }
+    std::string sub;
+    for (const std::string& t : times) sub += (sub.empty() ? "" : " \xc2\xb7 ") + t;
+    float subW = std::min(724.0f, ui::textWidth(c, sub, Weight::Regular, 19));
+    float rightW = std::min(724.0f, std::max(rowW, subW));
+    float rx = right - rowW;
+    if (logo) {
+      Rect r{rx, top, logoW, logoH};
+      c.g.fill(r, theme::hex(0x14161B, 0.85f), 12);
+      ui::logo(c, logoUrl, "", {r.x + 8, r.y + 5, r.w - 16, r.h - 10});
+      rx += logoW + gap;
+    }
+    float nameY = top + (logoH - c.t.lineHeight(Weight::Bold, 22)) * 0.5f;
+    shadowed(c, name, rx, nameY, Weight::Bold, 22, theme::white(0.9f), nameW + 1);
+    if (coast) ui::coastChip(c, g->west, rx + nameW + gap, top + (logoH - 21) * 0.5f, 14);
+    if (!sub.empty()) shadowed(c, sub, right - subW, top + 50, Weight::Regular, 19, theme::white(0.72f), subW + 1);
+
+    // At the left: the marks, 60 tall.
+    float my = top + 2;
+    if (b.sides.size() == 2) {
+      const EventSide& a = b.sides[0];
+      const EventSide& h = b.sides[1];
+      auto person = [](const EventSide& s) { return !s.flags.empty() || !s.country.empty(); };
+      auto hasLogo = [&](const EventSide& s) { return c.logos && !s.logoUrl.empty() && c.logos->get(s.logoUrl).id; };
+      if (person(a) || person(h)) {
+        float w = events_ui::mark(c, a, x, my, kGameMark);
+        events_ui::mark(c, h, x + w + 8, my, kGameMark);
+      } else {
+        // Badges overlap a little, as a pair; logos sit side by side.
+        float step = hasLogo(a) || hasLogo(h) ? kGameMark + 4 : kGameMark - 12;
+        events_ui::mark(c, a, x, my, kGameMark);
+        events_ui::mark(c, h, x + step, my, kGameMark);
+      }
+    } else {
+      Rect box{x, my, 120, kGameMark};
+      c.g.fill(box, theme::white(0.1f), 12);
+      if (unsigned icon = c.icons && !b.icon.empty() ? c.icons->get(b.icon) : 0)
+        c.g.textureAlpha(icon, {box.x + 34, box.y + 4, 52, 52}, theme::white(0.85f));
+      else
+        ui::labelIn(c, b.symbol.empty() ? "\xe2\x97\x8f" : b.symbol, box, Weight::Bold, 30, theme::white(0.85f), Align::Center);
+    }
+
+    // Who's playing, the star, the status chip; the line under them.
+    float tx = kGameText;
+    float room = right - rightW - 40 - tx;
+    float starW = b.favorite ? ui::textWidth(c, "\xe2\x98\x85", Weight::Bold, 30) + 12 : 0;
+    float chipW = st.chip == Chip::none ? 0 : ui::textWidth(c, st.text, Weight::Bold, 16) + 16 + 16;
+    float lineH = c.t.lineHeight(Weight::Bold, 36);
+    float titleW = shadowed(c, b.title, tx, top, Weight::Bold, 36, theme::white(), std::max(80.0f, room - starW - chipW));
+    float cx = tx + titleW;
+    if (b.favorite) {
+      ui::label(c, "\xe2\x98\x85", cx + 12, top + (lineH - c.t.lineHeight(Weight::Bold, 30)) * 0.5f, Weight::Bold, 30,
+                theme::hex(theme::kStar));
+      cx += starW;
+    }
+    events_ui::clockPill(c, st.chip, st.text, cx + 16, top + std::round((lineH - 26) * 0.5f));
+    shadowed(c, b.line, tx, top + 46, Weight::Bold, 19, theme::white(0.62f), std::max(80.0f, room));
   }
 
   // "Later on this channel": the next show (when it's close, how soon) and
@@ -1029,7 +1150,7 @@ class PlayerScreen : public Screen {
     float right = gfx::kLayoutWidth - kLeft;
     if (st.text.empty()) {
       int left = static_cast<int>((bannerUntil_ > app_.ms() ? bannerUntil_ - app_.ms() : 0) / 1000) + 1;
-      ui::label(c, "Hides in " + std::to_string(std::min(left, static_cast<int>(kBannerMs / 1000))) + " s", right,
+      ui::label(c, "Hides in " + std::to_string(std::min(left, static_cast<int>(kBannerMs / 1000))) + " s", right - 300,
                 y + 10, Weight::Regular, 22, theme::white(0.75f), 300, Align::Right);
       return;
     }
@@ -1041,7 +1162,7 @@ class PlayerScreen : public Screen {
   }
 
   // The controls: Subtitles first (with its language), Aa for languages
-  // and style, then Sources, the guide, the last channel, Favorite, More.
+  // and style, then Sources, the guide, the last channel, Favorite, Settings.
   void drawPills(ui::Ctx& c, const GuideChannel* g) {
     buildPills();
     Playback& p = app_.playback();
@@ -1073,7 +1194,7 @@ class PlayerScreen : public Screen {
         case Pill::Guide: it.title = app_.store().isEvent(p.entry()) ? "Games" : "Guide"; break;
         case Pill::Last: it.title = "Back to " + nameOf(p.previousEntry()); break;
         case Pill::Favorite: it.title = g && g->favorite ? "Unfavorite" : "Favorite"; break;
-        case Pill::More: it.title = "More"; break;
+        case Pill::More: it.title = "Settings"; break;
       }
       items.push_back(std::move(it));
     }
@@ -1150,39 +1271,9 @@ class PlayerScreen : public Screen {
            nameOf(p.previousEntry()));
   }
 
-  // 1C: once, the first time a channel plays.
-  void drawTips(ui::Ctx& c) {
-    ui::scrim(c, 0.55f);
-    Rect card{460, 150, 1000, 780};
-    c.g.fill(card, theme::hex(0x1C1F25, 0.97f), 34);
-    float x = card.x + 64, y = card.y + 56;
-    ui::label(c, "WATCHING LIVE TV", x, y, Weight::Bold, 18, theme::white(0.5f));
-    ui::label(c, "Getting around", x, y + 30, Weight::Bold, 44, theme::white());
-    y += 120;
-    std::vector<hints::Tip> tips = hints::gettingAround(app_.remoteKeys());
-    float colW = (card.w - 128 - 40) / 2;
-    for (size_t i = 0; i < tips.size() && i < 6; ++i) {
-      float tx = x + static_cast<float>(i % 2) * (colW + 40), ty = y + static_cast<float>(i / 2) * 96;
-      Rect cap{tx, ty, 56, 56};
-      c.g.fill(cap, theme::white(0.12f), 14);
-      const hints::Hint& key = tips[i].key;
-      unsigned icon = !key.icons.empty() && c.icons ? c.icons->get(key.icons.front()) : 0;
-      if (key.colour != hints::Colour::None) c.g.fill({cap.x + 16, cap.y + 16, 24, 24}, theme::hex(kRed), 12);
-      else if (icon) c.g.textureAlpha(icon, {cap.x + 14, cap.y + 14, 28, 28}, theme::white());
-      else ui::labelIn(c, key.cap, cap, Weight::Bold, 18, theme::white(), Align::Center);
-      ui::label(c, tips[i].title, tx + 74, ty + 4, Weight::Bold, 25, theme::white(), colW - 74);
-      ui::label(c, tips[i].detail, tx + 74, ty + 36, Weight::Regular, 19, theme::white(0.65f), colW - 74);
-    }
-    y += 3 * 96 + 10;
-    ui::paragraph(c,
-                  "If a feed stops, a backup takes over by itself. This shows once; the keys are listed under the "
-                  "banner whenever it's up.",
-                  x, y, card.w - 128, Weight::Regular, 20, theme::white(0.6f), 2);
-    Rect ok{x, card.y + card.h - 130, ui::chipWidth(c, "Got it", 24) + 60, 68};
-    c.hit(ok, kHitTips);
-    c.g.fill(ok, theme::white(), 34);
-    ui::labelIn(c, "Got it", ok, Weight::Bold, 24, theme::black(), Align::Center);
-  }
+  // 1C: once, the first time a channel plays (Settings › Help & info shows
+  // it again).
+  void drawTips(ui::Ctx& c) { drawGettingAround(c, app_.remoteKeys(), false, kHitTips); }
 
   uint32_t bannerFrom_ = 0, bannerUntil_ = 0, rowTouched_ = 0;
   std::string pendingFlip_;  // channel keys: the channel the banner shows, tuned once they stop
@@ -1211,6 +1302,11 @@ class PlayerScreen : public Screen {
   bool messageDone_ = false;
   uint32_t messageUntil_ = 0;
   mutable std::shared_ptr<const Listings> listings_;
+  float cardTop_ = kCardTop;        // the card this frame: a game's is lower
+  std::optional<GameBanner> game_;  // the game banner for gameFor_, if it's a game
+  std::string gameFor_;
+  time::Seconds gameAt_ = 0;
+  uint64_t gameBoard_ = 0;
 };
 
 }  // namespace

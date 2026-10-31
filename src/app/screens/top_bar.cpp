@@ -73,4 +73,11 @@ void buttons(ui::Ctx& c, int focused, bool filtered, int hitBase) {
   }
 }
 
+void filterButton(ui::Ctx& c, ui::Rect r, bool focused, bool filtered, int hit) {
+  c.hit(r, hit);
+  c.g.fill(r, focused ? theme::white() : theme::white(0.1f), r.h * 0.5f);
+  iconFilter(c.g, r.x + r.w * 0.5f, r.y + r.h * 0.5f + 1, focused ? theme::black() : theme::white());
+  if (filtered) c.g.fill({r.x + r.w - 12, r.y - 2, 12, 12}, theme::hex(theme::kNowLine), 6);
+}
+
 }  // namespace marigold::app::top_bar

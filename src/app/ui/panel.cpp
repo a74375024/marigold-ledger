@@ -9,6 +9,9 @@ namespace {
 constexpr int kNoteLines = 6;
 constexpr int kNotePx = 18, kNoteTitlePx = 21;
 constexpr float kNoteLineH = 24;
+
+// The second line: the reason a dimmed row can't be used, else its detail.
+const std::string& secondLine(const PanelItem& it) { return !it.enabled && !it.why.empty() ? it.why : it.detail; }
 }  // namespace
 
 float ListPanel::rowHeight(Ctx& c, const PanelItem& it, float width) const {
@@ -22,7 +25,7 @@ float ListPanel::rowHeight(Ctx& c, const PanelItem& it, float width) const {
       if (!it.detail.empty()) lines += c.t.wrap(it.detail, Weight::Regular, kNotePx, width - 16, kNoteLines).size();
       return std::max(44.0f, static_cast<float>(lines) * kNoteLineH + 20);
     }
-    default: return it.detail.empty() ? theme::kPanelRowHeight : 84;
+    default: return secondLine(it).empty() ? theme::kPanelRowHeight : 84;
   }
 }
 
@@ -57,6 +60,9 @@ void ListPanel::focusIndex(int i) {
 }
 
 bool ListPanel::key(Key k) {
+  int hovered = k == Key::Ok ? hoveredChoice_ : -1;
+  hoveredChoice_ = -1;
+  followFocus_ = true;
   if (k == Key::Up || k == Key::Down) {
     int step = k == Key::Up ? -1 : 1;
     for (int i = focus_ + step; i >= 0 && i < static_cast<int>(items.size()); i += step) {
@@ -74,6 +80,7 @@ bool ListPanel::key(Key k) {
     int n = static_cast<int>(it.choices.size());
     int next = k == Key::Left ? std::max(0, it.choice - 1)
                : k == Key::Right ? std::min(n - 1, it.choice + 1)
+               : hovered >= 0 && hovered < n ? hovered  // a click on one of them
                                  : (it.choice + 1) % n;
     if (next != it.choice && it.enabled) {
       it.choice = next;
@@ -89,8 +96,22 @@ bool ListPanel::key(Key k) {
 }
 
 void ListPanel::hover(int id) {
-  int i = id - kHitBase;
-  if (i >= 0 && i < static_cast<int>(items.size()) && items[static_cast<size_t>(i)].focusable()) focus_ = i;
+  int i = id - kHitBase, choice = -1;
+  if (i >= kChoiceHits) {
+    choice = (i - kChoiceHits) % 8;
+    i = (i - kChoiceHits) / 8;
+  }
+  if (i >= 0 && i < static_cast<int>(items.size()) && items[static_cast<size_t>(i)].focusable()) {
+    focus_ = i;
+    hoveredChoice_ = choice;
+    // The rows stay where they are under the pointer.
+    followFocus_ = false;
+  }
+}
+
+void ListPanel::scrollBy(float dy) {
+  followFocus_ = false;
+  scroll_ = std::clamp(scroll_ + dy, 0.0f, maxScroll_);
 }
 
 void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
@@ -116,11 +137,12 @@ void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
     }
     total += h;
   }
-  if (focus_ >= 0) {
+  if (focus_ >= 0 && followFocus_) {
     if (focusTop - 70 < scroll_) scroll_ = std::max(0.0f, focusTop - 70);
     if (focusTop + focusH + 70 > scroll_ + list.h) scroll_ = focusTop + focusH + 70 - list.h;
   }
-  scroll_ = std::clamp(scroll_, 0.0f, std::max(0.0f, total - list.h));
+  maxScroll_ = std::max(0.0f, total - list.h);
+  scroll_ = std::clamp(scroll_, 0.0f, maxScroll_);
 
   c.g.pushClip(list);
   float ry = list.y - scroll_;
@@ -187,6 +209,8 @@ void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
         for (size_t k = 0; k < it.choices.size(); ++k) {
           float w = textWidth(c, it.choices[k], Weight::Bold, 18) + 28;
           Rect seg{sx, box.y + 4, w, 36};
+          if (k < 8 && it.enabled)
+            c.hit({seg.x, row.y, seg.w, row.h}, hitBase + kChoiceHits + static_cast<int>(i * 8 + k));
           bool on = static_cast<int>(k) == it.choice;
           if (on) c.g.fill(seg, focused ? theme::black() : theme::white(0.22f), 9);
           Color ink = on ? theme::white() : (focused ? theme::black(0.55f) : theme::white(0.6f));
@@ -209,10 +233,13 @@ void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
       x += 22;
     }
     float tw = right - x;
-    float titleY = it.detail.empty() ? row.y + (row.h - c.t.lineHeight(Weight::Bold, 25)) * 0.5f : row.y + 12;
+    const std::string& second = secondLine(it);
+    float titleY = second.empty() ? row.y + (row.h - c.t.lineHeight(Weight::Bold, 25)) * 0.5f : row.y + 12;
     float titleW = label(c, it.title, x, titleY, Weight::Bold, 25, fg, tw);
     if (it.coast >= 0) coastChip(c, it.coast == 1, x + titleW + 12, titleY + 5, 13);
-    if (!it.detail.empty()) label(c, it.detail, x, row.y + 46, Weight::Medium, 19, sub, tw);
+    if (!it.tag.empty()) chip(c, it.tag, x + titleW + 12, titleY + 3, 14, theme::hex(theme::kNew), theme::white());
+    if (&second == &it.why) label(c, second, x, row.y + 46, Weight::Medium, 17, theme::hex(theme::kWarning), tw);
+    else if (!second.empty()) label(c, second, x, row.y + 46, Weight::Medium, 19, sub, tw);
   }
   c.g.popClip();
   if (!hint.empty())

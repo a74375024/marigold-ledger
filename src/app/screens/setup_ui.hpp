@@ -61,7 +61,4 @@ struct Building {
 };
 void building(ui::Ctx& c, ui::Rect area, const engine::LoadProgress& p, Building& state, bool large = true);
 
-// 48213 -> "48,213"
-std::string grouped(size_t n);
-
 }  // namespace marigold::app::setup_ui

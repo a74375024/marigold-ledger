@@ -1,8 +1,9 @@
-// Options › Help › Export Channel Report / Export Playback Log / Export Live
-// Events Report (tvOS
-// LiveTVExportView). The TV serves the file on the home network for 10
-// minutes: a QR code and a link to open on a phone or computer on the same
-// Wi-Fi. The link is shown on screen only, never logged.
+// Settings › Help & info › Send a report to your phone: the channel report,
+// the playback log or the Live Events report (tvOS LiveTVExportView;
+// clearing the log is on that page). The TV serves the file on the home
+// network for 10 minutes: a QR code and a link to open on a phone or
+// computer on the same Wi-Fi. The link is shown on screen only, never
+// logged.
 #include <algorithm>
 #include <cmath>
 #include <optional>
@@ -72,7 +73,7 @@ class ExportScreen : public Screen {
     c.g.fill(card, theme::hex(0x1C1F25, 0.98f), 34);
     float x = card.x + 60, y = card.y + 50, w = card.w - 120;
     bool log = kind_ == ExportKind::PlaybackLog, events = kind_ == ExportKind::LiveEvents;
-    ui::label(c, log ? "Export Playback Log" : events ? "Export Live Events Report" : "Export Channel Report", x, y,
+    ui::label(c, log ? "Playback log" : events ? "Live Events report" : "Channel report", x, y,
               Weight::Bold, 40, theme::white(), w);
     y += 64;
     std::string about = log ? "What happened each time a channel was tuned: feeds tried, stalls, reconnects and errors "
@@ -132,10 +133,9 @@ class ExportScreen : public Screen {
  private:
   std::vector<std::string> buttonTitles() const {
     std::vector<std::string> out;
-    if (status_.state == platform::LanShare::State::Ready) out.push_back("Stop Sharing");
-    else if (!building_) out.push_back("Share Again");
+    if (status_.state == platform::LanShare::State::Ready) out.push_back("Stop sharing");
+    else if (!building_) out.push_back("Share again");
     out.push_back("Done");
-    if (kind_ == ExportKind::PlaybackLog && !building_) out.push_back("Clear Log");
     return out;
   }
 
@@ -145,16 +145,11 @@ class ExportScreen : public Screen {
     const std::string& t = titles[static_cast<size_t>(button_)];
     if (t == "Done") {
       app_.nav().pop();
-    } else if (t == "Stop Sharing") {
+    } else if (t == "Stop sharing") {
       share_.stop();
       qr_.reset();
-    } else if (t == "Share Again") {
+    } else if (t == "Share again") {
       start();
-    } else if (t == "Clear Log") {
-      share_.stop();
-      qr_.reset();
-      app_.playback().clearLog();
-      app_.toast("Playback log cleared");
     }
     button_ = std::min(button_, static_cast<int>(buttonTitles().size()) - 1);
   }

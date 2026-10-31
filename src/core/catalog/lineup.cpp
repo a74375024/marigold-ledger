@@ -180,7 +180,7 @@ const MarketChoice* LineupPrefs::home() const {
 bool LineupPrefs::operator==(const LineupPrefs& o) const {
   return configured == o.configured && markets == o.markets && categories == o.categories &&
          requireGuide == o.requireGuide && suggested == o.suggested && added == o.added &&
-         removed == o.removed && showHidden == o.showHidden && builtAt == o.builtAt &&
+         removed == o.removed && builtAt == o.builtAt &&
          countries == o.countries && homeMarket == o.homeMarket && coast == o.coast;
 }
 
@@ -294,7 +294,6 @@ std::string toJson(const LineupPrefs& prefs) {
   v.set("suggested", stringArray(prefs.suggested));
   v.set("added", stringArray(prefs.added));
   v.set("removed", stringArray(prefs.removed));
-  v.set("showHidden", prefs.showHidden);
   if (prefs.builtAt) v.set("builtAt", *prefs.builtAt);
   v.set("countries", stringArray(prefs.countries));
   if (prefs.homeMarket) v.set("homeMarket", *prefs.homeMarket);
@@ -330,7 +329,6 @@ std::optional<LineupPrefs> lineupPrefsFromJson(std::string_view textIn) {
   if (!readStrings(v, "suggested", p.suggested)) return std::nullopt;
   if (!readStrings(v, "added", p.added)) return std::nullopt;
   if (!readStrings(v, "removed", p.removed)) return std::nullopt;
-  if (!readBool(v, "showHidden", p.showHidden)) return std::nullopt;
   if (v.has("builtAt") && !v["builtAt"].isNull()) {
     if (!v["builtAt"].isNumber()) return std::nullopt;
     p.builtAt = v["builtAt"].asInt();

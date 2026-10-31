@@ -1,6 +1,6 @@
 // Subtitles: the panel from the player's Aa button (Off or a language the
-// stream carries, and the style), Caption style, and the Options page.
-// Picking a language turns subtitles on for every channel of the same
+// stream carries, and the style). Settings › Watching has the same choices
+// (settings_rows.cpp). Picking a language turns subtitles on for every channel of the same
 // language (English-language or Spanish-language) until Off is picked.
 #include <algorithm>
 
@@ -27,17 +27,6 @@ void change(App& app, const std::function<void(Settings&)>& edit) {
   edit(s);
   app.store().setSettings(s);
   app.playback().subtitlesChanged();
-}
-
-std::string styleSummary(const Settings& s) {
-  return std::string(kSizes[std::clamp(s.subtitleSize, 0, 3)]) + " \xc2\xb7 " + kLooks[std::clamp(s.subtitleLook, 0, 2)];
-}
-
-ui::PanelItem styleRow(App& app) {
-  ui::PanelItem it{ui::PanelItem::Kind::Chevron, "Caption style"};
-  it.value = styleSummary(app.store().settings());
-  it.select = [&app] { app.nav().push(makeCaptionStyle(app)); };
-  return it;
 }
 
 ui::PanelItem choice(const std::string& title, std::vector<std::string> choices, int on, std::function<void(int)> pick) {
@@ -116,46 +105,6 @@ std::unique_ptr<Screen> makeSubtitles(App& app) {
   });
   panel->liveRows = true;  // languages appear as the stream shows them
   return panel;
-}
-
-std::unique_ptr<Screen> makeCaptionStyle(App& app) {
-  return page(app, [&app](ui::ListPanel& p) {
-    p.subtitle = "SUBTITLES";
-    p.title = "Caption style";
-    for (ui::PanelItem& it : styleItems(app)) p.items.push_back(std::move(it));
-    if (!Playback::playerDrawsSubtitles())
-      p.items.push_back(ui::PanelItem::note(
-          "Sentence case turns live captions in capitals into normal sentences. It's easier to read but can get names wrong."));
-    p.hint = "Left and right change it";
-  });
-}
-
-std::unique_ptr<Screen> makeSubtitleSettings(App& app) {
-  return page(app, [&app](ui::ListPanel& p) {
-    const Settings& set = app.store().settings();
-    p.subtitle = "OPTIONS";
-    p.title = "Subtitles";
-    ui::PanelItem on{ui::PanelItem::Kind::Toggle, "English-language channels"};
-    on.detail = set.subtitleLanguage.empty() ? "On for every channel that has them" : "In " + set.subtitleLanguage;
-    on.on = set.subtitles;
-    on.select = [&app] { change(app, [](Settings& s) { s.subtitles = !s.subtitles; }); };
-    p.items.push_back(on);
-    ui::PanelItem es{ui::PanelItem::Kind::Toggle, "Spanish-language channels"};
-    es.detail = set.subtitleLanguageEs.empty() ? "Univision, Telemundo and the rest" : "In " + set.subtitleLanguageEs;
-    es.on = set.subtitlesEs;
-    es.select = [&app] { change(app, [](Settings& s) { s.subtitlesEs = !s.subtitlesEs; }); };
-    p.items.push_back(es);
-    p.items.push_back(ui::PanelItem::note("Pick a language from Aa in the player. The TV's own captions setting also turns them on and off."));
-    p.items.push_back(styleRow(app));
-  });
-}
-
-std::string subtitleSummary(App& app) {
-  const Settings& s = app.store().settings();
-  if (s.subtitles && s.subtitlesEs) return "On";
-  if (s.subtitles) return "English channels";
-  if (s.subtitlesEs) return "Spanish channels";
-  return "Off";
 }
 
 }  // namespace marigold::app

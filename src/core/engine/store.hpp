@@ -80,7 +80,7 @@ struct AccountSummary {
   std::string id;
   std::string name;   // the name the person gave it
   std::string kind;   // "Xtream", "Emby", "M3U playlist"
-  std::string state;  // "1,240 channels", "Couldn't sign in"...
+  std::string state;  // "Signed in", "Couldn't sign in" (never a channel count)
 };
 
 // Fields of the add-account form. Passwords and playlist links go to the
@@ -107,7 +107,7 @@ struct GroupSummary {
   bool hidden = false;
 };
 
-// Options › Guide Listings.
+// Settings › Guide › Guide listings, and Help & info › Status.
 struct GuideListingsStatus {
   struct Provider {
     std::string name, line;
@@ -132,7 +132,7 @@ struct ProgramHit {
 struct Settings {
   bool previewChannels = true;  // the guide corner plays the focused channel
   bool scheduleEnabled = true;  // Live Events: game schedule and scores
-  bool showUnwatchable = true;  // games not in my channels
+  bool showUnwatchable = true;  // games not on my channels
   bool showScores = true;
   bool allChannelsTab = false;
   bool preferTS = true;         // Xtream: MPEG-TS rather than HLS
@@ -282,6 +282,11 @@ class Store {
   bool isEvent(const std::string& id) const;
   const EventTile* eventTile(const std::string& id) const;
   WhereToWatch whereToWatch(const std::string& eventId) const;
+  // The player's game banner for what plays: a game (its event id), or a
+  // guide channel showing a game the board matched, by the clock now.
+  // Nullopt for anything else (the channel's usual banner). Only what the
+  // board holds already: nothing is asked for.
+  std::optional<GameBanner> gameBanner(const std::string& entryId, time::Seconds now) const;
   // How a tile came about, in plain lines (the preview tool's detail card):
   // the schedule game or the channel title, its live status, its feeds.
   std::vector<std::string> eventNotes(const std::string& eventId) const;
@@ -310,7 +315,7 @@ class Store {
   std::map<std::string, int> sportSuggestions() const;
   void refreshSchedule();
 
-  // Options pages (store_options.cpp).
+  // Settings pages (store_options.cpp).
   std::vector<GroupSummary> groups() const;
   void setGroupHidden(const std::string& name, bool hidden);
   void setLineupCountries(const std::set<std::string>& countries);
@@ -327,9 +332,10 @@ class Store {
   std::vector<std::string> coastPairs() const;
   catalog::Coast channelCoast(const std::string& entryId) const;
   void setChannelCoast(const std::string& entryId, catalog::Coast coast);
-  // Home city for Live Events (only with more than one market).
+  // Home city for Live Events (a choice only with more than one market).
   std::string homeMarketName() const;
   void cycleHomeMarket();
+  void setHomeMarket(const std::string& name);
   GuideListingsStatus guideListings() const;
   void setGuideShard(const std::string& id, bool on);
   void refreshListings();
@@ -358,10 +364,11 @@ class Store {
   std::optional<std::vector<Feed>> cameraFeeds(const std::string& channelId, const std::vector<std::string>& alternates,
                                                const std::string& playingChannel) const;
 
-  // Options › Help › Export Channel Report: the CSV, built on a worker.
+  // Settings › Help & info › Send a report: the channel report CSV, built
+  // on a worker.
   // `done` runs on the UI thread (null on failure).
   void buildChannelReport(std::function<void(std::shared_ptr<std::string>)> done);
-  // Help › Export Live Events Report: every event slot of the provider's
+  // The Live Events report: every event slot of the provider's
   // groups, what it was read as and what became of it (a tile, or why not).
   void buildLiveEventsReport(std::function<void(std::shared_ptr<std::string>)> done);
   // Live Events lines for the playback log since the last call (opened,

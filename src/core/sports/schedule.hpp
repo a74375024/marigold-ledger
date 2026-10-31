@@ -208,7 +208,7 @@ class Schedule {
   // since is missing), and not while backing off after failures. True when
   // a fetch began.
   bool refreshIfNeeded(const Context& ctx);
-  // Options -> Refresh schedule: every league, now.
+  // Settings › Live Events › Refresh schedule: every league, now.
   bool refreshNow(const Context& ctx);
   // My Sports changed (or a sport newly seen): look up newly picked
   // leagues (and the schools for college). During a fetch it waits for it.

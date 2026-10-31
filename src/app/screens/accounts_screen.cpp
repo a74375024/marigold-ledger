@@ -2,7 +2,8 @@
 // playlist). Text goes in with the TV keyboard, or the form is filled in on
 // a phone (makePhoneSignIn). Passwords show as dots and, like playlist
 // links, are kept in the secrets file only. In first-run setup this is the
-// remote's way through the Provider step.
+// remote's way through the Provider step; from Settings › Providers it is
+// the form alone (makeAddProvider).
 #include <algorithm>
 
 #include "app/app.hpp"
@@ -21,8 +22,9 @@ namespace theme = ui::theme;
 
 class AccountsScreen : public Screen {
  public:
-  AccountsScreen(App& app, bool firstRun) : Screen(app), firstRun_(firstRun) {
-    if (firstRun_ || app.store().accounts().empty()) startForm();
+  AccountsScreen(App& app, bool firstRun, bool formOnly = false)
+      : Screen(app), firstRun_(firstRun), formOnly_(formOnly) {
+    if (firstRun_ || formOnly_ || app.store().accounts().empty()) startForm();
   }
 
   void shown() override { list_ = app_.store().accounts(); }
@@ -74,28 +76,9 @@ class AccountsScreen : public Screen {
     }
   }
 
-  void accountMenu(const AccountSummary& a) {
-    App& app = app_;
-    std::string id = a.id, name = a.name;
-    app_.nav().push(std::make_unique<PanelScreen>(app_, PanelScreen::Side::Trailing, 640.0f,
-                                                  [&app, id, name](ui::ListPanel& p) {
-      p.title = name;
-      ui::PanelItem reload{ui::PanelItem::Kind::Action, "Reload now"};
-      reload.select = [&app] {
-        app.store().refreshAll();
-        app.nav().pop();
-      };
-      p.items.push_back(reload);
-      ui::PanelItem remove{ui::PanelItem::Kind::Action, "Remove this provider"};
-      remove.detail = "Its channels leave the guide; My Lineup keeps the rest";
-      remove.select = [&app, id] {
-        app.store().removeAccount(id);
-        app.nav().pop();
-        app.toast("Provider removed");
-      };
-      p.items.push_back(remove);
-    }));
-  }
+  // The same page as Settings › Providers › the provider (Remove asks
+  // first; Reload channels and listings is in Settings › Providers).
+  void accountMenu(const AccountSummary& a) { app_.nav().push(makeProvider(app_, a.id)); }
 
   void drawList(ui::Ctx& c) {
     float x = 120, y = 80;
@@ -116,7 +99,7 @@ class AccountsScreen : public Screen {
                   f ? theme::black(0.6f) : theme::white(0.6f), 900);
       } else {
         bool phone = i > list_.size();
-        ui::labelIn(c, phone ? "+  Add from your phone" : "+  Add a Provider", {r.x + 32, r.y, r.w - 64, r.h},
+        ui::labelIn(c, phone ? "+  Add from your phone" : "+  Add a provider", {r.x + 32, r.y, r.w - 64, r.h},
                     Weight::Bold, 27, f ? theme::black() : theme::white());
         if (phone)
           ui::labelIn(c, "Type the server and password on your phone", {r.x + 32, r.y, r.w - 64, r.h}, Weight::Medium,
@@ -189,6 +172,7 @@ class AccountsScreen : public Screen {
           app_.closeKeyboard();
           return true;
         }
+        if (formOnly_) return false;  // back to Settings
         if (!list_.empty() || !app_.store().accounts().empty()) {
           form_ = false;
           list_ = app_.store().accounts();
@@ -226,6 +210,9 @@ class AccountsScreen : public Screen {
       self->data_.password.clear();
       if (first) {
         app.nav().replaceAll(makeLineupSetup(app, true));
+      } else if (self->formOnly_) {
+        app.nav().pop();
+        app.toast("Provider added");
       } else {
         self->form_ = false;
         self->list_ = app.store().accounts();
@@ -246,10 +233,10 @@ class AccountsScreen : public Screen {
       setup_ui::stepBar(c, setup_ui::Step::Provider);
       setup_ui::keys(c, app_.remoteKeys(), false);
     }
-    ui::label(c, firstRun_ ? "Add your provider" : "Add a Provider", x, y, Weight::Bold, 52, theme::white());
+    ui::label(c, firstRun_ ? "Add your provider" : "Add a provider", x, y, Weight::Bold, 52, theme::white());
     y += 84;
     ui::paragraph(c,
-                  firstRun_ ? "Add the provider your channels come from. You can add more later in Options."
+                  firstRun_ ? "Add the provider your channels come from. You can add more later in Settings."
                             : "Channels from every provider you add are merged into one guide.",
                   x, y, 1200, Weight::Regular, 24, theme::white(0.65f), 2);
     y += 86;
@@ -282,7 +269,12 @@ class AccountsScreen : public Screen {
         ui::label(c, fieldTitle(row), r.x + 30, r.y + 12, Weight::Medium, 18, sub);
         std::string* v = field(row);
         std::string shown = v ? *v : std::string();
-        if (row == 4 && !shown.empty()) shown = std::string(std::min<size_t>(shown.size(), 24), '*');
+        if (row == 4 && !shown.empty()) {
+          // Dots, never the password.
+          std::string dots;
+          for (size_t i = 0; i < std::min<size_t>(shown.size(), 24); ++i) dots += "\xe2\x80\xa2";
+          shown = dots;
+        }
         if (row == 2 && !shown.empty() && editing_ != row) shown = maskLink(shown);
         if (shown.empty()) shown = editing_ == row ? "" : "Press OK to type";
         ui::label(c, shown, r.x + 30, r.y + 40, Weight::Bold, 26, v && !v->empty() ? fg : sub, r.w - 60);
@@ -307,6 +299,7 @@ class AccountsScreen : public Screen {
   using Color = ui::Color;
 
   bool firstRun_;
+  bool formOnly_;
   bool form_ = false;
   bool busy_ = false;
   int focus_ = 0;
@@ -322,5 +315,7 @@ class AccountsScreen : public Screen {
 std::unique_ptr<Screen> makeAccounts(App& app, bool firstRun) {
   return std::make_unique<AccountsScreen>(app, firstRun);
 }
+
+std::unique_ptr<Screen> makeAddProvider(App& app) { return std::make_unique<AccountsScreen>(app, false, true); }
 
 }  // namespace marigold::app

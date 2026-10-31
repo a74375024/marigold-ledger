@@ -1,7 +1,7 @@
 # M1: My Lineup and the guide
 
 Install the `.ipk` the same way as M0 (`docs/m0-test.md`). The M0 test screen
-is still there: Options (blue key) › Help › Remote and video test.
+is still there: Settings › Help & info › Diagnostics.
 
 ## First run
 
@@ -11,7 +11,7 @@ is still there: Options (blue key) › Help › Remote and video test.
    - Xtream: server address, user name, password.
    - Emby / Jellyfin: server address, user name, password.
    - M3U: the playlist link, optionally a guide link.
-2. The guide opens and loads the channels. Big lists show "Sorting N
+2. The guide opens and loads the channels. Big lists show "Sorting your
    channels…" for a few seconds the first time; later launches open from
    the list saved on the TV and refresh in the background.
 
@@ -35,7 +35,7 @@ file. They never appear on screen, in the log or in a channel id.
 | Backups | Watch a channel with several feeds whose first feed is broken | It moves to the next feed by itself; "Switched to a backup feed" at the top right |
 | Sources (red) | In the guide or the player | Every feed with quality, East/West and the provider's name; picking one switches |
 | My Lineup (green) | On any channel | Toast "added to / removed from My Lineup" |
-| Options (blue) | Toggle Preview channels, All Channels tab | The guide follows at once |
+| Quick settings (blue) | Toggle Preview channels, All Channels tab | The guide follows at once |
 | Number keys | Type a local station's number, or a lineup number | It tunes after 1.5 seconds |
 | Search | Search button (top right), type part of a name | Results as you type; OK jumps to the channel |
 | Long OK | Hold OK on a channel | Watch / Add to My Lineup / Choose Feed / Favorites |
@@ -48,6 +48,6 @@ file. They never appear on screen, in the log or in a channel id.
 - Xtream short guide: only for rows on screen with no full guide, 25 rows per
   batch, at most four batches at once.
 - Xtream full guide: about every 12 hours, four seconds after start.
-- Outside listings (Options › Fill in missing listings): about once a day,
+- Outside listings (Settings › Guide › Guide listings › Fill in missing listings): about once a day,
   eight seconds after start, asking the servers to skip unchanged files.
 - Logos: once per logo, then kept on the TV; only for rows drawn on screen.

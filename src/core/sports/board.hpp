@@ -406,7 +406,7 @@ struct WhereSection {
 struct WherePanel {
   std::string title;
   std::vector<WhereSection> sections;
-  std::optional<std::string> moreStations;  // "3 more stations in your channels are showing it"
+  std::optional<std::string> moreStations;  // "More stations in your channels are showing it"
   std::string hint;
 };
 // `feedSummary`: extra detail for a provider feed (the store's), optional.

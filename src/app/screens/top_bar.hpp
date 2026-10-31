@@ -30,5 +30,9 @@ void preview(ui::Ctx& c, const Playback& p, const std::string& logoUrl, const st
 // button's hit id is `hitBase` + its index. A red dot on the filter while
 // one is set.
 void buttons(ui::Ctx& c, int focused, bool filtered, int hitBase);
+// The small round filter button of the left rail's layout (Build 112),
+// beside the guide's "Now ▼" and on Live Events' first row: 40 px, a red dot
+// while a filter is set.
+void filterButton(ui::Ctx& c, ui::Rect r, bool focused, bool filtered, int hit);
 
 }  // namespace marigold::app::top_bar

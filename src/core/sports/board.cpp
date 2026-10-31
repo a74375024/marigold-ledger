@@ -1850,8 +1850,9 @@ WherePanel wherePanel(const Board& board, const SportsEvent& event, const Channe
   if (!english.empty()) section("Your channels", english, event.id);
   if (event.moreStations && *event.moreStations > 0) {
     int more = *event.moreStations;
-    panel.moreStations = more == 1 ? std::string("1 more station in your channels is showing it")
-                                   : std::to_string(more) + " more stations in your channels are showing it";
+    // Never how many: the product shows no channel counts.
+    panel.moreStations = more == 1 ? std::string("Another station in your channels is showing it")
+                                   : std::string("More stations in your channels are showing it");
   }
   if (!spanish.empty()) section("Spanish", spanish, event.id);
   if (!feeds.empty()) section("Event feeds from your provider", feeds, event.id);

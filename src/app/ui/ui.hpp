@@ -74,7 +74,7 @@ struct Ctx {
   const time::Zone* zone = nullptr;
   std::vector<HitRegion>* hits = nullptr;
   bool pointerActive = false;
-  bool clock24 = false;  // Options › Clock
+  bool clock24 = false;  // Settings › Guide › Clock
   // A panel or card is drawn over this screen: it draws only what belongs
   // under panels (the player: the picture and captions, not its banner).
   bool covered = false;
@@ -119,8 +119,9 @@ float keyCap(Ctx& c, float x, float y, float h, const std::vector<std::string>& 
 // The colour of a colour key in the bars.
 uint32_t keyColour(hints::Colour colour);
 // The bottom key bar: the remote's keys for this screen and a line at the
-// right (core/input/hints.hpp decides which).
-void keyBar(Ctx& c, const hints::Bar& bar);
+// right (core/input/hints.hpp decides which). `left`: where it starts (the
+// guide's and Live Events' move with their content, right of the left rail).
+void keyBar(Ctx& c, const hints::Bar& bar, float left = theme::kMarginX);
 
 // A small spinner centred at (x, y).
 void spinner(Ctx& c, float x, float y, float radius, Color col = theme::white(0.8f));

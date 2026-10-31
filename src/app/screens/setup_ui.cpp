@@ -146,15 +146,6 @@ int nextLetter(const std::vector<std::string>& names, int from, int step) {
   return from;
 }
 
-std::string grouped(size_t n) {
-  std::string digits = std::to_string(n), out;
-  for (size_t i = 0; i < digits.size(); ++i) {
-    if (i > 0 && (digits.size() - i) % 3 == 0) out += ',';
-    out += digits[i];
-  }
-  return out;
-}
-
 void building(ui::Ctx& c, Rect area, const engine::LoadProgress& p, Building& st, bool large) {
   using Stage = engine::LoadProgress::Stage;
   // The bar's share of each step: downloading, recognizing, local stations
@@ -208,7 +199,6 @@ void building(ui::Ctx& c, Rect area, const engine::LoadProgress& p, Building& st
   std::string doing = p.stage == Stage::Download  ? "Getting your channel list from your provider"
                       : p.stage == Stage::Games   ? "Finding your local stations and games"
                       : p.stage == Stage::Done    ? "Opening the guide"
-                      : p.channels > 0            ? "Recognizing " + grouped(p.channels) + " channels"
                                                   : "Recognizing your channels";
   ui::label(c, doing, area.x, y, Weight::Regular, px(24), theme::white(0.65f), area.w, Align::Center);
   y += 56 * scale;

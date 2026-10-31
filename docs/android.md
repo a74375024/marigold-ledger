@@ -40,7 +40,7 @@ supported. Both 32-bit and 64-bit ARM are in the APK.
 
 The Fire TV remote has no colour, number or CH keys, so on a Fire TV the
 key hints on screen show the keys above (☰, ⏯, ⏪ ⏩) instead of the LG
-colour keys. Options and Search are the icons at the top right of the
+colour keys. Settings and Search are the icons at the top right of the
 guide (Up to the tabs, then Right). The LG app is unchanged.
 
 ### Any other Android TV stick or box
@@ -49,7 +49,7 @@ The app runs on any Android TV device (Android 7 or newer; Chromecast with
 Google TV, Nvidia Shield, Onn and Xiaomi boxes, TVs with Android TV
 built in). Their remotes differ, so the hints start with only what every
 remote has: hold OK for a channel's actions, Up for Live Events, Search
-and Options, Down then OK in the player for Sources, Back for the guide.
+and Settings, Down then OK in the player for Sources, Back for the guide.
 Every action is reachable that way, with the D-pad alone.
 
 The first time a key is pressed that the remote has (Menu, play/pause,
@@ -92,7 +92,7 @@ What differs on Android:
 - **Text:** the same Inter Display fonts, drawn by Android (missing glyphs,
   like emoji, fall back to the system's fonts).
 - **Keyboard:** a one-line box with the Fire TV's on-screen keyboard.
-- **Diagnostics** (Options › Help) shows the system, GPU, video state and
+- **Diagnostics** (Settings › Help & info) shows the system, GPU, video state and
   the log; the TV's key test screen is webOS only.
 - **Log:** the same file in the app's data, and logcat (tag `marigold`),
   redacted the same way.

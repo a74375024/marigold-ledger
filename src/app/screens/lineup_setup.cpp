@@ -2,9 +2,10 @@
 //   1. Area: "Where do you watch?": TV markets, so their local stations join;
 //   2. Languages: the countries and languages channels are kept from;
 //   3. Channels: kinds of channels, "Only channels with a guide";
-// then "My Lineup is ready" with the counts per kind. In first-run setup
-// these are steps 2-4 of 7 and Channels carries on to My Sports instead.
-// Nothing is saved until the last step.
+// then "My Lineup is ready" with its kinds of channels (never how many). In
+// first-run setup these are steps 2-4 of 7 and Channels carries on to My
+// Sports instead. Nothing is saved until the last step. Settings › My
+// Lineup opens one step on its own (makeLineupStep), which saves as you go.
 #include <algorithm>
 #include <map>
 #include <set>
@@ -32,9 +33,13 @@ constexpr int kHitButton = 10;  // + index
 
 class LineupSetup : public Screen {
  public:
-  LineupSetup(App& app, bool onboarding) : Screen(app), onboarding_(onboarding), draft_(app.store().lineupPrefs()) {
+  enum class Step { Market, Languages, Channels, Summary };
+
+  LineupSetup(App& app, bool onboarding, std::optional<Step> single = std::nullopt)
+      : Screen(app), onboarding_(onboarding), single_(single.has_value()), draft_(app.store().lineupPrefs()) {
     for (const catalog::MarketChoice& m : draft_.markets) selected_.push_back(m.name);
     initial_ = draft_;
+    if (single) step_ = *single;
     std::weak_ptr<bool> alive = alive_;
     app_.store().loadMarkets([this, alive](TvMarkets markets) {
       if (alive.expired()) return;
@@ -83,6 +88,7 @@ class LineupSetup : public Screen {
           press(0);
         } else if (focusList_) {
           list_.key(Key::Ok);
+          if (single_) save();
           build();
         } else {
           press(button_);
@@ -93,7 +99,7 @@ class LineupSetup : public Screen {
           app_.closeKeyboard();
           return true;
         }
-        if (step_ == Step::Channels || step_ == Step::Languages) {
+        if (!single_ && (step_ == Step::Channels || step_ == Step::Languages)) {
           go(step_ == Step::Channels ? Step::Languages : Step::Market);
           return true;
         }
@@ -149,7 +155,7 @@ class LineupSetup : public Screen {
     }
     if (step_ == Step::Summary && !summaryReady_) {
       // The lineup is worked out on a worker; the summary shows meanwhile,
-      // its counts as placeholders, and waits for it to start watching.
+      // its kinds as placeholders, and waits for it to start watching.
       auto ch = app_.store().channels();
       if (ch->version != builtFrom_ && ch->lineupConfigured) {
         summaryReady_ = true;
@@ -195,8 +201,6 @@ class LineupSetup : public Screen {
   }
 
  private:
-  enum class Step { Market, Languages, Channels, Summary };
-
   float bottom() const { return onboarding_ ? setup_ui::kContentBottom : 990; }
 
   setup_ui::Step stepOf() const {
@@ -207,11 +211,14 @@ class LineupSetup : public Screen {
 
   std::string kicker() const {
     if (onboarding_) return setup_ui::kicker(stepOf());
+    if (single_) return "SETTINGS \xc2\xb7 MY LINEUP";
     int n = step_ == Step::Market ? 1 : step_ == Step::Languages ? 2 : 3;
     return "MY LINEUP \xc2\xb7 STEP " + std::to_string(n) + " OF 3";
   }
 
   std::string heading() const {
+    if (single_) return step_ == Step::Market ? "Your area" : step_ == Step::Languages ? "Countries & languages"
+                                                                                      : "Kinds of channels";
     switch (step_) {
       case Step::Market: return "Where do you watch?";
       case Step::Languages: return "Countries & languages";
@@ -233,6 +240,11 @@ class LineupSetup : public Screen {
   }
 
   std::string note() const {
+    if (single_) return noteText() + " Changes save as you go.";
+    return noteText();
+  }
+
+  std::string noteText() const {
     switch (step_) {
       case Step::Market:
         return "Pick more than one if you split your time between places; the first is home for Live Events. Other "
@@ -242,13 +254,14 @@ class LineupSetup : public Screen {
       default: {
         catalog::Coast coast = catalog::resolveCoast(draft_);
         std::string feeds = coast == catalog::Coast::west ? "West" : coast == catalog::Coast::east ? "East" : "Both";
-        return "East/West premium feeds: " + feeds + " here. Change it any time in Options \xe2\x80\xba My Lineup.";
+        return "East/West premium feeds: " + feeds + " here. Change it any time in Settings \xe2\x80\xba My Lineup.";
       }
     }
   }
 
   std::vector<std::string> buttonTitles() const {
     if (step_ == Step::Summary) return {"Start Watching"};
+    if (single_) return {"Done"};
     if (onboarding_) return {"Continue", "Skip"};
     switch (step_) {
       case Step::Market: return {selected_.empty() ? "Skip Local Stations" : "Continue", "Not Now"};
@@ -267,7 +280,11 @@ class LineupSetup : public Screen {
 
   void press(int i) {
     if (step_ == Step::Summary) {
-      if (summaryReady_) app_.nav().pop();  // Start Watching waits for the counts
+      if (summaryReady_) app_.nav().pop();  // Start Watching waits for the lineup
+      return;
+    }
+    if (single_) {
+      app_.nav().pop();  // Done: every change is saved already
       return;
     }
     if (waiting()) return;  // Back still goes back
@@ -314,6 +331,53 @@ class LineupSetup : public Screen {
         summaryReady_ = false;
         focusList_ = false;
         button_ = 0;
+        return;
+      default:
+        return;
+    }
+  }
+
+  // A single page: the change saved at once. Areas are looked up (their
+  // stations) and the suggestions built again; countries only change what
+  // is included, as before; kinds of channels build the suggestions again.
+  void save() {
+    Store& s = app_.store();
+    catalog::LineupPrefs now = s.lineupPrefs();
+    switch (step_) {
+      case Step::Market: {
+        std::vector<std::string> names;
+        for (const catalog::MarketChoice& m : now.markets) names.push_back(m.name);
+        if (names == selected_) return;
+        if (s.status().phase == StoreStatus::Phase::Loading) {
+          // Suggestions are built from the sorted list: not while it sorts.
+          app_.toast("Your channels are still loading. Try again in a moment");
+          selected_ = names;
+          return;
+        }
+        busy_ = true;
+        std::weak_ptr<bool> alive = alive_;
+        s.resolveMarkets(selected_, now, [this, alive](std::vector<catalog::MarketChoice> choices) {
+          if (alive.expired()) return;
+          busy_ = false;
+          catalog::LineupPrefs p = app_.store().lineupPrefs();
+          p.markets = std::move(choices);
+          app_.store().buildLineup(p);
+          draft_ = app_.store().lineupPrefs();
+          app_.invalidate();
+        });
+        return;
+      }
+      case Step::Languages:
+        if (draft_.countries == now.countries) return;
+        s.setLineupCountries(draft_.countries);
+        draft_ = s.lineupPrefs();
+        return;
+      case Step::Channels:
+        if (draft_.categories == now.categories && draft_.requireGuide == now.requireGuide) return;
+        now.categories = draft_.categories;
+        now.requireGuide = draft_.requireGuide;
+        s.buildLineup(now);
+        draft_ = s.lineupPrefs();
         return;
       default:
         return;
@@ -421,7 +485,6 @@ class LineupSetup : public Screen {
       list_.items.push_back(ui::PanelItem::header("IN YOUR CHANNEL LIST"));
       for (const MarketSummary& m : s.countries(draft_.countries)) {
         ui::PanelItem it{ui::PanelItem::Kind::Check, m.name};
-        it.value = std::to_string(m.count) + " channels";
         it.on = m.on;
         std::string code = m.code;
         it.select = [self, code] {
@@ -429,6 +492,7 @@ class LineupSetup : public Screen {
           auto& set = self->draft_.countries;
           if (set.count(code)) {
             if (set.size() > 1) set.erase(code);
+            else if (self->single_) self->app_.toast("Keep at least one");
           } else {
             set.insert(code);
           }
@@ -440,9 +504,7 @@ class LineupSetup : public Screen {
       list_.items.push_back(ui::PanelItem::header("KINDS OF CHANNELS"));
       for (const CategorySummary& cat : s.categories(draft_)) {
         ui::PanelItem it{ui::PanelItem::Kind::Toggle, cat.title};
-        it.detail = cat.detail;
-        it.value = cat.key == "local" ? std::to_string(cat.suggested) + " stations"
-                                      : std::to_string(cat.suggested) + " of " + std::to_string(cat.total);
+        it.detail = cat.detail;  // never how many channels
         it.on = cat.on;
         auto category = catalog::categoryFromRaw(cat.key);
         it.select = [self, category] {
@@ -472,30 +534,29 @@ class LineupSetup : public Screen {
     ui::label(c, "My Lineup is ready", x, y, Weight::Bold, 56, theme::white());
     y += 90;
     ui::paragraph(c,
-                  std::to_string(ch->lineup.size()) + " channels, down from " + std::to_string(ch->rawChannels) +
-                      ". Press the green key on any channel to add or remove it; Options \xe2\x80\xba Set Up My Lineup "
-                      "changes the rest.",
+                  "Your channels, in one short guide. Press the green key on any channel to add or remove it; "
+                  "Settings \xe2\x80\xba My Lineup changes the rest.",
                   x, y, 1500, Weight::Regular, 26, theme::white(0.75f), 3);
     y += 120;
-    std::vector<std::pair<std::string, int>> bySection;
+    // Its kinds of channels, in guide order (never how many).
+    std::vector<std::string> sections;
     for (int i : ch->lineup) {
       const std::string& s = ch->all[static_cast<size_t>(i)].section;
-      if (bySection.empty() || bySection.back().first != s) bySection.push_back({s, 0});
-      ++bySection.back().second;
+      if (sections.empty() || sections.back() != s) sections.push_back(s);
     }
     float tx = x;
-    for (const auto& [title, count] : bySection) {
+    for (const std::string& title : sections) {
       Rect r{tx, y, 150, 150};
       c.g.fill(r, theme::white(0.08f), 18);
-      ui::label(c, std::to_string(count), r.x, r.y + 34, Weight::Bold, 34, theme::white(), r.w, Align::Center);
-      ui::paragraph(c, title, r.x + 10, r.y + 92, r.w - 20, Weight::Medium, 16, theme::white(0.8f), 2);
+      ui::label(c, "\xe2\x9c\x93", r.x, r.y + 30, Weight::Bold, 30, theme::hex(theme::kToggleOn), r.w, Align::Center);
+      ui::paragraph(c, title, r.x + 10, r.y + 86, r.w - 20, Weight::Medium, 18, theme::white(0.85f), 2);
       tx += 168;
       if (tx + 150 > gfx::kLayoutWidth - 80) break;
     }
     setup_ui::buttons(c, x, y + 210, buttonTitles(), 0, kHitButton);
   }
 
-  // The summary while the lineup is worked out: the same layout, the counts
+  // The summary while the lineup is worked out: the same layout, its kinds
   // as pulsing placeholders, a quiet line, Start Watching dimmed.
   void drawSummaryLoading(ui::Ctx& c) {
     float x = 110, y = 140;
@@ -522,6 +583,7 @@ class LineupSetup : public Screen {
   }
 
   bool onboarding_;
+  bool single_;  // one step on its own, saved as you go
   catalog::LineupPrefs draft_, initial_;
   Step step_ = Step::Market;
   TvMarkets markets_;
@@ -530,7 +592,7 @@ class LineupSetup : public Screen {
   bool touched_ = false;         // the viewer picked or unpicked an area
   bool waitingForList_ = false;  // countries or channels wait for the sorted list
   setup_ui::Building building_;
-  bool summaryReady_ = true;  // the summary's counts are in
+  bool summaryReady_ = true;  // the summary's lineup is in
   uint32_t pulseStep_ = 0;
   bool busy_ = false;
   bool searching_ = false;
@@ -548,6 +610,12 @@ class LineupSetup : public Screen {
 
 std::unique_ptr<Screen> makeLineupSetup(App& app, bool onboarding) {
   return std::make_unique<LineupSetup>(app, onboarding);
+}
+
+std::unique_ptr<Screen> makeLineupStep(App& app, LineupStep step) {
+  using Step = LineupSetup::Step;
+  Step s = step == LineupStep::Area ? Step::Market : step == LineupStep::Countries ? Step::Languages : Step::Channels;
+  return std::make_unique<LineupSetup>(app, false, s);
 }
 
 }  // namespace marigold::app

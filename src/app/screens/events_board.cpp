@@ -1,16 +1,19 @@
 // The Live Events board (LiveEventsBoard in tvOS): the focused game in the
-// hero with its two badges large and faded behind, the guide's tab bar and
-// round buttons (search, filter, options), then one row per sport of 360x230
-// tiles under group labels. Left from a row's first tile opens the sports
-// column. A live game in your channels plays in the guide's preview corner
-// once focus rests on it. Scores refresh only while this board (or the
-// event guide in the player) is open.
+// hero with its two badges large and faded behind, then one row per sport
+// of 360x230 tiles under group labels, right of the left rail's strip
+// (Build 112; Live Events is one of its sections, this screen over the
+// guide). Left from a row's first tile opens the SPORTS column, which
+// pushes the rows right; Back opens the menu. A small filter button ends the
+// first row's header. A live game in your channels plays in the guide's
+// preview corner once focus rests on it. Scores refresh only while this
+// board (or the event guide in the player) is open.
 #include <algorithm>
 #include <cmath>
 
 #include "app/app.hpp"
 #include "app/playback.hpp"
 #include "app/screens/events_ui.hpp"
+#include "app/screens/left_rail.hpp"
 #include "app/screens/panel_screen.hpp"
 #include "app/screens/screens.hpp"
 #include "app/screens/top_bar.hpp"
@@ -27,9 +30,9 @@ using ui::Rect;
 using ui::Weight;
 namespace theme = ui::theme;
 
-constexpr float kLeft = 80;
-constexpr float kTabsY = top_bar::kTabsY;
-constexpr float kBoardTop = 404;
+constexpr float kHeroX = left_rail::kRestLeft;  // the hero never moves
+constexpr float kRight = gfx::kLayoutWidth - 80;  // the rows' right edge
+constexpr float kBoardTop = 330;
 constexpr float kBoardBottom = 1010;
 constexpr float kRowHeader = 44;
 constexpr float kGroupLabel = 30;
@@ -37,20 +40,20 @@ constexpr float kRowGap = 26;
 constexpr float kTileGap = 24;
 constexpr float kGroupGap = 32;
 constexpr int kHitTile = 100000;  // + row * 1000 + tile
-constexpr int kHitTab = 10;
-constexpr int kHitButton = 40;
-constexpr int kHitColumn = 50;
-
-const char* kTabs[] = {"My Lineup", "Favorites", "Recent", "Live Events"};
+constexpr int kHitFilter = 51;    // the rail's ids are left_rail::kHit*, 1-499
 
 class EventsBoardScreen : public Screen {
  public:
   bool holdsOk() const override { return true; }
-  EventsBoardScreen(App& app, std::function<void(int)> pickTab) : Screen(app), pickTab_(std::move(pickTab)) {
+  EventsBoardScreen(App& app, std::function<void(rail::Item, bool)> go, bool sports)
+      : Screen(app), go_(std::move(go)), nav_(rail::Item::Events) {
     app_.store().eventsOpen(true);
+    nav_.setItems(rail::items(app_.store().settings().allChannelsTab));
     // The guide's channel preview doesn't carry over into the board.
     stopPreview();
     refresh();
+    // From the menu (or the strip): on the SPORTS column first.
+    if (sports) openColumn(true);
     // Offer My Sports once, the first time Live Events opens.
     if (app_.store().shouldPromptMySports()) {
       app_.store().markMySportsPrompted();
@@ -81,35 +84,61 @@ class EventsBoardScreen : public Screen {
       app_.invalidate();
     }
     bool pulse = skeletonShown_ && ui::skeletonMoved(ms, pulseStep_);
-    return previewTick(ms) || pulse || promptAt_ != 0 || board_->updating;
+    bool sliding = push_.moving(ms) || menu_.moving(ms);
+    return previewTick(ms) || pulse || sliding || promptAt_ != 0 || board_->updating;
   }
 
   bool key(const KeyEvent& e) override {
-    if (column_) return columnKey(e);
-    if (buttons_) return buttonsKey(e);
-    if (tabs_) return tabsKey(e);
+    Key k = e.key;
+    // Other keys hide the pointer, and its target with it.
+    if (k != Key::Ok) pointer_ = 0;
+    rail::Mode mode = nav_.mode();
     if (e.longPress) {
-      if (const EventTile* t = focused()) openMenu(*t);
+      if (mode == rail::Mode::Content && !filterFocus_ && !inRange(pointer_, left_rail::kHitStrip)) {
+        if (const EventTile* t = focused()) openMenu(*t);
+      }
       return true;
     }
-    switch (e.key) {
+    // A click: the rail's targets first (the strip, the menu, the column).
+    if (k == Key::Ok && pointer_ && click()) return true;
+    // Yellow (play/pause on Fire TV) and Blue do what they did in every state.
+    switch (k) {
+      case Key::Yellow:
+      case Key::PlayPause:
+      case Key::Play:
+        close();
+        return true;
+      case Key::Blue:
+        app_.nav().push(makeQuickSettings(app_, QuickPlace::LiveEvents));
+        return true;
+      default: break;
+    }
+    // The column and the menu: the rail's key path.
+    if (mode != rail::Mode::Content) {
+      apply(nav_.key(k), true);
+      return true;
+    }
+    if (filterFocus_) {
+      if (k == Key::Ok) openFilter();
+      else if (k == Key::Down || k == Key::Back) filterFocus_ = false;
+      return true;
+    }
+    switch (k) {
       case Key::Up:
-        if (row_ == 0 || rows_.empty()) {
-          tabs_ = true;
-          tab_ = 3;
-        } else {
-          setRow(row_ - 1);
-        }
+        if (row_ == 0 || rows_.empty()) filterFocus_ = true;
+        else setRow(row_ - 1);
         return true;
       case Key::Down:
         if (row_ + 1 < static_cast<int>(rows_.size())) setRow(row_ + 1);
         return true;
       case Key::Left:
-        if (tile_ > 0) --tile_;
-        else if (!rows_.empty()) {
-          column_ = true;
-          columnRow_ = row_;
-          columnReturn_ = row_;
+        if (tile_ > 0) {
+          --tile_;
+        } else {
+          // A row's first tile: SPORTS (the menu when there are no rows).
+          place_ = {row_, tile_, focusId_};
+          nav_.leftEdge(row_, static_cast<int>(rows_.size()));
+          syncSlides();
         }
         return true;
       case Key::Right:
@@ -123,17 +152,13 @@ class EventsBoardScreen : public Screen {
         if (const EventTile* t = focused()) app_.nav().push(makeWhereToWatch(app_, t->id));
         return true;
       case Key::Back:
-        // A filter first, as the × on its chip says.
-        if (filtered()) setFilter(Show::All, "");
-        else close(0);
-        return true;
-      case Key::Yellow:
-      case Key::PlayPause:
-      case Key::Play:
-        close(0);
-        return true;
-      case Key::Blue:
-        app_.nav().push(makeOptions(app_));
+        // A filter first, as the × on its chip says; then the menu.
+        if (filtered()) {
+          setFilter(Show::All, "");
+        } else {
+          nav_.openMenu();
+          syncSlides();
+        }
         return true;
       default:
         return true;
@@ -141,27 +166,32 @@ class EventsBoardScreen : public Screen {
   }
 
   void hover(int id) override {
+    pointer_ = id;
+    if (nav_.mode() == rail::Mode::Menu) {
+      if (inRange(id, left_rail::kHitMenu)) nav_.hoverMenu(id - left_rail::kHitMenu);
+      return;
+    }
+    // The strip only shows the icon's name; with SPORTS open the tiles take
+    // the focus on a click.
+    if (id < kHitFilter || (id >= left_rail::kHitStrip && id < left_rail::kHitEnd)) return;
+    if (nav_.mode() == rail::Mode::Column) return;
     if (id >= kHitTile) {
       int r = (id - kHitTile) / 1000, t = (id - kHitTile) % 1000;
       if (r < static_cast<int>(rows_.size())) {
         row_ = r;
         tile_ = t;
-        tabs_ = buttons_ = column_ = false;
+        filterFocus_ = false;
       }
-    } else if (id >= kHitColumn && column_) {
-      columnRow_ = std::clamp(id - kHitColumn, 0, static_cast<int>(rows_.size()) - 1);
-    } else if (id >= kHitButton && id < kHitButton + 3) {
-      tabs_ = buttons_ = true;
-      button_ = id - kHitButton;
-    } else if (id >= kHitTab && id < kHitTab + 4) {
-      tabs_ = true;
-      buttons_ = false;
-      tab_ = id - kHitTab;
+    } else if (id == kHitFilter) {
+      filterFocus_ = true;
     }
   }
 
   void draw(ui::Ctx& c) override {
     skeletonShown_ = false;
+    // Under everything: the pointer off any target (the strip's pill goes).
+    c.hit({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight}, left_rail::kHitNothing);
+    settleSlides(c.ms);
     const EventTile* f = focused();
     bool corner = f && previewable(*f);
     // The corner takes the place of the big faded badges.
@@ -169,13 +199,134 @@ class EventsBoardScreen : public Screen {
     drawHero(c, f);
     top_bar::clock(c);
     if (corner) top_bar::preview(c, app_.playback(), f->channelLogo, f->channelName);
-    drawTabs(c);
+    drawTop(c);
     drawRows(c);
-    if (column_) drawColumn(c);
-    ui::keyBar(c, hints::eventsBoard(app_.remoteKeys()));
+    float column = push_.at(c.ms);
+    if (column > 0.01f) drawColumn(c, column);
+    ui::keyBar(c, hints::eventsBoard(app_.remoteKeys(), nav_.mode() == rail::Mode::Column ? hints::Rail::Column : hints::Rail::Content),
+               left_);
+    int hover = -1;
+    if (c.pointerActive && nav_.mode() != rail::Mode::Menu && inRange(pointer_, left_rail::kHitStrip))
+      hover = pointer_ - left_rail::kHitStrip;
+    left_rail::strip(c, nav_.items(), rail::Item::Events, hover);
+    float menu = menu_.at(c.ms);
+    if (menu > 0.01f) left_rail::menu(c, nav_.items(), rail::Item::Events, nav_.menuFocus(), menu);
   }
 
  private:
+  static bool inRange(int id, int base) { return id >= base && id < base + 100; }
+
+  // ---------------------------------------------------------------- left rail
+
+  void openColumn(bool fromMenu) {
+    place_ = {row_, tile_, focusId_};
+    nav_.openColumn(row_, static_cast<int>(rows_.size()), fromMenu);
+    syncSlides();
+  }
+
+  // The same game tile the column opened on (found again if the board was
+  // rebuilt meanwhile).
+  void restorePlace() {
+    row_ = std::clamp(place_.row, 0, std::max(0, static_cast<int>(rows_.size()) - 1));
+    tile_ = place_.tile;
+    std::vector<const EventTile*> tiles = flat(row_);
+    for (size_t t = 0; t < tiles.size(); ++t) {
+      if (tiles[t]->id == place_.id) tile_ = static_cast<int>(t);
+    }
+    focusId_ = place_.id;
+  }
+
+  void apply(const rail::Step& s, bool fromMenu) {
+    using Do = rail::Step::Do;
+    int n = static_cast<int>(rows_.size());
+    switch (s.what) {
+      case Do::None: break;
+      case Do::Scroll:
+      case Do::Top:
+        // The rows scroll behind the column; confirming another sport lands
+        // on its first game.
+        if (s.index < n) {
+          row_ = s.index;
+          tile_ = 0;
+        }
+        break;
+      case Do::Restore: restorePlace(); break;
+      case Do::Open: open(s.item, fromMenu); break;
+      case Do::Home: {
+        // Back in the menu: My Lineup, at rest.
+        auto go = go_;
+        close();
+        if (go) go(rail::Item::Lineup, false);
+        break;
+      }
+      case Do::Exit: break;  // only on My Lineup, which is the guide's
+    }
+    filterFocus_ = false;
+    syncSlides();
+  }
+
+  void open(rail::Item item, bool fromMenu) {
+    switch (item) {
+      case rail::Item::Search: openSearch(); break;
+      case rail::Item::MySports: app_.nav().push(makeMySports(app_)); break;
+      case rail::Item::Events: openColumn(fromMenu); break;
+      case rail::Item::Options:
+        if (go_) go_(item, false);
+        break;
+      default: {
+        // A guide section: the board closes onto it (its neighborhoods).
+        auto go = go_;
+        close();
+        if (go) go(item, rail::hasColumn(item));
+        break;
+      }
+    }
+  }
+
+  // A pointer click (OK while the pointer is on something). True when the
+  // rail took it; on the tiles OK acts as before (hovering moved the focus).
+  bool click() {
+    int id = pointer_;
+    const std::vector<rail::Item>& items = nav_.items();
+    rail::Mode mode = nav_.mode();
+    auto item = [&](int base) {
+      return items[static_cast<size_t>(std::clamp(id - base, 0, static_cast<int>(items.size()) - 1))];
+    };
+    if (mode == rail::Mode::Menu) {
+      if (inRange(id, left_rail::kHitMenu) && !items.empty()) apply(nav_.pick(item(left_rail::kHitMenu)), true);
+      else if (id == left_rail::kHitOutside) nav_.close();
+      syncSlides();
+      return true;
+    }
+    if (inRange(id, left_rail::kHitStrip) && !items.empty()) {
+      if (mode == rail::Mode::Column) restorePlace();
+      apply(nav_.pick(item(left_rail::kHitStrip)), false);
+      return true;
+    }
+    if (mode != rail::Mode::Column) return id == left_rail::kHitNothing;
+    if (inRange(id, left_rail::kHitColumn)) {
+      apply(nav_.clickColumn(id - left_rail::kHitColumn), false);
+    } else if (id >= kHitTile) {
+      // A tile: the column closes and that game takes the focus.
+      nav_.close();
+      syncSlides();
+      hover(id);
+    }
+    return true;
+  }
+
+  void syncSlides() {
+    uint32_t ms = app_.ms();
+    push_.go(nav_.mode() == rail::Mode::Column ? 1.0f : 0.0f, ms);
+    menu_.go(nav_.mode() == rail::Mode::Menu ? 1.0f : 0.0f, ms);
+    settleSlides(ms);
+    app_.invalidate();
+  }
+
+  void settleSlides(uint32_t ms) {
+    left_ = left_rail::kRestLeft + (left_rail::kPushLeft - left_rail::kRestLeft) * push_.at(ms);
+  }
+
   void refresh() {
     board_ = app_.store().events();
     version_ = board_->version;
@@ -247,93 +398,9 @@ class EventsBoardScreen : public Screen {
     return x;
   }
 
-  bool tabsKey(const KeyEvent& e) {
-    switch (e.key) {
-      case Key::Left:
-        tab_ = std::max(0, tab_ - 1);
-        return true;
-      case Key::Right:
-        if (tab_ < 3) {
-          ++tab_;
-        } else {
-          buttons_ = true;
-          button_ = 0;
-        }
-        return true;
-      case Key::Down:
-        tabs_ = false;
-        return true;
-      case Key::Ok:
-        if (tab_ == 3) tabs_ = false;
-        else close(tab_);
-        return true;
-      case Key::Back:
-        close(0);
-        return true;
-      default:
-        return true;
-    }
-  }
-
-  // The round buttons, right of the tabs (focus counts as in the tab row).
-  bool buttonsKey(const KeyEvent& e) {
-    switch (e.key) {
-      case Key::Left:
-        if (button_ > 0) {
-          --button_;
-        } else {
-          buttons_ = false;
-          tab_ = 3;
-        }
-        return true;
-      case Key::Right:
-        button_ = std::min(2, button_ + 1);
-        return true;
-      case Key::Down:
-      case Key::Back:
-        tabs_ = buttons_ = false;
-        return true;
-      case Key::Ok:
-        if (button_ == 0) openSearch();
-        else if (button_ == 1) openFilter();
-        else app_.nav().push(makeOptions(app_));
-        return true;
-      default:
-        return true;
-    }
-  }
-
-  bool columnKey(const KeyEvent& e) {
-    int n = static_cast<int>(rows_.size());
-    switch (e.key) {
-      case Key::Up:
-      case Key::Down:
-        columnRow_ = std::clamp(columnRow_ + (e.key == Key::Up ? -1 : 1), 0, n - 1);
-        row_ = columnRow_;  // the board scrolls behind the column
-        tile_ = 0;
-        return true;
-      case Key::Right:
-      case Key::Ok:
-        column_ = false;
-        row_ = columnRow_;
-        tile_ = 0;
-        return true;
-      case Key::Back:
-      case Key::Left:
-        column_ = false;
-        row_ = columnReturn_;
-        tile_ = 0;
-        return true;
-      default:
-        return true;
-    }
-  }
-
-  void close(int tab) {
+  void close() {
     stopPreview();
-    auto pick = pickTab_;
     app_.nav().pop();
-    if (pick) pick(tab);
   }
 
   void select(const EventTile& t) {
@@ -466,7 +533,7 @@ class EventsBoardScreen : public Screen {
     rows_ = filteredRows();
     row_ = tile_ = 0;
     focusId_.clear();
-    tabs_ = buttons_ = false;
+    filterFocus_ = false;
   }
 
   void openFilter() {
@@ -501,8 +568,8 @@ class EventsBoardScreen : public Screen {
       }
       if (app.store().settings().scheduleEnabled) {
         p.items.push_back(ui::PanelItem::header("ALSO"));
-        ui::PanelItem unwatchable{ui::PanelItem::Kind::Toggle, "Games not in my channels"};
-        unwatchable.detail = "Show them dimmed at the end of each row";
+        ui::PanelItem unwatchable{ui::PanelItem::Kind::Toggle, "Games not on my channels"};
+        unwatchable.detail = "Dimmed at the end of each row";
         unwatchable.on = app.store().settings().showUnwatchable;
         unwatchable.select = [&app] {
           Settings n = app.store().settings();
@@ -541,7 +608,7 @@ class EventsBoardScreen : public Screen {
   // the tabs or the sports column leaves it playing.
   bool previewTick(uint32_t ms) {
     Playback& p = app_.playback();
-    if (app_.nav().top() != this || tabs_ || column_) return false;
+    if (app_.nav().top() != this || filterFocus_ || nav_.mode() != rail::Mode::Content) return false;
     const EventTile* t = focused();
     if (!t || !previewable(*t)) {
       if (p.active() && !p.full()) p.stop();
@@ -571,7 +638,7 @@ class EventsBoardScreen : public Screen {
   // ---------------------------------------------------------------- drawing
 
   void drawHero(ui::Ctx& c, const EventTile* t) {
-    float x = kLeft, y = 44;
+    float x = kHeroX, y = 44;
     if (!t) {
       ui::label(c, "Live Events", x, y + 40, Weight::Bold, 44, theme::white());
       if (board_->loading) {
@@ -593,12 +660,12 @@ class EventsBoardScreen : public Screen {
       events_ui::badge(c, t->sides[1], tx + 64, y, 52, false);
       tx += 140;
     }
-    ui::label(c, t->heroTitle.empty() ? t->title : t->heroTitle, tx, y + 4, Weight::Bold, 40, theme::white(), 1240 - tx);
+    ui::label(c, t->heroTitle.empty() ? t->title : t->heroTitle, tx, y + 4, Weight::Bold, 40, theme::white(), x + 1240 - tx);
     y += 72;
     float sx = x;
     sx += events_ui::pill(c, *t, sx, y + 4, false) ;
     if (sx > x) sx += 12;
-    ui::label(c, t->heroStatus.empty() ? t->status : t->heroStatus, sx, y, Weight::Medium, 24, theme::white(), 1240 - sx);
+    ui::label(c, t->heroStatus.empty() ? t->status : t->heroStatus, sx, y, Weight::Medium, 24, theme::white(), x + 1240 - sx);
     y += 44;
     if (t->progress >= 0) {
       ui::progress(c, {x, y, 420, 6}, t->progress);
@@ -609,35 +676,29 @@ class EventsBoardScreen : public Screen {
       ui::logo(c, t->channelLogo, t->channelName, {wx, y, 80, 32});
       wx += 96;
     }
-    ui::label(c, t->whereLine, wx, y + 2, Weight::Regular, 22, theme::white(0.8f), 1240 - wx);
+    ui::label(c, t->whereLine, wx, y + 2, Weight::Regular, 22, theme::white(0.8f), x + 1240 - wx);
   }
 
-  void drawTabs(ui::Ctx& c) {
-    float x = kLeft;
-    for (int i = 0; i < 4; ++i) {
-      float w = ui::textWidth(c, kTabs[i], Weight::Bold, 27);
-      bool focusedTab = tabs_ && !buttons_ && tab_ == i;
-      Rect hit{x - 16, kTabsY, w + 32, 60};
-      c.hit(hit, kHitTab + i);
-      if (focusedTab) c.g.fill(hit, theme::white(), 30);
-      Color col = focusedTab ? theme::black() : i == 3 ? theme::white() : theme::white(0.55f);
-      ui::labelIn(c, kTabs[i], {x, kTabsY, w, 54}, Weight::Bold, 27, col);
-      if (i == 3 && !focusedTab) c.g.fill({x, kTabsY + 52, w, 5}, theme::white(), 2.5f);
-      x += w + 44;
-    }
+  // The filter button at the end of the first row's header line, its chip
+  // and "Updating…" to its left (the tab row they sat in is gone).
+  void drawTop(ui::Ctx& c) {
+    Rect button{kRight - 40, kBoardTop - 6, 40, 40};
+    bool focusedButton = filterFocus_ && nav_.mode() == rail::Mode::Content;
+    top_bar::filterButton(c, button, focusedButton, filtered(), kHitFilter);
+    float right = button.x - 16;
     if (filtered()) {
-      ui::chip(c, "\xe2\x97\x8f " + filterTitle() + "  \xc3\x97", x + 10, kTabsY + 14, 19,
-               theme::hex(theme::kNowLine, 0.3f), theme::white());
+      std::string text = "\xe2\x97\x8f " + filterTitle() + "  \xc3\x97";
+      right -= ui::chipWidth(c, text, 19);
+      ui::chip(c, text, right, kBoardTop - 1, 19, theme::hex(theme::kNowLine, 0.3f), theme::white());
+      right -= 20;
     }
     if (board_->updating) {
       // An old board while the fresh one is made (never a count).
       const char* text = "Updating\xe2\x80\xa6";
-      float right = gfx::kLayoutWidth - 80 - 60 - 2 * 76 - 28;
       float tw = ui::textWidth(c, text, Weight::Medium, 22);
-      ui::label(c, text, right - tw, kTabsY + 16, Weight::Medium, 22, theme::white(0.6f));
-      ui::spinner(c, right - tw - 22, kTabsY + 30, 11);
+      ui::label(c, text, right - tw, kBoardTop, Weight::Medium, 22, theme::white(0.6f));
+      ui::spinner(c, right - tw - 22, kBoardTop + 14, 11);
     }
-    top_bar::buttons(c, buttons_ ? button_ : -1, filtered(), kHitButton);
   }
 
   float rowHeight(const EventRow& r) const {
@@ -654,14 +715,19 @@ class EventsBoardScreen : public Screen {
       const char* empty = !filtered()           ? "No games this week in your sports."
                           : show_ == Show::Live ? "No games on right now. Back shows them all."
                                                 : "None this week. Back shows every game.";
-      ui::label(c, empty, kLeft, kBoardTop + 30, Weight::Medium, 26, theme::white(0.6f));
+      ui::label(c, empty, left_, kBoardTop + 30, Weight::Medium, 26, theme::white(0.6f));
       return;
     }
     // The focused row sits at the top of the board area.
     float y = kBoardTop;
     float scroll = 0;
     for (int r = 0; r < row_; ++r) scroll += rowHeight(rows_[static_cast<size_t>(r)]);
-    c.g.pushClip({0, kBoardTop - 10, gfx::kLayoutWidth, kBoardBottom - kBoardTop + 10});
+    // At rest a scrolled row runs under the strip; with SPORTS open it stops
+    // at the column's rule.
+    float clipX = left_rail::kStripW + (left_ - left_rail::kRestLeft) *
+                                           (left_rail::kColumnX + left_rail::kColumnW + 15 - left_rail::kStripW) /
+                                           (left_rail::kPushLeft - left_rail::kRestLeft);
+    c.g.pushClip({clipX, kBoardTop - 10, gfx::kLayoutWidth - clipX, kBoardBottom - kBoardTop + 10});
     y -= scroll;
     for (size_t r = 0; r < rows_.size(); ++r) {
       const EventRow& row = rows_[r];
@@ -679,19 +745,21 @@ class EventsBoardScreen : public Screen {
     ui::Color block = ui::skeleton(c);
     float y = kBoardTop;
     while (y + kRowHeader < kBoardBottom) {
-      c.g.fill({kLeft, y + 4, 220, 22}, block, 11);
+      c.g.fill({left_, y + 4, 220, 22}, block, 11);
       float tileY = y + kRowHeader;
-      for (float x = kLeft; x < gfx::kLayoutWidth; x += events_ui::kTileW + kTileGap)
+      for (float x = left_; x < gfx::kLayoutWidth; x += events_ui::kTileW + kTileGap)
         c.g.fill({x, tileY, events_ui::kTileW, events_ui::kTileH}, block, 12);
       y += kRowHeader + events_ui::kTileH + kRowGap;
     }
   }
 
   void drawRow(ui::Ctx& c, const EventRow& row, int r, float y) {
-    float hx = kLeft;
+    float hx = left_;
     hx += ui::label(c, row.title, hx, y, Weight::Bold, 25, theme::white()) + 10;
     std::string summary = "\xc2\xb7 " + std::to_string(row.count);
-    if (row.live > 0) {
+    if (row.families) {
+      // Event channels: never how many (they are channels).
+    } else if (row.live > 0) {
       hx += ui::label(c, summary, hx, y + 3, Weight::Medium, 22, theme::white(0.6f)) + 10;
       ui::label(c, "\xc2\xb7 " + std::to_string(row.live) + " live", hx, y + 3, Weight::Medium, 22, theme::hex(0xF4B4AE));
     } else {
@@ -703,7 +771,7 @@ class EventsBoardScreen : public Screen {
     float scrollX = 0;
     if (r == row_) {
       float fx = tileX(r, tile_);
-      float visible = gfx::kLayoutWidth - 2 * kLeft;
+      float visible = kRight - left_;
       if (fx + events_ui::kTileW > visible) scrollX = fx + events_ui::kTileW - visible + 40;
       rowScroll_ = scrollX;
     } else if (r == row_ - 1 || r == row_ + 1) {
@@ -715,13 +783,13 @@ class EventsBoardScreen : public Screen {
     for (const EventGroup& g : row.groups) {
       if (!firstGroup) x += kGroupGap;
       firstGroup = false;
-      float gx = kLeft + x - scrollX;
+      float gx = left_ + x - scrollX;
       if (!g.title.empty() && gx > -400 && gx < gfx::kLayoutWidth)
         ui::label(c, g.title, gx, y + kRowHeader, Weight::Bold, 20, theme::white(0.75f));
       for (const EventTile& t : g.tiles) {
-        float tx = kLeft + x - scrollX;
+        float tx = left_ + x - scrollX;
         if (tx + events_ui::kTileW > 0 && tx < gfx::kLayoutWidth) {
-          bool f = !tabs_ && !column_ && r == row_ && index == tile_;
+          bool f = !filterFocus_ && nav_.mode() == rail::Mode::Content && r == row_ && index == tile_;
           Rect rect{tx, tileY, events_ui::kTileW, events_ui::kTileH};
           c.hit(rect, kHitTile + r * 1000 + std::min(index, 999));
           events_ui::tile(c, t, rect, f, mixed(row));
@@ -744,36 +812,31 @@ class EventsBoardScreen : public Screen {
     return first && first->sport.empty();
   }
 
-  void drawColumn(ui::Ctx& c) {
-    float h = std::min(640.0f, 70.0f + 60.0f * static_cast<float>(rows_.size()));
-    Rect r{kLeft - 10, kBoardTop - 20, 400, h};
-    c.g.fill(r, theme::hex(0x1C1F25, 0.97f), theme::kPanelRadius);
-    ui::label(c, "SPORTS", r.x + 24, r.y + 20, Weight::Bold, 16, theme::white(0.55f));
-    float y = r.y + 56;
-    int visible = static_cast<int>((r.h - 70) / 60);
-    int first = std::clamp(columnRow_ - visible / 2, 0, std::max(0, static_cast<int>(rows_.size()) - visible));
-    for (int i = first; i < static_cast<int>(rows_.size()) && i < first + visible; ++i) {
-      const EventRow& row = rows_[static_cast<size_t>(i)];
-      Rect pill{r.x + 14, y, r.w - 28, 54};
-      bool f = i == columnRow_;
-      c.hit(pill, kHitColumn + i);
-      if (f) c.g.fill(pill, theme::white(), 27);
-      Color fg = f ? theme::black() : theme::white();
-      ui::labelIn(c, row.title, {pill.x + 20, pill.y, pill.w - 150, pill.h}, Weight::Bold, 22, fg);
-      std::string right = std::to_string(row.count);
-      ui::labelIn(c, right, {pill.x, pill.y, pill.w - 20, pill.h}, Weight::Medium, 19, f ? theme::black(0.6f) : theme::white(0.6f),
-                  Align::Right);
-      if (row.live > 0)
-        ui::labelIn(c, std::to_string(row.live) + " live", {pill.x, pill.y, pill.w - 70, pill.h}, Weight::Bold, 18,
-                    theme::hex(theme::kWatching), Align::Right);
-      y += 60;
-    }
+  void drawColumn(ui::Ctx& c, float alpha) {
+    // SPORTS, inside the board: each row's sport and how many are live.
+    std::vector<left_rail::Entry> entries;
+    entries.reserve(rows_.size());
+    for (const EventRow& row : rows_) entries.push_back({row.title, row.live});
+    int hover = c.pointerActive && inRange(pointer_, left_rail::kHitColumn) ? pointer_ - left_rail::kHitColumn : -1;
+    left_rail::column(c, "Live Events", "Sports", entries, nav_.index(), nav_.origin(), hover, kBoardTop,
+                      kBoardTop + 52, alpha);
   }
+
+  // Where the focus was when SPORTS opened (the return rule).
+  struct Place {
+    int row = 0, tile = 0;
+    std::string id;
+  };
 
   uint32_t promptAt_ = 0;
   bool skeletonShown_ = false;  // placeholders on screen: the pulse redraws
   uint32_t pulseStep_ = 0;
-  std::function<void(int)> pickTab_;
+  std::function<void(rail::Item, bool)> go_;
+  rail::Nav nav_;
+  Place place_;
+  left_rail::Slide push_, menu_;  // SPORTS' push, the menu's slide
+  float left_ = left_rail::kRestLeft;  // the rows' left edge
+  int pointer_ = 0;  // what the pointer is on (a hit id) while it shows
   std::shared_ptr<const EventsBoard> board_;
   std::vector<EventRow> rows_;  // the board's rows, filtered
   Show show_ = Show::All;
@@ -781,12 +844,7 @@ class EventsBoardScreen : public Screen {
   uint64_t version_ = ~0ull;
   int row_ = 0, tile_ = 0;
   std::string focusId_;
-  bool tabs_ = false;
-  int tab_ = 3;
-  bool buttons_ = false;  // on the round buttons (part of the tab row)
-  int button_ = 0;        // 0 search, 1 filter, 2 options
-  bool column_ = false;
-  int columnRow_ = 0, columnReturn_ = 0;
+  bool filterFocus_ = false;  // on the filter button
   float rowScroll_ = 0;
   std::string previewCandidate_, previewTried_;
   uint32_t focusSince_ = 0, lastPreviewAt_ = 0;
@@ -794,8 +852,8 @@ class EventsBoardScreen : public Screen {
 
 }  // namespace
 
-std::unique_ptr<Screen> makeEventsBoard(App& app, std::function<void(int)> pickTab) {
-  return std::make_unique<EventsBoardScreen>(app, std::move(pickTab));
+std::unique_ptr<Screen> makeEventsBoard(App& app, std::function<void(rail::Item, bool)> go, bool sports) {
+  return std::make_unique<EventsBoardScreen>(app, std::move(go), sports);
 }
 
 }  // namespace marigold::app

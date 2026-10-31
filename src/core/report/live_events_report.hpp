@@ -1,4 +1,4 @@
-// The Live Events report (Options › Help › Export Live Events Report): a
+// The Live Events report (Settings › Help & info › Send a report): a
 // spreadsheet (CSV) of every event slot in the provider's event groups,
 // what the app read it as, and what became of it: the tile it is on (and
 // the rows that tile is in), or why it was left out, at each step:

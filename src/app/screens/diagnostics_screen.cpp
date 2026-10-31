@@ -1,5 +1,6 @@
-// The M0 test screen, reachable from Options › Help: every remote key, the
-// pointer, the keyboard and the video plane, for checking a new TV.
+// The M0 test screen, reachable from Settings › Help & info › Diagnostics:
+// every remote key, the pointer, the keyboard and the video plane, for
+// checking a new TV.
 #include <SDL2/SDL.h>
 
 #include "app/app.hpp"
@@ -50,6 +51,6 @@ class DiagnosticsScreen : public Screen {
 }  // namespace
 
 std::unique_ptr<Screen> makeDiagnostics(App& app) { return std::make_unique<DiagnosticsScreen>(app); }
-const char* diagnosticsTitle() { return "Remote and video test"; }
+const char* diagnosticsDetail() { return "Remote and video test for this TV"; }
 
 }  // namespace marigold::app

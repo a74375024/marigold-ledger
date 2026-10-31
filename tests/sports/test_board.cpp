@@ -607,7 +607,7 @@ TEST_CASE("Where to Watch and the details card") {
   CHECK(where.sections[1].items.size() == 2);
   CHECK(where.sections[2].title == "Event feeds from your provider");
   CHECK(where.sections[2].items[0].detail == "Provider event channel \xC2\xB7 1080p");
-  CHECK(where.moreStations == "3 more stations in your channels are showing it");
+  CHECK(where.moreStations == "More stations in your channels are showing it");
   CHECK(where.hint == "Whichever you pick, the others stay as automatic backups.");
   DetailCard card = detailCard(e, kNow, time::Zone::usEastern(), Settings(), channels());
   CHECK(card.summary ==

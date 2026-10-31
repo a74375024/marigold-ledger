@@ -23,11 +23,11 @@ Requests: race drivers and results only for race weekends you can watch
 
 | Area | How to check | Pass |
 |---|---|---|
-| Channel report | Options › Help › Export Channel Report | "Building the report…", then a QR code and a link |
+| Channel report | Settings › Help & info › Send a report to your phone › Channel report | "Building the report…", then a QR code and a link |
 | Open on a phone | Scan the code on the same Wi-Fi | A CSV downloads; no passwords, links or server names in it |
 | Countdown | Wait | "The link works for 9:59…"; after 10 minutes, "Sharing stopped." |
 | Stop | Stop Sharing | The link stops working at once |
-| Playback log | Options › Help › Export Playback Log | Tunes, feeds tried, stalls and errors; never a stream link |
+| Playback log | Settings › Help & info › Send a report to your phone › Playback log | Tunes, feeds tried, stalls and errors; never a stream link |
 | Clear | Clear Log | The log starts again |
 
 ## The other gaps
@@ -42,12 +42,12 @@ Requests: race drivers and results only for race weekends you can watch
 | Directory report | Export Channel Report | directory_id (the channel directory's entry, when it has one) and directory_match ("exact", "other name", "loose", "ambiguous", "none", or "none (another country: PK)") per channel |
 | Free streaming | Free streaming off in My Lineup setup | Channels your provider also lists under Roku, Pluto, Tubi... (50 Cent Action, FailArmy, Tastemade) stay out of My Lineup; HBO, Starz, MGM+ and the national networks stay in |
 | Preview and Live Events | A preview playing in the guide, then the yellow key | The preview stops; back in the guide it starts again |
-| Edit My Lineup | Options › Edit My Lineup | Added by you / Removed by you / My Lineup; removing and adding back work |
-| Countries | Options › Countries & Languages | Checking a country adds its channels to All Channels and Live Events |
-| Guide Listings | Options › Guide Listings | Provider guide status, outside listings toggles and files, Refresh |
-| Groups | All Channels, hold OK › Hide Group; or the filter's Provider groups | The group leaves All Channels; Options › Provider groups brings it back |
-| Clock | Options › Clock | 24-hour times in the guide and on Live Events tiles |
-| Home city | Options › Home city (two or more markets) | Its stations are listed first on games |
+| Edit My Lineup | Settings › My Lineup › Edit My Lineup | Added by you / Removed by you / My Lineup; removing and adding back work |
+| Countries | Settings › My Lineup › Countries & languages | Checking a country adds its channels to All Channels and Live Events |
+| Guide listings | Settings › Guide › Guide listings | Outside listings toggles and Refresh; the provider guide status and files are in Help & info › Status |
+| Groups | All Channels, hold OK › Hide Group; or the filter's Provider groups | The group leaves All Channels; Settings › Guide › Groups in All Channels brings it back |
+| Clock | Settings › Guide › Clock | 24-hour times in the guide and on Live Events tiles |
+| Home city | Settings › Live Events › Home city (two or more areas) | Its stations are listed first on games |
 | Remind Me | OK on a later show | Remind Me / Watch; other airings listed; a card when it starts |
 | Search | Search for a team or a show | Channels, Live Events, and Shows on now & later |
 | My Sports | Open Live Events for the first time | My Sports setup opens once |
@@ -59,7 +59,7 @@ Requests: race drivers and results only for race weekends you can watch
 | First time | Play any channel full screen for the first time | "Getting around" card (Guide, Last channel, Channels, Info, Sources, Number keys); OK closes it, it never shows again |
 | Banner | Start a channel, or OK while watching | Shows at once, also before the picture (black behind it, a small spinner where the picture goes, "Tuning in" bottom right). Logo, number and name, LIVE and the show, times, progress and "N min left"; on the right "Later on this channel": the next show ("Starts in 4 min" when it's close) and the two after; under it the keys. Hides 6 s after the picture comes up |
 | Banner on bright content | Start a channel showing snow, a pitch or a bright studio | Title, channel line, times and keys all readable; the top half of the picture isn't darkened |
-| Action row | Down while the banner is up | Pills: Sources (feed), Guide, Back to the last channel, Favorite, More (Cameras first on a race); Left/Right, OK, Up hides it |
+| Action row | Down while the banner is up | Pills: Sources (feed), Guide, Back to the last channel, Favorite, Settings (Cameras first on a race); Left/Right, OK, Up hides it |
 | Sources | Sources pill or the red key | Side panel over the picture: each feed playing / backup / why it failed lately; OK switches at once |
 | Switching | Pick another feed | The banner stays, its status line reads "Switching to another feed · HD"; no full-screen card, no feed numbers; then the picture |
 | Backup | A feed that stops while watching | The banner with "Reconnecting…" or "Switching to another feed · HD"; when the picture's back, "✓ Back on CNN" for 2 s, then the banner hides. No corner card |
@@ -75,14 +75,14 @@ Requests: race drivers and results only for race weekends you can watch
 | Area | How to check | Pass |
 |---|---|---|
 | Over 30,000 channels | A provider with more channels than the cap, US checked in Countries | All Channels and My Lineup include the US groups; the groups left out are other countries' |
-| Change countries | Check another country in Options › Countries & Languages | The list loads again with that country's groups kept first |
+| Change countries | Check another country in Settings › My Lineup › Countries & languages | The list loads again with that country's groups kept first |
 | Other countries | US checked only | All Channels and channel search show US (and unmarked) channels; Live Events still finds games on other countries' sports and event channels (UK, Canada, DAZN, PPV) |
 
 ## Memory
 
 | Area | How to check | Pass |
 |---|---|---|
-| Reading | Options › Help | "Memory in use: 212 MB (peak 340 MB)" above the version |
+| Reading | Settings › Help & info | About › Memory in use: "212 MB (peak 340 MB)" under the version |
 | Log | Use the app for an hour, then Export Playback Log | "memory" lines every 5 minutes, before each tune, and after "channels sorted", "listings merged", "outside listings built", "provider guide built", "channel list checked" |
 | Half-hourly refresh | Leave the guide open past 30 minutes | "channel list checked" (nothing sorted again) when the provider's list hasn't changed; memory stays level |
 | Unchanged launch | Quit and reopen the app (the provider's list unchanged) | "channel list checked" rather than "channels sorted" after the download; the first screen opens as fast as before |
@@ -96,7 +96,7 @@ The guide's lists and the playback session now come from the shared engine. Each
 | Area | How to check | Pass |
 |---|---|---|
 | Guide tabs | My Lineup, Favorites, Recent, All Channels | Same channels, order and neighborhood headers as before; Recent has no headers |
-| Filters | Filter › Sports on now, a neighborhood, a provider group | Same counts beside each choice; the grid shows only those channels; Back clears it |
+| Filters | Filter › Sports on now, a neighborhood, a provider group | No counts beside the choices; the grid shows only those channels; Back clears it |
 | Search | Type a channel name, a channel number and a local station ("nbc") | Exact name first, then the number, then names that start with it |
 | Mini guide | Down in the player | The list the channel was picked from, under its headers, the playing one focused |
 | Flip and LAST | CH+ / CH− past the end of the list, then ▶ Last channel | Wraps around; LAST goes back to the channel watched before |
@@ -135,7 +135,7 @@ The guide's lists and the playback session now come from the shared engine. Each
 
 ## More sports with schedules and scores
 
-Pick each in Options › My Sports (More sports).
+Pick each in Settings › Live Events › My leagues (More sports).
 
 | Area | How to check | Pass |
 |---|---|---|
@@ -176,7 +176,7 @@ Events from provider feeds that no schedule game matched.
 
 | Area | How to check | Pass |
 |---|---|---|
-| West market | My Lineup with a Pacific or Mountain market (San Francisco, Denver) | Premium channels your provider has twice (HBO, HBO West) appear once, as the West version; Options › My Lineup › East/West feeds reads "Automatic: West" |
+| West market | My Lineup with a Pacific or Mountain market (San Francisco, Denver) | Premium channels your provider has twice (HBO, HBO West) appear once, as the West version; Settings › My Lineup › East/West feeds reads "Automatic here: West" |
 | East market | Set the market to an Eastern or Central one (New York, Chicago) | The East versions instead |
 | Setting | East/West feeds › East feeds, West feeds, Both | My Lineup changes at once; Both shows both versions; the other version is always in All Channels and search |
 | Added by hand | Add the other version in Edit My Lineup | It stays whichever coast is set |
@@ -187,17 +187,17 @@ Events from provider feeds that no schedule game matched.
 | Area | How to check | Pass |
 |---|---|---|
 | Same places | Open the guide, then Live Events | The clock, the preview corner and the three round buttons sit exactly where the guide has them; the settings button is a gear |
-| Buttons | Up to the tabs, Right past Live Events | Search, Filter, Options in turn; OK opens each; Left from Search goes back to the tabs; Down or Back returns to the tiles |
+| Buttons | Up to the tabs, Right past Live Events | Search, Filter, Settings in turn; OK opens each; Left from Search goes back to the tabs; Down or Back returns to the tiles |
 | Filter | Filter › Live now, My teams, or a sport | Only those tiles, each sport in its own row; a "● Live now ×" chip after the tabs and a red dot on the filter button; Back clears it |
-| Not in my channels | Filter › Games not in my channels | The same switch as in Options; the board updates |
+| Not in my channels | Filter › Games not on my channels | The same switch as in Settings; the board updates |
 | Preview | Rest 2 s on a live game in your channels | It plays in the corner (no big faded badges then); OK goes full screen on the same stream with no re-tune |
 | No preview | Rest on an upcoming or final game, or a game you can't watch | No corner; the badges show as before; a preview that was playing stops |
-| Setting | Options › Preview channels off | No preview anywhere |
+| Setting | Settings › Guide › Preview channels off | No preview anywhere |
 | Leaving | Back to the guide, or Back from a game you watched | The guide's preview doesn't carry into Live Events; back from full screen the game returns to the corner |
 
 ## First-run setup and phone sign-in
 
-Start with no providers (a fresh install, or remove them all in Options › Providers).
+Start with no providers (a fresh install, or remove them all in Settings › Providers).
 
 | Area | How to check | Pass |
 |---|---|---|
@@ -210,15 +210,15 @@ Start with no providers (a fresh install, or remove them all in Options › Prov
 | Remote way | Back to Welcome, "Use the remote" | Today's form with "STEP 1 OF 7"; signing in moves on to Area |
 | Area, Languages, Channels | Continue through them | One screen each; the busiest area is picked; LG CH ▲▼ / Fire TV ⏪ ⏩ jump a letter in the A to Z list; Back goes to the step before |
 | Sports, Teams | Continue | The busiest leagues are picked; teams in a rail by league with the reminder switch; letter keys jump in the team grid |
-| Done | Continue | Channel count, today's games, your teams; "Start watching" opens the guide, "Go to Live Events" the board; My Sports doesn't pop up later |
+| Done | Continue | My Lineup ready (never a channel count), today's games, your teams; "Start watching" opens the guide, "Go to Live Events" the board; My Sports doesn't pop up later |
 | Skip | Skip any step after the provider | It moves on and keeps that step's defaults |
-| From Options | Options › Providers › "Add from your phone" | The same scan screen; it closes with "Provider added" once the channels are in |
+| From Settings | Settings › Providers › Add from your phone | The same scan screen; it closes with "Provider added" once the channels are in |
 | Network | Put the phone on mobile data | The page doesn't open; "Use the remote instead" works |
 | Apple TV | First scan screen on Apple TV | tvOS asks once to allow local network access; after allowing, the phone page opens |
 
 ## East and West versions, one channel at a time
 
-A provider with both versions of a channel (HBO and HBO West). Options › East/West Feeds on Automatic.
+A provider with both versions of a channel (HBO and HBO West). Settings › My Lineup › East/West feeds on Automatic.
 
 | Area | How to check | Pass |
 |---|---|---|
@@ -227,7 +227,7 @@ A provider with both versions of a channel (HBO and HBO West). Options › East/
 | Hold OK | Hold OK (LG), hold Select (Fire TV), click and hold (Apple TV) on the version in My Lineup | "Watch HBO West" with what's on now, and "+ Add HBO West to My Lineup"; adding it puts it right below HBO in My Lineup |
 | Player | Watch the East version, press Down | "Watch West ↔" next to Sources; OK switches in place, the banner tag turns WEST, the pill reads "Watch East ↔"; Last goes back |
 | Sources | Open Sources while watching | VERSION with East and West (the playing one ticked, what's on the other); OK on the other switches; "+ Add … to My Lineup" adds it, then the row reads "Both versions are in My Lineup" (OK removes it) |
-| Edit My Lineup | Options › Edit My Lineup | EAST & WEST with East / West / Both for each pair; Left / Right changes My Lineup at once and the choice stays when the East/West setting changes |
+| Channel by channel | Settings › My Lineup › Channel by channel | East / West / Both for each pair; Left / Right changes My Lineup at once and the choice stays when the East/West setting changes |
 
 ## College games from Divisions II and III
 
@@ -283,19 +283,19 @@ The app knows real US channels by their other names, language and closing. After
 
 | Area | How to check | Pass |
 |---|---|---|
-| First run | Sign in from the phone | Once "N channels received" ticks, setup moves on to Area; no wait screen |
+| First run | Sign in from the phone | Once "Your channel list is in" ticks, setup moves on to Area; no wait screen |
 | Area | The area list right away | Areas listed at once; "Looking at your channels…" until "Suggested from your channels" fills in; the focus doesn't jump |
 | Languages | Continue from Area quickly on a slow TV | If the list is still sorting, "Building your lineup" with a bar and four steps where the list goes; the countries appear by themselves |
 | After an update | Install a new build over an old one, open the app | The guide opens on your list right away; the header reads "Updating your channel list…", then "✓ Channel list updated" for about 3 seconds, then fades |
-| Couldn't update | Turn the provider off (or the network), then Options › refresh | The list stays; the header reads "Couldn't update the channel list · tries again later" for a few seconds |
+| Couldn't update | Turn the provider off (or the network), then Settings › Providers › Reload channels and listings | The list stays; the header reads "Couldn't update the channel list · tries again later" for a few seconds |
 | Focus | Stay on a channel while it updates | The same channel stays focused (also when it was renamed); playback never stops |
-| No list at all | Add a provider in Options | "Building your lineup" with a bar that never jumps back or sits full |
+| No list at all | Add a provider in Settings | "Building your lineup" with a bar that never jumps back or sits full |
 | Straight to the guide | Set up, or add the first provider, and watch the end of "Building your lineup" | The full bar goes straight to the guide: no "No channels" message in between (Build 96) |
 | Next launch | Close the app after the first sort, open it again | The guide opens on your rows; no "No channels" flash while the rest of the list loads (Build 96) |
-| Another provider | With channels already in the guide, add a second provider in Options | The guide keeps your list; the header reads "Adding channels from <name>…", then "✓ Channels added"; the new channels join the list without it emptying |
+| Another provider | With channels already in the guide, add a second provider in Settings | The guide keeps your list; the header reads "Adding channels from <name>…", then "✓ Channels added"; the new channels join the list without it emptying |
 | Placeholders | Open the guide before its listings are in | Rows show soft pulsing blocks where the shows and times go (no "Loading guide…"); they turn into listings as they arrive; scrolling stays smooth |
 | Live Events placeholders | Open Live Events on a fresh start | Two rows of pulsing tile shapes until the games are in; no "Loading this week's games…" |
-| Edit My Lineup | Options › Edit My Lineup, change something, Continue | The summary shows pulsing blocks and a dimmed "Start Watching" with "Working out your channels…"; Start Watching works once the counts are in |
+| Edit My Lineup | Settings › My Lineup › Set up My Lineup again, change something, Build My Lineup | The summary shows pulsing blocks and a dimmed "Start Watching" with "Working out your channels…"; Start Watching works once the lineup is in |
 | Timing | Help › playback log after a first run | A "sorted N channels in X ms" line: tell me the number |
 
 ## Built-in logos and the LG package
@@ -381,7 +381,7 @@ The app knows real US channels by their other names, language and closing. After
 | Rechecks | Leave the app on the guide for a few hours without opening Live Events | The channel list is read about every 2 hours, not every 30 minutes; with Live Events open (or used in the last 3 hours, or a reminder coming up) still every 30 minutes |
 | New games | Open Live Events after a while away | New games show up within moments (a list older than 10 minutes is read again) |
 | Dead copy | A copy that sends nothing (Help › playback log) | "start failed · no data after 6s", then the retry; never a 10 s wait for a copy that sent no data (LG and Fire TV; Apple TV waits as before) |
-| Emby quick start | Options › Quick start for Emby (test) on; tune Emby-only channels (your locals) | "quick start" in the log, then a picture; if the server refuses, one retry the normal way and it plays as before. Compare the time to picture with the switch off |
+| Emby quick start | Settings › Advanced › Experimental: Emby / Jellyfin quick start on; tune Emby-only channels (your locals) | "quick start" in the log, then a picture; if the server refuses, one retry the normal way and it plays as before. Compare the time to picture with the switch off |
 | Emby to Emby | With an Emby channel playing, change to another Emby channel | No longer slower than the first one |
 
 ## Launch (Build 103)
@@ -408,7 +408,7 @@ The app knows real US channels by their other names, language and closing. After
 | Fire TV | Change channels | The picture comes up about a second sooner than before |
 | Apple TV | Change channels | Slightly sooner (half a second of buffer instead of one) |
 | Typed numbers | Type a channel number that no longer number starts with (e.g. 702 when there's no 7020) | It tunes at once; 7 alone still waits for the next digit if 70-something exists |
-| OK | Menus, Options, the player | OK acts as you press it; in the guide, Live Events and panels with a hold menu it still waits to tell a press from a hold |
+| OK | Menus, Settings, the player | OK acts as you press it; in the guide, Live Events and panels with a hold menu it still waits to tell a press from a hold |
 
 ## Subtitles (Build 106)
 
@@ -416,7 +416,7 @@ Off until turned on; then on for every channel that has them until turned off. M
 
 | Area | How to check | Pass |
 |---|---|---|
-| Turning on | Options › Watching › Subtitles, or Down in the player › Subtitles | Picking a language (or On) turns them on; Off turns them off; the choice stays across channels and restarts |
+| Turning on | Settings › Watching, or OK in the player › Subtitles | Picking a language (or On) turns them on; Off turns them off; the choice stays across channels and restarts |
 | On LG | Turn subtitles on while watching a US channel | The channel restarts once (a second or two) and captions appear low and centred; a CC tag next to LIVE |
 | Timing | Watch for a minute with captions | Captions appear with the speech, not seconds early |
 | Banner | Press OK while captions show | They move up above the banner and back down when it hides |
@@ -429,10 +429,10 @@ Off until turned on; then on for every channel that has them until turned off. M
 
 | Area | How to check | Pass |
 |---|---|---|
-| Through the app (LG) | Watch normally for a day, then export the playback log | Each start says "route · through the app"; start times and failures no worse than Build 105 (Options › Playback › Play through the app off goes back to "direct") |
+| Through the app (LG) | Watch normally for a day, then export the playback log | Each start says "route · through the app"; start times and failures no worse than Build 105 (Settings › Advanced › Play through Marigold off goes back to "direct") |
 | Subtitles on LG | Turn subtitles on while watching | They appear without the channel restarting |
 | Banner | Press OK in the player | The banner sits on a rounded, translucent card; no dark fade over the picture |
-| Panels | Sources, Subtitles, Options, the cameras panel | Floating cards inset from the edges, no fades |
+| Panels | Sources, Subtitles, Quick settings, the cameras panel | Floating cards inset from the edges, no fades |
 | Mini guide | Left in the player | A 600-wide card; Left again adds the categories beside it and the card widens; it narrows again when they close |
 | Live Events rail | Left while watching a game | 600 wide; Left again for sports (a red dot where something is live); Right does nothing (other ways to watch are under Sources) |
 
@@ -447,7 +447,7 @@ Off until turned on; then on for every channel that has them until turned off. M
 | Detail | A live football or baseball game | Down and distance (red in the red zone) or runners and count under the teams |
 | Sets | Tennis, volleyball | Sets in columns, the set on now bold |
 | Races and cards | A race weekend, a UFC card | Title with a track of the sessions or card parts: done parts dim, the current one bold (filling red while live) |
-| Scores off | Options › Show scores off | Same layout, no numbers, sets, podiums or game detail |
+| Scores off | Settings › Live Events › Show scores off | Same layout, no numbers, sets, podiums or game detail |
 
 ## Live Events audit, filters, steadier relay (Build 109)
 
@@ -459,7 +459,7 @@ Off until turned on; then on for every channel that has them until turned off. M
 | Direct after the relay | The same case | The direct try gets its own 6 s (no "no data after 6s" right after the switch) |
 | Old board | Open Live Events after a few hours away | "Updating…" by the top buttons until the fresh board is in (a minute at most); the log says "live events · opened; the board is from 9 h ago; updating" |
 | Log lines | Export the playback log after opening Live Events | "live events" lines: opened, rebuilt (with what was hidden), the board's size |
-| Report | Options › Help › Export Live Events Report | A spreadsheet of every event slot: what it was read as, the tile and rows it's on, or why it was left out |
+| Report | Settings › Help & info › Send a report to your phone › Live Events report | A spreadsheet of every event slot: what it was read as, the tile and rows it's on, or why it was left out |
 | High school | Live Events | No High School row and none in Live now; My Sports › High School brings both back |
 | TSN+ shows | Live Events with TSN+ groups | No "SC with…", "Sportscentre" or "SC: Top Characters" tiles |
 | Other languages | Danish, Italian, Brazilian event feeds | "Quarterfinals", "Day 2", "Finals" in place of Kvartfinaler, Giorno 2, Finais |
@@ -471,15 +471,15 @@ Off until turned on; then on for every channel that has them until turned off. M
 | Area | How to check | Pass |
 |---|---|---|
 | Flipping | Up, pause a second, then Down, on every remote | Down always goes back down; it never opens buttons. The banner shows where Up and Down go (their numbers) |
-| CH keys | CH+ on LG (or a remote with CH keys) | Goes to the next higher number; Up goes to the channel above (Options › Watching › Up arrow goes to higher numbers flips Up) |
-| Controls | OK while watching | The banner with buttons: Subtitles first (highlighted), Aa, Sources, Guide, Back to…, Favorite, More. Up/Down still flip and close them |
+| CH keys | CH+ on LG (or a remote with CH keys) | Goes to the next higher number; Up goes to the channel above (Settings › Watching › Up arrow in the player: Higher number flips Up) |
+| Controls | OK while watching | The banner with buttons: Subtitles first (highlighted), Aa, Sources, Guide, Back to…, Favorite, Settings. Up/Down still flip and close them |
 | Subtitles | OK, then OK again (a moment later) | Subtitles switch on or off; a large notice says so and how to undo. Two quick OKs do nothing |
 | Subtitle button | With subtitles on | It shows the language ("English ✓"), "On · waiting…" before captions arrive, or "no Español here" when the picked one is missing |
 | Aa | OK on Aa, or hold OK on Subtitles | Languages and style in one panel; Size has Extra large |
-| Languages | Español on a Spanish channel, then an English channel | The English channel keeps its own setting (Options › Watching › Subtitles has a switch for each) |
+| Languages | Español on a Spanish channel, then an English channel | The English channel keeps its own setting (Settings › Watching has a switch for each) |
 | LG Green / CC key | Press it while watching | Subtitles on or off in one press, with the notice |
 | Fire TV system captions | Settings › Accessibility › Captions on, back to the app | Subtitles turn on within a few seconds (and off when it's turned off) |
-| One layer | Banner up, then Left | Only the guide shows; no banner under it. Back from Sources/Options returns to the plain picture |
+| One layer | Banner up, then Left | Only the guide shows; no banner under it. Back from Sources/Quick settings returns to the plain picture |
 | Back | Back with the banner up, then on a clear picture | Hides the banner; on a clear picture "Press Back again to leave · ▶ Back to …"; a second Back leaves |
 | Back to | Watch A for 15 s, flip through B and C quickly, press Right | Goes to A, not C; Right again goes back to where you were |
 | Exit (LG) | Exit while the controls are up | Everything clears, the channel keeps playing |
@@ -509,3 +509,84 @@ Off until turned on; then on for every channel that has them until turned off. M
 | Saved picks | Favorites, hidden channels and lineup order from before | All still apply to the merged rows |
 | Logos | BYUtv, MeTV, BabyFirst, News 12 | Clean library logos instead of the provider's |
 | Channel report | Export it | A row_id column says which row each stream is in |
+
+## Game banner (Build 112)
+
+| Area | How to check | Pass |
+|---|---|---|
+| Low card | Watch a live game from Live Events | The banner is one card from about two thirds down: logos, "Away at Home" (or "vs"), LIVE; under it the league, week or round and venue in small capitals; the key line below as before. The top of the picture stays clear |
+| No score | The same game with Settings › Live Events › Show scores on, then off | Neither shows a score, clock, period, down and distance, sets, serve, leaderboard, running order or result anywhere in the banner |
+| Logos | A game with logos, one without (small college) | The two logos (the tiles' own); without logos, the generated colour badges; for a person named only in a title, initials |
+| Your team | A My Sports team's game | A gold star after the matchup |
+| Before the start | Watch a game's channel 25 minutes early (the detail card's Watch) | An amber "in 25 min" chip; at the right "Starts 8:20 PM · on now: <show>" |
+| After the end | Keep watching past the game's usual length (or its listing's end) | "Likely over", outlined as on the tiles; "was scheduled until …" at the right. Never Final or a winner |
+| Tennis | A tennis match | The players' flags (the country code until they load) and the court in the small line |
+| Races and golf | An F1 race, a golf round | The sport's icon in a box where the logos go; the session in the title ("Australian GP · Race"); the circuit and "LIGHTS OUT 2:00 PM" (F1 races and sprints), or the course |
+| Channel | A game on a channel with both coasts | The channel's logo, number and name at the right with EAST or WEST; in small type the listing times and "next 11:30 PM <show>" |
+| Event feed | A game only on an event feed | The feed's name at the right; "started 1:10 PM" in place of the listing times |
+| Guide channel | From the guide, tune a channel that's showing a game on the board | The same game banner. A channel with no game on (or one whose game ended over half an hour ago) keeps the usual banner |
+| Controls | OK on a game | The pills replace the key line, exactly as on any channel; the ID line stays |
+| Captions | Subtitles on, banner up | Captions sit just above the lower card, not over it; back down when it hides |
+| Pointer (LG) | Wave the remote over a game | Edge buttons and pills work as before; a click on the picture opens and closes the controls |
+| Hides in | Any banner | "Hides in 5 s" at the right end of the key line, counting down |
+| By the clock | Watch a game across its scheduled end, bringing the banner up now and then | The chip goes from LIVE to "Likely over" on its own; nothing else in the banner changes while watching |
+
+## Left rail (Build 112)
+
+| Area | How to check | Pass |
+|---|---|---|
+| Strip | Open the guide, then Live Events | A narrow strip down the left in its own colour with a clear edge: Search, My Lineup, Favorites, Recent, Live Events (All Channels when that setting is on), then My Sports and Settings at the bottom. A bar marks the current section. No tab row and no round buttons |
+| No strip elsewhere | Open the player, the mini guide, the event guide, Search, setup and a side panel | No strip; each behaves as before |
+| Hero | Move around, open the column, open the menu | The title, description and preview corner never move (the hero starts right of the strip) |
+| More rows | Compare with Build 111 | The timeline and grid start right under the hero: about one more row |
+| Filter | Up from the first row, Right | A small filter button beside "Now ▼"; OK opens the filter. A set filter shows a red dot and its chip at the top right of the hero |
+| Neighborhoods | Left from the first show at Now | The column opens at the hero's left edge with MY LINEUP · Jump to in the timeline row; the timeline and grid slide right and the window shows 2 hours (re-timed once the slide ends). No channel counts |
+| Walk | Up/Down in the column | One neighborhood per press (or swipe); the grid scrolls behind |
+| Return rule | Scroll to the middle of a neighborhood on a later show, Left to the column, Up, Down, OK (or Right) | Back exactly where you were: same row, show, time and scroll |
+| Another neighborhood | The same, but OK on a different neighborhood | Its first channel, at Now; the column closes and the grid slides back |
+| Back in the column | Move to another neighborhood, then Back | Exactly where you were |
+| Menu | Left in the column, or Back in the grid with nothing to undo (digits, filter, later time) | A full-height menu with labels over the dimmed hero and grid; the grid slides back under it. Up/Down move; the bar marks the current section |
+| Menu picks | OK on My Lineup, Favorites, Recent, Live Events, Search, My Sports, Settings | My Lineup and Favorites land on their column (Favorites only lists neighborhoods with a favorite); Recent goes to its grid, newest first; Live Events opens on SPORTS; the others open their screens as before |
+| Back from a picked column | Menu › Favorites, then Back | Back in the menu |
+| Back in the menu | On Favorites, Back; Back again on My Lineup | The first goes to My Lineup; then "Press Back again to exit" (Apple TV leaves the app) |
+| Recent | Left from the first show on Recent | The menu (Recent has no column); the bar reads "◀ Menu" |
+| Settings | Settings in the strip, and from Live Events's strip | Both open All settings; the blue key opens Quick settings for where you are |
+| Live Events | Left from a row's first tile; Up/Down; OK | SPORTS opens inside the board ("2 live" in red), the tile rows slide right, the game hero stays. The same sport returns to the same tile; another sport goes to its first game |
+| Live Events Back | Back with a filter, then again | The filter clears first, then the menu; Back in the menu goes to My Lineup |
+| Yellow | Yellow (Play/Pause on Fire TV) in the guide and in Live Events, also with the column open | Switches between the guide and Live Events, as before |
+| Colour keys | Red, Green, Blue and hold OK with the column open and at rest | Same as before; with the column open they act on the channel behind it |
+| Key bar | Look at the right end of the key bar in each state | "◀ Neighborhoods · Back: Menu · Hold OK: more", "OK or ▶ Go · Back: Stay · ◀ Menu" in the column, "◀ Menu …" on Recent, "◀ Sports …" on Live Events |
+| Pointer (LG) | Hover the strip's icons; click one; click outside the open menu; click a show with the column open; wheel over the column | A name pill and nothing moves; a section opens its column (Recent its grid); the menu closes; the column closes on that show; the wheel walks the list |
+| Pointer return rule | Open the column, click your own neighborhood, then another | Your own puts you back where you were; another goes to its top |
+
+## Settings (Build 112)
+
+"Options" is now Settings: a short Quick settings panel for where you are, and All settings, full screen, with seven categories. No screen shows a number of channels.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Name | The key bars, the player's controls, Live Events | "Settings" on the blue key's hint and on the player's last button; "Options" nowhere |
+| Quick settings, guide | Blue in the guide | A side panel over the guide: Preview channels, All Channels tab, Edit My Lineup ›, then All settings › and Help & info ›; Blue or Back closes it |
+| Quick settings, player | Blue while watching, or OK › Settings | Subtitles Off / On (says English- or Spanish-language channels), Caption size S / M / L / XL, Caption look; Version East / West on a channel with both, which switches in place; the picture keeps playing |
+| Quick settings, Live Events | Blue on the board | Show scores, Games not on my channels, My Sports › (its leagues), Refresh schedule; with Game schedule off the first, second and last are dimmed with "Turn on Game schedule in All settings" |
+| All settings | The gear (Up to the tabs, Right to the gear, OK), or All settings › in Quick settings | Full screen: Watching, Guide, My Lineup, Live Events, Providers, Advanced, Help & info, each with a line of its current values; Watching's rows show, quieter, in the middle |
+| Moving | Up / Down on the categories | The middle shows each category's rows as you move; the right column says what the category is for |
+| Going in | Right or OK, then Back, then Back | Right / OK goes into the rows; Back returns to the categories; Back again closes Settings |
+| Rows | Inside a category | Every row has its value (a switch, the choices, or the value before ›); the right column describes the focused row; the key bar says ◀▶ Change on rows of choices and "Changes save as you go" |
+| Pointer (LG) | Point at a category, a row, one of a row's choices; click; turn the wheel over each pane | Pointing at a category shows it; a click opens or changes what's under the pointer (a choice picks that one); the wheel scrolls the pane under the pointer |
+| Help & info › | Help & info › in Quick settings | All settings opens inside Help & info |
+| Dimmed rows | Turn off All Channels tab, then Game schedule | Groups in All Channels stays where it was, dimmed, with "Turn on All Channels tab"; Show scores, Games not on my channels and Refresh schedule dim with "Turn on Game schedule". Rows never come and go |
+| Watching | Settings › Watching | English-language and Spanish-language channels (with the language picked in Aa), Caption size (with a preview on the right that follows), Caption look, Letters, Position (dimmed on Apple TV), Up arrow in the player: Channel above / Higher number |
+| Guide | Settings › Guide | Preview channels, Clock 12-hour / 24-hour (a real choice), All Channels tab, Groups in All Channels › (checks, no counts), Guide listings › (Fill in missing listings, Listings to use dimmed when it's off, Refresh listings now) |
+| My Lineup | Settings › My Lineup | Edit My Lineup › (Added by you, Removed by you, My Lineup: no counts in the headers), Refresh suggestions, Your area ›, Countries & languages ›, Kinds of channels ›, East/West feeds Automatic / East / West / Both (with "Automatic here: West" and why), Channel by channel ›, then Set up My Lineup again › |
+| Your area | Your area ›, pick a second area, Back | One page, not the wizard; the guide's local stations change at once; Done or Back closes it |
+| Kinds of channels | Kinds of channels ›, turn off News, Back | My Lineup loses its news channels without going through the other steps; no counts beside the kinds; Only channels with a guide is on the same page |
+| Countries | Countries & languages ›, check Mexico | Saved at once; no counts; the last one can't be unchecked ("Keep at least one") |
+| Live Events | Settings › Live Events | Game schedule, Show scores, Games not on my channels, My leagues ›, My teams › (opens on the teams; Back closes), Remind me before my teams play (dimmed until you have teams), Home city (your areas as choices; dimmed with a reason with one area), Refresh schedule |
+| Providers | Settings › Providers | Each provider as "Xtream · Signed in" (never a channel count), Add a provider › (the form; passwords as dots), Add from your phone ›, Reload channels and listings |
+| Remove | A provider › Remove this provider | Asks "Remove <name>?" with Cancel focused; Remove takes its channels out and says "Provider removed" |
+| Advanced | Settings › Advanced | Only what applies: Play through Marigold (LG), Xtream stream format MPEG-TS / HLS (with an Xtream provider), Experimental: Emby / Jellyfin quick start (with Emby); not listed at all when none apply |
+| Help & info | Settings › Help & info | Getting around › shows the keys card again; Send a report to your phone › has the three reports and Clear playback log (asks first); Diagnostics ›; Status › (guide files, memory); About: Version and Memory in use, both focusable |
+| Defaults | A fresh install | Preview on, 12-hour clock, All Channels off, subtitles off, Medium / Box, Channel above, Game schedule, scores and games not on my channels on, MPEG-TS, quick start off |
+| Old settings | Update over Build 111 | Every setting and My Lineup choice is kept |
+| No counts | The guide filter and Jump to, search, the lineup setup and its summary, first-run setup, Guide listings, Status, provider lines | No number of channels anywhere |

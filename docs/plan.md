@@ -87,7 +87,7 @@ src/
     guide/        guide grid, hero, preview, rail, time menu, filter, search, detail card
     events/       board, tiles, hero, sports column, Where to Watch, detail card
     player/       banner, mini guide, event guide, Sources, cameras, tuning card, notes
-    setup/        accounts, My Lineup wizard, My Sports wizard, Options
+    setup/        accounts, My Lineup wizard, My Sports wizard, Settings
   main.cpp
 vendor/legacy/    trimmed Legacy files, kept byte-identical where possible
   UPSTREAM.md     commit, file list, local patches, last sync
@@ -257,7 +257,7 @@ The screens follow the tvOS layout, redrawn at 1920×1080 with Legacy's GLES2 re
 - **Focus:** a directional focus graph, with explicit neighbours where a grid needs them.
   - Magic Remote hover moves focus and the wheel scrolls rows.
   - Long OK opens the context menu, which tvOS gets from long-press Select.
-- **Colour keys:** red Sources (Where to Watch on the board), green Add to My Lineup or Remind Me, yellow Live Events or Guide, blue Options.
+- **Colour keys:** red Sources (Where to Watch on the board), green Add to My Lineup or Remind Me, yellow Live Events or Guide, blue Quick settings.
   - Remotes without colour keys see the keys they have instead: ☰, ⏯ and ⏪ ⏩ on a Fire TV; on other Android TV remotes, hold OK and the D-pad until a key is pressed that joins the hints.
 - **Live Events UI never names a data source.** Strings come from one English table, so this is reviewable in one file.
 
@@ -295,10 +295,10 @@ Each milestone ends with a "Build NN" `.ipk` you can install.
 | # | Scope | Done when |
 |---|---|---|
 | M0 | Toolchain, CMake, CI (hygiene, host + sanitizers, ipk), platform facades, a test screen that draws, reads every remote key and plays one stream you enter on the TV | CI green; the app opens on your TV and plays |
-| M1 · Lineup + guide | Xtream, Emby and M3U playlist accounts (LG keyboard), streaming channel load with whole-group admission up to 30k, catalog and clustering, My Lineup wizard, guide grid with hero, rail, time menu, search, provider guide, outside XMLTV, logo cache, Options (lineup and guide parts) | A 60k-channel mock loads within its memory budget; the guide scrolls at 60 fps on the TV; listings match like tvOS on the fixtures |
+| M1 · Lineup + guide | Xtream, Emby and M3U playlist accounts (LG keyboard), streaming channel load with whole-group admission up to 30k, catalog and clustering, My Lineup wizard, guide grid with hero, rail, time menu, search, provider guide, outside XMLTV, logo cache, Settings (lineup and guide parts) | A 60k-channel mock loads within its memory budget; the guide scrolls at 60 fps on the TV; listings match like tvOS on the fixtures |
 | M2 · Playback with backups | Video facade, preview corner, tuning card, banner, previous channel, number and CH keys, mini guide, Sources panel, failover policy, reliability scores, pinned feeds, playback log | A killed feed fails over silently on the TV; failover unit tests pass under TSan |
 | M3 · Live Events with scores | Schedule, network map, matcher, board (rows, tiles, hero, sports column), Where to Watch, detail card, live scores, My Sports wizard, reminders, event guide in the player, remembered source per game | The matcher reproduces the tvOS results on synthetic fixtures; scores stay within the request caps |
-| M4 · Panels, cameras, tennis | F1/NASCAR cameras panel, race data, followed drivers, whip-arounds, tennis tiles with player photos, the rest of Options | Feature parity with the tvOS `multiview` branch, minus Multiview |
+| M4 · Panels, cameras, tennis | F1/NASCAR cameras panel, race data, followed drivers, whip-arounds, tennis tiles with player photos, the rest of Settings | Feature parity with the tvOS `multiview` branch, minus Multiview |
 
 Multiview is out of scope: the TV has one hardware decoder, and providers cap streams per account.
 

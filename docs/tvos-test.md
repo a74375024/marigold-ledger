@@ -28,7 +28,7 @@ These rows are what is new on Apple TV.
 | Back on the guide | Back with nothing open on the guide | The Apple TV Home screen at once |
 | Return | Open Marigold again | The guide as you left it, at once |
 | TV button | Press it in the player | Home; the picture stopped. Back in Marigold: the guide, and the channel starts again when chosen |
-| Options | Up to the tabs, Right to the gear, OK | Options opens |
+| Settings | Up to the tabs, Right to the gear, OK | All settings opens |
 | TV remote | A TV remote over HDMI with CH or number keys | Works; its keys join the hints once pressed |
 
 ## Keyboard
@@ -61,5 +61,5 @@ These rows are what is new on Apple TV.
 | Kept for good | After a reinstall of the same build | Accounts, settings and My Lineup kept; the Help log shows no "Keychain unavailable" (if it does, passwords are in a file Apple TV may clear) |
 | Plain http | A provider on http:// | Loads |
 | Emby | A LAN Emby server with its own certificate | Connects (allow local network access when asked) |
-| Share | Options › Help › Export Channel Report | The QR code; a phone on the Wi-Fi gets the file |
-| Diagnostics | Options › Help › Diagnostics | tvOS version, model, GPU, video state and the last log lines; no stream links |
+| Share | Settings › Help & info › Send a report to your phone › Channel report | The QR code; a phone on the Wi-Fi gets the file |
+| Diagnostics | Settings › Help & info › Diagnostics | tvOS version, model, GPU, video state and the last log lines; no stream links |

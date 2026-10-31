@@ -27,7 +27,7 @@ code. These rows are what is new on Android.
 | Menu | ☰ on a channel in the guide; ☰ on Live Events; ☰ in the player | The channel's actions (Watch, Remind Me, My Lineup, Choose Feed); Where to Watch; Sources |
 | Play/pause | ⏯ on the guide, then ⏯ again | Live Events opens, then back to the guide |
 | Rewind, fast forward | ⏪ and ⏩ on the guide | A page up, a page down |
-| Options without colour keys | Up to the tabs, Right to the gear, OK | Options opens |
+| Settings without colour keys | Up to the tabs, Right to the gear, OK | All settings opens |
 | Media keys | Play/pause, rewind, fast forward in the player | As on LG |
 | Another Android TV remote | On a non-Fire TV stick: the guide's bar, then press ☰ or ⏯ if it has them | First only "Hold OK · Channel options"; each key pressed joins the bar |
 | Volume, Home | Press them | The system's: volume changes, Home goes home |
@@ -63,6 +63,6 @@ code. These rows are what is new on Android.
 | Plain http | A provider on http:// | Loads (cleartext is allowed) |
 | Emby | A LAN Emby server with its own certificate | Connects |
 | Update | Install a newer build over this one | Accounts and settings kept |
-| Share | Options › Help › Export Channel Report | The QR code; a phone on the Wi-Fi gets the file |
-| Diagnostics | Options › Help › Diagnostics | Android version, GPU, video state and the last log lines |
+| Share | Settings › Help & info › Send a report to your phone › Channel report | The QR code; a phone on the Wi-Fi gets the file |
+| Diagnostics | Settings › Help & info › Diagnostics | Android version, GPU, video state and the last log lines |
 | Logcat | `adb logcat -s marigold` | The app's log lines; no stream links in them |
