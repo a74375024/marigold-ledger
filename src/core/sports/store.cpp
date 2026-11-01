@@ -52,7 +52,7 @@ std::vector<ListingChannel> listingChannels(const std::set<std::string>& lineup,
 
 std::optional<matcher::GuideListing> listingFor(const ListingChannel& channel, const std::string& rawTitle,
                                                 const std::optional<std::string>& subtitle,
-                                                const std::optional<std::string>& overview, bool sports,
+                                                const guide::Text& overview, bool sports,
                                                 Seconds start, Seconds end) {
   std::string title = subtitle ? rawTitle + " " + *subtitle : rawTitle;
   matcher::GuideListing listing;
@@ -70,15 +70,15 @@ std::optional<matcher::GuideListing> listingFor(const ListingChannel& channel, c
     listing.tennisCoverage = true;
     return listing;
   }
-  if (overview && text::count(*overview) > 12 && (sports || matcher::isGenericSportsTitle(rawTitle)) &&
+  if (overview && text::count(overview.view()) > 12 && (sports || matcher::isGenericSportsTitle(rawTitle)) &&
       matcher::isGenericSportsTitle(title)) {
     // "NBA Basketball": the description names the venue ("From Chase
     // Center in San Francisco"), or sometimes the teams.
-    if (auto place = matcher::venueOf(*overview)) {
+    if (auto place = matcher::venueOf(overview.view())) {
       listing.venue = place->first;
       listing.city = place->second;
     } else {
-      listing.detail = text::prefix(*overview, 120);
+      listing.detail = text::prefix(overview.view(), 120);
     }
     return listing;
   }

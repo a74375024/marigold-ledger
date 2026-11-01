@@ -28,6 +28,12 @@ std::string prefixCodePoints(std::string_view s, size_t n, bool& cut) {
   return std::string(s.substr(0, i));
 }
 
+// "en-US" is "en": the language before any region, ignoring case.
+bool sameLanguage(std::string_view lang, std::string_view code) {
+  std::string_view primary = lang.substr(0, lang.find_first_of("-_"));
+  return !code.empty() && str::iequals(str::trim(primary), code);
+}
+
 }  // namespace
 
 XmltvReader::XmltvReader(
@@ -141,10 +147,14 @@ void XmltvReader::startElement(std::string_view element, const xml::Attributes& 
     desc_.reset();
     categories_.clear();
     flags_ = 0;
+    subtitleInLanguage_ = false;
+    descInLanguage_ = false;
   } else if (element == "title" || element == "sub-title" || element == "desc" ||
              element == "category") {
     collecting_ = programmeChannel_.has_value();
     text_.clear();
+    const std::string* lang = collecting_ ? attributes.find("lang") : nullptr;
+    textInLanguage_ = lang && sameLanguage(*lang, language_);
   } else if (element == "new" || element == "premiere") {
     if (programmeChannel_) flags_ |= 32;
   } else if (element == "live") {
@@ -168,13 +178,22 @@ void XmltvReader::endElement(std::string_view element) {
   } else if (element == "title") {
     if (programmeChannel_ && !title_) title_ = clean(text_);
   } else if (element == "sub-title") {
-    if (programmeChannel_) subtitle_ = clean(text_);
-  } else if (element == "desc") {
-    // Read here; kept at the end of the programme only for what's on soon
-    // or for sports (whose description names the venue, how Live Events
-    // finds which game a station has). Descriptions are most of the size.
-    if (programmeChannel_) {
+    // The first one, or the first in the app's language.
+    if (programmeChannel_ && (!subtitle_ || (textInLanguage_ && !subtitleInLanguage_))) {
       if (auto value = clean(text_)) {
+        subtitle_ = std::move(value);
+        subtitleInLanguage_ = textInLanguage_;
+      }
+    }
+  } else if (element == "desc") {
+    // Read here (the first, or the first in the app's language); kept at
+    // the end of the programme only for what starts before
+    // window_.descUntil, or for sports (whose description names the venue,
+    // how Live Events finds which game a station has). Descriptions are
+    // most of the size.
+    if (programmeChannel_ && (!desc_ || (textInLanguage_ && !descInLanguage_))) {
+      if (auto value = clean(text_)) {
+        descInLanguage_ = textInLanguage_;
         bool longer = false, ignored = false;
         prefixCodePoints(*value, kMaxDescription, longer);
         if (longer) {
@@ -192,13 +211,14 @@ void XmltvReader::endElement(std::string_view element) {
     if (programmeChannel_ && title_) {
       int f = flags_ | genre::flags(str::join(categories_, " "));
       if ((f & genre::kGenreBits) == 0) f |= genre::flagsForTitle(*title_, subtitle_);
-      bool keepDesc = programmeStart_ < window_.low + 180 + 8 * 60 || (f & genre::kSports) != 0;
+      int descUntil = window_.descUntil ? window_.descUntil : window_.low + 180 + kDescHours * 60;
+      bool keepDesc = programmeStart_ < descUntil || (f & genre::kSports) != 0;
       RawProgram p;
       p.s = programmeStart_;
       p.m = std::max(1, programmeEnd_ - programmeStart_);
       p.t = *title_;
       p.st = subtitle_;
-      if (keepDesc) p.d = desc_;
+      if (keepDesc && desc_) p.d = texts_.intern(*desc_);
       p.f = f;
       found_[*programmeChannel_].push_back(std::move(p));
     }
@@ -259,6 +279,7 @@ std::map<std::string, SourceResult::Entry> XmltvReader::result() {
     byUser[userID] = std::move(entry);
   }
   found_.clear();  // losers go now
+  texts_.clear();
   return byUser;
 }
 

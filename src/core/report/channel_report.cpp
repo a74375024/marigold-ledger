@@ -103,6 +103,13 @@ int tagged(const std::vector<guide::RawProgram>* raw, int low, int high) {
   return n;
 }
 
+int described(const std::vector<guide::RawProgram>* raw, int low, int high) {
+  if (!raw) return 0;
+  int n = 0;
+  for (const auto& p : *raw) n += p.s < high && p.s + p.m > low && p.d ? 1 : 0;
+  return n;
+}
+
 // "yyyy-MM-dd HH:mm" in `zone` (en_US_POSIX DateFormatter).
 std::string minuteStamp(time::Seconds t, const time::Zone& zone) {
   time::Civil c = zone.toLocal(t);
@@ -196,7 +203,9 @@ const std::vector<std::string>& channelReportColumns() {
       "kind", "market", "core_network", "scope",
       "server_genre_tagged_next_3h", "outside_genre_tagged_next_3h",
       "provider_guide_genre_tagged_next_3h", "now_genres",
-      "now_subtitle", "now_description", "outside_listings_end", "logo_sources", "logo_status",
+      "now_subtitle", "now_description", "outside_listings_end",
+      "now_start", "outside_built_at", "provider_built_at",
+      "outside_described_next_3h", "provider_guide_described_next_3h", "logo_sources", "logo_status",
       "directory_id", "directory_match", "row_id"};
   return kColumns;
 }
@@ -297,8 +306,8 @@ std::string channelReportCSV(const ChannelReportInput& in,
       nowGenres = str::join(g, " ");
     }
     std::string nowDescription;
-    if (now && now->overview && !now->overview->empty()) {
-      nowDescription = rx::replace(prefixChars(*now->overview, 160), "https?://\\S+", "");
+    if (now && !now->overview.empty()) {
+      nowDescription = rx::replace(prefixChars(now->overview.view(), 160), "https?://\\S+", "");
       nowDescription = str::replaceAll(nowDescription, "\n", " ");
     }
 
@@ -320,6 +329,14 @@ std::string channelReportCSV(const ChannelReportInput& in,
       int last = outsideRaw->front().end();
       for (const auto& p : *outsideRaw) last = std::max(last, p.end());
       listingsEnd = minuteStamp(static_cast<time::Seconds>(last) * 60, in.zone);
+    }
+
+    // When each guide was read: descriptions reach a set time past it.
+    std::string providerBuilt;
+    if (isXtream) {
+      const guide::provider::Status* status = find(in.providerStates, channel.serverId);
+      if (status && status->kind == guide::provider::Status::Kind::ready && status->updated > 0)
+        providerBuilt = minuteStamp(status->updated, in.zone);
     }
 
     // The channel directory's entry for it (phase 1: reported, not used).
@@ -371,6 +388,11 @@ std::string channelReportCSV(const ChannelReportInput& in,
         cell(now && now->episodeTitle ? *now->episodeTitle : empty),
         cell(nowDescription),
         cell(listingsEnd),
+        cell(now ? minuteStamp(now->start, in.zone) : empty),
+        cell(in.outsideBuilt > 0 && outsideRaw ? minuteStamp(in.outsideBuilt, in.zone) : empty),
+        cell(providerBuilt),
+        cell(std::to_string(described(outsideRaw, low, high))),
+        cell(isXtream ? std::to_string(described(providerRaw, low, high)) : empty),
         cell(logo ? logo->first : empty),
         cell(logo ? logo->second : empty),
         cell(directoryId),

@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <vector>
 
 namespace marigold::px {
@@ -96,32 +98,69 @@ Image trimTransparent(Image src, uint8_t threshold) {
 
 void bleedEdges(Image& im) {
   if (im.empty() || im.rgba.size() < static_cast<size_t>(im.w) * static_cast<size_t>(im.h) * 4) return;
-  const size_t n = static_cast<size_t>(im.w) * static_cast<size_t>(im.h);
-  std::vector<uint8_t> coloured(n);
+  const size_t w = static_cast<size_t>(im.w), h = static_cast<size_t>(im.h), n = w * h;
+  std::vector<uint8_t> coloured(n), next, across(n);
   for (size_t i = 0; i < n; ++i) coloured[i] = im.rgba[i * 4 + 3] > 0;
   for (int pass = 0; pass < 2; ++pass) {
-    std::vector<uint8_t> next = coloured;
-    for (int y = 0; y < im.h; ++y) {
-      for (int x = 0; x < im.w; ++x) {
-        size_t i = static_cast<size_t>(y) * static_cast<size_t>(im.w) + static_cast<size_t>(x);
-        if (coloured[i]) continue;
+    next = coloured;
+    // Only the band beside the coloured pixels has anything to do: a pixel
+    // is in it when a coloured one is within one step (rows first, then
+    // columns), so the clear rest is skipped at a byte a pixel.
+    // Eight pixels at a time (one byte each) where the row has room.
+    for (size_t y = 0; y < h; ++y) {
+      const uint8_t* c = &coloured[y * w];
+      uint8_t* a = &across[y * w];
+      a[0] = c[0] | (w > 1 ? c[1] : 0);
+      size_t x = 1;
+      for (; x + 9 <= w; x += 8) {
+        uint64_t l, m, r;
+        std::memcpy(&l, c + x - 1, 8);
+        std::memcpy(&m, c + x, 8);
+        std::memcpy(&r, c + x + 1, 8);
+        uint64_t v = l | m | r;
+        std::memcpy(a + x, &v, 8);
+      }
+      for (; x + 1 < w; ++x) a[x] = c[x - 1] | c[x] | c[x + 1];
+      if (w > 1) a[w - 1] = c[w - 2] | c[w - 1];
+    }
+    for (size_t y = 0; y < h; ++y) {
+      const uint8_t* row = &across[y * w];
+      const uint8_t* above = y > 0 ? row - w : row;
+      const uint8_t* below = y + 1 < h ? row + w : row;
+      const uint8_t* own = &coloured[y * w];
+      for (size_t x = 0; x < w; ++x) {
+        if (x % 8 == 0 && x + 8 <= w) {
+          // Nothing coloured near, or all coloured already: the next eight
+          // have nothing to do.
+          uint64_t here, up, down, done;
+          std::memcpy(&here, row + x, 8);
+          std::memcpy(&up, above + x, 8);
+          std::memcpy(&down, below + x, 8);
+          std::memcpy(&done, own + x, 8);
+          if ((here | up | down) == 0 || done == 0x0101010101010101ull) {
+            x += 7;
+            continue;
+          }
+        }
+        size_t i = y * w + x;
+        if (!(row[x] | above[x] | below[x]) || coloured[i]) continue;
         // The average of the coloured neighbours, the visible ones counting
-        // by how visible they are.
-        double sum[3] = {0, 0, 0}, weight = 0;
-        for (int dy = -1; dy <= 1; ++dy) {
-          for (int dx = -1; dx <= 1; ++dx) {
-            int nx = x + dx, ny = y + dy;
-            if ((dx == 0 && dy == 0) || nx < 0 || ny < 0 || nx >= im.w || ny >= im.h) continue;
-            size_t j = static_cast<size_t>(ny) * static_cast<size_t>(im.w) + static_cast<size_t>(nx);
-            if (!coloured[j]) continue;
-            double wgt = 1.0 + im.rgba[j * 4 + 3];
-            for (int c = 0; c < 3; ++c) sum[c] += im.rgba[j * 4 + static_cast<size_t>(c)] * wgt;
+        // by how visible they are; whole numbers, rounded half up as
+        // std::lround() rounds their exact quotient.
+        uint32_t sum[3] = {0, 0, 0}, weight = 0;
+        for (size_t ny = y > 0 ? y - 1 : 0; ny <= y + 1 && ny < h; ++ny) {
+          for (size_t nx = x > 0 ? x - 1 : 0; nx <= x + 1 && nx < w; ++nx) {
+            size_t j = ny * w + nx;
+            if (j == i || !coloured[j]) continue;
+            const uint8_t* q = &im.rgba[j * 4];
+            uint32_t wgt = 1u + q[3];
+            for (int ch = 0; ch < 3; ++ch) sum[ch] += q[ch] * wgt;
             weight += wgt;
           }
         }
-        if (weight <= 0) continue;
-        for (int c = 0; c < 3; ++c)
-          im.rgba[i * 4 + static_cast<size_t>(c)] = static_cast<uint8_t>(std::lround(std::clamp(sum[c] / weight, 0.0, 255.0)));
+        if (weight == 0) continue;
+        for (int ch = 0; ch < 3; ++ch)
+          im.rgba[i * 4 + static_cast<size_t>(ch)] = static_cast<uint8_t>((2 * sum[ch] + weight) / (2 * weight));
         next[i] = 1;
       }
     }

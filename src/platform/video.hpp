@@ -80,7 +80,8 @@ class Video {
   // when they change.
   std::vector<std::string> textLines(uint64_t* version) const;
   // The player draws the text over the picture itself (tvOS: VLC), in this
-  // size (0..3) and look (0 box, 1 outline, 2 shadow) where it can.
+  // size (0..3) and look (0 box, 1 outline, 2 shadow) where it can. tvOS:
+  // a size shows at once, a look's box from the stream's start.
   static bool drawsText();
   void setTextStyle(int size, int look);
   // Caption timing for a player that draws the text itself (tvOS: VLC's

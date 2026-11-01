@@ -1,8 +1,9 @@
 // Channel logos as GL textures. Each logo is fetched at most once (and kept
 // on disk, so a restart costs no requests), decoded and shrunk on a worker,
 // and uploaded on the UI thread. Only logos asked for in the last couple of
-// frames are loaded, newest first, a few at a time: scrolling past 300
-// channels does not start 300 downloads. Textures live in an LRU with a
+// frames are loaded, newest first, a few at a time and two decodes at a
+// time (PrepareGate): scrolling past 300 channels does not start 300
+// downloads, nor keep every core busy. Textures live in an LRU with a
 // memory budget.
 #pragma once
 
@@ -14,6 +15,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "core/logos/prepare_gate.hpp"
 #include "core/logos/tune.hpp"
 #include "core/util/pixels.hpp"
 
@@ -62,6 +64,15 @@ class LogoCache {
   void abandonLoads();
 
   size_t textureBytes() const { return bytes_; }
+  // For a timing log line, since the last call: logos decoded and
+  // prepared, the longest one (worker ms), the most decoding at once and
+  // the most loads under way. Counts and milliseconds only.
+  struct Stats {
+    int prepared = 0;
+    double prepareMaxMs = 0;
+    int maxPreparing = 0, maxInFlight = 0;
+  };
+  Stats takeStats();
   // For the channel report: "shown", "shown, low quality" (fillsCard()
   // says no: drawn small next to the name, or the name instead), each with
   // what was done to it ("shown, colours tuned", "shown, box removed"),
@@ -102,6 +113,8 @@ class LogoCache {
   std::list<std::string> lru_;  // front = most recently drawn
   uint64_t frame_ = 0;
   int inFlight_ = 0;
+  int maxInFlight_ = 0;  // since takeStats()
+  PrepareGate gate_;
   size_t writtenSinceTrim_ = 0;
   uint64_t epoch_ = 0;
   std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);

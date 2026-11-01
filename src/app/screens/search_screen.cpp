@@ -20,6 +20,11 @@
 // back. That choice holds while Search is open. With nothing in your
 // lineup, what's outside shows at once under its own header. Never a
 // count.
+//
+// Build 119: the board's event channel groups are among the channels
+// ("Event channel" under the name, outside your lineup unless one of
+// their channels is in it); OK plays the group's first channel, Up/Down
+// the rest, as from the board. No corner preview and no recent search.
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -93,6 +98,7 @@ struct Cell {
   time::Seconds also = 0;
   bool top = false;   // the band's top result card
   bool outside = false;  // marked "Outside your lineup"
+  bool family = false;   // a Channel cell for an event channel group (Build 119)
   // What it shows, made by label() after a layout, each minute and when
   // the data changes: drawing makes no text.
   struct Label {
@@ -554,6 +560,7 @@ class SearchScreen : public Screen {
     if (it.listing) c.listing = *it.listing;
     c.also = it.also;
     c.outside = mark && it.outside;
+    c.family = it.family;
     return c;
   }
 
@@ -1248,6 +1255,10 @@ class SearchScreen : public Screen {
     labelsDirty_ = true;  // a reminder set shows on the row
     switch (c.kind) {
       case CellKind::Channel:
+        if (c.family) {
+          watchFamily(c.id);
+          return;
+        }
         if (const GuideChannel* g = s.channels()->find(c.id)) remember(c, g->name);
         watchChannel(c.id, false);
         return;
@@ -1335,6 +1346,18 @@ class SearchScreen : public Screen {
     if (!p.tune(entryId, views::lineupList(*app_.store().channels(), entryId))) {
       app_.toast("This channel has no working feed right now");
       layout();
+      return;
+    }
+    full();
+  }
+
+  // An event channel group: its first channel, Up/Down through the rest
+  // (as from the board's Event channels row).
+  void watchFamily(const std::string& familyId) {
+    std::vector<std::string> feeds = app_.store().familyFeeds(familyId);
+    Playback& p = app_.playback();
+    if (feeds.empty() || !p.tune(feeds.front(), feeds)) {
+      app_.toast("No feeds in this family right now");
       return;
     }
     full();
@@ -1448,7 +1471,7 @@ class SearchScreen : public Screen {
     };
     switch (cell.kind) {
       case CellKind::Channel: {
-        const GuideChannel* g = s.channels()->find(cell.id);
+        const GuideChannel* g = cell.family ? nullptr : s.channels()->find(cell.id);
         if (!g) return;
         channelPanel(*g);
         return;
@@ -1656,7 +1679,7 @@ class SearchScreen : public Screen {
     if (!s.settings().previewChannels) return {};
     bool scores = s.settings().showScores;
     switch (c.kind) {
-      case CellKind::Channel: return c.id;
+      case CellKind::Channel: return c.family ? std::string() : c.id;  // a group: not in the corner, as on the board
       case CellKind::Show: return c.listing.isOn(time::now()) ? c.entryId : std::string();
       case CellKind::Game: {
         const EventTile* t = s.eventTile(c.id);
@@ -2006,6 +2029,13 @@ class SearchScreen : public Screen {
     const EventTile* corner = nullptr;
     switch (cell.kind) {
       case CellKind::Channel: {
+        if (cell.family) {
+          // An event channel group: its name, "Event channel" under it.
+          l.logoName = l.cornerName = l.cornerTitle = l.title = l.cardTitle = cell.title;
+          l.line = l.cornerLine = cell.outside ? std::string("Event channel \xc2\xb7 ") + kOutside : "Event channel";
+          l.cardTag = "EVENT CHANNEL";
+          break;
+        }
         const GuideChannel* g = s.channels()->find(cell.id);
         if (!g) {
           l.missing = true;

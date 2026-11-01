@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <unordered_map>
 
 #include "core/catalog/text.hpp"
@@ -122,6 +123,33 @@ std::vector<Program> listing(const std::string& id, const std::vector<Program>* 
   return bestListing(&own, &outsideList, start);
 }
 
+int bestGuide(const std::vector<const std::vector<Program>*>& lists, time::Seconds start,
+              int* described) {
+  time::Seconds end = start + static_cast<time::Seconds>(kGuideHours * 3600);
+  int best = -1;
+  time::Seconds bestCoverage = -1;
+  int bestDescribed = 0;
+  for (size_t i = 0; i < lists.size(); ++i) {
+    if (!lists[i] || lists[i]->empty()) continue;
+    time::Seconds coverage = 0;
+    int descriptions = 0;
+    for (const Program& p : *lists[i]) {
+      coverage += std::max<time::Seconds>(0, std::min(p.end, end) - std::max(p.start, start));
+      if (!p.overview.empty() && p.end > start && p.start < start + 6 * 3600) ++descriptions;
+    }
+    bool close = best >= 0 && std::abs(coverage - bestCoverage) * 10 <= std::max(coverage, bestCoverage);
+    bool better = close ? descriptions > bestDescribed ||
+                              (descriptions == bestDescribed && coverage > bestCoverage)
+                        : coverage > bestCoverage;
+    if (!better) continue;
+    best = static_cast<int>(i);
+    bestCoverage = coverage;
+    bestDescribed = descriptions;
+  }
+  if (described) *described = best < 0 ? 0 : bestDescribed;
+  return best;
+}
+
 std::vector<Program> bestListing(const std::vector<Program>* serverIn,
                                  const std::vector<Program>* outside, time::Seconds start) {
   std::vector<Program> server = serverIn ? *serverIn : std::vector<Program>();
@@ -137,7 +165,8 @@ std::vector<Program> bestListing(const std::vector<Program>* serverIn,
   bool outsideWins = coverage(*outside) > coverage(server) + 15 * 60;
   const std::vector<Program>& winner = outsideWins ? *outside : server;
   const std::vector<Program>& secondary = outsideWins ? server : *outside;
-  std::vector<Program> result = guide::genre::mergeFlags(winner, secondary);
+  std::vector<Program> result =
+      guide::genre::mergeDetails(guide::genre::mergeFlags(winner, secondary), secondary);
   for (const Program& program : secondary) {
     bool clashes = std::any_of(result.begin(), result.end(), [&](const Program& other) {
       return std::min(program.end, other.end) - std::max(program.start, other.start) > 300;

@@ -56,6 +56,7 @@ struct Fetched;
 struct OpenStream;
 namespace events_build {
 struct BoardInput;
+struct Inputs;
 }
 
 // A country / language of the channel list, for the lineup setup.
@@ -138,6 +139,13 @@ struct Settings {
   bool previewChannels = true;  // the guide corner plays the focused channel
   bool scheduleEnabled = true;  // Live Events: game schedule and scores
   bool showUnwatchable = true;  // games not on my channels
+  // Settings › Live Events › Show on the board (Build 119): the last three
+  // rows of the board, off until turned on (installs from before too). The
+  // board keeps them; only the board screen, its SPORTS column and the
+  // games rail leave them out (boardShows()).
+  bool boardMoreEvents = false;     // More events
+  bool boardUntimed = false;        // Time not listed
+  bool boardEventChannels = false;  // Event channels
   bool showScores = true;
   bool allChannelsTab = false;
   bool preferTS = true;         // Xtream: MPEG-TS rather than HLS
@@ -176,6 +184,12 @@ struct Settings {
   int systemCaptions = -1;
   std::set<std::string> guideShards;  // outside listings to use; empty = the defaults
 };
+
+// The rows the board screen draws besides the sports: Event channels
+// always while Game schedule is off (the board is the provider's events).
+inline BoardShows boardShows(const Settings& s) {
+  return {s.boardMoreEvents, s.boardUntimed, s.boardEventChannels || !s.scheduleEnabled};
+}
 
 // The subtitles choice for a channel's language: on/off and the language
 // picked last ("" = the channel's own).
@@ -498,6 +512,10 @@ class Store {
   // Live Events (store_events.cpp).
   void loadEvents();
   void eventsTick(uint32_t ms);
+  // Live Events opened, or the TV woke with it open after `away` seconds.
+  void eventsArrive(time::Seconds away);
+  // What the games were matched from and what is coming (freshness).
+  events_build::Inputs eventsInputs() const;
   void rebuildEvents();
   std::shared_ptr<events_build::BoardInput> boardInput();
   void startBoard(uint32_t ms);

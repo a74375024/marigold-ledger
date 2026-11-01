@@ -1258,7 +1258,8 @@ void GuideScreen::drawHero(ui::Ctx& c) {
       ui::label(c, durationText(l->start - now), x, y - 4, Weight::Medium, 20, theme::white(0.7f));
     }
     y += 22;
-    if (!l->overview.empty()) ui::paragraph(c, l->overview, x, y, 1200, Weight::Regular, 20, theme::white(0.7f), 2, 1.4f);
+    if (!l->overview.empty())
+      ui::paragraph(c, l->overview.string(), x, y, 1200, Weight::Regular, 20, theme::white(0.7f), 2, 1.4f);
   } else {
     const std::vector<Listing>* v = li_ ? li_->forChannel(g->id) : nullptr;
     bool askedEmpty = li_ && li_->empty.count(g->id);

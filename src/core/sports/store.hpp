@@ -65,7 +65,7 @@ std::vector<ListingChannel> listingChannels(const std::set<std::string>& lineup,
 // or tennis and an event or city). nullopt otherwise.
 std::optional<matcher::GuideListing> listingFor(const ListingChannel& channel, const std::string& title,
                                                 const std::optional<std::string>& subtitle,
-                                                const std::optional<std::string>& overview, bool sports,
+                                                const guide::Text& overview, bool sports,
                                                 Seconds start, Seconds end);
 
 // A channel's guide programmes, plus the saved listings past what the guide

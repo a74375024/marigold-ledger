@@ -43,7 +43,14 @@ std::unique_ptr<Screen> makeQuickSettings(App& app, QuickPlace place);
 // directly) calls it with no category; Quick settings' last rows open it
 // inside one.
 enum class SettingsCategory { Watching, Guide, MyLineup, LiveEvents, Providers, Advanced, Help };
-void openAllSettings(App& app, std::optional<SettingsCategory> inside = std::nullopt);
+// `at`: a group's header in that category, the focus on its first row
+// (the empty Live Events board opens kShowOnBoard).
+void openAllSettings(App& app, std::optional<SettingsCategory> inside = std::nullopt, const std::string& at = {});
+inline constexpr const char* kShowOnBoard = "SHOW ON THE BOARD";
+// Settings › Live Events › Show on the board (Build 119): Games not on my
+// channels, More events, Time not listed and Event channels; also opened
+// from the board's Quick settings. `about`: with the right column's text.
+void showOnBoardRows(App& app, ui::ListPanel& p, bool about);
 // A category's rows and its one-line summary (settings_rows.cpp). Advanced
 // is only listed when one of its rows applies to this TV and its providers.
 void settingsRows(App& app, SettingsCategory category, ui::ListPanel& p);

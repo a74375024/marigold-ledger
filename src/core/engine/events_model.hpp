@@ -142,6 +142,13 @@ struct EventRow {
   bool families = false;  // the "Event channels" row (feed families)
 };
 
+// Settings › Live Events › Show on the board (Build 119): which of the
+// board's last three rows ("more", "untimed", "families") the board screen
+// draws (views::boardShown()).
+struct BoardShows {
+  bool more = false, untimed = false, families = false;
+};
+
 struct EventsBoard {
   uint64_t version = 0;
   std::vector<EventRow> rows;

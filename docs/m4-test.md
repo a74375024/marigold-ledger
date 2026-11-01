@@ -522,7 +522,7 @@ The guide in the player: In-player guide (Build 116).
 | Controls | OK on a game | The pills replace the key line, exactly as on any channel; the ID line stays |
 | Captions | Subtitles on, banner up | Captions sit just above the lower card, not over it; back down when it hides |
 | Pointer (LG) | Wave the remote over a game | Edge buttons and pills work as before; a click on the picture opens and closes the controls |
-| Hides in | Any banner | "Hides in 5 s" at the right end of the key line, counting down |
+| Hides in | Any banner | "Hides in 5 s" at the right end of the key line, counting down a second at a time (5 s with or without a description); between the seconds the TV draws nothing new |
 | By the clock | Watch a game across its scheduled end, bringing the banner up now and then | The chip goes from LIVE to "Likely over" on its own; nothing else in the banner changes while watching |
 
 ## Left rail (Build 112)
@@ -865,3 +865,77 @@ Every logo sits straight on its cell: no plates, chips or boxes behind it, anywh
 | First show | Focus the first show in a row (at Now), then Left and Right along the row | The show's white ring stays clear of the channel cell's outline; the channel logo is never covered |
 | Later shows | Focus a show further right | It still grows a little on both sides, as before |
 
+## Live Events freshness (Build 119)
+
+Opening Live Events, the first start of the day, or waking the TV with Live Events on screen never shows games from old information. A board made now can still be made from old inputs: the channel list saved on the TV (its event slots as they were), yesterday's schedule, or scores answered hours ago. Until fresh ones are in, the board leaves out what such inputs decide and shows its placeholders while that is everything; real rows come in only from fresh inputs. New enough: the channel list for 15 minutes after it was fetched this session; the schedule while fetched the same day under 20 hours ago; a live score while its league is polled (2 minutes after its answer, or until its next look plus 2 minutes). After 18 s at most (before the placeholders' 20 s run out) every tile shows, each LIVE only from a score answered lately or from the clock, and the board is replaced as fresh data lands. Nothing else looks different, and no more requests are made than before (the daily caps and the refusals' day off still apply).
+
+| Area | How to check | Pass |
+|---|---|---|
+| First open of the day | Start the app in the morning (Live Events last used the evening before) and open Live Events at once | Placeholders until the board comes; never a game from last night with LIVE, a score or "Likely over"; the first tiles that show are today's |
+| Back after hours | Use Live Events in the evening, leave it (the guide, another app) for a few hours, open it again | Placeholders, then today's board; no LIVE on a game that ended meanwhile, not even for a moment |
+| TV off on Live Events | Leave Live Events on screen, turn the TV off for over 15 minutes, turn it on | Placeholders straight away (no old tiles), then a fresh board; the focus comes back to the same game when it is still there |
+| Short sleep | The same, off for 3 to 10 minutes | The board comes back made again from the clock (a moment of placeholders at most); games that ended meanwhile are gone or Likely over |
+| Fills in | Watch the placeholders after a first start of the day | Rows come in from the top as their information arrives (games on your channels before event slots on a slow list); placeholder rows after them until the rest is in |
+| Slow network | Open Live Events while the channel list is still downloading (e.g. right after starting the app on a slow connection) | Placeholders for up to about 18 s, then every tile (no LIVE from an old score; slots with no time say "Time not listed"); the board is replaced when the list is in |
+| Offline | Open with the network unplugged | The board from what the TV has, made from the clock, within a few seconds (nothing to wait for); no LIVE from a score kept from before |
+| Reopen at once | Close Live Events and open it again within a minute | The same board at once, no placeholders |
+| Scores on | Open during live games | Live games show once their scores answer (a second or two); LIVE, scores and clocks as before; no flicker while watching the board |
+| Player and back | Watch a game full screen for 10 minutes, Back to Live Events | Until scores answer again (within a minute, as before) a game is LIVE only if the clock says so; no old score or clock on a tile |
+| Focus | Rest on a game while rows fill in after a wake | The focus stays on that game; the board doesn't jump |
+| Timing log | Open Live Events after a few hours away, then send a log | One "events timing fresh=… capped=… held=… oldLive=…" line per open or wake (milliseconds to the first fresh board, whether the 18 s ran out, games held back, old live scores set aside); the "opened"/"woke after" lines in the playback log; counts and milliseconds only, no titles or links |
+
+
+## Guide descriptions (Build 119)
+
+Shows have their descriptions all day, not just for the first hours after the guide was read. Descriptions are now kept for programmes starting up to the time of the next guide read plus a margin (26 h for the free listings, which are read about every 20 h; 18 h for the provider's own guide, read every 12 h); sports keep theirs for the whole window as before. When the listings files haven't changed, the saved listings are reused as they were, and the files already on the TV are read again (nothing downloaded) shortly before their descriptions would run out. Where two guides list the same show at the same time, the one shown takes a missing description and episode title from the other (never replacing its own). A programme with several descriptions keeps the first one, or the first in English, instead of the last. A merged channel picks, between versions with about the same listings, the one with more descriptions. Each description is held once in memory however many channels and reruns share it, so a whole day of descriptions costs about the same as the few hours kept before.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Later today | Guide, mid-afternoon or evening, on a news channel, an entertainment channel and a movie channel | The show on now and the next few have descriptions in the info panel, as they do right after a guide update |
+| Next morning | Leave the TV on (or come back) the next morning without a guide update in between; open the guide | Shows on now still have descriptions; none missing across a whole row of channels |
+| Unchanged files | Help › playback log after a guide check that found nothing new, about a day after the last full update | "saved listings reused" earlier; near the end of a day, a line that the saved files are read again; no new download for it; descriptions continue past it |
+| Two guides | A channel whose show comes from one guide while the other guide also lists it | The show has a description and episode title; a show the first guide describes keeps its own wording |
+| Language | A channel whose guide gives descriptions in two languages (e.g. English and Spanish) | The English one shows, every time |
+| Merged channel | A row made of several versions of one channel (HD, backup feeds) | The row shows descriptions when any version with the same listings has them |
+| Sports | Live Events with a game on a local station | Still found by its venue, as before |
+| Memory | Settings › Help & info › About › Memory in use, a few hours after launch with a big lineup | Within a few MB of Build 118's figure; peaks no higher |
+| First launch | Install over Build 118 and open the guide | The guide shows the saved listings at once, then rebuilds them once in the background (no extra screens) |
+| Channel report | Export it | now_start, outside_built_at and provider_built_at (times) and outside_described_next_3h / provider_guide_described_next_3h (counts) show for each channel; descriptions present for shows starting well after the build time |
+
+
+## Player banner description (Build 119)
+
+A show's banner carries what the guide says about it, at today's height: the episode follows the times on the times line ("8:30 – 9:30 PM · S5 E2 · Pies", quieter, cut at 360 px so the progress bar and "N min left" keep their place), and the description takes the empty band under that line (Regular 20 px, white 70%, two lines at most with an ellipsis, as wide as the title: it stops 36 px short of "Later on this channel" when that shows). The card's top and bottom, the title, the Later strip, the key line, the controls and the captions don't move. With a description or without, the banner stays up 5 s. A game's banner is unchanged.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Long description | Tune a channel whose show has an episode and a long description in the guide | Times, then "· S5 E2 · Pies" in quieter type, then the progress bar and "N min left"; two lines of description under them ending in "…", clear of the key line's rule |
+| No description | A show with neither (a news hour) | Exactly Build 118's banner; "Hides in 5 s" |
+| Episode only | A show with an episode and no description | The episode after the times; nothing under them; 5 s |
+| Short description | A sports listing with a one-line description | One line under the times |
+| Long title and episode | A long title, a long episode name, Later strip showing | The title and the description stop short of the strip; the episode ends in "…" and the progress bar and time left are where they always are |
+| Hide time | Bring the banner up with Info (or tune) on a show with a description | "Hides in 5 s" counting down, then it hides after 5 s, as on a show without one |
+| Controls | OK on a show with a description | The pills replace the key line as before; the description stays above them |
+| Captions | Subtitles on, banner up | Captions sit above the card as before, not over the description |
+| Game | Watch a game from Live Events | The game banner exactly as before (no description, 5 s) |
+| Flipping | Up/Down quickly through channels | Each channel's episode and description show as it lands; no text from the channel before |
+
+## Live Events rows (Build 119)
+
+More events, Time not listed and Event channels are hidden on the Live Events board and its SPORTS column until switched on in Settings › Live Events › Show on the board (with "Games not on my channels", moved there). Installs from before get them hidden too. Only the board screen leaves them out: Search, Where to Watch and Up/Down while watching still find those games, and Search now finds event channels by name. Event channel tiles no longer say how many feeds they have.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Default | Update over Build 118 and open Live Events | The board ends with the last sport's row; no More events, Time not listed or Event channels, in the rows or in SPORTS |
+| Settings | Settings › Live Events | Game schedule, Show scores, then SHOW ON THE BOARD: Games not on my channels (On), More events, Time not listed, Event channels (Off); then My leagues and the rest; each says in the right column what it is (no data-source names) |
+| Switches | Turn each one on, open the board | Its row comes back at the end, in today's order, and in SPORTS; off again, it goes |
+| Game schedule off | Turn Game schedule off | Event channels shows On, dimmed, "Always shown while Game schedule is off", and its row is on the board; More events and Time not listed still switch |
+| Quick settings | Blue on the board | Four rows: Show scores, Show on the board ("Hidden: More events, Time not listed, Event channels"), My Sports, Refresh schedule; OK on Show on the board opens the four switches; switching one changes the board behind; Back returns to Quick settings |
+| Empty board | Open the board when only hidden rows have games (out of season, or My Sports set to a league with no games this week) | "No games this week in your sports.", then "Time not listed and Event channels are hidden." (what is hidden and has something in it) and a focused "Show them in Settings" button; OK opens Settings › Live Events on Games not on my channels (the group's first row). With nothing in the hidden rows either, the first line alone |
+| Filter | Filter › Live now with More events hidden | A live game from More events doesn't come back |
+| Search | Search a game that is only in More events, and an untimed event | Found as before; OK plays it or opens its card |
+| Search event channels | Search an event channel's name | It is among the channels with "Event channel" under it ("Event channel · Outside your lineup" unless one of its channels is in My Lineup); OK plays its first channel, Up/Down goes through the rest; no corner preview |
+| Games rail | Play a game from More events (from Search), then Left | The rail opens on its row (More events shows in its SPORTS while you watch it); a game from a sport row: the rail's SPORTS has no hidden rows |
+| Up/Down | Up/Down while watching a game from More events; while on an event channel | Live games of the same sport; the event channel's own group, as before |
+| Tiles | Turn Event channels on | Its tiles say the group's name and "Up/Down to surf", never how many feeds; the row header shows no number |
+| Typing speed | Type quickly in Search on a large provider | As fast as Build 118 |

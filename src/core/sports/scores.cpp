@@ -675,6 +675,11 @@ void LiveScores::endLeague(Seconds now) {
     Seconds wait = static_cast<Seconds>(interval);
     nextDue_[shortName] = now + wait;
     r.soonest = std::min(r.soonest, wait);
+    // Believed until the next look is due, and a little after.
+    for (const auto& [id, status] : r.merged) {
+      Seconds& until = heldUntil_[id];
+      until = std::max(until, now + wait + kHeldFor);
+    }
   } else {
     int count = failures_[shortName] + 1;
     failures_[shortName] = count;
@@ -694,6 +699,8 @@ Seconds LiveScores::waitSeconds() const { return std::max(kMinimumWait, lastWait
 void LiveScores::apply(const Statuses& fresh, Seconds now, const std::vector<SportsGame>& games) {
   bool changed = false;
   for (const auto& [id, status] : fresh) {
+    Seconds& until = heldUntil_[id];
+    until = std::max(until, now + kHeldFor);
     auto old = statuses_.find(id);
     if (old != statuses_.end() && old->second == status) continue;
     if (status.phase == LivePhase::final && !finalSeen_.count(id)) {
@@ -716,8 +723,27 @@ void LiveScores::apply(const Statuses& fresh, Seconds now, const std::vector<Spo
     for (auto it = finalSeen_.begin(); it != finalSeen_.end();) {
       it = keep.count(it->first) ? std::next(it) : finalSeen_.erase(it);
     }
+    for (auto it = heldUntil_.begin(); it != heldUntil_.end();) {
+      it = statuses_.count(it->first) ? std::next(it) : heldUntil_.erase(it);
+    }
   }
   if (changed) revision_ += 1;
+}
+
+Statuses LiveScores::current(Seconds now, int* setAside) const {
+  Statuses out;
+  int aside = 0;
+  for (const auto& [id, status] : statuses_) {
+    bool over = status.phase == LivePhase::final || status.phase == LivePhase::postponed;
+    auto until = heldUntil_.find(id);
+    if (over || (until != heldUntil_.end() && now <= until->second)) {
+      out.emplace(id, status);
+    } else if (status.phase == LivePhase::live || status.phase == LivePhase::delayed) {
+      ++aside;
+    }
+  }
+  if (setAside) *setAside = aside;
+  return out;
 }
 
 }  // namespace marigold::sports::scores

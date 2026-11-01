@@ -926,7 +926,7 @@ class MiniGuide : public Screen {
     if (app_.store().hasShowReminder(g.id, l->start)) line += " \xc2\xb7 Reminder set";
     ui::label(c, line, left_, kDetailY + 50, Weight::Regular, 22, theme::white(0.8f * a), w);
     if (!l->overview.empty())
-      ui::label(c, l->overview, left_, kDetailY + 82, Weight::Regular, 21, theme::white(0.65f * a), w);
+      ui::label(c, l->overview.string(), left_, kDetailY + 82, Weight::Regular, 21, theme::white(0.65f * a), w);
   }
 
   // The list's neighborhoods inside the card, the main guide's column in

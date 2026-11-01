@@ -139,6 +139,57 @@ TEST_CASE("bestListing fills gaps and takes genre tags") {
   CHECK(merged[2].genres == 0);
 }
 
+TEST_CASE("bestGuide: the most covered, then the most described") {
+  time::Seconds start = utc(2026, 10, 21, 12, 0);
+  std::vector<Program> plain = {program("A", start, 180)};
+  std::vector<Program> described = {program("A", start, 170)};  // within 10%
+  described[0].overview = "About A";
+  std::vector<Program> longer = {program("A", start, 240)};  // past the 3 h window: no more
+  std::vector<Program> shorter = {program("A", start, 120)};
+  shorter[0].overview = "About A";
+  std::vector<Program> none;
+  int count = -1;
+  CHECK(bestGuide({&plain, &described}, start, &count) == 1);
+  CHECK(count == 1);
+  CHECK(bestGuide({&described, &plain}, start) == 0);
+  // Equal descriptions: the more covered one.
+  CHECK(bestGuide({&plain, &longer}, start) == 0);
+  // Not close: coverage decides.
+  CHECK(bestGuide({&plain, &shorter}, start, &count) == 0);
+  CHECK(count == 0);
+  CHECK(bestGuide({&none, nullptr}, start, &count) == -1);
+  CHECK(bestGuide({}, start) == -1);
+}
+
+TEST_CASE("bestListing takes descriptions and episode titles from the same show") {
+  time::Seconds start = utc(2026, 10, 21, 12, 0);
+  std::vector<Program> server = {program("Evening News", start, 60),
+                                 program("Quiz Time", start + 3600, 60),
+                                 program("Feature", start + 7200, 60)};
+  server[2].overview = "The server's own";
+  std::vector<Program> outside = {program("EVENING NEWS", start + 300, 60),
+                                  program("Other Show", start + 3600, 60),
+                                  program("Feature", start + 7200, 60)};
+  outside[0].overview = "Tonight's headlines";
+  outside[0].episodeTitle = "Tuesday";
+  outside[1].overview = "Not the quiz";
+  outside[2].overview = "The outside one";
+  outside[2].episodeTitle = "Part 2";
+  std::vector<Program> merged = bestListing(&server, &outside, start);
+  REQUIRE(merged.size() == 3);
+  CHECK(merged[0].title == "Evening News");
+  CHECK(merged[0].overview == std::string("Tonight's headlines"));
+  CHECK(merged[0].episodeTitle == std::string("Tuesday"));
+  CHECK_FALSE(merged[1].overview);  // another show at that time
+  CHECK(merged[2].overview == std::string("The server's own"));  // never replaced
+  CHECK(merged[2].episodeTitle == std::string("Part 2"));         // only what's missing
+  // Only where the times overlap by more than half.
+  std::vector<Program> early = {program("Evening News", start - 3000, 60)};
+  early[0].overview = "Yesterday's";
+  CHECK_FALSE(bestListing(&server, &early, start)[0].overview);
+  CHECK(guide::genre::titleKey("LIVE: Caf\xC3\xA9 Hour!") == guide::genre::titleKey("cafe hour"));
+}
+
 TEST_CASE("listing: provider guide first, short guide and outside for gaps") {
   time::Seconds start = utc(2026, 10, 21, 12, 0);
   std::vector<guide::RawProgram> provider = {raw("Provider news", start, 60, guide::genre::kNews),

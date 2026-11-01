@@ -243,12 +243,14 @@ json::Value toJson(const RawProgram& p) {
   v.set("m", p.m);
   v.set("t", p.t);
   setOpt(v, "st", p.st);
-  setOpt(v, "d", p.d);
+  setOpt(v, "d", p.d.str());
   v.set("f", p.f);
   return v;
 }
 
-std::optional<RawProgram> rawProgramFromJson(const json::Value& v) {
+namespace {
+
+std::optional<RawProgram> rawProgramIn(const json::Value& v, TextPool* pool) {
   if (!v.isObject() || !v["s"].isNumber() || !v["m"].isNumber() || !v["t"].isString()) {
     return std::nullopt;
   }
@@ -257,10 +259,15 @@ std::optional<RawProgram> rawProgramFromJson(const json::Value& v) {
   p.m = static_cast<int>(v["m"].asInt());
   p.t = v["t"].asString();
   p.st = optString(v, "st");
-  p.d = optString(v, "d");
+  if (const json::Value& d = v["d"]; d.isString())
+    p.d = pool ? pool->intern(d.asString()) : Text(d.asString());
   p.f = static_cast<int>(v["f"].asInt());
   return p;
 }
+
+}  // namespace
+
+std::optional<RawProgram> rawProgramFromJson(const json::Value& v) { return rawProgramIn(v, nullptr); }
 
 json::Value toJson(const ProgramsById& programs) {
   json::Value o = json::Value::object();
@@ -300,7 +307,8 @@ uint64_t contentHash(const std::vector<RawProgram>& list) {
     mix(static_cast<uint32_t>(p.f));
     text(p.t);
     text(p.st.value_or(""));
-    text(p.d.value_or(""));
+    for (char c : p.d.view()) mix(static_cast<unsigned char>(c));
+    mix(0xff);
   }
   return h;
 }
@@ -379,11 +387,11 @@ void writePrograms(json::Writer& w, const SharedPrograms& programs, const ListIn
 
 namespace {
 
-Schedule listFromJson(const json::Value& list) {
+Schedule listFromJson(const json::Value& list, TextPool& pool) {
   std::vector<RawProgram> programs;
   programs.reserve(list.size());
   for (const json::Value& item : list.items()) {
-    if (auto p = rawProgramFromJson(item)) programs.push_back(std::move(*p));
+    if (auto p = rawProgramIn(item, &pool)) programs.push_back(std::move(*p));
   }
   return makeSchedule(std::move(programs));
 }
@@ -392,20 +400,21 @@ Schedule listFromJson(const json::Value& list) {
 
 void ProgramsReader::part(const std::string& key, const std::string& member, json::Value&& value) {
   if (key == "lists") {
-    lists_.push_back(listFromJson(value));
+    lists_.push_back(listFromJson(value, texts_));
   } else if (key == "programs") {
     sawPrograms_ = true;
     if (value.isNumber()) {
       int64_t i = value.asInt();
       if (i >= 0 && i < static_cast<int64_t>(lists_.size())) programs_.emplace(member, lists_[static_cast<size_t>(i)]);
     } else if (value.isArray()) {
-      programs_.emplace(member, listFromJson(value));  // the older layout
+      programs_.emplace(member, listFromJson(value, texts_));  // the older layout
     }
   }
 }
 
 SharedPrograms ProgramsReader::take() {
   lists_.clear();
+  texts_.clear();
   return share(std::move(programs_));
 }
 
@@ -492,6 +501,10 @@ bool writeSaved(const Saved& saved, const json::Writer::Sink& sink) {
     w.endObject();
   }
   writePrograms(w, saved.programs, index);
+  if (saved.readAt) {
+    w.key("readAt");
+    w.value(*saved.readAt);
+  }
   w.key("shards");
   w.beginArray();
   for (const std::string& shard : saved.shards) w.value(shard);
@@ -555,6 +568,8 @@ std::optional<Saved> readSavedWith(const Feed& feed) {
           s.targetsKey = v.asString();
         } else if (key == "detailVersion" && v.isNumber()) {
           s.detailVersion = static_cast<int>(v.asInt());
+        } else if (key == "readAt" && v.isNumber()) {
+          s.readAt = v.asInt();
         }
         return true;
       },
@@ -831,6 +846,37 @@ LearnedShift learnShift(const SharedPrograms& reference, const SharedPrograms& c
   return learnShiftIn(reference, candidate, sample);
 }
 
+namespace {
+
+// Episode titles and descriptions from `extra` where `list` has none, as
+// genre::mergeDetails does for the guide's programmes.
+void fillDetails(std::vector<RawProgram>& list, const std::vector<RawProgram>& extra) {
+  auto missing = [](const RawProgram& p) { return !p.d || !p.st || p.st->empty(); };
+  if (std::none_of(list.begin(), list.end(), missing)) return;
+  std::vector<std::pair<std::string, const RawProgram*>> described;
+  for (const RawProgram& p : extra) {
+    if (!p.d && !p.st) continue;
+    std::string key = genre::titleKey(p.t);
+    if (!key.empty()) described.emplace_back(std::move(key), &p);
+  }
+  if (described.empty()) return;
+  for (RawProgram& program : list) {
+    if (!missing(program)) continue;
+    std::string key = genre::titleKey(program.t);
+    if (key.empty()) continue;
+    for (const auto& [otherKey, candidate] : described) {
+      int overlap = std::min(candidate->end(), program.end()) - std::max(candidate->s, program.s);
+      if (otherKey != key || overlap * 2 <= program.m) continue;
+      if (!program.d) program.d = candidate->d;
+      if ((!program.st || program.st->empty()) && candidate->st && !candidate->st->empty())
+        program.st = candidate->st;
+      if (!missing(program)) break;
+    }
+  }
+}
+
+}  // namespace
+
 std::vector<RawProgram> mergePrograms(const std::vector<RawProgram>& base,
                                       const std::vector<RawProgram>& extra) {
   auto byStart = [](const RawProgram& a, const RawProgram& b) { return a.s < b.s; };
@@ -840,6 +886,7 @@ std::vector<RawProgram> mergePrograms(const std::vector<RawProgram>& base,
     return out;
   }
   std::vector<RawProgram> result = base;
+  fillDetails(result, extra);
   for (const RawProgram& program : extra) {
     int end = program.end();
     bool clashes = std::any_of(result.begin(), result.end(), [&](const RawProgram& other) {
@@ -865,7 +912,7 @@ std::vector<Program> programs(const std::vector<RawProgram>& raw, const std::str
     p.channelId = channelID;
     p.title = item.t;
     p.episodeTitle = item.st;
-    p.overview = item.d;
+    p.overview = item.d;  // shared, not copied
     p.start = static_cast<time::Seconds>(item.s) * 60;
     p.end = end * 60;
     p.genres = static_cast<uint8_t>(item.f & genre::kGenreBits);
@@ -915,7 +962,7 @@ BuildResult build(const std::vector<Channel>& channels, const std::set<std::stri
   std::map<std::string, SourceState> states;
   if (previous && previous->sources) states = *previous->sources;
   const int now = static_cast<int>(nowSec / 60);
-  const Window window{now - 180, now + kKeepHours * 60};
+  const Window window{now - 180, now + kKeepHours * 60, now + kDescHours * 60};
   std::vector<const Source*> chosen, mains, backups;
   for (const Source& s : sources()) {
     if (!s.appliesTo(on)) continue;
@@ -988,6 +1035,15 @@ BuildResult build(const std::vector<Channel>& channels, const std::set<std::stri
   });
   bool reuse = unchanged && previous && previous->targetsKey == key &&
                previous->detailVersion.value_or(1) >= kDetailVersion;
+  // Descriptions end kDescHours after the files were read: when they end
+  // soon, the files already here are read again (nothing is downloaded).
+  time::Seconds descEnd =
+      previous && previous->readAt ? *previous->readAt + kDescHours * 3600 : 0;
+  if (reuse && descEnd - nowSec <= kDescRefill) {
+    reuse = false;
+    log.push_back("guide main sources unchanged, descriptions end within " +
+                  std::to_string(kDescRefill / 3600) + " h: the saved files are read again");
+  }
   if (reuse) {
     std::unordered_map<const void*, Schedule> memo;
     for (const auto& [id, list] : previous->programs) {
@@ -1133,7 +1189,7 @@ BuildResult build(const std::vector<Channel>& channels, const std::set<std::stri
       }
       // A wider window, so times can still be moved into it.
       int shiftRoom = source.calibrate ? 16 * 60 : 0;
-      Window wide{window.low - shiftRoom, window.high + shiftRoom};
+      Window wide{window.low - shiftRoom, window.high + shiftRoom, window.descUntil + shiftRoom};
       BuildIO::ReadOutcome read =
           io.read ? io.read(source, fetched.file, targets, wide) : BuildIO::ReadOutcome{};
       if (!read.result) {
@@ -1247,6 +1303,10 @@ BuildResult build(const std::vector<Channel>& channels, const std::set<std::stri
   bool retry = !staleShards.empty();
   BuildResult result;
   result.nextCheck = nowSec + (retry ? kStaleRetry : kRefreshAge);
+  // Reused listings are looked at again in time to read their files before
+  // the descriptions run out.
+  result.readAt = reuse ? previous->readAt.value_or(nowSec) : nowSec;
+  if (reuse) result.nextCheck = std::min(result.nextCheck, descEnd - kDescRefill);
   size_t ahead = 0;
   for (const auto& [id, list] : merged) {
     int64_t end = !list || list->empty() ? 0 : lastEnd(list.get());

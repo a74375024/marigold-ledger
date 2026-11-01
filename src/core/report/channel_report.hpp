@@ -89,9 +89,11 @@ struct ChannelReportInput {
   // The merged listing shown in the guide, by raw channel id ("now").
   const std::unordered_map<std::string, std::shared_ptr<const std::vector<Program>>>* programs = nullptr;
 
-  // Outside listings: matches and how each channel was matched.
+  // Outside listings: matches and how each channel was matched, and when
+  // their files were read (guide::Saved::readAt; 0 unknown).
   const guide::SharedPrograms* outsideMatches = nullptr;
   const std::map<std::string, std::string>* outsideNotes = nullptr;
+  time::Seconds outsideBuilt = 0;
   // The provider's full guide (Xtream xmltv.php): matches, notes, each
   // account's state (by server id "xt:...") and the countries in scope.
   const guide::SharedPrograms* providerMatches = nullptr;
@@ -110,8 +112,8 @@ struct ChannelReportInput {
   // The guide grid's start (catalog::windowStart(now)).
   time::Seconds windowStart = 0;
   double guideHours = catalog::kGuideHours;
-  // outside_listings_end is written in this zone (DateFormatter's default,
-  // the device's).
+  // outside_listings_end, now_start and the *_built_at times are written in
+  // this zone (DateFormatter's default, the device's).
   time::Zone zone = time::Zone::device();
   // Server hosts, user names: removed from every cell (shorter than 4
   // characters are ignored, they would blank ordinary words).

@@ -444,12 +444,16 @@ void watchingRows(App& app, ui::ListPanel& p) {
                                  std::clamp(set.subtitleSize, 0, 3),
                                  [&app](int k) { changeCaptions(app, [k](Settings& s) { s.subtitleSize = k; }); });
   size.about = std::string("Left and Right change it; the preview follows.") +
-               (apple ? "\nOn Apple TV it shows from the next channel you tune." : "");
+               (apple ? "\nOn Apple TV it shows from the next caption line." : "");
   size.preview = "captions";
   p.items.push_back(size);
   ui::PanelItem look = choiceRow("Caption look", {kLooks[0], kLooks[1], kLooks[2]}, std::clamp(set.subtitleLook, 0, 2),
                                  [&app](int k) { changeCaptions(app, [k](Settings& s) { s.subtitleLook = k; }); });
-  look.about = "What sits behind the letters: a dark box, a dark edge round each letter, or a soft shadow.";
+  look.about = std::string("What sits behind the letters: a dark box, a dark edge round each letter, or a soft "
+                           "shadow.") +
+               (apple ? "\nOn Apple TV Outline and Shadow both edge the letters, and turning the box on or off "
+                        "restarts the picture for a moment."
+                      : "");
   look.preview = "captions";
   p.items.push_back(look);
   // Apple TV's player draws the captions itself, with its own letters and
@@ -614,12 +618,9 @@ void eventsRows(App& app, ui::ListPanel& p) {
                                        "Off hides scores, sets and podiums everywhere; games still say live or final.");
   dim(scores, schedule, "Turn on Game schedule");
   p.items.push_back(scores);
-  ui::PanelItem unwatchable = settingToggle(app, "Games not on my channels", "Dimmed at the end of each row",
-                                            &Settings::showUnwatchable,
-                                            "Games none of your channels show, so you know they're on. Off leaves "
-                                            "them out.");
-  dim(unwatchable, schedule, "Turn on Game schedule");
-  p.items.push_back(unwatchable);
+  p.items.push_back(ui::PanelItem::header(kShowOnBoard));
+  showOnBoardRows(app, p, true);
+  p.items.push_back(ui::PanelItem::header(""));
   std::vector<std::string> leagues = leagueNames(my);
   ui::PanelItem mine = chevron("My leagues", "", leagues.empty() ? "Not set" : firstFew(leagues, 3),
                                [&app] { app.nav().push(makeMySports(app)); });
@@ -782,6 +783,34 @@ void helpRows(App& app, ui::ListPanel& p) {
 }
 
 }  // namespace
+
+void showOnBoardRows(App& app, ui::ListPanel& p, bool about) {
+  bool schedule = app.store().settings().scheduleEnabled;
+  auto row = [&](const char* title, const char* detail, bool Settings::*field, const char* text) {
+    ui::PanelItem it = settingToggle(app, title, detail, field, about ? text : "");
+    p.items.push_back(it);
+    return &p.items.back();
+  };
+  dim(*row("Games not on my channels", "Dimmed at the end of each row", &Settings::showUnwatchable,
+           "Games none of your channels show, so you know they're on. Off leaves them out."),
+      schedule, "Turn on Game schedule");
+  row("More events", "Other sports, and games in other languages", &Settings::boardMoreEvents,
+      "A row at the end of the board for sports you don't follow in My Sports, and for events shown only on "
+      "channels from other countries, in other languages.\nOff: they aren't on the board, but Search still finds "
+      "them and they play from there.");
+  row("Time not listed", "Events with no start time", &Settings::boardUntimed,
+      "Events your channels carry without a start time, so the board can't place them by the clock. They play "
+      "when you pick them, if they're on.\nOff: they aren't on the board, but Search still finds them.");
+  ui::PanelItem* channels =
+      row("Event channels", "Channels that show one event at a time", &Settings::boardEventChannels,
+          "Groups of channels your provider sets up for live events, each showing one event at a time. Pick one to "
+          "start watching, then use Up and Down to go through the rest of the group.");
+  // Game schedule off: the board is the provider's events, so they show.
+  if (!schedule) {
+    channels->on = true;
+    dim(*channels, false, "Always shown while Game schedule is off");
+  }
+}
 
 bool settingsCategoryShown(App& app, SettingsCategory category) {
   return category != SettingsCategory::Advanced || advancedApplies(app).any();

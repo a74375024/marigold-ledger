@@ -33,6 +33,17 @@ double linear(double v) {
   return v <= 0.03928 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4);
 }
 
+// linear() of each whole channel value, worked out once: luminance() runs
+// thousands of times per logo (every try of tuneColour()).
+const double* linearTable() {
+  static const std::vector<double> kTable = [] {
+    std::vector<double> t(256);
+    for (int v = 0; v < 256; ++v) t[static_cast<size_t>(v)] = linear(v);
+    return t;
+  }();
+  return kTable.data();
+}
+
 double gamma(double v) {
   v = std::clamp(v, 0.0, 1.0);
   return 255 * (v <= 0.0031308 ? v * 12.92 : 1.055 * std::pow(v, 1 / 2.4) - 0.055);
@@ -83,8 +94,11 @@ uint32_t fromHls(double h, double l, double s) {
 }
 
 bool okOn(uint32_t c, const std::vector<uint32_t>& refs) {
+  // contrast() with the colour's own luminance worked out once.
+  double la = luminance(c);
   for (uint32_t b : refs) {
-    if (contrast(c, b) < kTarget) return false;
+    double lb = luminance(b);
+    if ((std::max(la, lb) + 0.05) / (std::min(la, lb) + 0.05) < kTarget) return false;
   }
   return true;
 }
@@ -104,10 +118,11 @@ Rgb at(const px::Image& im, size_t i) {
           static_cast<double>(im.rgba[i * 4 + 2])};
 }
 
-// Colours, 5 bits a channel: pixels of one flat colour share a bin.
+// Colours, 5 bits a channel: pixels of one flat colour share a bin. Whole
+// sums (exact, as the doubles they replace were).
 struct Bin {
   size_t n = 0;
-  double sum[3] = {0, 0, 0};
+  uint64_t sum[3] = {0, 0, 0};
 };
 
 size_t binOf(const uint8_t* p) {
@@ -131,8 +146,8 @@ std::vector<Bin> histogram(const px::Image& im, size_t& visible) {
 }  // namespace
 
 double luminance(uint32_t rgb) {
-  Rgb c = unpack(rgb);
-  return 0.2126 * linear(c.r) + 0.7152 * linear(c.g) + 0.0722 * linear(c.b);
+  const double* lin = linearTable();
+  return 0.2126 * lin[(rgb >> 16) & 0xff] + 0.7152 * lin[(rgb >> 8) & 0xff] + 0.0722 * lin[rgb & 0xff];
 }
 
 double contrast(uint32_t a, uint32_t b) {
@@ -219,7 +234,8 @@ uint32_t mainColour(const px::Image& im) {
   auto best = std::max_element(bins.begin(), bins.end(), [](const Bin& a, const Bin& b) { return a.n < b.n; });
   if (best == bins.end() || best->n == 0) return 0;
   double n = static_cast<double>(best->n);
-  return pack(best->sum[0] / n, best->sum[1] / n, best->sum[2] / n);
+  return pack(static_cast<double>(best->sum[0]) / n, static_cast<double>(best->sum[1]) / n,
+              static_cast<double>(best->sum[2]) / n);
 }
 
 bool removeOwnBox(px::Image& im) {
@@ -354,7 +370,8 @@ bool tuneImage(px::Image& im) {
   for (size_t i : order) {
     const Bin& bin = bins[i];
     double cnt = static_cast<double>(bin.n);
-    Rgb m{bin.sum[0] / cnt, bin.sum[1] / cnt, bin.sum[2] / cnt};
+    Rgb m{static_cast<double>(bin.sum[0]) / cnt, static_cast<double>(bin.sum[1]) / cnt,
+          static_cast<double>(bin.sum[2]) / cnt};
     bool near = false;
     for (const Rgb& c : centre) near = near || distance2(c, m) <= kSame * kSame;
     if (near) continue;
@@ -385,11 +402,25 @@ bool tuneImage(px::Image& im) {
     }
     return best;
   };
+  // nearest() of a pixel's colour, remembered for the next pixel when it is
+  // the same colour (a logo's flat parts run on for many pixels).
+  uint32_t lastRgb = 0xFFFFFFFF;
+  int lastBest = -1, lastSecond = -1;
+  auto nearestOf = [&](const px::Image& from, size_t i, int& second) {
+    const uint8_t* q = &from.rgba[i * 4];
+    uint32_t rgb = static_cast<uint32_t>(q[0]) << 16 | static_cast<uint32_t>(q[1]) << 8 | q[2];
+    if (rgb != lastRgb) {
+      lastRgb = rgb;
+      lastBest = nearest(at(from, i), lastSecond);
+    }
+    second = lastSecond;
+    return lastBest;
+  };
   std::vector<int> label(n, -1);
   for (size_t i = 0; i < n; ++i) {
     if (im.rgba[i * 4 + 3] < 128) continue;
     int second = -1;
-    label[i] = nearest(at(im, i), second);
+    label[i] = nearestOf(im, i, second);
   }
   std::vector<int> piece(n, -1);
   std::vector<int> pieceLabel;
@@ -407,40 +438,67 @@ bool tuneImage(px::Image& im) {
       size_t i = stack.back();
       stack.pop_back();
       ++pieceArea[static_cast<size_t>(id)];
-      int x = static_cast<int>(i % static_cast<size_t>(im.w)), y = static_cast<int>(i / static_cast<size_t>(im.w));
-      const int nb[4][2] = {{x - 1, y}, {x + 1, y}, {x, y - 1}, {x, y + 1}};
-      for (const auto& q : nb) {
-        if (q[0] < 0 || q[1] < 0 || q[0] >= im.w || q[1] >= im.h) continue;
-        size_t j = index(q[0], q[1]);
-        if (piece[j] >= 0 || label[j] != label[s]) continue;
+      const size_t w = static_cast<size_t>(im.w);
+      size_t x = i % w, y = i / w;
+      auto visit = [&](size_t j) {
+        if (piece[j] >= 0 || label[j] != label[s]) return;
         piece[j] = id;
         stack.push_back(j);
-      }
+      };
+      if (x > 0) visit(i - 1);
+      if (x + 1 < w) visit(i + 1);
+      if (y > 0) visit(i - w);
+      if (y + 1 < static_cast<size_t>(im.h)) visit(i + w);
     }
   }
   const size_t pieces = pieceLabel.size();
   // What each piece touches: the outside (clear pixels, the image's edge)
   // or other pieces.
+  // Counted first, then which pieces each one touches, only for the
+  // pieces that may be a detail (few touch the outside).
   std::vector<size_t> outside(pieces, 0), touches(pieces, 0);
-  std::vector<std::unordered_map<int, size_t>> neighbours(pieces);
+  auto across = [&](size_t i, int x, int y, int side) {
+    switch (side) {
+      case 0: return x > 0 ? piece[i - 1] : -1;
+      case 1: return x + 1 < im.w ? piece[i + 1] : -1;
+      case 2: return y > 0 ? piece[i - static_cast<size_t>(im.w)] : -1;
+      default: return y + 1 < im.h ? piece[i + static_cast<size_t>(im.w)] : -1;
+    }
+  };
   for (int y = 0; y < im.h; ++y) {
     for (int x = 0; x < im.w; ++x) {
-      int p = piece[index(x, y)];
+      size_t i = index(x, y);
+      int p = piece[i];
       if (p < 0) continue;
-      const int nb[4][2] = {{x - 1, y}, {x + 1, y}, {x, y - 1}, {x, y + 1}};
-      for (const auto& q : nb) {
-        int other = q[0] < 0 || q[1] < 0 || q[0] >= im.w || q[1] >= im.h ? -1 : piece[index(q[0], q[1])];
+      for (int side = 0; side < 4; ++side) {
+        int other = across(i, x, y, side);
         if (other == p) continue;
         ++touches[static_cast<size_t>(p)];
         if (other < 0) ++outside[static_cast<size_t>(p)];
-        else ++neighbours[static_cast<size_t>(p)][other];
+      }
+    }
+  }
+  auto maybeDetail = [&](size_t p) { return touches[p] != 0 && outside[p] * 10 < touches[p]; };
+  bool anyDetail = false;
+  for (size_t p = 0; p < pieces && !anyDetail; ++p) anyDetail = maybeDetail(p);
+  std::vector<std::unordered_map<int, size_t>> neighbours(pieces);
+  if (anyDetail) {
+    for (int y = 0; y < im.h; ++y) {
+      for (int x = 0; x < im.w; ++x) {
+        size_t i = index(x, y);
+        int p = piece[i];
+        if (p < 0 || !maybeDetail(static_cast<size_t>(p))) continue;
+        for (int side = 0; side < 4; ++side) {
+          int other = across(i, x, y, side);
+          if (other != p && other >= 0) ++neighbours[static_cast<size_t>(p)][other];
+        }
       }
     }
   }
   // A piece almost all inside one larger piece is a detail drawn on it.
   std::vector<int> parent(pieces, -1);
   for (size_t p = 0; p < pieces; ++p) {
-    if (touches[p] == 0 || outside[p] * 10 >= touches[p]) continue;
+    if (!maybeDetail(p)) continue;
     int best = -1;
     size_t most = 0;
     for (const auto& [q, cnt] : neighbours[p]) {
@@ -512,20 +570,27 @@ bool tuneImage(px::Image& im) {
   // A part's new colour near a pixel: the piece it is in, else the nearest
   // piece of that part within two pixels, else the part's colour for the
   // surfaces.
+  // Rings out from the pixel, each row by row, left to right; a pixel's
+  // label is its piece's part (none for the clear and the faint).
+  std::vector<Rgb> tunedRgb(pieces);
+  for (size_t p = 0; p < pieces; ++p) tunedRgb[p] = unpack(tuned[p]);
   auto tunedNear = [&](int x, int y, int k) {
-    int found = -1;
-    for (int r = 0; r <= 2 && found < 0; ++r) {
-      for (int dy = -r; dy <= r && found < 0; ++dy) {
-        for (int dx = -r; dx <= r && found < 0; ++dx) {
-          if (std::max(std::abs(dx), std::abs(dy)) != r) continue;
-          int nx = x + dx, ny = y + dy;
-          if (nx < 0 || ny < 0 || nx >= im.w || ny >= im.h) continue;
-          int p = piece[index(nx, ny)];
-          if (p >= 0 && pieceLabel[static_cast<size_t>(p)] == k) found = p;
+    size_t i = index(x, y);
+    if (label[i] == k) return tunedRgb[static_cast<size_t>(piece[i])];
+    for (int r = 1; r <= 2; ++r) {
+      for (int dy = -r; dy <= r; ++dy) {
+        int ny = y + dy;
+        if (ny < 0 || ny >= im.h) continue;
+        int step = dy == -r || dy == r ? 1 : 2 * r;  // the ring's sides: its two ends
+        for (int dx = -r; dx <= r; dx += step) {
+          int nx = x + dx;
+          if (nx < 0 || nx >= im.w) continue;
+          size_t j = index(nx, ny);
+          if (label[j] == k) return tunedRgb[static_cast<size_t>(piece[j])];
         }
       }
     }
-    return unpack(found >= 0 ? tuned[static_cast<size_t>(found)] : onSurface[static_cast<size_t>(k)]);
+    return unpack(onSurface[static_cast<size_t>(k)]);
   };
   px::Image src = im;
   for (int y = 0; y < im.h; ++y) {
@@ -534,10 +599,10 @@ bool tuneImage(px::Image& im) {
       if (src.rgba[i * 4 + 3] == 0) continue;
       Rgb p = at(src, i);
       int j = -1;
-      int k = nearest(p, j);
+      int k = nearestOf(src, i, j);
       if (k < 0) continue;
       const Rgb& ck = centre[static_cast<size_t>(k)];
-      Rgb tk = tunedNear(x, y, k);
+      Rgb tk = label[i] == k ? tunedRgb[static_cast<size_t>(piece[i])] : tunedNear(x, y, k);
       Rgb out{p.r + tk.r - ck.r, p.g + tk.g - ck.g, p.b + tk.b - ck.b};
       if (j >= 0) {
         // Between two parts (anti-aliasing): the same share of the way

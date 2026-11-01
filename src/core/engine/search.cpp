@@ -519,6 +519,10 @@ void Index::finishGames() {
     g.forms.reserve(g.names.size());
     for (const std::string& n : g.names) g.forms.push_back(Name::of(n));
   }
+  for (ChannelEntry& c : families.edit()) {
+    c.forms.clear();
+    c.forms.push_back(Name::of(c.name));
+  }
   std::vector<TeamEntry>& teamList = teams.edit();
   for (size_t i = 0; i < teamList.size(); ++i) {
     TeamEntry& t = teamList[i];
@@ -549,6 +553,7 @@ Index Index::join(const Index& guide, const Index& board) {
   j.teams = board.teams;
   j.games = board.games;
   j.leagues = board.leagues;
+  j.families = board.families;
   j.teamTitles = board.teamTitles;
   j.gameById = board.gameById;
   j.teamByKey = board.teamByKey;
@@ -793,8 +798,11 @@ Found find(const Index& index, const Query& q, const Options& o) {
   std::vector<uint32_t> strict = strictChannels(index, q);
   size_t nextStrict = 0;
   const std::vector<ChannelEntry>& list = *index.channels;
-  for (size_t i = 0; i < list.size(); ++i) {
-    const ChannelEntry& c = list[i];
+  const std::vector<ChannelEntry>& groups = *index.families;
+  // The guide's channels, then the event channel groups (a few, by name).
+  auto entry = [&](size_t i) -> const ChannelEntry& { return i < list.size() ? list[i] : groups[i - list.size()]; };
+  for (size_t i = 0; i < list.size() + groups.size(); ++i) {
+    const ChannelEntry& c = entry(i);
     if (!c.browsable) {
       while (nextStrict < strict.size() && strict[nextStrict] < i) ++nextStrict;
       if (nextStrict == strict.size() || strict[nextStrict] != i) continue;
@@ -811,15 +819,18 @@ Found find(const Index& index, const Query& q, const Options& o) {
   // best by the top result's rule among all of them.
   auto listed = [](const ChannelHit& a, const ChannelHit& b) { return a.order != b.order ? a.order < b.order : a.at < b.at; };
   auto channelItem = [&](const ChannelHit& h) {
+    const ChannelEntry& c = entry(h.at);
     Item it;
     it.kind = Kind::Channel;
-    it.id = list[h.at].id;
+    it.id = c.id;
     it.entryId = it.id;
     it.hit = h.hit;
     it.tier = h.tier;
     it.score = h.score;
     it.playable = true;
-    it.outside = index.lineupSet && !list[h.at].mine();
+    it.outside = index.lineupSet && !c.mine();
+    it.family = c.family;
+    if (c.family) it.name = c.title;
     return it;
   };
   auto pick = [&](std::vector<ChannelHit>& hits, std::vector<Item>& out, std::optional<Item>& best) {

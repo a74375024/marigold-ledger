@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "core/guide/names.hpp"
+#include "core/guide/text.hpp"
 #include "core/model/channel.hpp"
 #include "core/util/json.hpp"
 #include "core/util/json_doc.hpp"
@@ -76,6 +77,17 @@ bool needsStationDirectory(const std::set<std::string>& shards);
 constexpr time::Seconds kRefreshAge = 20 * 3600;
 // How far ahead listings are kept (hours).
 constexpr int kKeepHours = 48;
+// Descriptions are kept for programmes starting up to this many hours after
+// the files are read: until the next read (kRefreshAge) and 6 h for a late
+// one, so what's on has its description all day. Later ones are dropped as
+// they stream past (sports keep theirs for the whole window): descriptions
+// are most of the listings' memory. With each held once (Text), a week's
+// guide for 600 channels keeps about 0.6 MB more than with the 8 h kept
+// before, and 3,000 guide channels for a 60,000-channel lineup about 3 MB.
+constexpr int kDescHours = static_cast<int>(kRefreshAge / 3600) + 6;
+// Saved listings whose descriptions end within this are read again from the
+// files already here, even when nothing changed (no download for it).
+constexpr time::Seconds kDescRefill = 3 * 3600;
 // Main sources older than this, or reaching less than kShortHorizon minutes
 // ahead, are stale: backups fill in and the update is retried soon.
 constexpr time::Seconds kStaleAge = 36 * 3600;
@@ -83,7 +95,8 @@ constexpr int kShortHorizon = 12 * 60;
 constexpr time::Seconds kStaleRetry = 2 * 3600;
 // Sports descriptions kept for the whole window (2): older builds kept only
 // the next few hours', so they're rebuilt once.
-constexpr int kDetailVersion = 4;  // 3: national networks by any of their names; 4: call signs with a network word
+// 5: descriptions for kDescHours, the first or English one.
+constexpr int kDetailVersion = 5;  // 3: national networks by any of their names; 4: call signs with a network word
 
 // MARK: Data
 
@@ -93,7 +106,7 @@ struct RawProgram {
   int m = 0;                      // length in minutes
   std::string t;                  // title
   std::optional<std::string> st;  // subtitle / episode title
-  std::optional<std::string> d;   // description
+  Text d;                         // description (shared by its copies)
   int f = 0;                      // flags: 1 movie, 2 sports, 4 news, 8 kids, 16 live, 32 new
 
   int end() const { return s + m; }
@@ -170,6 +183,9 @@ struct Saved {
   // The channel list and shards these listings were matched for.
   std::optional<std::string> targetsKey;
   std::optional<int> detailVersion;
+  // When the main files were last read: descriptions reach kDescHours past
+  // it. Listings reused as they were keep the time they were read.
+  std::optional<time::Seconds> readAt;
 };
 
 // JSON. Dates are Unix seconds (Swift's JSONEncoder wrote its own reference
@@ -196,6 +212,7 @@ class ProgramsReader {
  private:
   std::vector<Schedule> lists_;
   SharedPrograms programs_;
+  TextPool texts_;  // a description repeated in many lists is held once
   bool sawPrograms_ = false;
 };
 SharedPrograms sharedProgramsFromJson(const json::Value& v);
@@ -256,7 +273,9 @@ LearnedShift learnShift(const ProgramsById& reference, const ProgramsById& candi
 LearnedShift learnShift(const SharedPrograms& reference, const SharedPrograms& candidate,
                         int sample = 800);
 
-// Adds `extra` programmes that don't overlap `base` by more than 5 minutes.
+// Adds `extra` programmes that don't overlap `base` by more than 5 minutes;
+// a `base` programme without a description or episode title takes them from
+// the same show in `extra` covering more than half of it.
 std::vector<RawProgram> mergePrograms(const std::vector<RawProgram>& base,
                                       const std::vector<RawProgram>& extra);
 
@@ -271,6 +290,9 @@ std::vector<Program> programs(const std::vector<RawProgram>& raw, const std::str
 struct Window {
   int low = 0;  // minutes since 1970
   int high = 0;
+  // Descriptions are kept for programmes starting before this (and for
+  // sports); 0: kDescHours after low + 180 (the time of the read).
+  int descUntil = 0;
 };
 
 // One source's matches from a file (XMLTVReader.SourceResult).
@@ -333,6 +355,8 @@ struct BuildResult {
   std::map<std::string, SourceState> states;
   time::Seconds nextCheck = 0;
   std::string targetsKey;
+  // When the main files were read (Saved::readAt).
+  time::Seconds readAt = 0;
   // Lines for the log.
   std::vector<std::string> log;
 };

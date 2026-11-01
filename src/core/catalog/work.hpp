@@ -57,10 +57,19 @@ std::vector<Program> listing(const std::string& id, const std::vector<Program>* 
                              const std::vector<guide::RawProgram>* outside,
                              time::Seconds windowStart);
 
+// The best of an entry's versions' listings (Store::applyEntryGuides): the
+// one covering the most of the kGuideHours from `start`; of two covering
+// about the same (within 10%), the one with more descriptions in the next 6
+// hours. Its index, or -1 when there is none; `described` gets its count.
+int bestGuide(const std::vector<const std::vector<Program>*>& lists, time::Seconds start,
+              int* described = nullptr);
+
 // Picks whichever listing covers more of the next three hours (the first
 // wins unless the other covers 15 minutes more), tops it up from the other
 // where it has gaps (overlaps of 5 minutes or less don't count), and takes
-// genre tags from the other where its own programmes have none.
+// genre tags from the other where its own programmes have none, and
+// descriptions and episode titles from the same show there
+// (genre::mergeDetails).
 std::vector<Program> bestListing(const std::vector<Program>* server,
                                  const std::vector<Program>* outside, time::Seconds windowStart);
 

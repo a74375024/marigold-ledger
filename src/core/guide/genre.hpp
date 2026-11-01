@@ -35,4 +35,15 @@ Program withTitleFlags(const Program& program);
 std::vector<Program> mergeFlags(const std::vector<Program>& list,
                                 const std::vector<Program>& other);
 
+// A programme title for comparing guides: letters and numbers in lower case,
+// without accents or a "Live:" / "New:" in front.
+std::string titleKey(std::string_view title);
+
+// Episode titles and descriptions from `other` for programmes in `list` that
+// have none, from a programme with the same title (titleKey) covering more
+// than half of it: one guide often describes what the other only names.
+// What a programme has is never replaced.
+std::vector<Program> mergeDetails(const std::vector<Program>& list,
+                                  const std::vector<Program>& other);
+
 }  // namespace marigold::guide::genre

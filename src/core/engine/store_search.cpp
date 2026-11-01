@@ -1,14 +1,18 @@
 // What Search looks through (search.hpp's index), made from the store's
 // snapshots in two parts (search_build.hpp): the guide's channels with
 // their other names and its shows, and every team of the saved team lists
-// joined with the board's games, the leagues and sports on the board. Each
+// joined with the board's games, the leagues and sports on the board and
+// its event channel groups. Each
 // part is made on a worker and put in by tick(); Search keeps the one it
 // has until then. Recent searches and following a team from Search.
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <map>
 #include <set>
+#include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "core/catalog/core_channels.hpp"
 #include "core/catalog/reference.hpp"
@@ -169,6 +173,37 @@ std::shared_ptr<se::Index> guide(const GuideInput& in) {
   return index;
 }
 
+std::shared_ptr<const FamilyMarksById> familyMarks(const catalog::CatalogResult& catalog,
+                                                   const std::vector<Channel>& list, const Channels& channels) {
+  auto out = std::make_shared<FamilyMarksById>();
+  // Whether a feed is still in the list is asked only of a feed that would
+  // mark its group (most feeds' entries are neither), the list's ids
+  // gathered the first time.
+  std::unordered_set<std::string_view> present;
+  auto inList = [&](const std::string& feed) {
+    if (present.empty() && !list.empty()) {
+      present.reserve(list.size());
+      for (const Channel& c : list) present.insert(c.id);
+    }
+    return present.count(feed) > 0;
+  };
+  const std::string none;
+  for (const catalog::EventFamily& f : catalog.families) {
+    if (out->count(f.id)) continue;
+    FamilyMarks m;
+    for (const std::string& feed : f.feeds) {
+      if (m.inLineup && m.favorite) break;
+      auto e = catalog.entryOf.find(feed);
+      const GuideChannel* entry = channels.find(e == catalog.entryOf.end() ? none : e->second);
+      if (!entry || !((entry->inLineup && !m.inLineup) || (entry->favorite && !m.favorite)) || !inList(feed)) continue;
+      m.inLineup = m.inLineup || entry->inLineup;
+      m.favorite = m.favorite || entry->favorite;
+    }
+    out->emplace(f.id, m);
+  }
+  return out;
+}
+
 BoardPart board(const BoardInput& in) {
   BoardPart out;
   auto index = std::make_shared<se::Index>();
@@ -189,6 +224,33 @@ BoardPart board(const BoardInput& in) {
     if (!x.leagueShort.empty()) leaguesOnBoard.insert(x.leagueShort);
     if (!t.sport.empty()) sportsOnBoard.insert(t.sport);
     games.push_back(std::move(g));
+  }
+
+  // ---- event channel groups, found like channels
+  std::vector<se::ChannelEntry>& families = index->families.edit();
+  families.reserve(in.families.size());
+  std::shared_ptr<const FamilyMarksById> marks = in.marks;
+  if (in.catalog && !marks && in.list && in.channels && !in.families.empty())
+    marks = familyMarks(*in.catalog, *in.list, *in.channels);
+  out.marks = marks;
+  for (const BoardInput::Family& f : in.families) {
+    se::ChannelEntry c;
+    c.id = f.id;
+    c.title = f.name;
+    c.name = se::fold(f.name);
+    c.family = true;
+    c.inLineup = f.inLineup;
+    c.favorite = f.favorite;
+    if (in.catalog) {
+      const FamilyMarks* mark = nullptr;
+      if (marks) {
+        auto it = marks->find(f.id);
+        if (it != marks->end()) mark = &it->second;
+      }
+      c.inLineup = mark && mark->inLineup;
+      c.favorite = mark && mark->favorite;
+    }
+    if (!c.name.empty()) families.push_back(std::move(c));
   }
 
   // ---- teams: every team of the saved lists (a team on a bye is found
@@ -347,9 +409,22 @@ void Store::startSearchBuilds(bool forSearch) const {
     in->events = events_;
     in->mySports = e.mySports;
     in->now = now;
+    // Event channel groups: yours when one of their channels is, worked
+    // out on the worker (kept while the catalog and the channels are).
+    in->catalog = m.catalog;
+    in->list = m.channels;
+    in->channels = channels_;
+    Impl::MarksKey marksKey{static_cast<uint64_t>(m.catalogRevision), channels_->version,
+                            reinterpret_cast<uintptr_t>(m.catalog.get()),
+                            reinterpret_cast<uintptr_t>(m.channels.get())};
+    if (m.searchMarks && m.searchMarksKey == marksKey) in->marks = m.searchMarks;
     std::set<std::string> seen, leaguesOnBoard;
     for (const EventRow& row : events_->rows) {
-      if (row.families) continue;
+      if (row.families) {
+        for (const EventGroup& g : row.groups)
+          for (const EventTile& t : g.tiles) in->families.push_back({t.id, t.title});
+        continue;
+      }
       for (const EventGroup& g : row.groups) {
         for (const EventTile& t : g.tiles) {
           if (!seen.insert(t.id).second) continue;
@@ -406,6 +481,7 @@ void Store::startSearchBuilds(bool forSearch) const {
     auto result = std::make_shared<Impl::SearchMade>();
     result->key = boardKey;
     result->teamsKey = teamsKey;
+    result->marksKey = marksKey;
     board.busy = true;
     host_.pool.post(
         [in, result] {
@@ -413,6 +489,7 @@ void Store::startSearchBuilds(bool forSearch) const {
           search_build::BoardPart part = search_build::board(*in);
           result->index = part.index;
           result->teams = part.teams;
+          result->marks = part.marks;
           result->ms = msSince(t);
         },
         [this, result] {
@@ -440,6 +517,10 @@ bool Store::installSearch() const {
     if (r->teams) {
       m.searchTeams = r->teams;
       m.searchTeamsKey = r->teamsKey;
+    }
+    if (r->marks) {
+      m.searchMarks = r->marks;
+      m.searchMarksKey = r->marksKey;
     }
     const se::Index& x = *r->index;
     MLOG_I("search", "index part=%s%s ms=%.0f ch=%zu teams=%zu games=%zu titles=%zu", part, r->quick ? " quick" : "",

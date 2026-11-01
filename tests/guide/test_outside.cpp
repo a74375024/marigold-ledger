@@ -172,6 +172,59 @@ TEST_CASE("mergePrograms: only gaps are filled") {
   CHECK(fresh.front().t == "y");
 }
 
+TEST_CASE("Text: a shared description") {
+  Text none;
+  CHECK_FALSE(none);
+  CHECK_FALSE(Text(""));
+  CHECK_FALSE(Text(std::nullopt));
+  CHECK(none.str() == std::nullopt);
+  Text a = "About it";
+  Text b = a;
+  CHECK(b.view().data() == a.view().data());
+  CHECK(b == std::string("About it"));
+  CHECK(b != "Other");
+  CHECK(Text("About it") == a);  // equal text, another block
+  std::optional<std::string> plain = a;
+  CHECK(plain == std::string("About it"));
+  b = Text("Changed");
+  CHECK(a == "About it");
+  a = std::move(b);
+  CHECK(a == "Changed");
+  TextPool pool;
+  Text x = pool.intern("Rerun"), y = pool.intern(std::string("Rerun"));
+  CHECK(x.view().data() == y.view().data());
+  pool.clear();
+  CHECK(x == "Rerun");  // outlives the pool
+}
+
+TEST_CASE("mergePrograms: descriptions and episode titles from the same show") {
+  std::vector<RawProgram> base = {raw(100, 60, "The Show"), raw(200, 60, "News"),
+                                  raw(300, 60, "Mystery Hour"), raw(400, 60, "Kept")};
+  base[3].d = "Its own";
+  base[3].st = "Own episode";
+  RawProgram same = raw(95, 60, "LIVE: the show!");
+  same.d = "From the other guide";
+  same.st = "Pilot";
+  RawProgram other = raw(200, 60, "Something Else");
+  other.d = "Another show's";
+  RawProgram later = raw(331, 60, "Mystery Hour");  // covers only half of it
+  later.d = "Too far off";
+  RawProgram rival = raw(400, 60, "Kept");
+  rival.d = "Not this";
+  rival.st = "Nor this";
+  auto merged = mergePrograms(base, {same, other, later, rival});
+  REQUIRE(merged.size() == 4);
+  CHECK(merged[0].d == std::string("From the other guide"));
+  CHECK(merged[0].st == std::string("Pilot"));
+  CHECK(merged[0].t == "The Show");  // its own title and times stay
+  CHECK(merged[0].s == 100);
+  CHECK_FALSE(merged[1].d);  // another title
+  CHECK_FALSE(merged[2].d);  // the same title, but mostly at another time
+  CHECK(merged[3].d == std::string("Its own"));  // never replaced
+  CHECK(merged[3].st == std::string("Own episode"));
+  CHECK(merged[0].d.view().data() == same.d.view().data());  // shared, not copied
+}
+
 TEST_CASE("programs: window, ids, flags and title genres") {
   std::vector<RawProgram> list = {
       raw(kNowMin - 120, 60, "Gone"), raw(kNowMin - 30, 60, "NFL Football"),

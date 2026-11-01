@@ -12,6 +12,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -37,10 +38,27 @@ class Pool final : public http::Pool {
   void answer(const std::string& url, std::string body, int status = 200) { canned_[url] = {status, std::move(body)}; }
 
   void submit(http::Request req, Done done) override {
-    queue_.push_back([this, req = std::move(req), done = std::move(done)]() mutable {
+    std::string url = req.url;
+    std::function<void()> step = [this, req = std::move(req), done = std::move(done)]() mutable {
       http::Response r = run(req);
       if (done) done(std::move(r));
-    });
+    };
+    if (held_.count(url)) waiting_.emplace_back(std::move(url), std::move(step));
+    else queue_.push_back(std::move(step));
+  }
+
+  // A slow network: requests for a held link wait until it is let go.
+  void hold(const std::string& url) { held_.insert(url); }
+  void letGo(const std::string& url) {
+    held_.erase(url);
+    for (auto it = waiting_.begin(); it != waiting_.end();) {
+      if (it->first != url) {
+        ++it;
+        continue;
+      }
+      queue_.push_back(std::move(it->second));
+      it = waiting_.erase(it);
+    }
   }
 
   void post(std::function<void()> work, std::function<void()> done, http::Priority) override {
@@ -52,7 +70,10 @@ class Pool final : public http::Pool {
 
   http::Response fetchNow(http::Request req) override { return run(req); }
 
-  void cancelAll() override { queue_.clear(); }
+  void cancelAll() override {
+    queue_.clear();
+    waiting_.clear();
+  }
 
   // No waiting on the pretend TV; the waits are counted.
   void pause(unsigned ms) override { paused += ms; }
@@ -102,6 +123,8 @@ class Pool final : public http::Pool {
 
   std::map<std::string, Canned> canned_;
   std::deque<std::function<void()>> queue_;
+  std::set<std::string> held_;
+  std::vector<std::pair<std::string, std::function<void()>>> waiting_;
 };
 
 // A real folder (the engine checks file dates), removed afterwards.

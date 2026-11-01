@@ -7,7 +7,9 @@
 // rule); a game's other channels and feeds are under the banner's
 // Sources. The rail is narrower than the guide's card, so more of the
 // picture shows; the column widens it while it's open. Built from the
-// board's rows: no requests of its own.
+// board's rows as the board screen shows them (Build 119: Show on the
+// board), with the row of the game on screen kept: indices into the board,
+// never a copy of it, and no requests of its own.
 #include <algorithm>
 
 #include "app/app.hpp"
@@ -53,14 +55,15 @@ class EventGuide : public Screen {
     app_.store().eventsOpen(true);
     const auto& s = app_.store().settings();
     nav_.setLists(rail::playerLists(s.allChannelsTab, s.scheduleEnabled));
-    board_ = app_.store().events();
+    visible(app_.store().events());
     // The row of the game on screen.
     const std::string& watching = app_.playback().entry();
-    for (size_t r = 0; r < board_->rows.size() && rowIndex_ < 0; ++r) {
-      if (board_->rows[r].families) continue;
-      for (const EventGroup& g : board_->rows[r].groups)
+    for (size_t r = 0; r < rowCount() && rowIndex_ < 0; ++r) {
+      const EventRow& row = rowAt(r);
+      if (row.families) continue;
+      for (const EventGroup& g : row.groups)
         for (const EventTile& t : g.tiles)
-          if (t.id == watching && board_->rows[r].id != "live" && board_->rows[r].id != "teams") rowIndex_ = static_cast<int>(r);
+          if (t.id == watching && row.id != "live" && row.id != "teams") rowIndex_ = static_cast<int>(r);
     }
     if (rowIndex_ < 0) rowIndex_ = 0;
     build();
@@ -68,7 +71,7 @@ class EventGuide : public Screen {
       if (items_[i].tile && items_[i].tile->id == watching) focus_ = static_cast<int>(i);
     if (focus_ < 0) move(0, 1);
     follow();
-    if (sports) apply(nav_.openColumn(rowIndex_, static_cast<int>(board_->rows.size())));
+    if (sports) apply(nav_.openColumn(rowIndex_, static_cast<int>(rowCount())));
   }
   ~EventGuide() override { app_.store().eventsOpen(false); }
 
@@ -77,10 +80,10 @@ class EventGuide : public Screen {
   bool tick(uint32_t ms) override {
     if (app_.store().events()->version != board_->version) {
       std::string keep = focusedTile() ? focusedTile()->id : std::string();
-      board_ = app_.store().events();
+      visible(app_.store().events());
       // The rows themselves changed: the rail as it is, the column closed.
       if (nav_.mode() != rail::Mode::Content) nav_.close();
-      rowIndex_ = std::clamp(rowIndex_, 0, std::max(0, static_cast<int>(board_->rows.size()) - 1));
+      rowIndex_ = std::clamp(rowIndex_, 0, std::max(0, static_cast<int>(rowCount()) - 1));
       build();
       focus_ = -1;
       for (size_t i = 0; i < items_.size(); ++i)
@@ -100,7 +103,7 @@ class EventGuide : public Screen {
       return true;
     }
     // Every game is at the rail's left edge: Left opens SPORTS.
-    rail::Grid g{true, false, false, rowIndex_, static_cast<int>(board_->rows.size())};
+    rail::Grid g{true, false, false, rowIndex_, static_cast<int>(rowCount())};
     rail::PlayerStep s = nav_.key(e.key, g, e.glide);
     if (s.what != rail::PlayerStep::Do::Grid) {
       apply(s);
@@ -137,7 +140,7 @@ class EventGuide : public Screen {
     c.hit(card, left_rail::kHitNothing);
     rail::Mode mode = nav_.mode();
     float x = ui::kCardInset + 38 + kSportsW * push;
-    std::string title = rowIndex_ < static_cast<int>(board_->rows.size()) ? board_->rows[static_cast<size_t>(rowIndex_)].title : "";
+    std::string title = rowIndex_ < static_cast<int>(rowCount()) ? rowAt(static_cast<size_t>(rowIndex_)).title : "";
     float right = card.x + card.w - 40;
     ui::labelIn(c, "LIVE EVENTS \xc2\xb7 " + upper(title), {x, kTopY, right - 220 - x, 34}, Weight::Bold, 22,
                 theme::white(0.7f));
@@ -196,7 +199,9 @@ class EventGuide : public Screen {
   void build() {
     items_.clear();
     float y = 0;
-    for (const engine::views::EventLine& l : engine::views::eventGuide(*board_, static_cast<size_t>(rowIndex_))) {
+    size_t at = static_cast<size_t>(rowIndex_);
+    size_t row = at < rowCount() ? shown_[at] : board_->rows.size();
+    for (const engine::views::EventLine& l : engine::views::eventGuide(*board_, row)) {
       items_.push_back({l.header, l.tile, y});
       y += l.tile ? kRowH : kHeaderH;
     }
@@ -204,7 +209,7 @@ class EventGuide : public Screen {
 
   // A sport's games, from its first.
   void showRow(int row) {
-    rowIndex_ = std::clamp(row, 0, std::max(0, static_cast<int>(board_->rows.size()) - 1));
+    rowIndex_ = std::clamp(row, 0, std::max(0, static_cast<int>(rowCount()) - 1));
     build();
     focus_ = -1;
     scroll_ = 0;
@@ -238,7 +243,7 @@ class EventGuide : public Screen {
       case Do::Open:
         if (s.item == rail::Item::Events) {
           // This list: its SPORTS again.
-          apply(nav_.openColumn(rowIndex_, static_cast<int>(board_->rows.size())));
+          apply(nav_.openColumn(rowIndex_, static_cast<int>(rowCount())));
           return;
         }
         // A channel list: the guide in the player, on its neighborhoods.
@@ -280,7 +285,7 @@ class EventGuide : public Screen {
       return true;
     }
     if (mode == rail::Mode::Column) {
-      if (inRange(id, left_rail::kHitColumn, static_cast<int>(board_->rows.size()))) {
+      if (inRange(id, left_rail::kHitColumn, static_cast<int>(rowCount()))) {
         apply(nav_.clickColumn(id - left_rail::kHitColumn));
       } else if (id == kHitLists) {
         apply(nav_.openLists());
@@ -352,15 +357,26 @@ class EventGuide : public Screen {
   // its games are live, with "◀ Lists" in its header.
   void drawSports(ui::Ctx& c, float alpha) {
     std::vector<left_rail::Entry> entries;
-    entries.reserve(board_->rows.size());
-    for (const EventRow& row : board_->rows) entries.push_back({row.title, row.live});
+    entries.reserve(rowCount());
+    for (size_t r : shown_) entries.push_back({board_->rows[r].title, board_->rows[r].live});
     int hover = c.pointerActive && inRange(pointer_, left_rail::kHitColumn, 100) ? pointer_ - left_rail::kHitColumn : -1;
     float x = ui::kCardInset + 40;
     left_rail::column(c, "Live Events", "", entries, nav_.index(), nav_.origin(), hover, kColumnTop, kColumnFirst, alpha, x);
     left_rail::listsButton(c, x, kColumnTop, c.pointerActive && pointer_ == kHitLists, alpha, kHitLists);
   }
 
+  // The board as the board screen shows it (Show on the board), keeping
+  // the row of the game on screen: the board itself (the store frees it on
+  // a worker), and the indices of the rows shown.
+  void visible(std::shared_ptr<const EventsBoard> board) {
+    board_ = std::move(board);
+    shown_ = engine::views::boardShownRows(board_->rows, boardShows(app_.store().settings()), app_.playback().entry());
+  }
+  size_t rowCount() const { return shown_.size(); }
+  const EventRow& rowAt(size_t r) const { return board_->rows[shown_[r]]; }
+
   std::shared_ptr<const EventsBoard> board_;
+  std::vector<size_t> shown_;  // rows of board_ shown, in order
   int rowIndex_ = -1;
   std::vector<Item> items_;
   int focus_ = -1;

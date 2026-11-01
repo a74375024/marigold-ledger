@@ -43,6 +43,9 @@ class XmltvReader : private xml::Handler {
 
   // Called every 4000 programmes, so the caller can wait while video plays.
   void setPauseHook(std::function<void()> hook) { pause_ = std::move(hook); }
+  // A programme with several descriptions (or episode titles) keeps the
+  // first one in this language ("en", "es"...), else the first one.
+  void setLanguage(std::string code) { language_ = std::move(code); }
 
   void feed(std::string_view chunk);
   void finish();
@@ -79,6 +82,7 @@ class XmltvReader : private xml::Handler {
   std::optional<std::unordered_map<std::string, std::vector<std::string>>> exact_;
   bool stationNames_;
   std::function<void()> pause_;
+  std::string language_ = "en";
   xml::Tokenizer tokenizer_;
   bool finished_ = false;
 
@@ -90,6 +94,7 @@ class XmltvReader : private xml::Handler {
   std::optional<std::map<std::string, std::vector<Match>>> keep_;  // xmltv id -> user channels
   std::unordered_map<std::string, std::string> keepNames_;
   std::unordered_map<std::string, std::vector<RawProgram>> found_;  // xmltv id -> programmes
+  TextPool texts_;  // a rerun's description is held once
 
   std::optional<std::string> programmeChannel_;
   int programmeStart_ = 0;
@@ -99,6 +104,11 @@ class XmltvReader : private xml::Handler {
   std::optional<std::string> desc_;
   std::vector<std::string> categories_;
   int flags_ = 0;
+  // The text being read is in language_; and the kept sub-title and
+  // description are.
+  bool textInLanguage_ = false;
+  bool subtitleInLanguage_ = false;
+  bool descInLanguage_ = false;
   std::string text_;
   bool collecting_ = false;
   int counter_ = 0;

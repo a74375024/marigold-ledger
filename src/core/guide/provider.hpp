@@ -26,6 +26,10 @@ namespace marigold::guide::provider {
 constexpr time::Seconds kRefreshAge = 12 * 3600;
 // How far ahead listings are kept (hours).
 constexpr int kKeepHours = 48;
+// Descriptions are kept for programmes starting up to this many hours after
+// the guide is read: until the next read and 6 h for a late one (see
+// guide::kDescHours for what they cost).
+constexpr int kDescHours = static_cast<int>(kRefreshAge / 3600) + 6;
 
 struct Saved {
   time::Seconds built = 0;

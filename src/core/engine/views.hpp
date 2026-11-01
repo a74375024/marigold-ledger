@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -141,6 +142,48 @@ struct BoardFocus {
 };
 BoardFocus boardFocus(const std::vector<EventRow>& rows, const std::string& rowId, const std::string& tileId, int row,
                       int tile);
+
+// A board row as a screen shows it, pointing into the board (Build 119:
+// a new board every few seconds is never copied): the row, its tiles shown
+// in order across its groups, the groups with a tile shown, and the counts
+// in its header (the row's own, or a filter's).
+struct ShownRow {
+  const EventRow* row = nullptr;
+  std::vector<const EventTile*> tiles;
+  struct Group {
+    const EventGroup* group = nullptr;
+    size_t begin = 0, end = 0;  // its tiles in `tiles`
+  };
+  std::vector<Group> groups;
+  int count = 0, live = 0;
+};
+// Every tile of the row, with its counts.
+ShownRow shownRow(const EventRow& row);
+// The tiles `keep` keeps (groups left with none are left out), counted
+// afresh: `live` says which of them count as live.
+ShownRow shownRow(const EventRow& row, const std::function<bool(const EventTile&)>& keep,
+                  const std::function<bool(const EventTile&)>& live);
+// boardFocus() over rows as shown.
+BoardFocus boardFocusShown(const std::vector<ShownRow>& rows, const std::string& rowId, const std::string& tileId,
+                           int row, int tile);
+
+// Show on the board (Build 119): the board's rows as the board screen, its
+// SPORTS column and the games rail show them. More events, Time not listed
+// and Event channels only when switched on; a row holding `keep` (the game
+// on screen) stays. The board itself keeps every row (Search, Where to
+// Watch and Up/Down read it). boardHides() says whether any row is left
+// out; boardHidden() names the rows left out, in board order, for the
+// empty board's line. The screens take boardShownRows(): the rows shown as
+// indices into the board's (boardShown() is the same rows as copies).
+bool boardRowShown(const EventRow& row, const BoardShows& shows, const std::string& keep = {});
+bool boardHides(const std::vector<EventRow>& rows, const BoardShows& shows, const std::string& keep = {});
+std::vector<size_t> boardShownRows(const std::vector<EventRow>& rows, const BoardShows& shows,
+                                   const std::string& keep = {});
+std::vector<EventRow> boardShown(const std::vector<EventRow>& rows, const BoardShows& shows,
+                                 const std::string& keep = {});
+std::vector<std::string> boardHidden(const std::vector<EventRow>& rows, const BoardShows& shows);
+// "More events, Time not listed and Event channels are hidden." ("" for none).
+std::string hiddenLine(const std::vector<std::string>& titles);
 
 // Typed channel digits can't become a longer channel number ("702" when no
 // channel is 7020-7029, or 4 digits): tune now rather than wait for more.

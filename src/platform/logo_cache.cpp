@@ -6,6 +6,7 @@
 #include <utime.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <fstream>
 #include <iterator>
@@ -24,6 +25,8 @@
 namespace marigold::logos {
 namespace {
 
+// Loads under way (most of a download is waiting); of those, at most
+// PrepareGate::kMax are decoded and prepared at once.
 constexpr int kMaxInFlight = 4;
 constexpr uint64_t kWantedFrames = 2;     // asked for in the last two frames
 constexpr int64_t kRetryAfterS = 30 * 60;  // a broken logo is not asked again soon
@@ -58,16 +61,21 @@ struct LogoCache::Result {
   Treatment treatment;
   uint32_t field = 0;
   bool onDisk = false;
+  std::string bytes;  // downloaded, until decoded
+  double ms = 0;      // the decode and preparation, on the worker
 
   // On the worker, once per load: decoded, then made ready for the dark
   // surfaces. The disk keeps the file as it came (a restart decodes and
   // prepares it again), so there is nothing old to throw away.
-  void decode(std::string_view bytes, Art art) {
-    image = image::decode(bytes, kMaxW, kMaxH, &shape);
-    if (!image) return;
-    treatment = prepare(*image, art);
-    if (art == Art::logo) small = smallCopy(*image);
-    if (art == Art::flag) field = mainColour(*image);
+  void decode(std::string_view in, Art art) {
+    auto start = std::chrono::steady_clock::now();
+    image = image::decode(in, kMaxW, kMaxH, &shape);
+    if (image) {
+      treatment = prepare(*image, art);
+      if (art == Art::logo) small = smallCopy(*image);
+      if (art == Art::flag) field = mainColour(*image);
+    }
+    ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
   }
 };
 
@@ -125,10 +133,13 @@ std::string LogoCache::status(const std::string& url) const {
 
 void LogoCache::frame() {
   ++frame_;
-  if (inFlight_ >= kMaxInFlight) return;
+  // A new load starts with a decode (from the disk): only when one can run
+  // now, after the downloads waiting for theirs.
+  auto room = [this] { return inFlight_ < kMaxInFlight && !gate_.full() && gate_.waiting() == 0; };
+  if (!room()) return;
   // Newest wanted first; LRU order already puts the latest draws in front.
   for (const std::string& url : lru_) {
-    if (inFlight_ >= kMaxInFlight) break;
+    if (!room()) break;
     Entry& e = entries_[url];
     if (e.wantedFrame + kWantedFrames < frame_) break;  // rest were not drawn lately
     if (e.state == State::Wanted) start(url);
@@ -138,6 +149,7 @@ void LogoCache::frame() {
 void LogoCache::abandonLoads() {
   ++epoch_;
   inFlight_ = 0;
+  gate_.reset();
   for (auto& [url, e] : entries_) {
     if (e.state == State::Loading) e.state = State::Wanted;
   }
@@ -153,25 +165,30 @@ void LogoCache::start(const std::string& url) {
   Entry& e = entries_[url];
   e.state = State::Loading;
   ++inFlight_;
+  maxInFlight_ = std::max(maxInFlight_, inFlight_);
   auto r = std::make_shared<Result>();
   std::string path = fileFor(url);
   std::weak_ptr<bool> alive = alive_;
   Art art = e.art;
-  pool_.post(
-      [r, path, art] {
-        std::string bytes;
-        if (!readFile(path, bytes)) return;
-        r->onDisk = true;
-        r->decode(bytes, art);
-        if (!r->image) unlink(path.c_str());  // corrupt: fetch it again
-        else utime(path.c_str(), nullptr);    // freshen for the disk LRU
-      },
-      [this, alive, epoch = epoch_, url, r] {
-        if (alive.expired() || epoch != epoch_) return;
-        if (r->image) finish(url, r);
-        else fetch(url, std::make_shared<Result>(), 0);
-      },
-      http::Priority::Visible);
+  gate_.run([this, r, path, art, alive, epoch = epoch_, url] {
+    pool_.post(
+        [r, path, art] {
+          std::string bytes;
+          if (!readFile(path, bytes)) return;
+          r->onDisk = true;
+          r->decode(bytes, art);
+          if (!r->image) unlink(path.c_str());  // corrupt: fetch it again
+          else utime(path.c_str(), nullptr);    // freshen for the disk LRU
+        },
+        [this, alive, epoch, url, r] {
+          if (alive.expired() || epoch != epoch_) return;
+          gate_.ended();
+          if (r->onDisk) gate_.took(r->ms);
+          if (r->image) finish(url, r);
+          else fetch(url, std::make_shared<Result>(), 0);
+        },
+        http::Priority::Visible);
+  });
 }
 
 void LogoCache::fetch(const std::string& key, std::shared_ptr<Result> r, size_t index) {
@@ -189,24 +206,54 @@ void LogoCache::fetch(const std::string& key, std::shared_ptr<Result> r, size_t 
   std::string path = fileFor(key);
   auto found = entries_.find(key);
   Art art = found == entries_.end() ? Art::logo : found->second.art;
-  q.afterTransfer = [r, path, art](http::Response& resp) {
+  // The bytes are kept as they came; the decode waits its turn (gate_).
+  q.afterTransfer = [r](http::Response& resp) {
     if (!resp.ok || resp.status != 200) return;
-    r->decode(resp.body, art);
-    if (r->image) writeFileAtomic(path, resp.body);
-    resp.body.clear();
-    resp.body.shrink_to_fit();
+    r->bytes = std::move(resp.body);
+    resp.body = std::string();
   };
   std::weak_ptr<bool> alive = alive_;
   bool more = index + 1 < links.size();
-  pool_.submit(std::move(q), [this, alive, epoch = epoch_, key, r, index, more](http::Response&& resp) {
+  pool_.submit(std::move(q), [this, alive, epoch = epoch_, key, r, index, more, path, art](http::Response&& resp) {
     if (alive.expired() || epoch != epoch_) return;
-    if (r->image) writtenSinceTrim_ += resp.bytes;
-    if (!r->image && more && !resp.cancelled) {
-      fetch(key, r, index + 1);  // the next logo in the list
+    if (r->bytes.empty()) {
+      if (more && !resp.cancelled) fetch(key, r, index + 1);  // the next logo in the list
+      else finish(key, r);
       return;
     }
-    finish(key, r);
+    bool cancelled = resp.cancelled;
+    gate_.run([this, alive, epoch, key, r, index, more, path, art, cancelled] {
+      pool_.post(
+          [r, path, art] {
+            r->decode(r->bytes, art);
+            if (r->image) writeFileAtomic(path, r->bytes);
+            r->bytes = std::string();
+          },
+          [this, alive, epoch, key, r, index, more, cancelled, size = r->bytes.size()] {
+            if (alive.expired() || epoch != epoch_) return;
+            gate_.ended();
+            gate_.took(r->ms);
+            if (r->image) writtenSinceTrim_ += size;
+            if (!r->image && more && !cancelled) {
+              fetch(key, r, index + 1);  // the next logo in the list
+              return;
+            }
+            finish(key, r);
+          },
+          http::Priority::Visible);
+    });
   });
+}
+
+LogoCache::Stats LogoCache::takeStats() {
+  PrepareGate::Stats g = gate_.take();
+  Stats out;
+  out.prepared = g.prepared;
+  out.prepareMaxMs = g.maxMs;
+  out.maxPreparing = g.maxRunning;
+  out.maxInFlight = maxInFlight_;
+  maxInFlight_ = inFlight_;
+  return out;
 }
 
 void LogoCache::finish(const std::string& url, const std::shared_ptr<Result>& r) {

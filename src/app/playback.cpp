@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "app/app.hpp"
+#include "core/captions/caption_style.hpp"
 #include "core/media/ts_video_probe.hpp"
 #include "core/util/log.hpp"
 #include "core/util/strings.hpp"
@@ -284,16 +285,23 @@ void Playback::subtitlesBegin(unsigned relaySession, bool relayPossible) {
   const Settings& set = app_.store().settings();
   app_.video().setTextStyle(set.subtitleSize, set.subtitleLook);
   app_.video().setTextDelay(captionTiming());
+  textLook_ = set.subtitleLook;
 }
 
 void Playback::subtitlesChanged() {
   const Settings& set = app_.store().settings();
   app_.video().setTextStyle(set.subtitleSize, set.subtitleLook);
   app_.video().setTextDelay(captionTiming());
+  // Apple TV: VLC sets its box behind captions as the stream starts; a look
+  // with or without it starts the stream again (a new size shows at once).
+  bool newBox = playerDrawsSubtitles() && textLook_ >= 0 &&
+                captions::vlcCaptionBox(set.subtitleLook) != captions::vlcCaptionBox(textLook_);
+  textLook_ = set.subtitleLook;
+  bool live = subtitleChoice().on && active() && !failed();
   // webOS: captions are read on the way through the relay, which a
   // continuous TS feed only takes with subtitles on; play it again that way.
-  if (subtitleChoice().on && relayPossible_ && active() && !failed() && !subtitles_->fromStream())
-    restart("subtitles on");
+  if (live && relayPossible_ && !subtitles_->fromStream()) restart("subtitles on");
+  else if (live && newBox) restart("caption look");
   app_.invalidate();
 }
 

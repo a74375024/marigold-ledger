@@ -47,9 +47,11 @@ std::vector<ui::PanelItem> styleItems(App& app) {
   out.push_back(choice("Look", {kLooks[0], kLooks[1], kLooks[2]}, set.subtitleLook,
                        [&app](int k) { change(app, [k](Settings& s) { s.subtitleLook = k; }); }));
   if (Playback::playerDrawsSubtitles()) {
-    // Apple TV's player draws them: size and look apply from the next
-    // channel, and it keeps its own position and letters.
-    out.push_back(ui::PanelItem::note("Changes show from the next channel you tune."));
+    // Apple TV's player draws them: a size shows from the next line, a box
+    // on or off starts the picture again (playback.cpp), and it keeps its
+    // own position and letters.
+    out.push_back(ui::PanelItem::note("A new size shows from the next line. Box on or off restarts the picture for a "
+                                      "moment; Outline and Shadow both edge the letters."));
   } else {
     out.push_back(choice("Letters", {"As sent", "Sentence case"}, set.subtitleSentenceCase ? 1 : 0,
                          [&app](int k) { change(app, [k](Settings& s) { s.subtitleSentenceCase = k == 1; }); }));

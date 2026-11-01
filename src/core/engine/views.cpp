@@ -266,27 +266,23 @@ std::vector<EventLine> eventGuide(const EventsBoard& board, size_t row) {
   return out;
 }
 
-BoardFocus boardFocus(const std::vector<EventRow>& rows, const std::string& rowId, const std::string& tileId, int row,
-                      int tile) {
-  auto count = [&](size_t r) {
-    int n = 0;
-    for (const EventGroup& g : rows[r].groups) n += static_cast<int>(g.tiles.size());
-    return n;
-  };
+namespace {
+
+// boardFocus() over any rows: `n` of them, each one's id, tile count and
+// tile ids.
+template <class RowId, class Count, class TileId>
+BoardFocus focusIn(size_t n, RowId rowIdOf, Count count, TileId tileIdOf, const std::string& rowId,
+                   const std::string& tileId, int row, int tile) {
   auto find = [&](size_t r) {
-    int i = 0;
-    for (const EventGroup& g : rows[r].groups)
-      for (const EventTile& t : g.tiles) {
-        if (t.id == tileId) return i;
-        ++i;
-      }
+    for (int i = 0, end = count(r); i < end; ++i)
+      if (tileIdOf(r, i) == tileId) return i;
     return -1;
   };
   BoardFocus out;
-  if (rows.empty()) return out;
+  if (n == 0) return out;
   int sameRow = -1;
-  for (size_t r = 0; r < rows.size() && sameRow < 0; ++r)
-    if (!rowId.empty() && rows[r].id == rowId) sameRow = static_cast<int>(r);
+  for (size_t r = 0; r < n && sameRow < 0; ++r)
+    if (!rowId.empty() && rowIdOf(r) == rowId) sameRow = static_cast<int>(r);
   if (sameRow >= 0) {
     int at = tileId.empty() ? -1 : find(static_cast<size_t>(sameRow));
     out.row = sameRow;
@@ -294,14 +290,111 @@ BoardFocus boardFocus(const std::vector<EventRow>& rows, const std::string& rowI
     return out;
   }
   if (!tileId.empty()) {
-    for (size_t r = 0; r < rows.size(); ++r) {
+    for (size_t r = 0; r < n; ++r) {
       int at = find(r);
       if (at >= 0) return {static_cast<int>(r), at};
     }
   }
-  out.row = std::clamp(row, 0, static_cast<int>(rows.size()) - 1);
+  out.row = std::clamp(row, 0, static_cast<int>(n) - 1);
   out.tile = std::clamp(tile, 0, std::max(0, count(static_cast<size_t>(out.row)) - 1));
   return out;
+}
+
+}  // namespace
+
+BoardFocus boardFocus(const std::vector<EventRow>& rows, const std::string& rowId, const std::string& tileId, int row,
+                      int tile) {
+  std::vector<ShownRow> shown;
+  shown.reserve(rows.size());
+  for (const EventRow& r : rows) shown.push_back(shownRow(r));
+  return boardFocusShown(shown, rowId, tileId, row, tile);
+}
+
+ShownRow shownRow(const EventRow& row) {
+  ShownRow out;
+  out.row = &row;
+  out.count = row.count;
+  out.live = row.live;
+  size_t n = 0;
+  for (const EventGroup& g : row.groups) n += g.tiles.size();
+  out.tiles.reserve(n);
+  out.groups.reserve(row.groups.size());
+  for (const EventGroup& g : row.groups) {
+    size_t begin = out.tiles.size();
+    for (const EventTile& t : g.tiles) out.tiles.push_back(&t);
+    out.groups.push_back({&g, begin, out.tiles.size()});
+  }
+  return out;
+}
+
+ShownRow shownRow(const EventRow& row, const std::function<bool(const EventTile&)>& keep,
+                  const std::function<bool(const EventTile&)>& live) {
+  ShownRow out;
+  out.row = &row;
+  for (const EventGroup& g : row.groups) {
+    size_t begin = out.tiles.size();
+    for (const EventTile& t : g.tiles) {
+      if (!keep(t)) continue;
+      out.tiles.push_back(&t);
+      if (live(t)) ++out.live;
+    }
+    if (out.tiles.size() > begin) out.groups.push_back({&g, begin, out.tiles.size()});
+  }
+  out.count = static_cast<int>(out.tiles.size());
+  return out;
+}
+
+BoardFocus boardFocusShown(const std::vector<ShownRow>& rows, const std::string& rowId, const std::string& tileId,
+                           int row, int tile) {
+  return focusIn(
+      rows.size(), [&](size_t r) -> const std::string& { return rows[r].row->id; },
+      [&](size_t r) { return static_cast<int>(rows[r].tiles.size()); },
+      [&](size_t r, int i) -> const std::string& { return rows[r].tiles[static_cast<size_t>(i)]->id; }, rowId, tileId,
+      row, tile);
+}
+
+bool boardRowShown(const EventRow& row, const BoardShows& shows, const std::string& keep) {
+  bool on = row.families ? shows.families : row.id == "more" ? shows.more : row.id == "untimed" ? shows.untimed : true;
+  if (on || keep.empty() || row.families) return on;
+  for (const EventGroup& g : row.groups)
+    for (const EventTile& t : g.tiles)
+      if (t.id == keep) return true;
+  return false;
+}
+
+bool boardHides(const std::vector<EventRow>& rows, const BoardShows& shows, const std::string& keep) {
+  return std::any_of(rows.begin(), rows.end(), [&](const EventRow& r) { return !boardRowShown(r, shows, keep); });
+}
+
+std::vector<size_t> boardShownRows(const std::vector<EventRow>& rows, const BoardShows& shows,
+                                   const std::string& keep) {
+  std::vector<size_t> out;
+  out.reserve(rows.size());
+  for (size_t r = 0; r < rows.size(); ++r)
+    if (boardRowShown(rows[r], shows, keep)) out.push_back(r);
+  return out;
+}
+
+std::vector<EventRow> boardShown(const std::vector<EventRow>& rows, const BoardShows& shows, const std::string& keep) {
+  std::vector<EventRow> out;
+  for (size_t r : boardShownRows(rows, shows, keep)) out.push_back(rows[r]);
+  return out;
+}
+
+std::vector<std::string> boardHidden(const std::vector<EventRow>& rows, const BoardShows& shows) {
+  std::vector<std::string> out;
+  for (const EventRow& r : rows)
+    if (!boardRowShown(r, shows)) out.push_back(r.title);
+  return out;
+}
+
+std::string hiddenLine(const std::vector<std::string>& titles) {
+  if (titles.empty()) return {};
+  if (titles.size() == 1) return "The " + titles.front() + " row is hidden.";
+  std::string out;
+  for (size_t i = 0; i < titles.size(); ++i)
+    out += (i == 0 ? "" : i + 1 == titles.size() ? " and " : ", ") + titles[i];
+  return out + " are hidden.";
 }
 
 bool digitsSettled(const std::string& typed, const Channels& ch) {

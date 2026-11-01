@@ -81,7 +81,79 @@ std::string hours(const std::string& channel, const std::string& name, int from,
   return b.done();
 }
 
+// Hourly programmes, each with a description.
+std::string described(const std::string& channel, const std::string& name, int from, int count) {
+  xmltvdata::Builder b;
+  b.channel(channel, {name});
+  for (int i = 0; i < count; ++i)
+    b.programme(channel, from + i * 60, 60, "Show " + std::to_string(i),
+                "<desc>About show " + std::to_string(i) + "</desc>");
+  return b.done();
+}
+
+Saved savedFrom(const BuildResult& r, const std::set<std::string>& on, time::Seconds built) {
+  Saved saved;
+  saved.built = built;
+  saved.shards = {on.begin(), on.end()};
+  saved.channelCount = 1;
+  saved.programs = r.programs;
+  saved.notes = r.notes;
+  saved.sources = r.states;
+  saved.nextCheck = r.nextCheck;
+  saved.targetsKey = r.targetsKey;
+  saved.detailVersion = kDetailVersion;
+  saved.readAt = r.readAt;
+  return saved;
+}
+
+const RawProgram* at(const BuildResult& r, const std::string& id, int start) {
+  for (const RawProgram& p : *r.programs.at(id))
+    if (p.s == start) return &p;
+  return nullptr;
+}
+
 }  // namespace
+
+TEST_CASE("outside build: unchanged files are read again before descriptions run out") {
+  std::vector<Channel> channels = {userChannel("a", "US: Dream Sports")};
+  std::set<std::string> on = {"us"};
+  FakeIO fake;
+  fake.files["us-national"] = described("dream.us", "Dream Sports", kNow - 60, 80);
+  fake.files["us-sports"] = fake.files["us-national"];
+  BuildResult r = build(channels, on, nullptr, {}, kNowSec, fake.io());
+  CHECK(r.readAt == kNowSec);
+  CHECK(r.nextCheck == kNowSec + kRefreshAge);
+  REQUIRE(at(r, "a", kNow + 25 * 60));
+  CHECK(at(r, "a", kNow + 25 * 60)->d == std::string("About show 26"));
+  CHECK_FALSE(at(r, "a", kNow + 26 * 60)->d);  // kDescHours after the read
+
+  auto loaded = savedFromJson(toJson(savedFrom(r, on, kNowSec)));
+  REQUIRE(loaded);
+  CHECK(loaded->readAt == kNowSec);
+  // 20 h later nothing changed: reused as it was, and looked at again 3 h
+  // before its descriptions end.
+  FakeIO again = fake;
+  again.reads.clear();
+  again.status = {{"us-national", 304}, {"us-sports", 304}};
+  BuildResult later = build(channels, on, &*loaded, {}, kNowSec + 20 * 3600, again.io());
+  CHECK(again.reads.empty());
+  CHECK(later.readAt == kNowSec);
+  CHECK(later.nextCheck == kNowSec + (kDescHours * 3600 - kDescRefill));
+  CHECK_FALSE(at(later, "a", kNow + 27 * 60)->d);
+
+  // Then: the files already here are read again (nothing more is
+  // downloaded), so what's on later keeps its description.
+  Saved kept = savedFrom(later, on, kNowSec + 20 * 3600);
+  time::Seconds then = *kept.nextCheck;
+  BuildResult refilled = build(channels, on, &kept, {}, then, again.io());
+  CHECK(again.reads.at("us-national") == 1);
+  CHECK(refilled.readAt == then);
+  CHECK(at(refilled, "a", kNow + 27 * 60)->d == std::string("About show 28"));
+  CHECK(at(refilled, "a", kNow + 48 * 60)->d == std::string("About show 49"));
+  bool line = false;
+  for (const std::string& l : refilled.log) line |= l.find("descriptions end within 3 h") != std::string::npos;
+  CHECK(line);
+}
 
 TEST_CASE("outside build: mains, a failed main, stale shards, backups with a clock shift") {
   std::vector<Channel> channels = {userChannel("a", "US: Dream Sports"),
@@ -148,6 +220,7 @@ TEST_CASE("outside build: mains, a failed main, stale shards, backups with a clo
   saved.nextCheck = r.nextCheck;
   saved.targetsKey = r.targetsKey;
   saved.detailVersion = kDetailVersion;
+  saved.readAt = r.readAt;
   auto loaded = savedFromJson(toJson(saved));
   REQUIRE(loaded);
   FakeIO again = fake;
@@ -270,6 +343,7 @@ TEST_CASE("provider guide: scope, rebuild, outcomes") {
       [&](const auto& wanted, Window window, provider::ReadFailure&) {
         CHECK(window.low == kNow - 180);
         CHECK(window.high == kNow + 48 * 60);
+        CHECK(window.descUntil == kNow + 18 * 60);
         XmltvReader reader = XmltvReader::exact(wanted, window);
         xmltvdata::Builder b;
         b.channel("ONE.us", {"One TV"})

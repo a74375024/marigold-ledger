@@ -2,6 +2,7 @@
 #include <memory>
 
 #include "core/guide/genre.hpp"
+#include "core/guide/provider.hpp"
 #include "core/guide/xmltv.hpp"
 #include "doctest.h"
 #include "guide/xmltv_helpers.hpp"
@@ -45,8 +46,9 @@ std::string sampleGuide() {
       .programme("dream.us", kNow, 120, "Tom &amp; Jerry Match",
                  "<sub-title>Final</sub-title><desc>" + longDesc +
                      "</desc><category>Sports</category><category>Soccer</category><live/>")
-      .programme("dream.us", kNow + 600, 60, "Late Show", "<desc>Not soon, not sports</desc><new/>")
+      .programme("dream.us", kNow + 9 * 60, 60, "Late Show", "<desc>Later today</desc><new/>")
       .programme("dream.us", kNow + 60, 60, "Soon Show", "<desc>  Kept  </desc><premiere/>")
+      .programme("dream.us", kNow + 27 * 60, 60, "Tomorrow", "<desc>Past the next read</desc>")
       .programme("dream.us", kNow + 49 * 60, 60, "Beyond the window")
       .programme("movie.us", kNow, 90, "<![CDATA[Feature]]>", "<category>Movie</category>")
       .programme("movie.us", kNow + 90, 0, "Zero length")  // stop == start: dropped
@@ -74,26 +76,30 @@ TEST_CASE("XMLTV: matched channels, window, flags, descriptions") {
   std::string xml = sampleGuide();
   SourceResult whole = readAll(xml, xml.size());
   CHECK(whole.guideChannels == 6);
-  CHECK(whole.programmes == 13);
+  CHECK(whole.programmes == 14);
   REQUIRE(whole.programs.count("u-sports"));
   const auto& sports = whole.programs.at("u-sports");
   CHECK(sports.note == "Dream Sports HD (by name)");
-  REQUIRE(sports.programs->size() == 3);
+  REQUIRE(sports.programs->size() == 4);
   const RawProgram& match = (*sports.programs)[0];
   CHECK(match.t == "Tom & Jerry Match");
   CHECK(match.s == kNow);
   CHECK(match.m == 120);
   CHECK(match.st == std::string("Final"));
   REQUIRE(match.d);
-  CHECK(match.d->size() == 199 + 3);  // 199 characters and "…"
+  CHECK(match.d.size() == 199 + 3);  // 199 characters and "…"
   CHECK(match.f == (genre::kSports | 16));
   const RawProgram& late = (*sports.programs)[1];
   CHECK(late.t == "Late Show");
-  CHECK_FALSE(late.d);  // not on soon and not sports: description dropped
+  CHECK(late.d == std::string("Later today"));  // 9 h ahead: before the next read
   CHECK(late.f == 32);
   const RawProgram& soon = (*sports.programs)[2];
   CHECK(soon.d == std::string("Kept"));
   CHECK(soon.f == 32);
+  // Past kDescHours (26 h for outside guides) and not sports: dropped.
+  const RawProgram& tomorrow = (*sports.programs)[3];
+  CHECK(tomorrow.t == "Tomorrow");
+  CHECK_FALSE(tomorrow.d);
 
   // CDATA titles count; categories give the movie flag.
   REQUIRE(whole.programs.count("u-movies"));
@@ -140,6 +146,52 @@ TEST_CASE("XMLTV: matched channels, window, flags, descriptions") {
       }
     }
   }
+}
+
+TEST_CASE("XMLTV: descriptions until the window's horizon; the first or English one") {
+  xmltvdata::Builder b;
+  b.channel("movie.us", {"Movie Box"})
+      .programme("movie.us", kNow, 60, "One",
+                 "<desc lang=\"en\">English</desc><desc lang=\"es\">Espa\xC3\xB1ol</desc>")
+      .programme("movie.us", kNow + 60, 60, "Two",
+                 "<sub-title lang=\"es\">Episodio</sub-title><sub-title lang=\"EN-us\">Episode</sub-title>"
+                 "<desc lang=\"es\">Espa\xC3\xB1ol</desc><desc lang=\"en-US\">English</desc>"
+                 "<desc lang=\"en\">More English</desc>")
+      .programme("movie.us", kNow + 120, 60, "Three", "<desc>First</desc><desc>Second</desc>")
+      .programme("movie.us", kNow + 180, 60, "Four",
+                 "<desc lang=\"es\"> </desc><desc lang=\"fr\">Fran\xC3\xA7\x61is</desc>")
+      .programme("movie.us", kNow + 17 * 60, 60, "Five", "<desc>Before</desc>")
+      .programme("movie.us", kNow + 19 * 60, 60, "Six", "<desc>After</desc>");
+  std::string xml = b.done();
+  auto read = [&](const std::string& language, Window window) {
+    XmltvReader reader(targets(), false, window);
+    if (!language.empty()) reader.setLanguage(language);
+    reader.feed(xml);
+    reader.finish();
+    return *reader.result().at("u-movies").programs;
+  };
+  std::vector<RawProgram> en = read("", kWindow);
+  REQUIRE(en.size() == 6);
+  CHECK(en[0].d == std::string("English"));
+  CHECK(en[1].d == std::string("English"));
+  CHECK(en[1].st == std::string("Episode"));
+  CHECK(en[2].d == std::string("First"));
+  CHECK(en[3].d == std::string("Fran\xC3\xA7\x61is"));  // a blank one doesn't count
+  CHECK(en[5].d == std::string("After"));
+  std::vector<RawProgram> es = read("es", kWindow);
+  CHECK(es[0].d == std::string("Espa\xC3\xB1ol"));
+  CHECK(es[1].st == std::string("Episodio"));
+  CHECK(es[2].d == std::string("First"));
+  // The provider's guide keeps them for 18 h.
+  Window provider{kNow - 180, kNow + 48 * 60, kNow + provider::kDescHours * 60};
+  std::vector<RawProgram> pg = read("", provider);
+  CHECK(pg[4].d == std::string("Before"));
+  CHECK_FALSE(pg[5].d);
+  // Copies share one description; reruns are held once.
+  RawProgram copy = en[0];
+  CHECK(copy.d == en[0].d);
+  CHECK(copy.d.view().data() == en[0].d.view().data());
+  CHECK(en[1].d.view().data() == en[0].d.view().data());
 }
 
 TEST_CASE("XMLTV: a repeater wins only when the main station isn't listed") {

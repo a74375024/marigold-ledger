@@ -9,7 +9,9 @@
 //             networks, regional sports names, the built-in reference's
 //             names and former call signs), every team of the saved team
 //             lists (byes too) with a small nickname table, the board's
-//             games, leagues and sports, and the guide's show titles.
+//             games, leagues and sports, its event channel groups (by
+//             name, listed as channels: Build 119), and the guide's show
+//             titles.
 //   run()  -> the top result, then Channels, Teams, Games, Shows, and
 //             genre, sport and league results; "Showing …" for a typo.
 //             find(), findShows() and merge() are the same in steps (the
@@ -133,6 +135,10 @@ struct ChannelEntry {
   bool browsable = true;  // another country's sports channel: only when named exactly
   bool hidden = false;    // in a hidden group of All Channels
   int stationRank = 0;    // lower first (network_map::stationRank)
+  // An event channel group (Build 119, Index::families): found by its name
+  // like a channel; OK plays its first channel. `title` as shown.
+  bool family = false;
+  std::string title;
   std::vector<Name> forms;  // Index::finish(): the name, then the aliases (browsable only)
   // Yours: in My Lineup or Favorites (Search looks there first).
   bool mine() const { return inLineup || favorite; }
@@ -243,6 +249,10 @@ struct Index {
   Shared<std::vector<TeamEntry>> teams;
   Shared<std::vector<GameEntry>> games;
   Shared<std::vector<LeagueEntry>> leagues;
+  // The board's event channel groups (Build 119), listed with the
+  // channels: yours when a channel of the group is in My Lineup or
+  // Favorites.
+  Shared<std::vector<ChannelEntry>> families;
   // The guide's shows: folded title -> airings still to end, by start.
   // finishShows() moves them into showTitles, their names made ready.
   struct Airing {
@@ -332,6 +342,7 @@ struct Item {
   time::Seconds also = 0;
   bool live = false;
   bool playable = false;  // OK watches it (live, in your channels)
+  bool family = false;    // a channel item for an event channel group (id: the group's)
   // Outside your lineup and Live Events (once a lineup is set up): a
   // channel not in My Lineup or Favorites, a show airing on one, a game
   // you can't watch, a team whose games are all outside.

@@ -141,12 +141,18 @@ std::string rowValue(const ui::PanelItem& it) {
 
 class AllSettings : public Screen {
  public:
-  AllSettings(App& app, std::optional<SettingsCategory> inside) : Screen(app) {
+  AllSettings(App& app, std::optional<SettingsCategory> inside, const std::string& at) : Screen(app) {
     listCategories();
     SettingsCategory start = inside.value_or(SettingsCategory::Watching);
     for (size_t i = 0; i < cats_.size(); ++i)
       if (cats_[i] == start) cat_ = static_cast<int>(i);
     buildRows(false);
+    // A group's first row.
+    for (size_t i = 0; !at.empty() && i < rows_.items.size(); ++i)
+      if (rows_.items[i].kind == ui::PanelItem::Kind::Header && rows_.items[i].title == at) {
+        rows_.focusIndex(static_cast<int>(i) + 1);
+        break;
+      }
     inRows_ = inside.has_value() && rows_.focused() >= 0;
   }
 
@@ -439,10 +445,26 @@ void eventsQuickRows(App& app, ui::ListPanel& p) {
       quickToggle(app, "Show scores", "Off keeps live and final, without numbers", &Settings::showScores);
   needsSchedule(scores);
   p.items.push_back(scores);
-  ui::PanelItem unwatchable =
-      quickToggle(app, "Games not on my channels", "Dimmed at the end of each row", &Settings::showUnwatchable);
-  needsSchedule(unwatchable);
-  p.items.push_back(unwatchable);
+  // Show on the board: its four switches in a panel of their own, so Quick
+  // settings stays at four rows (the board behind changes as they do).
+  const Settings& set = app.store().settings();
+  BoardShows shows = boardShows(set);
+  std::vector<std::string> hidden;
+  if (schedule && !set.showUnwatchable) hidden.push_back("Games not on my channels");
+  if (!shows.more) hidden.push_back("More events");
+  if (!shows.untimed) hidden.push_back("Time not listed");
+  if (!shows.families) hidden.push_back("Event channels");
+  ui::PanelItem board{ui::PanelItem::Kind::Chevron, "Show on the board"};
+  board.detail = hidden.empty() ? std::string("Every row shows") : "Hidden: " + str::join(hidden, ", ");
+  board.select = [&app] {
+    app.nav().push(std::make_unique<PanelScreen>(app, PanelScreen::Side::Trailing, 760.0f, [&app](ui::ListPanel& sub) {
+      sub.subtitle = "QUICK \xc2\xb7 LIVE EVENTS";
+      sub.title = "Show on the board";
+      showOnBoardRows(app, sub, false);
+      sub.hint = "Back: Quick settings";
+    }));
+  };
+  p.items.push_back(board);
   const sports::MySportsPrefs& my = app.store().mySports();
   ui::PanelItem sports{ui::PanelItem::Kind::Chevron, "My Sports"};
   sports.detail = "Leagues and favorite teams";
@@ -472,8 +494,8 @@ class GettingAround : public Screen {
 
 }  // namespace
 
-void openAllSettings(App& app, std::optional<SettingsCategory> inside) {
-  app.nav().push(std::make_unique<AllSettings>(app, inside));
+void openAllSettings(App& app, std::optional<SettingsCategory> inside, const std::string& at) {
+  app.nav().push(std::make_unique<AllSettings>(app, inside, at));
 }
 
 std::unique_ptr<Screen> makeQuickSettings(App& app, QuickPlace place) {

@@ -195,7 +195,7 @@ Listing toListing(const Program& p) {
   Listing l;
   l.title = p.title;
   l.episode = p.episodeTitle.value_or("");
-  l.overview = p.overview.value_or("");
+  l.overview = p.overview;
   l.start = p.start;
   l.end = p.end;
   l.genres = p.genres;
@@ -325,6 +325,9 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
       settings_.fillMissingListings = (*v)["fillMissingListings"].asBool(true);
       settings_.scheduleEnabled = (*v)["scheduleEnabled"].asBool(true);
       settings_.showUnwatchable = (*v)["showUnwatchable"].asBool(true);
+      settings_.boardMoreEvents = (*v)["boardMoreEvents"].asBool(false);
+      settings_.boardUntimed = (*v)["boardUntimed"].asBool(false);
+      settings_.boardEventChannels = (*v)["boardEventChannels"].asBool(false);
       settings_.showScores = (*v)["showScores"].asBool(true);
       settings_.clock24 = (*v)["clock24"].asBool(false);
       settings_.recentSearches = (*v)["recentSearches"].asBool(true);
@@ -639,6 +642,9 @@ void Store::setSettings(const Settings& s) {
   v.set("fillMissingListings", s.fillMissingListings);
   v.set("scheduleEnabled", s.scheduleEnabled);
   v.set("showUnwatchable", s.showUnwatchable);
+  v.set("boardMoreEvents", s.boardMoreEvents);
+  v.set("boardUntimed", s.boardUntimed);
+  v.set("boardEventChannels", s.boardEventChannels);
   v.set("showScores", s.showScores);
   v.set("clock24", s.clock24);
   v.set("recentSearches", s.recentSearches);
@@ -885,7 +891,9 @@ void Store::reset() {
   m.channels = std::make_shared<std::vector<Channel>>();
   m.indexByID.clear();
   m.catalog = std::make_shared<CatalogResult>();
+  m.listFetchedAt = 0;
   m.entryInfo.clear();
+  m.familyAt.clear();
   m.lineup = catalog::LineupOutput{};
   m.programs.clear();
   m.serverPrograms.clear();
@@ -1231,7 +1239,7 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
         mm.sortProgress.reset();
         mm.receivedNames.reset();
         status_.received = 0;
-        mm.channelsLoadedAt = time::now();
+        mm.channelsLoadedAt = mm.listFetchedAt = time::now();
         mm.listFingerprint = *print;
         if (*unchanged) {
           mm.accountChange.clear();
@@ -1390,6 +1398,8 @@ void Store::installCatalog(std::shared_ptr<const std::vector<Channel>> list, std
   for (size_t i = 0; i < m.channels->size(); ++i) m.indexByID.emplace((*m.channels)[i].id, i);
   m.entryInfo.clear();
   for (size_t i = 0; i < m.catalog->entries.size(); ++i) m.entryInfo.emplace(m.catalog->entries[i].id, i);
+  m.familyAt.clear();
+  for (size_t i = 0; i < m.catalog->families.size(); ++i) m.familyAt.emplace(m.catalog->families[i].id, i);
   ++m.catalogRevision;
   rebuildEntries();
 }
@@ -1404,6 +1414,8 @@ void Store::installRenamed(std::shared_ptr<const std::vector<Channel>> list,
   for (size_t i = 0; i < m.channels->size(); ++i) m.indexByID.emplace((*m.channels)[i].id, i);
   m.entryInfo.clear();
   for (size_t i = 0; i < m.catalog->entries.size(); ++i) m.entryInfo.emplace(m.catalog->entries[i].id, i);
+  m.familyAt.clear();
+  for (size_t i = 0; i < m.catalog->families.size(); ++i) m.familyAt.emplace(m.catalog->families[i].id, i);
   ++m.catalogRevision;  // Live Events rebuild from the new names
   m.channelsDirty = true;
 }
@@ -2011,31 +2023,22 @@ std::vector<Program> Store::bestListing(const std::string& id) const {
 }
 
 void Store::applyEntryGuides(const std::vector<std::string>& entryIDs) {
-  // An entry's guide is the best of its versions' guides.
+  // An entry's guide is the best of its versions' guides (catalog::bestGuide).
   Impl& m = *impl_;
   time::Seconds start = windowStart();
-  time::Seconds end = start + static_cast<time::Seconds>(kGuideHours * 3600);
-  auto coverage = [&](const std::vector<Program>& list) {
-    time::Seconds total = 0;
-    for (const Program& p : list) total += std::max<time::Seconds>(0, std::min(p.end, end) - std::max(p.start, start));
-    return total;
-  };
+  std::vector<const std::vector<Program>*> lists;
+  std::vector<std::pair<const catalog::ProgramList*, const std::string*>> found;
   for (const std::string& id : entryIDs) {
     auto info = m.entryInfo.find(id);
     if (info == m.entryInfo.end()) continue;
-    const catalog::ProgramList* best = nullptr;
-    std::string bestMember;
-    time::Seconds bestCoverage = -1;
+    lists.clear();
+    found.clear();
     bool anyLoading = false, anyLoaded = false, anyFailed = false;
     for (const std::string& member : m.catalog->entries[info->second].members) {
       auto p = m.programs.find(member);
       if (p != m.programs.end() && p->second && !p->second->empty()) {
-        time::Seconds value = coverage(*p->second);
-        if (value > bestCoverage) {
-          best = &p->second;
-          bestCoverage = value;
-          bestMember = member;
-        }
+        lists.push_back(p->second.get());
+        found.emplace_back(&p->second, &member);
       }
       auto st = m.guideState.find(member);
       if (st != m.guideState.end()) {
@@ -2044,13 +2047,17 @@ void Store::applyEntryGuides(const std::vector<std::string>& entryIDs) {
         anyFailed = anyFailed || st->second == Impl::GuideState::Failed;
       }
     }
+    int described = 0;
+    int pick = catalog::bestGuide(lists, start, &described);
+    const catalog::ProgramList* best = pick < 0 ? nullptr : found[static_cast<size_t>(pick)].first;
+    std::string bestMember = pick < 0 ? std::string() : *found[static_cast<size_t>(pick)].second;
     // Unchanged since last time (same version, same programmes and tags): keep it.
     std::string key;
     if (best) {
       int tagged = 0;
       for (const Program& p : **best) tagged += p.genres ? 1 : 0;
       key = bestMember + "|" + std::to_string((*best)->size()) + "|" + (*best)->front().id + "|" + (*best)->back().id +
-            "|" + std::to_string(tagged);
+            "|" + std::to_string(tagged) + "|" + std::to_string(described);
     }
     if (key.empty() || m.entryGuideKeys[id] != key || !m.programs.count(id)) {
       m.entryGuideKeys[id] = key;
@@ -2522,6 +2529,7 @@ void Store::runOutsideGuide() {
           s.nextCheck = built->nextCheck;
           s.targetsKey = built->targetsKey;
           s.detailVersion = guide::kDetailVersion;
+          s.readAt = built->readAt;
           writeFileStreaming(
               savedPath, [&s](const json::Writer::Sink& sink) { return guide::writeSaved(s, sink); }, true);
           *newSaved = std::move(s);

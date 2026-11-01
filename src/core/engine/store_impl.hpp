@@ -16,6 +16,7 @@
 
 #include "core/engine/store.hpp"
 #include "core/engine/events_build.hpp"
+#include "core/engine/search_build.hpp"
 #include "core/catalog/catalog.hpp"
 #include "core/catalog/lineup.hpp"
 #include "core/catalog/markets.hpp"
@@ -126,6 +127,29 @@ struct EventsState {
   // and rebuild are in (checkedSinceOpen).
   time::Seconds eventsBuiltAt = 0;
   bool checkedSinceOpen = false;
+  // What the games were matched from (events_build::MadeFrom), and the
+  // wait for fresh inputs after an open or a wake (events_build::Hold):
+  // since when (app ms), the hold the last board began with, the most games
+  // left out meanwhile and old live scores set aside, for the timing log.
+  events_build::MadeFrom madeFrom;
+  bool holding = false, freshNote = false, holdCapped = false;
+  uint32_t holdSinceMs = 0;
+  events_build::Hold boardHold;
+  int heldMost = 0, oldLiveMost = 0;
+  // The live scores round for this open and schedule: each open or wake
+  // (`lookSerial`) and new schedule asks for one; the round begun for them
+  // and the last one over.
+  struct Look {
+    uint64_t serial = 0;
+    int schedule = 0;
+    bool operator==(const Look& o) const { return serial == o.serial && schedule == o.schedule; }
+    bool operator!=(const Look& o) const { return !(*this == o); }
+  };
+  uint64_t lookSerial = 0;
+  Look roundFor, scoresDone;
+  // The last tick's clocks: a long gap is a sleep (events_build::kAsleepFor).
+  time::Seconds lastTickAt = 0;
+  uint32_t lastTickMs = 0;
   uint32_t rebuildStartMs = 0;
   // The last rebuild's reasons for the feeds no tile took (raw feed id ->
   // why), for the Live Events report.
@@ -214,6 +238,7 @@ struct Store::Impl {
   std::unordered_map<std::string, size_t> indexByID;
   std::shared_ptr<const CatalogResult> catalog = std::make_shared<CatalogResult>();
   std::unordered_map<std::string, size_t> entryInfo;  // entry id -> catalog->entries index
+  std::unordered_map<std::string, size_t> familyAt;   // family id -> catalog->families index (the first)
   catalog::LineupOutput lineup;
   bool partial = false;
   bool admissionCut = false;
@@ -222,6 +247,9 @@ struct Store::Impl {
   uint64_t listFingerprint = 0;
   bool admissionChanged = false;  // the last list was over the cap: groups were left out
   time::Seconds channelsLoadedAt = 0;
+  // When a download this session last brought the list in (Live Events'
+  // event slots; the saved list doesn't count).
+  time::Seconds listFetchedAt = 0;
   bool loading = false;
   // A full sort under way: how far it has got, and the downloaded names
   // the area suggestion reads before the sorted list is in.
@@ -286,6 +314,9 @@ struct Store::Impl {
   // Search's index (store_search.cpp): the guide's part and the board's,
   // each made on a worker and put in by tick(), then joined.
   using SearchKey = std::array<uint64_t, 3>;
+  // What the event channel groups' marks were made from: the catalog's
+  // revision, the channels' version, and the catalog and list themselves.
+  using MarksKey = std::array<uint64_t, 4>;
   struct SearchMade {
     std::shared_ptr<const search::Index> index;
     SearchKey key{};
@@ -295,6 +326,8 @@ struct Store::Impl {
     sports::StationMarkets markets;
     std::shared_ptr<const std::vector<search::TeamEntry>> teams;
     std::string teamsKey;
+    std::shared_ptr<const search_build::FamilyMarksById> marks;
+    MarksKey marksKey{};
   };
   struct SearchPart {
     std::shared_ptr<const search::Index> index;
@@ -310,6 +343,10 @@ struct Store::Impl {
   // The board part's teams, made once per team lists.
   std::shared_ptr<const std::vector<search::TeamEntry>> searchTeams;
   std::string searchTeamsKey;
+  // The board part's event channel group marks, made once per catalog and
+  // channels.
+  std::shared_ptr<const search_build::FamilyMarksById> searchMarks;
+  MarksKey searchMarksKey{};
   // Made ahead in the background: when there is none, and after a guide job.
   bool searchWarm = false, searchGuideJobs = false;
   uint32_t searchWarmAt = 0;

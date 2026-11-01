@@ -16,10 +16,18 @@
 #include <string>
 #include <vector>
 
+#include "core/captions/caption_style.hpp"
 #include "core/util/log.hpp"
 #include "core/util/redact.hpp"
 #include "platform/tvos/agent.hpp"
 #include "platform/tvos/bridge.hpp"
+
+// TVVLCKit 3 has its text renderer's setters without declaring them. This
+// one sizes the letters as the picture's height over the number given
+// (freetype-rel-fontsize), on the player and on the picture playing at once.
+@interface VLCMediaPlayer (MGTextRenderer)
+- (void)setTextRendererFontSize:(NSNumber*)fontSize;
+@end
 
 namespace {
 
@@ -86,16 +94,30 @@ std::string factsOf(VLCMedia* media) {
 std::mutex gMu;
 Snapshot gState;
 
-// Subtitles: VLC draws them over the picture itself. Its tracks (id = VLC's
-// index), what the app asked for, and the style for the next stream.
+// Subtitles: VLC draws them over the picture itself (VLCKit gives the app
+// no caption text to draw). Its tracks (id = VLC's index), what the app
+// asked for, the style, the size VLC was given last and what the log said
+// last.
 struct TextState {
   std::vector<marigold::platform::Video::TextTrack> tracks;
   bool on = false;
   std::string wanted;
   int size = 1, look = 0;
   int delayMs = 0;  // Caption timing: only later (VLC can't show captions from the picture before it)
+  int sizeSet = -1;
+  std::string note;
 };
 TextState gText;  // guarded by gMu
+
+// VLC's letters for a caption size, as they look where the app draws them;
+// false when this VLCKit can't size them (left at its own, a tenth of the
+// picture's height).
+bool sizeText(VLCMediaPlayer* p, int size) {
+  if (![p respondsToSelector:@selector(setTextRendererFontSize:)]) return false;
+  [p setTextRendererFontSize:@(marigold::captions::vlcRelativeFontSize(size))];
+  return true;
+}
+
 // Search's corner preview plays without sound (applied by the tick, since
 // VLC's audio output only exists once the stream plays).
 bool gMuted = false;  // guarded by gMu
@@ -143,19 +165,26 @@ bool gMuted = false;  // guarded by gMu
   [self.timer invalidate];
   VLCMedia* media = [VLCMedia mediaWithURL:url];
   for (NSString* o in options) [media addOption:o];
-  // The caption style VLC draws with (it reads these when the stream starts).
+  // The caption style VLC draws with. Its text renderer belongs to the
+  // player, not the stream, so it never reads the stream's options: the
+  // letters' size is set on the player (and changed live: tick). The box
+  // behind 608/708 captions is an option of VLC's caption decoder, which
+  // reads it as the stream starts.
   int size = 1, look = 0;
+  std::string note;
   {
     std::lock_guard<std::mutex> lock(gMu);
     size = gText.size;
     look = gText.look;
     gText.tracks.clear();
+    gText.sizeSet = size;
+    note = marigold::captions::vlcCaptionNote(size, look, gText.delayMs);
+    if (note == gText.note) note.clear();
+    else gText.note = note;
   }
-  static const int kScale[] = {80, 100, 130, 170};  // small, medium, large, extra large
-  [media addOption:[NSString stringWithFormat:@":sub-text-scale=%d", kScale[std::clamp(size, 0, 3)]]];
-  [media addOption:[NSString stringWithFormat:@":freetype-background-opacity=%d", look == 0 ? 200 : 0]];
-  [media addOption:[NSString stringWithFormat:@":freetype-outline-thickness=%d", look == 1 ? 6 : 0]];
-  [media addOption:[NSString stringWithFormat:@":freetype-shadow-opacity=%d", look == 2 ? 200 : 0]];
+  [media addOption:marigold::captions::vlcCaptionBox(look) ? @":cc-opaque" : @":no-cc-opaque"];
+  sizeText(self.player, size);
+  if (!note.empty()) MLOG_I("video", "captions: %s", note.c_str());
   self.lastTime = -1;
   self.lastShown = -1;
   self.stillSince = 0;
@@ -224,10 +253,14 @@ bool gMuted = false;  // guarded by gMu
     if (video > 0 || audio > 0) videoTracks = video;
   }
   bool needFacts = false;
+  int textSize = -1;  // a caption size to give VLC now
   {
     std::lock_guard<std::mutex> lock(gMu);
     needFacts = gState.active && gState.picture && gState.facts.empty();
+    if (gText.size != gText.sizeSet) textSize = gText.sizeSet = gText.size;
   }
+  // A new caption size shows at once: VLC draws its next lines with it.
+  if (textSize >= 0) sizeText(p, textSize);
   std::string facts = needFacts && p.media ? factsOf(p.media) : std::string();
   std::lock_guard<std::mutex> lock(gMu);
   if (!gState.active) return;
@@ -270,6 +303,12 @@ bool gMuted = false;  // guarded by gMu
     // VLC's subtitle delay is in microseconds, positive later.
     NSInteger delay = static_cast<NSInteger>(gText.delayMs) * 1000;
     if (p.currentVideoSubTitleDelay != delay) p.currentVideoSubTitleDelay = delay;
+    // The log: the style VLC was given, when it changes (values only).
+    std::string note = marigold::captions::vlcCaptionNote(gText.size, gText.look, gText.delayMs);
+    if (note != gText.note) {
+      gText.note = note;
+      MLOG_I("video", "captions: %s", note.c_str());
+    }
   }
   if (p.audio && p.audio.muted != gMuted) p.audio.muted = gMuted;
   // Waiting: the clock stands (before a picture, sound alone with the clock
@@ -347,7 +386,13 @@ void place(gfx::Rect r) {
 
 bool Video::start() {
   tvos::onMainSync([] {
-    if (!gPlayer) gPlayer = [[MGPlayer alloc] init];
+    if (gPlayer) return;
+    gPlayer = [[MGPlayer alloc] init];
+    // VLCKit gives no caption text: VLC draws the captions, styled from the
+    // settings where it can be.
+    bool sized = [gPlayer.player respondsToSelector:@selector(setTextRendererFontSize:)];
+    MLOG_I("video", "captions: drawn by VLC; size %s, box from the look, timing as its subtitle delay",
+           sized ? "from the settings" : "VLC's own (this VLCKit can't set it)");
   });
   started_ = gPlayer != nil;
   return started_;

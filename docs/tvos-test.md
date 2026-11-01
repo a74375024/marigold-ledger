@@ -153,3 +153,24 @@ Everything in `docs/m4-test.md` › Logos and focus (Build 117) applies, except 
 | Own boxes, flags | A logo on a plain white box; a tennis tile | The box gone; flags in their shape |
 | Thin logos | A thin outline logo in the guide's small slot | No dark rim, lines unbroken |
 | Night viewing | A dark room | No white boxes or white focus over logos |
+
+## Apple TV subtitles (Build 119)
+
+VLC still draws the captions (VLCKit gives the app no caption text), now sized from the settings: its text renderer is given the picture's height over a number for each size (Small 30, Medium 25, Large 19, Extra large 15), the same share of the screen as the captions Marigold draws on LG and Android. Unset, TVVLCKit drew every caption a tenth of the picture's height. The box behind 608/708 captions is VLC's caption decoder option, read as a stream starts.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Default size | Captions on, Medium (the default), a channel with live captions | Each line about as tall as on LG at Medium (letters ~4% of the screen); two lines leave most of the picture clear |
+| Size, live | Aa › Size Small, Large, Extra large, back to Medium (Right or click on the row) | The next caption line shows the new size, no re-tune; each step visibly bigger |
+| Size in Settings | Settings › Watching › Caption size, then back to the player | The player's captions at that size |
+| Look | Aa › Look Box, then Outline | Box: dark box behind the letters. Outline: no box, edged letters; the picture restarts once for a moment. Outline to Shadow: no restart, the same edged letters |
+| Remote | In Aa: swipe up/down to Size and Look, swipe or press the ring left/right, click | Each moves or changes one step; a click cycles the choice; the row's value and the captions follow |
+| Kept | Change size and look, quit the app (swipe it away), open it again | Aa and Settings show the same size and look; the captions use them |
+| Letters, Position | Settings › Watching | Dimmed with their reason (VLC places the captions and shows them as sent) |
+| Timing | Caption timing 2 s later, then a size change | Still 2 s later (the size change doesn't reset it) |
+| Log | The app log after a channel with captions and a size change | "captions: drawn by VLC; size from the settings, …" once; then "captions: size Large (1/19 of the picture), look Box (boxed), timing +0 ms" on each change. No caption text, no links |
+| Old VLCKit | Log says "size VLC's own (this VLCKit can't set it)" | Report it: the size setter is missing from that TVVLCKit |
+
+## Player banner description and Live Events rows (Build 119)
+
+Everything in `docs/m4-test.md` › Player banner description (Build 119) and › Live Events rows (Build 119) applies; the banner, the board and Settings are the same screens, and a click is OK. VLC draws the captions here, so the captions row is checked as on Build 118 (they are where they were).

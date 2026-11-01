@@ -151,7 +151,7 @@ Outcome build(const std::vector<Channel>& channels, time::Seconds nowSec, const 
     return out;
   }
   int now = static_cast<int>(nowSec / 60);
-  Window window{now - 180, now + kKeepHours * 60};
+  Window window{now - 180, now + kKeepHours * 60, now + kDescHours * 60};
   if (progress) progress("Downloading your provider's guide\xE2\x80\xA6");
   ReadFailure failure;
   std::optional<ExactRead> found = read ? read(ids, window, failure) : std::nullopt;

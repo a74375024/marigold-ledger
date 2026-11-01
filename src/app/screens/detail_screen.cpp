@@ -85,7 +85,7 @@ class DetailScreen : public Screen {
       ui::label(c, listing_.episode, x, y, Weight::Medium, 22, theme::white(0.85f), w);
       y += 38;
     }
-    ui::paragraph(c, listing_.overview, x, y, w, Weight::Regular, 22, theme::white(0.7f), 3);
+    ui::paragraph(c, listing_.overview.string(), x, y, w, Weight::Regular, 22, theme::white(0.7f), 3);
 
     // Remind Me, Watch.
     float py = card.y + 470;

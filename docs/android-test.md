@@ -143,3 +143,7 @@ Everything in `docs/m4-test.md` › Logos and focus (Build 117) applies, except 
 | Flags, dimmed | A tennis tile; a not-watchable tile | Flags in their shape; dimmed badges grey but bright |
 | Thin logos | A thin outline logo in the guide's small slot | No dark rim, lines unbroken |
 | Night viewing | A dark room | No white boxes or white focus over logos |
+
+## Player banner description and Live Events rows (Build 119)
+
+Everything in `docs/m4-test.md` › Player banner description (Build 119) and › Live Events rows (Build 119) applies; the banner, the board and Settings are the same screens.

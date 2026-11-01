@@ -86,6 +86,7 @@ class Playback : public engine::Session {
   std::shared_ptr<engine::Subtitles> subtitles_;
   bool captionsLogged_ = false, noneLogged_ = false;
   bool relayPossible_ = false;
+  int textLook_ = -1;  // the caption look the stream started with (-1 none yet)
   uint32_t systemCheckAt_ = 0;
   uint64_t textVersion_ = 0;
   uint32_t textTracksAt_ = 0;

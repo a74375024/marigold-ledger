@@ -321,7 +321,7 @@ void Store::buildChannelReport(std::function<void(std::shared_ptr<std::string>)>
     guide::StationsByNetwork stations;
     std::unordered_map<std::string, std::pair<std::string, std::string>> logos;
     std::vector<std::string> privateWords;
-    time::Seconds now = 0, windowStart = 0;
+    time::Seconds now = 0, windowStart = 0, outsideBuilt = 0;
     time::Zone zone = time::Zone::device();
   };
   auto job = std::make_shared<Job>();
@@ -341,6 +341,7 @@ void Store::buildChannelReport(std::function<void(std::shared_ptr<std::string>)>
   job->programs = m.programs;
   job->outside = m.outsideMatches;
   if (m.outsideSaved && m.outsideSaved->notes) job->outsideNotes = *m.outsideSaved->notes;
+  if (m.outsideSaved) job->outsideBuilt = m.outsideSaved->readAt.value_or(m.outsideSaved->built);
   job->provider = m.providerMatches;
   time::Seconds now = time::now();
   for (const sources::Account& a : m.accounts) {
@@ -394,6 +395,7 @@ void Store::buildChannelReport(std::function<void(std::shared_ptr<std::string>)>
         in.programs = &job->programs;
         in.outsideMatches = &job->outside;
         in.outsideNotes = &job->outsideNotes;
+        in.outsideBuilt = job->outsideBuilt;
         in.providerMatches = &job->provider;
         in.providerNotes = &job->providerNotes;
         in.providerStates = &job->providerStates;

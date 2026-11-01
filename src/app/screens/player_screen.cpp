@@ -13,7 +13,9 @@
 // picture opening or closing them, two edge buttons for Guide and Last).
 // A game (a Live Events tile or feed, or a guide channel showing one the
 // board matched) gets a lower card with one line of who's playing instead
-// of the show's title, times and "Later on this channel".
+// of the show's title, times and "Later on this channel". A show's banner
+// has the guide's episode after its times and its description in the band
+// under them, at today's height (Build 119).
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -24,8 +26,10 @@
 #include "app/screens/events_ui.hpp"
 #include "app/screens/screens.hpp"
 #include "app/store/store.hpp"
+#include "core/captions/caption_style.hpp"
 #include "core/captions/sentence_case.hpp"
 #include "core/engine/views.hpp"
+#include "core/input/countdown.hpp"
 #include "core/input/hints.hpp"
 #include "core/sports/game_banner.hpp"
 #include "platform/icons.hpp"
@@ -39,7 +43,7 @@ using ui::Rect;
 using ui::Weight;
 namespace theme = ui::theme;
 
-constexpr uint32_t kBannerMs = 5000;       // after the picture comes up
+constexpr uint32_t kBannerMs = 5000;       // after the picture comes up, with or without a description
 constexpr uint32_t kRowIdleMs = 12000;  // the controls hide after this long untouched
 constexpr uint32_t kDoubleOkMs = 600;   // an OK this soon after the controls opened is a double press
 constexpr uint32_t kWheelAfterClickMs = 300;  // the wheel turned by pressing it isn't a flip
@@ -262,13 +266,25 @@ class PlayerScreen : public Screen {
     if (!digits_.empty() &&
         (ms - digitsAt_ >= kDigitsMs || engine::views::digitsSettled(digits_, *app_.store().channels())))
       commitDigits();
-    bool bannerAnim = ms < bannerUntil_ + 50;
+    // The banner at rest: drawn again only when its "Hides in" second moves
+    // on, a message on it ends, and it hides; asleep in between (wakeAt()).
+    wake_ = 0;
+    bool message = !message_.empty() && ms < messageUntil_;
+    int second = bannerVisible() ? hidesIn(ms) * 2 + (message ? 1 : 0) : 0;
+    bool bannerAnim = second != bannerSecond_;
+    bannerSecond_ = second;
+    if (second > 0 && !loading()) {
+      wake_ = countdown::nextChange(bannerUntil_, ms);
+      if (message && (!wake_ || messageUntil_ < wake_)) wake_ = messageUntil_;
+    }
     bool note = !p.note().empty();
     if (!missed_.empty() && ms >= missedUntil_) missed_.clear();
     bool noticeUp = !notice_.empty() && ms < noticeUntil_ + 50;
     return opening || bannerAnim || note || !digits_.empty() || !missed_.empty() || p.backupNotice().has_value() ||
            zone_ == Zone::Row || !pendingFlip_.empty() || noticeUp;
   }
+
+  uint32_t wakeAt() const override { return wake_; }
 
   void draw(ui::Ctx& c) override {
     Playback& p = app_.playback();
@@ -363,6 +379,8 @@ class PlayerScreen : public Screen {
     return !pendingFlip_.empty() || !p.ready() || p.failed() || p.noPicture();
   }
   bool bannerVisible() const { return loading() || (app_.ms() >= bannerFrom_ && app_.ms() < bannerUntil_); }
+  // The banner's "Hides in" seconds (1 in its last second).
+  int hidesIn(uint32_t ms) const { return countdown::shown(bannerUntil_, ms); }
   // Up/Down: Up is the channel above in the list (lower numbers) unless
   // Settings › Watching says Up goes to higher numbers, as CH+ does.
   int arrowStep(Key k) const {
@@ -828,8 +846,7 @@ class PlayerScreen : public Screen {
     const std::vector<captions::Line>& lines = subs.lines();
     if (lines.empty()) return;
     const Settings& set = app_.store().settings();
-    static const int kPx[] = {36, 44, 56, 72};
-    int px = kPx[std::clamp(set.subtitleSize, 0, 3)];
+    int px = captions::letterPx(set.subtitleSize);
     float lineH = std::round(static_cast<float>(px) * 1.36f);
     float pad = std::round(static_cast<float>(px) * 0.4f);
     float total = lineH * static_cast<float>(lines.size());
@@ -920,13 +937,21 @@ class PlayerScreen : public Screen {
       lx += ccW + 12;
     }
     std::string title = l ? l->title : (g ? g->name : std::string());
-    if (const EventTile* t = pending ? nullptr : app_.store().eventTile(p.entry()))
+    const Listing* show = l;  // the listing the title is (its episode and description)
+    if (const EventTile* t = pending ? nullptr : app_.store().eventTile(p.entry())) {
       title = t->heroTitle.empty() ? t->title : t->heroTitle;
+      show = nullptr;
+    }
     shadowed(c, title, lx, top + 30, Weight::Bold, 44, theme::white(), titleRight - lx);
-    // Times, progress and time left (the feed is under Sources, not here).
+    // Times, the guide's episode, progress and time left (the feed is under
+    // Sources, not here). The episode stops at 360 px, so the progress and
+    // time left keep their place.
     float rx = x;
     if (l) {
-      rx += shadowed(c, ui::range(c, l->start, l->end, true), rx, y, Weight::Medium, 22, theme::white(0.92f)) + 18;
+      rx += shadowed(c, ui::range(c, l->start, l->end, true), rx, y, Weight::Medium, 22, theme::white(0.92f));
+      if (show && !show->episode.empty())
+        rx += 10 + shadowed(c, "\xc2\xb7 " + show->episode, rx + 10, y, Weight::Regular, 22, theme::white(0.65f), 360);
+      rx += 18;
       double frac = static_cast<double>(c.now - l->start) / static_cast<double>(std::max<time::Seconds>(1, l->end - l->start));
       ui::progress(c, {rx, y + 11, 420, 6}, frac, theme::white(0.28f), theme::white());
       rx += 420 + 22;
@@ -935,6 +960,15 @@ class PlayerScreen : public Screen {
     } else if (next && !strip) {
       shadowed(c, "Next: " + ui::clock(c, next->start) + " " + next->title, rx, y, Weight::Regular, 22,
                theme::white(0.82f), titleRight - rx);
+    }
+    // Build 119: the guide's description in the empty band under the times
+    // (the card's height and everything on it as before), as wide as the
+    // title, two lines at most; the banner's 5 s as without one.
+    if (show && !show->overview.empty()) {
+      float dw = std::min(1200.0f, titleRight - x);
+      std::string about = show->overview.string();
+      ui::paragraph(c, about, x, top + 146, dw, Weight::Regular, 20, theme::black(0.55f * 0.7f), 2, 1.4f);
+      ui::paragraph(c, about, x, top + 144, dw, Weight::Regular, 20, theme::white(0.7f), 2, 1.4f);
     }
   }
 
@@ -1173,7 +1207,7 @@ class PlayerScreen : public Screen {
     Status st = status(g);
     float right = gfx::kLayoutWidth - kLeft;
     if (st.text.empty()) {
-      int left = static_cast<int>((bannerUntil_ > app_.ms() ? bannerUntil_ - app_.ms() : 0) / 1000) + 1;
+      int left = hidesIn(app_.ms());
       ui::label(c, "Hides in " + std::to_string(std::min(left, static_cast<int>(kBannerMs / 1000))) + " s", right - 300,
                 y + 10, Weight::Regular, 22, theme::white(0.75f), 300, Align::Right);
       return;
@@ -1300,6 +1334,10 @@ class PlayerScreen : public Screen {
   void drawTips(ui::Ctx& c) { drawGettingAround(c, app_.remoteKeys(), false, kHitTips); }
 
   uint32_t bannerFrom_ = 0, bannerUntil_ = 0, rowTouched_ = 0;
+  // The banner's "Hides in" second (and its message) when last ticked (0:
+  // hidden), and when either next moves on (wakeAt(); 0: nothing due).
+  int bannerSecond_ = 0;
+  uint32_t wake_ = 0;
   std::string pendingFlip_;  // channel keys: the channel the banner shows, tuned once they stop
   uint32_t flipAt_ = 0;
   bool wasReady_ = false, pictureSeen_ = false;  // this tune's picture: now, and ever

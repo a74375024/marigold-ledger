@@ -126,7 +126,6 @@ TEST_CASE("row order without My Sports: live, the fixed sport order, then A-Z, u
   const Row& fam = row(b, "families");
   CHECK(fam.title == "Event channels");
   REQUIRE(fam.families.size() == 1);
-  CHECK(fam.families[0].countText == "3 feeds");
   CHECK(fam.families[0].leagueChip == "SOCCER");
   CHECK(fam.families[0].hint == "Up/Down to surf");
   CHECK(fam.summary == "\xC2\xB7  1");

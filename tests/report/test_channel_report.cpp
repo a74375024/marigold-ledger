@@ -118,6 +118,7 @@ struct Fixture {
   std::map<std::string, provider::Status> providerStates;
   std::set<std::string> countries{"US"};
   marigold::guide::StationsByNetwork stations;
+  mtime::Seconds outsideBuilt = 0;
 
   ChannelReportInput input() const {
     ChannelReportInput in;
@@ -134,6 +135,7 @@ struct Fixture {
     in.programs = &sharedPrograms;
     in.outsideMatches = &sharedOutside;
     in.outsideNotes = &outsideNotes;
+    in.outsideBuilt = outsideBuilt;
     in.providerMatches = &sharedProvider;
     in.logos = &logos;
     in.providerNotes = &providerNotes;
@@ -216,9 +218,13 @@ Fixture sample() {
   f.programs["m3u:c|5"] = {program("m3u|5|1", kStart + 7200, kStart + 9000, "Not yet")};
 
   f.outside["xt:a|1"] = {raw(kLow - 60, 30), raw(kLow, 30, 4), raw(kLow + 30, 30), raw(kLow + 200, 40)};
+  f.outside["xt:a|1"][1].d = "Described";
+  f.outside["xt:a|1"][3].d = "Later, past the window";
   f.outsideNotes["xt:a|1"] = "US locals: WNBC (by call sign WNBC)";
+  f.outsideBuilt = kStart - 7200;
   f.outside["xt:a|2"] = {raw(kLow, 60, 1)};
   f.providerMatches["xt:a|1"] = {raw(kLow, 30, 2), raw(kLow + 30, 30)};
+  f.providerMatches["xt:a|1"][1].d = "Also described";
   f.providerMatches["jf:b|9"] = {raw(kLow, 30)};  // ignored: not Xtream
   f.names = {{"xt:a", "Provider A"}, {"jf:b", "Home Server"}};
   f.providerStates["xt:a"] = provider::Status{provider::Status::Kind::ready, "", 1, 3, 10, kStart};
@@ -230,7 +236,7 @@ Fixture sample() {
 
 TEST_CASE("channel report: header") {
   const auto& columns = channelReportColumns();
-  CHECK(columns.size() == 41);
+  CHECK(columns.size() == 46);
   CHECK(columns.front() == "number");
   CHECK(columns.back() == "row_id");
   std::string csv = channelReportCSV(ChannelReportInput());
@@ -241,7 +247,9 @@ TEST_CASE("channel report: header") {
         "provider_guide,provider_guide_programs_next_3h,kind,market,core_network,scope,"
         "server_genre_tagged_next_3h,outside_genre_tagged_next_3h,"
         "provider_guide_genre_tagged_next_3h,now_genres,now_subtitle,now_description,"
-        "outside_listings_end,logo_sources,logo_status,directory_id,directory_match,row_id\n");
+        "outside_listings_end,now_start,outside_built_at,provider_built_at,outside_described_next_3h,"
+        "provider_guide_described_next_3h,logo_sources,logo_status,directory_id,directory_match,"
+        "row_id\n");
 }
 
 TEST_CASE("channel report: one row per channel with the Swift rules") {
@@ -250,7 +258,7 @@ TEST_CASE("channel report: one row per channel with the Swift rules") {
   std::string csv = channelReportCSV(f.input());
   auto rows = parseCsv(csv);
   REQUIRE(rows.size() == 6);
-  for (const auto& r : rows) CHECK(r.size() == 41);
+  for (const auto& r : rows) CHECK(r.size() == 46);
   CHECK(csv.back() == '\n');
 
   auto nbc = rowFor(rows, "US: NBC 4 WNBC");
@@ -291,6 +299,13 @@ TEST_CASE("channel report: one row per channel with the Swift rules") {
   CHECK(nbc["now_description"] == "Line one more at  end");
   // The last outside programme ends at kLow + 240 minutes = 22:00 UTC.
   CHECK(nbc["outside_listings_end"] == "2026-10-26 22:00");
+  // Description coverage: when what's on started, when each guide was
+  // read, and how many of the next 3 hours' programmes are described.
+  CHECK(nbc["now_start"] == "2026-10-26 18:00");
+  CHECK(nbc["outside_built_at"] == "2026-10-26 16:00");
+  CHECK(nbc["provider_built_at"] == "2026-10-26 18:00");
+  CHECK(nbc["outside_described_next_3h"] == "1");
+  CHECK(nbc["provider_guide_described_next_3h"] == "1");
 
   auto fox = rowFor(rows, "FOX 2 Capital City");
   CHECK(fox["callsign_in_name"] == "");
@@ -304,6 +319,8 @@ TEST_CASE("channel report: one row per channel with the Swift rules") {
   CHECK(fox["scope"] == "");
   CHECK(fox["provider_guide_programs_next_3h"] == "0");
   CHECK(fox["outside_listings_end"] == "2026-10-26 19:00");
+  CHECK(fox["outside_described_next_3h"] == "0");
+  CHECK(fox["provider_built_at"] == "2026-10-26 18:00");
 
   auto ppv = rowFor(rows, "US (ESPN+ 07) | Team A vs Team B 7:30 PM ET");
   CHECK(ppv["server_guide"] == "none");
@@ -323,6 +340,9 @@ TEST_CASE("channel report: one row per channel with the Swift rules") {
   CHECK(emby["provider_guide_programs_next_3h"] == "");
   CHECK(emby["provider_guide_genre_tagged_next_3h"] == "");
   CHECK(emby["country"] == "");
+  CHECK(emby["outside_built_at"] == "");  // no outside listing
+  CHECK(emby["provider_built_at"] == "");
+  CHECK(emby["provider_guide_described_next_3h"] == "");
 
   auto loop = rowFor(rows, "Loop Channel 24/7");
   CHECK(loop["hidden_group"] == "yes");  // no group: "Other"

@@ -2,7 +2,9 @@
 
 #include <algorithm>
 
+#include "core/guide/names.hpp"
 #include "core/util/rx.hpp"
+#include "core/util/strings.hpp"
 
 namespace marigold::guide::genre {
 namespace {
@@ -100,6 +102,43 @@ std::vector<Program> mergeFlags(const std::vector<Program>& list,
             static_cast<uint8_t>((updated.genres & ~kGenreBits) | (candidate->genres & kGenreBits));
         break;
       }
+    }
+  }
+  return out;
+}
+
+std::string titleKey(std::string_view title) {
+  std::string lowered = rx::replace(str::lower(str::foldDiacritics(title)), "^(live|new)[: ]+", "");
+  return str::join(letterNumberTokens(lowered), "");
+}
+
+std::vector<Program> mergeDetails(const std::vector<Program>& list,
+                                  const std::vector<Program>& other) {
+  auto has = [](const std::optional<std::string>& text) { return text && !text->empty(); };
+  auto hasOverview = [](const Program& p) { return !p.overview.empty(); };
+  auto missing = [&](const Program& p) { return !hasOverview(p) || !has(p.episodeTitle); };
+  if (other.empty() || std::none_of(list.begin(), list.end(), missing)) return list;
+  std::vector<std::pair<std::string, const Program*>> described;
+  for (const Program& p : other) {
+    if (!hasOverview(p) && !has(p.episodeTitle)) continue;
+    std::string key = titleKey(p.title);
+    if (!key.empty()) described.emplace_back(std::move(key), &p);
+  }
+  if (described.empty()) return list;
+  std::vector<Program> out = list;
+  for (Program& program : out) {
+    time::Seconds length = program.end - program.start;
+    if (!missing(program) || length <= 0) continue;
+    std::string key = titleKey(program.title);
+    if (key.empty()) continue;
+    for (const auto& [otherKey, candidate] : described) {
+      time::Seconds overlap =
+          std::min(candidate->end, program.end) - std::max(candidate->start, program.start);
+      if (otherKey != key || overlap * 2 <= length) continue;
+      if (!hasOverview(program) && hasOverview(*candidate)) program.overview = candidate->overview;
+      if (!has(program.episodeTitle) && has(candidate->episodeTitle))
+        program.episodeTitle = candidate->episodeTitle;
+      if (!missing(program)) break;
     }
   }
   return out;

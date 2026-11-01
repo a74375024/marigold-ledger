@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "core/guide/text.hpp"
 #include "core/util/time.hpp"
 
 namespace marigold::engine {
@@ -44,7 +45,7 @@ struct GuideChannel {
 struct Listing {
   std::string title;
   std::string episode;
-  std::string overview;
+  guide::Text overview;  // the programme's own, shared (overview.string() for a copy)
   time::Seconds start = 0, end = 0;
   uint8_t genres = 0;  // model::GenreFlag bits
   bool live = false;

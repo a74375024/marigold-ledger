@@ -267,7 +267,6 @@ struct FamilyTile {
   std::string id;
   std::string key;
   std::string name;
-  std::string countText;  // "12 feeds"
   std::string leagueChip;
   std::string hint;       // "Up/Down to surf"
 };

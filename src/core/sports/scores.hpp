@@ -86,6 +86,11 @@ constexpr Seconds kBackoff[] = {120, 300, 900, 1800};
 // A game no scoreboard listed this many polls in a row stops keeping its
 // league polled.
 constexpr int kMissingLimit = 3;
+// A game's status is believed this long after the answer that gave it,
+// and while its league is polled, until its next look is due plus this.
+// Older (Live Events closed, the TV off), only a final or a postponement
+// still holds: the board goes by the clock instead (current()).
+constexpr Seconds kHeldFor = 120;
 constexpr bool kShowsScoresByDefault = true;
 
 // A league's scoreboard for a US Eastern day ("20261025"), or the current
@@ -160,6 +165,10 @@ class LiveScores {
   Seconds waitSeconds() const;
 
   const Statuses& statuses() const { return statuses_; }
+  // The statuses that still hold at `now` (kHeldFor): finals and
+  // postponements, and the rest only while answered lately. `setAside`
+  // counts the live ones left out.
+  Statuses current(Seconds now, int* setAside = nullptr) const;
   // When each game was seen ending; 0 for one already over when first
   // looked at.
   const std::map<std::string, Seconds>& finalSeen() const { return finalSeen_; }
@@ -190,6 +199,7 @@ class LiveScores {
   std::map<std::string, size_t> lastBytes_;
   std::map<std::string, int> missing_;
   std::map<std::string, Seconds> refusedUntil_;
+  std::map<std::string, Seconds> heldUntil_;  // game -> its status believed until (kHeldFor)
   std::vector<Seconds> recent_;
   DailyCount daily_;
   bool cappedNoted_ = false;

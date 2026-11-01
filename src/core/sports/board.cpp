@@ -1479,7 +1479,6 @@ Board build(const Input& in) {
       tile.id = f.id;
       tile.key = row.id + "|" + f.id;
       tile.name = f.name;
-      tile.countText = std::to_string(f.feeds.size()) + " feeds";
       tile.leagueChip = f.league.empty() ? "" : matcher::shortLeague(f.league);
       tile.hint = "Up/Down to surf";
       row.families.push_back(std::move(tile));

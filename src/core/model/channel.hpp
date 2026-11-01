@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "core/guide/text.hpp"
 #include "core/util/time.hpp"
 
 namespace marigold {
@@ -48,7 +49,7 @@ struct Program {
   std::string channelId;
   std::string title;
   std::optional<std::string> episodeTitle;
-  std::optional<std::string> overview;
+  guide::Text overview;  // shared by every copy (as an optional string: overview.str())
   time::Seconds start = 0;
   time::Seconds end = 0;
   uint8_t genres = 0;

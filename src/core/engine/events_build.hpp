@@ -38,6 +38,58 @@ namespace marigold::engine::events_build {
 constexpr time::Seconds kKeptBoardFor = 15 * 60;
 bool keptBoardShows(time::Seconds builtAt, time::Seconds now, const time::Zone& zone);
 
+// Live Events freshness (Build 119). A board made now can still be made
+// from old inputs: the provider's channel list (its event slots) and the
+// schedule saved last time, or live scores answered hours ago. So after an
+// open (or the TV waking with Live Events on screen) the board leaves out
+// what such inputs decide until fresh ones are in, and shows placeholders
+// while that is everything; after kHoldAtMostMs it shows every tile, each
+// live only by a score answered lately or by the clock (finals kept, games
+// over by the clock gone, "Time not listed" as it is).
+//
+// New enough: the channel list for 15 minutes after it was fetched this
+// session; the schedule while fetched the same day under 20 hours ago (it
+// isn't fetched again then); a score while its league is polled
+// (sports::scores::kHeldFor). An input nothing newer is coming for (offline,
+// refused, backing off after failures) holds nothing up.
+constexpr time::Seconds kListFreshFor = 15 * 60;
+// Under the screen's 20 s of placeholders, so the board made then is in first.
+constexpr uint32_t kHoldAtMostMs = 18000;
+// No tick for this long (wall clock or app clock): the TV was off or the
+// app asleep, and Live Events is opened again on waking.
+constexpr time::Seconds kAsleepFor = 120;
+bool listFresh(time::Seconds fetchedAt, time::Seconds now);
+bool scheduleCurrent(time::Seconds fetchedAt, time::Seconds now, const time::Zone& zone);
+
+// When what the games were matched from was fetched (0: not this session,
+// or never).
+struct MadeFrom {
+  time::Seconds listAt = 0;
+  time::Seconds scheduleAt = 0;
+};
+
+// What decides the games, and what is coming.
+struct Inputs {
+  MadeFrom made;             // the games on hand
+  time::Seconds listAt = 0;  // the newest channel list in, and one downloading
+  bool listComing = false;
+  time::Seconds scheduleAt = 0;  // the newest schedule in, and one being fetched
+  bool scheduleComing = false;
+  // A live scores round since the open (and the newest schedule) is over.
+  bool scoresChecked = true;
+};
+
+// What a board made now leaves out while it waits for fresh inputs.
+struct Hold {
+  bool list = false;      // event slots, feed families and games with feeds
+  bool schedule = false;  // schedule games
+  bool scores = false;    // games around now no score answered lately covers
+  bool any() const { return list || schedule || scores; }
+  bool operator==(const Hold& o) const { return list == o.list && schedule == o.schedule && scores == o.scores; }
+  bool operator!=(const Hold& o) const { return !(*this == o); }
+};
+Hold holdFor(const Inputs& in, time::Seconds now, const time::Zone& zone);
+
 // Raw channels by id: made once per channel list, shared with the workers.
 using ChannelIndex = std::unordered_map<std::string, size_t>;
 
@@ -113,6 +165,10 @@ struct BoardInput {
   std::string camerasKey;
   // What the titles say, kept from one board to the next (one at a time).
   std::shared_ptr<sports::board::TitleMemo> titles;
+  // Waiting for fresh inputs: what is left out (`statuses` already holds
+  // only the ones answered lately; `oldLive` live ones were set aside).
+  Hold hold;
+  int oldLive = 0;
 };
 
 struct BoardMade {
@@ -124,6 +180,8 @@ struct BoardMade {
   // every game): what a live scores round asks about.
   std::set<std::string> watchableListed;
   time::Seconds madeAt = 0;  // the clock it was made by
+  Hold hold;                 // what it waited for
+  int held = 0, oldLive = 0;  // games left out for it, old live scores set aside
   size_t tiles = 0;
   double ms = 0;
 };
