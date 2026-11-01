@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iterator>
 #include <sstream>
+#include <string_view>
 #include <vector>
 
 #include "core/logos/logos.hpp"
@@ -52,9 +53,22 @@ bool writeFileAtomic(const std::string& path, const std::string& data) {
 
 struct LogoCache::Result {
   std::optional<px::Image> image;
-  px::Tone tone = px::Tone::normal;
+  px::Image small;
   px::Shape shape;
+  Treatment treatment;
+  uint32_t field = 0;
   bool onDisk = false;
+
+  // On the worker, once per load: decoded, then made ready for the dark
+  // surfaces. The disk keeps the file as it came (a restart decodes and
+  // prepares it again), so there is nothing old to throw away.
+  void decode(std::string_view bytes, Art art) {
+    image = image::decode(bytes, kMaxW, kMaxH, &shape);
+    if (!image) return;
+    treatment = prepare(*image, art);
+    if (art == Art::logo) small = smallCopy(*image);
+    if (art == Art::flag) field = mainColour(*image);
+  }
 };
 
 LogoCache::LogoCache(http::Client& pool, std::string dir, size_t textureBudget, size_t diskBudget)
@@ -64,7 +78,7 @@ LogoCache::LogoCache(http::Client& pool, std::string dir, size_t textureBudget, 
 }
 
 LogoCache::~LogoCache() {
-  for (auto& [url, e] : entries_) gfx::releaseTexture(e.tex.id);
+  for (auto& [url, e] : entries_) release(e);
 }
 
 std::string LogoCache::fileFor(const std::string& url) const {
@@ -73,12 +87,14 @@ std::string LogoCache::fileFor(const std::string& url) const {
 
 std::string LogoCache::chain(const std::vector<std::string>& urls) { return logos::chain(urls); }
 
-Texture LogoCache::get(const std::string& url) {
+Texture LogoCache::get(const std::string& url, Art art) {
   if (url.empty()) return {};
   auto it = entries_.find(url);
   if (it == entries_.end()) {
     if (!str::startsWith(url, "http://") && !str::startsWith(url, "https://")) return {};
-    it = entries_.emplace(url, Entry{}).first;
+    Entry fresh;
+    fresh.art = art;
+    it = entries_.emplace(url, std::move(fresh)).first;
     lru_.push_front(url);
     it->second.lru = lru_.begin();
   }
@@ -93,7 +109,13 @@ std::string LogoCache::status(const std::string& url) const {
   auto it = entries_.find(url);
   if (it == entries_.end()) return "not drawn yet";
   switch (it->second.state) {
-    case State::Ready: return fillsCard(it->second.tex.shape) ? "shown" : "shown, low quality";
+    case State::Ready: {
+      const Texture& t = it->second.tex;
+      std::string s = fillsCard(t.shape) ? "shown" : "shown, low quality";
+      if (t.treatment.boxRemoved) s += ", box removed";
+      if (t.treatment.tuned) s += ", colours tuned";
+      return s;
+    }
     case State::Failed: return "failed";
     case State::Loading: return "loading";
     case State::Wanted: return "waiting";
@@ -134,13 +156,13 @@ void LogoCache::start(const std::string& url) {
   auto r = std::make_shared<Result>();
   std::string path = fileFor(url);
   std::weak_ptr<bool> alive = alive_;
+  Art art = e.art;
   pool_.post(
-      [r, path] {
+      [r, path, art] {
         std::string bytes;
         if (!readFile(path, bytes)) return;
         r->onDisk = true;
-        r->image = image::decode(bytes, kMaxW, kMaxH, &r->shape);
-        if (r->image) r->tone = px::toneOf(*r->image);
+        r->decode(bytes, art);
         if (!r->image) unlink(path.c_str());  // corrupt: fetch it again
         else utime(path.c_str(), nullptr);    // freshen for the disk LRU
       },
@@ -165,10 +187,11 @@ void LogoCache::fetch(const std::string& key, std::shared_ptr<Result> r, size_t 
   q.tag = "logo";
   q.priority = http::Priority::Normal;
   std::string path = fileFor(key);
-  q.afterTransfer = [r, path](http::Response& resp) {
+  auto found = entries_.find(key);
+  Art art = found == entries_.end() ? Art::logo : found->second.art;
+  q.afterTransfer = [r, path, art](http::Response& resp) {
     if (!resp.ok || resp.status != 200) return;
-    r->image = image::decode(resp.body, kMaxW, kMaxH, &r->shape);
-    if (r->image) r->tone = px::toneOf(*r->image);
+    r->decode(resp.body, art);
     if (r->image) writeFileAtomic(path, resp.body);
     resp.body.clear();
     resp.body.shrink_to_fit();
@@ -196,7 +219,7 @@ void LogoCache::finish(const std::string& url, const std::shared_ptr<Result>& r)
     e.retryAt = time::now() + kRetryAfterS;
     return;
   }
-  upload(e, *r->image, r->tone, r->shape);
+  upload(e, *r);
   e.state = State::Ready;
   evict();
   if (writtenSinceTrim_ > diskBudget_ / 4) {
@@ -205,15 +228,30 @@ void LogoCache::finish(const std::string& url, const std::shared_ptr<Result>& r)
   }
 }
 
-void LogoCache::upload(Entry& e, const px::Image& im, px::Tone tone, const px::Shape& shape) {
+void LogoCache::upload(Entry& e, const Result& r) {
+  const px::Image& im = *r.image;
   e.tex.id = gfx::uploadTexture(im, e.tex.id);
   e.tex.w = im.w;
   e.tex.h = im.h;
-  e.tex.tone = tone;
-  e.tex.shape = shape;
+  if (!r.small.empty()) {
+    e.tex.small = gfx::uploadTexture(r.small, e.tex.small);
+    e.tex.smallW = r.small.w;
+    e.tex.smallH = r.small.h;
+  } else {
+    gfx::releaseTexture(e.tex.small);
+    e.tex.smallW = e.tex.smallH = 0;
+  }
+  e.tex.field = r.field;
+  e.tex.treatment = r.treatment;
+  e.tex.shape = r.shape;
   bytes_ -= e.bytes;
-  e.bytes = im.rgba.size();
+  e.bytes = im.rgba.size() + r.small.rgba.size();
   bytes_ += e.bytes;
+}
+
+void LogoCache::release(Entry& e) {
+  gfx::releaseTexture(e.tex.id);
+  gfx::releaseTexture(e.tex.small);
 }
 
 void LogoCache::evict() {
@@ -221,7 +259,7 @@ void LogoCache::evict() {
   for (auto it = lru_.rbegin(); it != lru_.rend() && bytes_ > budget_; ++it) {
     Entry& e = entries_[*it];
     if (e.state != State::Ready || e.wantedFrame + kWantedFrames >= frame_) continue;
-    gfx::releaseTexture(e.tex.id);
+    release(e);
     e.tex = {};
     bytes_ -= e.bytes;
     e.bytes = 0;

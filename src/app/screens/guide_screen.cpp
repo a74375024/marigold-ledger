@@ -1446,26 +1446,29 @@ void GuideScreen::drawRow(ui::Ctx& c, int lineIndex, float y) {
 }
 
 void GuideScreen::drawChannelCell(ui::Ctx& c, const GuideChannel& g, Rect r, bool focused) {
-  c.g.fill(r, focused ? theme::white() : theme::white(0.07f), 14);
-  Color fg = focused ? theme::black() : theme::white();
-  Color sub = focused ? theme::black(0.65f) : theme::white(0.65f);
+  // The focused row's channel cell takes the calm focus: its logo looks the
+  // same focused or not.
+  if (focused) ui::calmFocus(c, r, 14);
+  else c.g.fill(r, theme::white(0.07f), 14);
+  Color fg = theme::white();
+  Color sub = theme::white(0.65f);
   // A logo that loaded but is too poor to stand alone sits next to the name.
   GuideChannel::Style style = g.style;
   if (style == GuideChannel::Style::LogoOnly && ui::logoState(c, g.logoUrl) == ui::LogoState::Poor)
     style = GuideChannel::Style::Named;
   switch (style) {
     case GuideChannel::Style::LogoOnly:
-      ui::logo(c, g.logoUrl, g.name, {r.x + 14, r.y + 12, r.w - 28, r.h - 24}, focused);
+      ui::logo(c, g.logoUrl, g.name, {r.x + 14, r.y + 12, r.w - 28, r.h - 24});
       break;
     case GuideChannel::Style::Local:
-      ui::logo(c, g.logoUrl, "", {r.x + 12, r.y + 24, 58, 36}, focused);
+      ui::logo(c, g.logoUrl, "", {r.x + 12, r.y + 24, 58, 36});
       ui::label(c, g.name, r.x + 80, r.y + 18, Weight::Bold, 20, fg, r.w - (g.favorite ? 108 : 88));
       ui::label(c, g.subtitle, r.x + 80, r.y + 46, Weight::Regular, 15, sub, r.w - 88);
       break;
     case GuideChannel::Style::Named: {
       bool hasLogo = !g.logoUrl.empty();
       float tx = r.x + (hasLogo ? 80 : 14);
-      if (hasLogo) ui::logo(c, g.logoUrl, "", {r.x + 12, r.y + 24, 58, 36}, focused);
+      if (hasLogo) ui::logo(c, g.logoUrl, "", {r.x + 12, r.y + 24, 58, 36});
       // Leave room for the favourite star in the corner.
       float right = r.x + r.w - (g.favorite ? 28 : 10);
       std::vector<std::string> lines = c.t.wrap(g.name, Weight::Bold, 18, right - tx, 2);
@@ -1485,7 +1488,7 @@ void GuideScreen::drawChannelCell(ui::Ctx& c, const GuideChannel& g, Rect r, boo
     ui::coastChip(c, g.west, r.x + r.w - w - 8, r.y + r.h - 24, 12);
   } else if (g.west) {
     float w = ui::chipWidth(c, "WEST", 12);
-    ui::chip(c, "WEST", r.x + r.w - w - 8, r.y + r.h - 24, 12, focused ? theme::black(0.15f) : theme::white(0.2f), fg);
+    ui::chip(c, "WEST", r.x + r.w - w - 8, r.y + r.h - 24, 12, theme::white(0.2f), fg);
   }
 }
 

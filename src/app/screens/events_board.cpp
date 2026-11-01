@@ -735,7 +735,7 @@ class EventsBoardScreen : public Screen {
     ui::label(c, t->heroTitle.empty() ? t->title : t->heroTitle, tx, y + 4, Weight::Bold, 40, theme::white(), x + 1240 - tx);
     y += 72;
     float sx = x;
-    sx += events_ui::pill(c, *t, sx, y + 4, false) ;
+    sx += events_ui::pill(c, *t, sx, y + 4);
     if (sx > x) sx += 12;
     ui::label(c, t->heroStatus.empty() ? t->status : t->heroStatus, sx, y, Weight::Medium, 24, theme::white(), x + 1240 - sx);
     y += 44;

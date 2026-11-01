@@ -22,6 +22,7 @@ class IconSet;
 
 namespace marigold::logos {
 class LogoCache;
+struct Texture;
 }
 
 namespace marigold::ui {
@@ -45,6 +46,9 @@ constexpr uint32_t kStar = 0xE0A100;
 constexpr uint32_t kEast = 0x3D7BFF, kWest = 0xF59E0B;  // East/West version tags
 constexpr uint32_t kToggleOn = 0x34C759;
 constexpr uint32_t kWarning = 0xFF9F0A;
+// The calm focus's fill (calmFocus()): where logos appear, focus never
+// turns a cell white.
+constexpr uint32_t kFocusFill = 0x2A2E36;
 
 constexpr float kMarginX = 80;
 constexpr float kRowRadius = 16;
@@ -104,10 +108,17 @@ float chipWidth(Ctx& c, const std::string& s, int px, Weight w = Weight::Bold);
 float coastChip(Ctx& c, bool west, float x, float y, int px);
 
 // A channel logo fitted inside `r` (aspect kept, centred), or the fallback
-// name in a pill until the logo is ready (or if there is none, or the one
+// name in bold until the logo is ready (or if there is none, or the one
 // that loaded is too poor to stand for the channel: logos::fillsCard()).
-void logo(Ctx& c, const std::string& url, const std::string& fallback, Rect r,
-          bool onLight = false, float opacity = 1);
+// Every logo sits straight on its cell in its one dark-surface version
+// (logos::prepare()): nothing about it changes with focus or the pointer.
+// `dim`: on a dimmed row or tile the logo loses its colour but keeps its
+// brightness, and the name dims like the text beside it.
+void logo(Ctx& c, const std::string& url, const std::string& fallback, Rect r, bool dim = false,
+          float opacity = 1);
+// Draws a loaded logo texture fitted inside `r` (the small copy when it is
+// drawn small). Returns where it went.
+Rect logoTexture(Ctx& c, const logos::Texture& tex, Rect r, bool dim = false, float opacity = 1);
 
 // How a channel card should read now: its logo loaded and good enough to
 // fill the card alone (Ready), loaded but poor (Poor: small, next to the
@@ -140,6 +151,15 @@ Color skeleton(const Ctx& c);
 // True when the pulse has moved on since `step` (which it updates): a
 // screen's tick returns it while placeholders are on screen.
 bool skeletonMoved(uint32_t ms, uint32_t& step);
+
+// The calm focus, where logos appear (the guide's and Search's channel
+// cells and results, Live Events tiles, the games rail, team tiles): the
+// cell lifts `lift` each way over a soft shadow, takes theme::kFocusFill and
+// a 3 px white outline inside its edge, and its text stays light. Returns
+// the lifted rect. The pointer's hover is the same focus.
+Rect calmFocus(Ctx& c, Rect r, float radius, float lift = 3);
+// Only the fill and the outline (for cells that lift by themselves).
+void calmFill(Ctx& c, Rect r, float radius);
 
 // A side panel's background in `r`: a floating card inset from the screen's
 // top, bottom and outer edge. `leading` panels open from the left.

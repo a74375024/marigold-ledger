@@ -1851,14 +1851,20 @@ class SearchScreen : public Screen {
       scopeRow(c, cell, box, f);
       return;
     }
-    c.g.fill(box, f ? theme::white() : theme::white(0.07f), 18);
-    Color ink = f ? theme::black() : theme::white();
-    Color sub = f ? theme::black(0.65f) : theme::white(0.7f);
+    // Results (where logos and badges appear) take the calm focus and keep
+    // light text; the band's other cells keep the white one.
+    bool calm = cell.kind == CellKind::Channel || cell.kind == CellKind::Show || cell.kind == CellKind::Game ||
+                cell.kind == CellKind::Team || cell.kind == CellKind::Genre;
+    bool white = f && !calm;
+    if (f && calm) ui::calmFocus(c, box, 18);
+    else c.g.fill(box, f ? theme::white() : theme::white(0.07f), 18);
+    Color ink = white ? theme::black() : theme::white();
+    Color sub = white ? theme::black(0.65f) : theme::white(0.7f);
     const Cell::Label& l = cell.label;
     bool ok = f && !l.ok.empty();
     float okW = ok ? ui::textWidth(c, l.ok, Weight::Bold, 20) + 24 : 0;
     if (cell.top) {
-      drawTopCard(c, cell, box, f, ok);
+      drawTopCard(c, cell, box, white, ok);
       return;
     }
     float tx = box.x + 22, right = box.x + box.w - 22 - okW;
@@ -1866,22 +1872,22 @@ class SearchScreen : public Screen {
     if (l.missing) return;
     switch (cell.kind) {
       case CellKind::Channel:
-        ui::logo(c, l.logoUrl, l.logoName, {tx, box.y + (box.h - 54) * 0.5f, 96, 54}, f);
+        ui::logo(c, l.logoUrl, l.logoName, {tx, box.y + (box.h - 54) * 0.5f, 96, 54});
         tx += 116;
         break;
       case CellKind::Show:
-        if (l.logo) ui::logo(c, l.logoUrl, l.logoName, {tx, box.y + (box.h - 48) * 0.5f, 84, 48}, f);
+        if (l.logo) ui::logo(c, l.logoUrl, l.logoName, {tx, box.y + (box.h - 48) * 0.5f, 84, 48});
         tx += 104;
         break;
-      case CellKind::Game: tx += badges(c, l, tx, box.y + (box.h - 52) * 0.5f, 52, f); break;
-      case CellKind::Team: tx += teamBadge(c, l, tx, box.y + (box.h - 52) * 0.5f, f) + 18; break;
+      case CellKind::Game: tx += badges(c, l, tx, box.y + (box.h - 52) * 0.5f, 52); break;
+      case CellKind::Team: tx += teamBadge(c, l, tx, box.y + (box.h - 52) * 0.5f) + 18; break;
       default: break;
     }
     float ty = box.y + box.h * 0.5f - 36;
     float lx = tx;
     if (l.live) lx += ui::chip(c, "LIVE", lx, ty + 4, 17, theme::hex(theme::kLive), theme::white()) + 10;
     if (l.west) lx += ui::coastChip(c, true, lx, ty + 4, 17) + 10;
-    if (!l.tag.empty()) lx += ui::chip(c, l.tag, lx, ty + 4, 17, f ? theme::black(0.15f) : theme::white(0.18f), ink) + 10;
+    if (!l.tag.empty()) lx += ui::chip(c, l.tag, lx, ty + 4, 17, white ? theme::black(0.15f) : theme::white(0.18f), ink) + 10;
     ui::label(c, l.title, lx, ty, Weight::Bold, 26, ink, right - lx);
     ui::label(c, l.line, tx, ty + 38, Weight::Medium, 22, sub, right - tx);
   }
@@ -1911,21 +1917,22 @@ class SearchScreen : public Screen {
   }
 
   // The top result: a type tag, a big title and what's on, beside the corner.
-  void drawTopCard(ui::Ctx& c, const Cell& cell, Rect box, bool f, bool ok) {
+  // `white`: focused on a white fill (results focus calmly, text light).
+  void drawTopCard(ui::Ctx& c, const Cell& cell, Rect box, bool white, bool ok) {
     const Cell::Label& l = cell.label;
     if (l.missing) return;
-    Color ink = f ? theme::black() : theme::white();
-    Color sub = f ? theme::black(0.65f) : theme::white(0.75f);
+    Color ink = white ? theme::black() : theme::white();
+    Color sub = white ? theme::black(0.65f) : theme::white(0.75f);
     float tx = box.x + 22, ty = box.y + 64;
     switch (cell.kind) {
       case CellKind::Channel:
-        ui::logo(c, l.logoUrl, l.logoName, {tx, ty, 112, 64}, f);
+        ui::logo(c, l.logoUrl, l.logoName, {tx, ty, 112, 64});
         tx += 132;
         break;
-      case CellKind::Game: tx += badges(c, l, tx, ty, 64, f); break;
-      case CellKind::Team: tx += teamBadge(c, l, tx, ty, f) + 18; break;
+      case CellKind::Game: tx += badges(c, l, tx, ty, 64); break;
+      case CellKind::Team: tx += teamBadge(c, l, tx, ty) + 18; break;
       case CellKind::Show:
-        if (l.logo) ui::logo(c, l.logoUrl, l.logoName, {tx, ty, 112, 64}, f);
+        if (l.logo) ui::logo(c, l.logoUrl, l.logoName, {tx, ty, 112, 64});
         tx += 132;
         break;
       default: break;
@@ -1939,18 +1946,18 @@ class SearchScreen : public Screen {
   }
 
   // Two side badges (or the sport's mark). Returns the width used.
-  float badges(ui::Ctx& c, const Cell::Label& l, float x, float y, float size, bool f) {
+  float badges(ui::Ctx& c, const Cell::Label& l, float x, float y, float size) {
     if (l.sides.size() == 2) {
-      events_ui::badge(c, l.sides[0], x, y, size, f);
-      events_ui::badge(c, l.sides[1], x + size + 8, y, size, f);
+      events_ui::badge(c, l.sides[0], x, y, size);
+      events_ui::badge(c, l.sides[1], x + size + 8, y, size);
       return 2 * size + 28;
     }
-    ui::logo(c, l.logoUrl, l.logoName, {x, y, size * 1.6f, size}, f);
+    ui::logo(c, l.logoUrl, l.logoName, {x, y, size * 1.6f, size});
     return size * 1.6f + 18;
   }
 
-  float teamBadge(ui::Ctx& c, const Cell::Label& l, float x, float y, bool f) {
-    if (!l.sides.empty()) events_ui::badge(c, l.sides.front(), x, y, 52, f);
+  float teamBadge(ui::Ctx& c, const Cell::Label& l, float x, float y) {
+    if (!l.sides.empty()) events_ui::badge(c, l.sides.front(), x, y, 52);
     return 52;
   }
 

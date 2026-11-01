@@ -510,8 +510,11 @@ class MySportsSetup : public Screen {
       c.hit(r, kHitTile + static_cast<int>(i));
       bool f = static_cast<int>(i) == focus_;
       bool on = std::find(draft_.teams.begin(), draft_.teams.end(), sports::teamKey(league, t.id)) != draft_.teams.end();
-      c.g.fill(r, f ? theme::white() : theme::white(0.08f), 18);
-      if (on) c.g.stroke(r, theme::hex(theme::kToggleOn), 18, 3);
+      // Focused: the calm focus (the badge looks the same focused or not);
+      // a picked team's green ring sits inside the white outline.
+      Rect up = f ? ui::calmFocus(c, r, 18) : r;
+      if (!f) c.g.fill(r, theme::white(0.08f), 18);
+      if (on) c.g.stroke(f ? Rect{up.x + 3, up.y + 3, up.w - 6, up.h - 6} : r, theme::hex(theme::kToggleOn), f ? 16 : 18, 3);
       EventSide side;
       side.abbr = t.abbreviation();
       side.logoUrl = t.badge.value_or("");
@@ -521,8 +524,8 @@ class MySportsSetup : public Screen {
       };
       side.color = hex(t.color, 0x3A3D44);
       side.alt = hex(t.altColor, 0xFFFFFF);
-      events_ui::badge(c, side, r.x + (r.w - 78) * 0.5f, r.y + 18, 78, f);
-      ui::label(c, t.name, r.x + 12, r.y + 116, Weight::Medium, 21, f ? theme::black() : theme::white(), r.w - 24, Align::Center);
+      events_ui::badge(c, side, r.x + (r.w - 78) * 0.5f, r.y + 18, 78);
+      ui::label(c, t.name, r.x + 12, r.y + 116, Weight::Medium, 21, theme::white(), r.w - 24, Align::Center);
       if (on) {
         Rect check{r.x + r.w - 40, r.y + 10, 30, 30};
         c.g.fill(check, theme::hex(theme::kToggleOn), 15);

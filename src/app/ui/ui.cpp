@@ -5,10 +5,13 @@
 #include <cstdio>
 
 #include "core/logos/logos.hpp"
+#include "core/logos/tune.hpp"
 #include "platform/icons.hpp"
 #include "platform/logo_cache.hpp"
 
 namespace marigold::ui {
+
+static_assert(theme::kFocusFill == logos::kFocusFill, "one focus fill: the logos are tuned against it");
 
 float label(Ctx& c, const std::string& s, float x, float y, Weight w, int px, Color col,
             float maxWidth, Align a) {
@@ -52,33 +55,30 @@ float coastChip(Ctx& c, bool west, float x, float y, int px) {
               : chip(c, "EAST", x, y, px, theme::hex(theme::kEast), theme::white());
 }
 
-void logo(Ctx& c, const std::string& url, const std::string& fallback, Rect r, bool onLight,
-          float opacity) {
+Rect logoTexture(Ctx& c, const logos::Texture& tex, Rect r, bool dim, float opacity) {
+  float s = std::min(r.w / static_cast<float>(tex.w), r.h / static_cast<float>(tex.h));
+  float w = std::round(static_cast<float>(tex.w) * s), h = std::round(static_cast<float>(tex.h) * s);
+  Rect at{std::round(r.x + (r.w - w) * 0.5f), std::round(r.y + (r.h - h) * 0.5f), w, h};
+  // A thin logo drawn small uses its ready-made small copy.
+  bool small = tex.small && w * c.g.pixelScale() <= static_cast<float>(tex.smallW);
+  c.g.image(small ? tex.small : tex.id, at, opacity, 0.0f,
+            dim ? static_cast<float>(logos::kDimSaturation) : 1.0f);
+  return at;
+}
+
+void logo(Ctx& c, const std::string& url, const std::string& fallback, Rect r, bool dim, float opacity) {
   logos::Texture tex;
   if (c.logos && !url.empty()) tex = c.logos->get(url);
   // A poor logo (a speck, a blank tile) gives way to the name when there is one.
   if (tex.id && tex.w > 0 && tex.h > 0 && (fallback.empty() || logos::fillsCard(tex.shape))) {
-    float s = std::min(r.w / static_cast<float>(tex.w), r.h / static_cast<float>(tex.h));
-    float w = std::round(static_cast<float>(tex.w) * s), h = std::round(static_cast<float>(tex.h) * s);
-    Rect at{std::round(r.x + (r.w - w) * 0.5f), std::round(r.y + (r.h - h) * 0.5f), w, h};
-    if (onLight && tex.tone == px::Tone::light) {
-      // White on a white cell: drawn as a dark silhouette.
-      c.g.textureAlpha(tex.id, at, theme::black(0.85f * opacity));
-      return;
-    }
-    if (onLight && tex.tone == px::Tone::mixed) {
-      // Partly white: on a small dark plate, colours kept.
-      c.g.fill({at.x - 6, at.y - 4, at.w + 12, at.h + 8}, theme::hex(theme::kBackground, opacity), 8);
-    }
-    c.g.image(tex.id, at, opacity);
+    logoTexture(c, tex, r, dim, opacity);
     return;
   }
   if (fallback.empty()) return;
   // Name in bold, shrunk to fit, like the tvOS fallback pill.
   int px = static_cast<int>(std::min(r.h * 0.55f, 30.0f));
   while (px > 12 && c.t.measure(fallback, Weight::Bold, px) > r.w - 8) --px;
-  Color col = onLight ? theme::black(0.85f * opacity) : theme::white(0.9f * opacity);
-  labelIn(c, fallback, r, Weight::Bold, px, col, Align::Center);
+  labelIn(c, fallback, r, Weight::Bold, px, theme::white(0.9f * opacity * (dim ? 0.6f : 1.0f)), Align::Center);
 }
 
 LogoState logoState(Ctx& c, const std::string& url) {
@@ -172,6 +172,18 @@ void spinner(Ctx& c, float x, float y, float radius, Color col) {
     int age = (lead - i + 8) % 8;
     c.g.fill({px, py, d, d}, col.withAlpha(col.a * (1.0f - static_cast<float>(age) * 0.11f)), d * 0.5f);
   }
+}
+
+void calmFill(Ctx& c, Rect r, float radius) {
+  c.g.fill(r, theme::hex(theme::kFocusFill), radius);
+  c.g.stroke(r, theme::white(), radius, 3);
+}
+
+Rect calmFocus(Ctx& c, Rect r, float radius, float lift) {
+  Rect up{r.x - lift, r.y - lift, r.w + 2 * lift, r.h + 2 * lift};
+  c.g.fill({up.x + 2, up.y + 8, up.w - 4, up.h}, theme::black(0.35f), radius + 2);
+  calmFill(c, up, radius + 1);
+  return up;
 }
 
 void floatingCard(Ctx& c, Rect r) {

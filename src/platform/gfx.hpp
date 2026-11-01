@@ -47,7 +47,9 @@ class Renderer {
   // Draws a texture's alpha channel tinted with `c`.
   void textureAlpha(unsigned texture, Rect r, Color c);
   // Draws a colour (RGBA, straight alpha) texture with rounded corners.
-  void image(unsigned texture, Rect r, float opacity = 1.0f, float radius = 0.0f);
+  // `saturation` under 1 takes colour out in linear light, keeping the
+  // brightness (dimmed rows' logos and badges).
+  void image(unsigned texture, Rect r, float opacity = 1.0f, float radius = 0.0f, float saturation = 1.0f);
 
   void pushClip(Rect r);
   void popClip();

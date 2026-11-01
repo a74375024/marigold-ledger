@@ -14,6 +14,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "core/logos/tune.hpp"
 #include "core/util/pixels.hpp"
 
 namespace marigold::http {
@@ -25,7 +26,13 @@ namespace marigold::logos {
 struct Texture {
   unsigned id = 0;  // 0 = not ready
   int w = 0, h = 0;
-  px::Tone tone = px::Tone::normal;  // how it reads on a light background
+  // Thin logos: a ready-made small copy for small boxes (0: none).
+  unsigned small = 0;
+  int smallW = 0, smallH = 0;
+  // A flag's field (its main colour), for its hairline.
+  uint32_t field = 0;
+  // What was done to it for the dark surfaces (logos::prepare()).
+  Treatment treatment;
   // Measured once after the decode, before trimming: whether it can stand
   // alone on a channel card (logos::fillsCard()).
   px::Shape shape;
@@ -42,8 +49,9 @@ class LogoCache {
 
   // UI thread. The texture when ready; otherwise marks it wanted. `url` may
   // list several links, one per line, tried in order until one loads (see
-  // chain()).
-  Texture get(const std::string& url);
+  // chain()). `art`: what the image is, as first asked for (logos get their
+  // dark-surface version; flags and photos are drawn as they are).
+  Texture get(const std::string& url, Art art = Art::logo);
   static std::string chain(const std::vector<std::string>& urls);
   // UI thread, once per frame, after drawing: starts the wanted loads.
   void frame();
@@ -55,8 +63,10 @@ class LogoCache {
 
   size_t textureBytes() const { return bytes_; }
   // For the channel report: "shown", "shown, low quality" (fillsCard()
-  // says no: drawn small next to the name, or the name instead), "failed",
-  // "loading", "waiting" (asked for, not started) or "not drawn yet".
+  // says no: drawn small next to the name, or the name instead), each with
+  // what was done to it ("shown, colours tuned", "shown, box removed"),
+  // "failed", "loading", "waiting" (asked for, not started) or "not drawn
+  // yet".
   std::string status(const std::string& url) const;
 
   // Largest logo kept, in pixels (fits the hero; rows draw it smaller).
@@ -66,6 +76,7 @@ class LogoCache {
   enum class State { Wanted, Loading, Ready, Failed };
   struct Entry {
     State state = State::Wanted;
+    Art art = Art::logo;
     Texture tex;
     size_t bytes = 0;
     uint64_t wantedFrame = 0;
@@ -77,7 +88,8 @@ class LogoCache {
   void start(const std::string& url);
   void fetch(const std::string& key, std::shared_ptr<Result> r, size_t index);
   void finish(const std::string& url, const std::shared_ptr<Result>& r);
-  void upload(Entry& e, const px::Image& im, px::Tone tone, const px::Shape& shape);
+  void upload(Entry& e, const Result& r);
+  void release(Entry& e);
   void evict();
   void trimDisk();
   std::string fileFor(const std::string& url) const;

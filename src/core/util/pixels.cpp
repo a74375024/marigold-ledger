@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace marigold::px {
 
@@ -93,23 +94,75 @@ Image trimTransparent(Image src, uint8_t threshold) {
   return out;
 }
 
-Tone toneOf(const Image& im) {
-  if (im.empty()) return Tone::normal;
-  size_t total = static_cast<size_t>(im.w) * static_cast<size_t>(im.h);
-  size_t visible = 0, light = 0, clear = 0;
-  for (size_t i = 0; i < total; ++i) {
-    const uint8_t* p = &im.rgba[i * 4];
-    if (p[3] < 32) ++clear;
-    if (p[3] < 128) continue;
-    ++visible;
-    uint8_t lo = std::min({p[0], p[1], p[2]}), hi = std::max({p[0], p[1], p[2]});
-    if (lo >= 200 && hi - lo <= 40) ++light;
+void bleedEdges(Image& im) {
+  if (im.empty() || im.rgba.size() < static_cast<size_t>(im.w) * static_cast<size_t>(im.h) * 4) return;
+  const size_t n = static_cast<size_t>(im.w) * static_cast<size_t>(im.h);
+  std::vector<uint8_t> coloured(n);
+  for (size_t i = 0; i < n; ++i) coloured[i] = im.rgba[i * 4 + 3] > 0;
+  for (int pass = 0; pass < 2; ++pass) {
+    std::vector<uint8_t> next = coloured;
+    for (int y = 0; y < im.h; ++y) {
+      for (int x = 0; x < im.w; ++x) {
+        size_t i = static_cast<size_t>(y) * static_cast<size_t>(im.w) + static_cast<size_t>(x);
+        if (coloured[i]) continue;
+        // The average of the coloured neighbours, the visible ones counting
+        // by how visible they are.
+        double sum[3] = {0, 0, 0}, weight = 0;
+        for (int dy = -1; dy <= 1; ++dy) {
+          for (int dx = -1; dx <= 1; ++dx) {
+            int nx = x + dx, ny = y + dy;
+            if ((dx == 0 && dy == 0) || nx < 0 || ny < 0 || nx >= im.w || ny >= im.h) continue;
+            size_t j = static_cast<size_t>(ny) * static_cast<size_t>(im.w) + static_cast<size_t>(nx);
+            if (!coloured[j]) continue;
+            double wgt = 1.0 + im.rgba[j * 4 + 3];
+            for (int c = 0; c < 3; ++c) sum[c] += im.rgba[j * 4 + static_cast<size_t>(c)] * wgt;
+            weight += wgt;
+          }
+        }
+        if (weight <= 0) continue;
+        for (int c = 0; c < 3; ++c)
+          im.rgba[i * 4 + static_cast<size_t>(c)] = static_cast<uint8_t>(std::lround(std::clamp(sum[c] / weight, 0.0, 255.0)));
+        next[i] = 1;
+      }
+    }
+    coloured.swap(next);
   }
-  // Mostly opaque: the logo brings its own background.
-  if (visible == 0 || clear * 100 < total * 8) return Tone::normal;
-  if (light * 100 >= visible * 75) return Tone::light;
-  if (light * 100 >= visible * 25) return Tone::mixed;
-  return Tone::normal;
+}
+
+double strokeWidth(const Image& im) {
+  if (im.empty() || im.rgba.size() < static_cast<size_t>(im.w) * static_cast<size_t>(im.h) * 4) return 0;
+  auto solid = [&im](int x, int y) {
+    if (x < 0 || y < 0 || x >= im.w || y >= im.h) return false;
+    return im.rgba[(static_cast<size_t>(y) * static_cast<size_t>(im.w) + static_cast<size_t>(x)) * 4 + 3] >= 128;
+  };
+  size_t area = 0, outline = 0;
+  for (int y = 0; y < im.h; ++y) {
+    for (int x = 0; x < im.w; ++x) {
+      if (!solid(x, y)) continue;
+      ++area;
+      if (!solid(x - 1, y) || !solid(x + 1, y) || !solid(x, y - 1) || !solid(x, y + 1)) ++outline;
+    }
+  }
+  return outline ? 2.0 * static_cast<double>(area) / static_cast<double>(outline) : 0.0;
+}
+
+void thicken(Image& im) {
+  if (im.empty() || im.rgba.size() < static_cast<size_t>(im.w) * static_cast<size_t>(im.h) * 4) return;
+  Image src = im;
+  auto at = [&src](int x, int y) {
+    return &src.rgba[(static_cast<size_t>(y) * static_cast<size_t>(src.w) + static_cast<size_t>(x)) * 4];
+  };
+  for (int y = 0; y < im.h; ++y) {
+    for (int x = 0; x < im.w; ++x) {
+      // The most visible of this pixel and the ones left of and above it.
+      const uint8_t* best = at(x, y);
+      if (x > 0 && at(x - 1, y)[3] > best[3]) best = at(x - 1, y);
+      if (y > 0 && at(x, y - 1)[3] > best[3]) best = at(x, y - 1);
+      if (x > 0 && y > 0 && at(x - 1, y - 1)[3] > best[3]) best = at(x - 1, y - 1);
+      uint8_t* o = &im.rgba[(static_cast<size_t>(y) * static_cast<size_t>(im.w) + static_cast<size_t>(x)) * 4];
+      if (best != at(x, y)) std::copy(best, best + 4, o);
+    }
+  }
 }
 
 Shape shapeOf(const Image& im, uint8_t threshold) {

@@ -88,7 +88,7 @@ class EventDetail : public Screen {
     ui::paragraph(c, t->heroTitle.empty() ? t->title : t->heroTitle, tx, y, card.x + card.w - 60 - tx, Weight::Bold, 44,
                   theme::white(), 2, 1.15f);
     y += 120;
-    float sx = x + events_ui::pill(c, *t, x, y + 4, false);
+    float sx = x + events_ui::pill(c, *t, x, y + 4);
     if (sx > x) sx += 12;
     std::string summary = t->heroStatus.empty() ? t->status : t->heroStatus;
     if (!t->venue.empty()) summary += " \xc2\xb7 " + t->venue;

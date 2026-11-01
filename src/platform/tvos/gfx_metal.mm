@@ -72,8 +72,15 @@ fragment float4 fmain(VOut in [[stage_in]], constant FUniforms& u [[buffer(0)]],
     cover *= clamp(0.5 + inner / u.pixel, 0.0, 1.0);
   }
   if (u.mode == 2) {
+    // An image: color.r is its saturation (1 = as is).
     float4 t = tex.sample(s, in.uv);
-    return float4(t.rgb, t.a * u.color.a * cover);
+    float3 rgb = t.rgb;
+    if (u.color.r < 1.0) {
+      float3 lin = pow(rgb, float3(2.2));
+      float y = dot(lin, float3(0.213, 0.715, 0.072));
+      rgb = pow(mix(float3(y), lin, u.color.r), float3(1.0 / 2.2));
+    }
+    return float4(rgb, t.a * u.color.a * cover);
   }
   return float4(u.color.rgb, u.color.a * cover);
 }
@@ -268,8 +275,8 @@ void Renderer::textureAlpha(unsigned texture, Rect r, Color c) {
   if (texture) draw(r, c, 0.0f, 0.0f, 1, texture);
 }
 
-void Renderer::image(unsigned texture, Rect r, float opacity, float radius) {
-  if (texture) draw(r, Color{1, 1, 1, opacity}, radius, 0.0f, 2, texture);
+void Renderer::image(unsigned texture, Rect r, float opacity, float radius, float saturation) {
+  if (texture) draw(r, Color{std::clamp(saturation, 0.0f, 1.0f), 1, 1, opacity}, radius, 0.0f, 2, texture);
 }
 
 void Renderer::hole(Rect r) {

@@ -14,11 +14,14 @@ namespace marigold::app::events_ui {
 constexpr float kTileW = 360;
 constexpr float kTileH = 156;
 
-// A team badge: the logo when it has loaded, else a colour circle with the
-// abbreviation. `size` is the diameter.
-void badge(ui::Ctx& c, const EventSide& side, float x, float y, float size, bool focused, float opacity = 1);
-// The status pill (LIVE, DELAYED, Final...). Returns its width (0 = none).
-float pill(ui::Ctx& c, const EventTile& t, float x, float y, bool focused);
+// A team badge: the logo when it has loaded (its dark-surface version,
+// nothing behind it), else a disc in the team colour with the abbreviation.
+// `size` is the diameter. `faded`: on a dimmed tile or row, the badge loses
+// its colour but keeps its brightness. Focus never changes a badge.
+void badge(ui::Ctx& c, const EventSide& side, float x, float y, float size, bool faded = false, float opacity = 1);
+// The status pill (LIVE, DELAYED, Final...), on a dark tile or row (focused
+// ones included). Returns its width (0 = none).
+float pill(ui::Ctx& c, const EventTile& t, float x, float y);
 // A side's mark `size` tall, as the player's game banner draws it: the
 // country flag (a doubles pair's two), the country code until it loads,
 // else the badge. Returns the width used.
@@ -28,6 +31,7 @@ float mark(ui::Ctx& c, const EventSide& side, float x, float y, float size);
 float clockPill(ui::Ctx& c, sports::banner::Chip chip, const std::string& text, float x, float y);
 // `mixed`: a row of several sports (Live now, Your teams), where the top
 // line names the sport; in a sport's own row it gives the competition only.
+// Focused: lifted, with the calm focus (ui::calmFill()).
 void tile(ui::Ctx& c, const EventTile& t, ui::Rect r, bool focused, bool mixed);
 // The focused game's two badges, big and faded, over a blue glow (top
 // right). Only the glow when `badges` is off (the corner preview is there).

@@ -59,8 +59,15 @@ void main() {
     cover *= clamp(0.5 + inner / uPixel, 0.0, 1.0);
   }
   if (uMode == 2) {
+    // An image: uColor.r is its saturation (1 = as is).
     vec4 t = texture2D(uTexture, vUv);
-    gl_FragColor = vec4(t.rgb, t.a * uColor.a * cover);
+    vec3 rgb = t.rgb;
+    if (uColor.r < 1.0) {
+      vec3 lin = pow(rgb, vec3(2.2));
+      float y = dot(lin, vec3(0.213, 0.715, 0.072));
+      rgb = pow(mix(vec3(y), lin, uColor.r), vec3(1.0 / 2.2));
+    }
+    gl_FragColor = vec4(rgb, t.a * uColor.a * cover);
     return;
   }
   gl_FragColor = vec4(uColor.rgb, uColor.a * cover);
@@ -191,8 +198,8 @@ void Renderer::textureAlpha(unsigned texture, Rect r, Color c) {
   if (texture) draw(r, c, 0.0f, 0.0f, 1, texture);
 }
 
-void Renderer::image(unsigned texture, Rect r, float opacity, float radius) {
-  if (texture) draw(r, Color{1, 1, 1, opacity}, radius, 0.0f, 2, texture);
+void Renderer::image(unsigned texture, Rect r, float opacity, float radius, float saturation) {
+  if (texture) draw(r, Color{std::clamp(saturation, 0.0f, 1.0f), 1, 1, opacity}, radius, 0.0f, 2, texture);
 }
 
 void Renderer::hole(Rect r) {

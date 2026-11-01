@@ -203,7 +203,7 @@ class CameraPanelScreen : public Screen {
       Rect b{r.x + 14, r.y + (r.h - size) * 0.5f, size, size};
       c.g.fill(b, theme::hex(color), size * 0.5f);
       logos::Texture tex;
-      if (c.logos && p.headshot) tex = c.logos->get(*p.headshot);
+      if (c.logos && p.headshot) tex = c.logos->get(*p.headshot, logos::Art::photo);  // a photo: as it is
       if (tex.id) {
         c.g.image(tex.id, {b.x + 3, b.y + 3, b.w - 6, b.h - 6}, 1.0f, (size - 6) * 0.5f);
       } else {

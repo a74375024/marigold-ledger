@@ -316,15 +316,19 @@ class EventGuide : public Screen {
       bool f = static_cast<int>(i) == focus_ && alpha >= 1;
       Rect r{x - 14, y, kRailW - 72, kRowH - 6};
       c.hit(r, kHitGame + static_cast<int>(i));
-      if (f) c.g.fill(r, theme::white(), theme::kRowRadius);
-      Color ink = f ? theme::black() : theme::white(alpha * (t.finished ? 0.6f : 1));
+      // Focused: the calm focus, so the badges look the same focused or not.
+      if (f) ui::calmFocus(c, r, theme::kRowRadius);
+      Color ink = theme::white(f ? 1.0f : alpha * (t.finished ? 0.6f : 1));
+      // A dimmed row (the rail inactive, a finished game): its badges lose
+      // their colour with the text.
+      bool faded = !f && ink.a < 1;
       float sx = r.x + 14;
       // The teams, never a score.
       if (t.sides.size() == 2) {
         for (int s = 0; s < 2; ++s) {
           const EventSide& side = t.sides[static_cast<size_t>(s)];
           float ly = r.y + 8 + static_cast<float>(s) * 38;
-          events_ui::badge(c, side, sx, ly + 2, 30, f);
+          events_ui::badge(c, side, sx, ly + 2, 30, faded);
           ui::label(c, (side.rank.empty() ? "" : side.rank + " ") + side.name, sx + 40, ly + 4, Weight::Medium, 20, ink, 250);
         }
       } else {
@@ -332,14 +336,14 @@ class EventGuide : public Screen {
         ui::label(c, t.subtitle, sx, r.y + 50, Weight::Regular, 17, ink.withAlpha(ink.a * 0.7f), 290);
       }
       float ix = r.x + 322;
-      float px = ix + events_ui::pill(c, t, ix, r.y + 14, f);
+      float px = ix + events_ui::pill(c, t, ix, r.y + 14);
       if (px > ix) px += 10;
       ui::label(c, t.status, px, r.y + 14, Weight::Medium, 18, ink, r.x + r.w - 14 - px);
       std::string where = t.channelName.empty() ? t.footer : t.channelName;
       float ww = ui::label(c, where, ix, r.y + 50, Weight::Regular, 17, ink.withAlpha(ink.a * 0.7f), r.w - 336);
       // The game on screen: WATCHING after its channel.
       if (t.id == watching && ww < r.w - 336 - 110)
-        ui::label(c, "WATCHING", ix + ww + 10, r.y + 51, Weight::Bold, 15, f ? theme::black(0.7f) : theme::hex(theme::kWatching));
+        ui::label(c, "WATCHING", ix + ww + 10, r.y + 51, Weight::Bold, 15, theme::hex(theme::kWatching));
     }
     c.g.popClip();
   }

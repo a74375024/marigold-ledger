@@ -874,7 +874,7 @@ class PlayerScreen : public Screen {
     // Logo, number and name, LIVE and the show.
     Rect logo{x, top + 8, 150, 64};
     if (g && !g->logoUrl.empty()) {
-      c.g.fill(logo, theme::hex(0x14161B, 0.85f), 12);
+      // Straight on the banner's card, like every logo: no plate.
       ui::logo(c, g->logoUrl, g->name, {logo.x + 10, logo.y + 6, logo.w - 20, logo.h - 12});
     } else {
       c.g.fill(logo, theme::hex(0x14161B, 0.85f), 12);
@@ -980,7 +980,6 @@ class PlayerScreen : public Screen {
     float rx = right - rowW;
     if (logo) {
       Rect r{rx, top, logoW, logoH};
-      c.g.fill(r, theme::hex(0x14161B, 0.85f), 12);
       ui::logo(c, logoUrl, "", {r.x + 8, r.y + 5, r.w - 16, r.h - 10});
       rx += logoW + gap;
     }

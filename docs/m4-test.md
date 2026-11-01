@@ -834,3 +834,26 @@ Opening Live Events with a large provider (tens of thousands of channels, big ev
 | Long rows | Up/Down into Time not listed or More events (thousands of tiles) | The focus moves at once |
 | Timing log | Keep Live Events open a few minutes, then send a log | At most one "events timing …" line a minute (boards, perMin, boardMax, tiles, rebuilds, rebuildMax, uiMax) and one "events board frames=… frameMax=… refreshes=… refreshMax=…" line; counts and milliseconds only, no titles or links |
 | Account change | Add or remove a provider while Live Events is loading | The board follows the new list (never stuck on the old one) |
+
+## Logos and focus (Build 117)
+
+Every logo sits straight on its cell: no plates, chips or boxes behind it, anywhere. Each logo is prepared once after it loads, on a worker, in one version made for the app's dark surfaces: colours that would fade into the cells get just enough lightness to stand out, with their hue kept (navy turns a clear mid blue, black off-white, purple lilac); colours that already show are left alone. A logo that comes in its own plain white or black box loses the box. Where logos appear, focus no longer turns a cell white: the cell lifts a little, takes a slightly lighter fill and a 3 px white outline, and its text stays light. So a logo never changes when the focus or the pointer moves. Buttons, menus, pills, settings rows and the guide's show cells keep the white focus.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Dark logos | My Lineup with a black, navy or purple logo (e.g. a news or kids' channel), not focused | The logo reads clearly on the dark cell, in a lighter shade of its own colour; white, red, yellow, green and grey logos look as before |
+| Guide focus | Up/Down through the guide | The focused row's channel cell lifts a little with a white outline and a dark fill; its logo, name and number look exactly as unfocused; the focused show cell is white as before |
+| Pointer sweep (LG) | Sweep the pointer slowly down the guide's channel column and back | Only the outline moves; no logo flickers, flips to black or gets a box as the pointer passes |
+| In-player guide | Left in the player, Up/Down | The focused channel cell keeps its fill and gets the white outline; no grey fill; every logo (black and navy included) readable |
+| Search | Search a channel, a show, a team and a game; move through the results | Focused results lift with the outline and light text; the focused result's logo is the same as in the corner card; "OK: Watch" readable |
+| Live Events | Move across the tiles | The focused tile lifts with the outline and stays dark; badges and text keep their look; LIVE stays red |
+| Games rail, My Sports | The games rail in the player; My Sports › teams | Same calm focus; a picked team's green ring shows inside the white outline |
+| Own boxes | A channel whose logo is a word on a plain white or black rectangle | The rectangle is gone: the word sits on the cell like the others, insides of letters see-through, edges smooth; a logo whose box is coloured (a blue square with a letter) keeps it |
+| Team badges | Live Events tiles with team logos and with colour discs | Dark crests in a lighter shade; no ring or plate behind a logo; a dark disc shows a light edge ring; disc letters black or white, whichever is clearer (black on orange) |
+| Flags | Tennis tiles, golf leaders, the game banner of a tennis match | Flags in their own shape (wider than tall), never squeezed square; a dark or red flag on a tile has a faint light edge |
+| Dimmed | A not-watchable tile; the games rail while its column is open; a finished game in the rail | Its logos and badges go grey with the text but stay as bright; focused, the colour comes back |
+| Thin logos | A channel with a thin outline logo, in the guide's small slot beside the name and in Search | Lines unbroken and even, no dark rim round the edges, no shimmer while scrolling |
+| Banners | Change channel; watch a game | The channel logo sits on the banner card with no plate behind it |
+| Night viewing | In a dark room, the guide and Live Events | Nothing glows: no white boxes, no white focus over logos; the outline is easy to follow from the sofa |
+| Restart | Restart the app | The same logos, prepared again from the disk cache, look the same |
+| Channel report | Export it | logo_status adds what was done: "shown, colours tuned", "shown, box removed", "shown, box removed, colours tuned" ("shown" when nothing was needed) |

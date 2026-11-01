@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <unordered_map>
 #include <vector>
 
+#include "core/logos/tune.hpp"
 #include "core/sports/game_banner.hpp"
 #include "platform/icons.hpp"
 #include "platform/logo_cache.hpp"
@@ -21,11 +23,41 @@ namespace theme = ui::theme;
 constexpr uint32_t kDelayed = 0xE0A100;
 constexpr uint32_t kPostponed = 0xE07A1F;
 constexpr uint32_t kPlayerLive = 0xE5372B;  // the player banner's LIVE
+// What a tile's marks sit on: the tile (white 9%, or 6% ended or not
+// watchable, over the background) or the calm focus; the player's card.
+constexpr uint32_t kTileSurface = 0x27292D, kTileDimSurface = 0x202226, kCardSurface = 0x15171C;
 
-bool isLight(uint32_t rgb) {
-  float r = static_cast<float>((rgb >> 16) & 0xff), g = static_cast<float>((rgb >> 8) & 0xff),
-        b = static_cast<float>(rgb & 0xff);
-  return 0.299f * r + 0.587f * g + 0.114f * b > 170.0f;
+// How a tile's marks are drawn: what they sit on (flags' hairlines), and
+// faded (not watchable, an inactive rail: no colour, brightness kept).
+struct Look {
+  uint32_t surface = kTileSurface;
+  bool faded = false;
+};
+
+// The fallback disc's colours, worked out once per team colour pair.
+const logos::Disc& discFor(uint32_t colour, uint32_t alt, bool faded) {
+  static std::unordered_map<uint64_t, logos::Disc> made;
+  uint64_t key = static_cast<uint64_t>(colour & 0xFFFFFF) << 25 | static_cast<uint64_t>(alt & 0xFFFFFF) << 1 | (faded ? 1 : 0);
+  auto it = made.find(key);
+  if (it != made.end()) return it->second;
+  if (made.size() > 512) made.clear();
+  logos::Disc d = logos::disc(colour, alt);
+  if (faded) {
+    d.fill = logos::desaturate(d.fill);
+    d.ring = logos::desaturate(d.ring);
+  }
+  return made.emplace(key, d).first->second;
+}
+
+// A flag at its own aspect ratio, centred in `box`, never recoloured; a 1 px
+// hairline on its own edge only where its field would blend into the
+// surface.
+void flag(ui::Ctx& c, const logos::Texture& tex, Rect box, const Look& look) {
+  float w = 0, h = 0;
+  logos::flagSize(tex.w, tex.h, std::min(box.w, box.h), w, h);
+  Rect at{std::round(box.x + (box.w - w) * 0.5f), std::round(box.y + (box.h - h) * 0.5f), std::round(w), std::round(h)};
+  c.g.image(tex.id, at, 1.0f, 1.0f, look.faded ? static_cast<float>(logos::kDimSaturation) : 1.0f);
+  if (logos::flagHairline(tex.field, look.surface)) c.g.stroke(at, theme::white(0.6f), 1.0f, 1.0f);
 }
 
 float smallPill(ui::Ctx& c, const std::string& text, float x, float y, Color fill, Color fg, bool outline,
@@ -66,36 +98,36 @@ void bases(ui::Ctx& c, const std::vector<bool>& on, float x, float y, Color ink)
   base(c, x + 23.5f, y + 15.5f, kHalf, on[0], ink);
 }
 
-void countryChip(ui::Ctx& c, const std::string& code, float x, float y, bool focused) {
+void countryChip(ui::Ctx& c, const std::string& code, float x, float y) {
   Rect r{x, y, 32, 22};
-  c.g.fill(r, focused ? theme::black(0.12f) : theme::white(0.16f), 4);
-  ui::labelIn(c, code, r, Weight::Bold, 13, focused ? theme::black() : theme::white(), Align::Center);
+  c.g.fill(r, theme::white(0.16f), 4);
+  ui::labelIn(c, code, r, Weight::Bold, 13, theme::white(), Align::Center);
 }
 
 // A tennis player's country flag, or a doubles pair's two, in a row 40 tall
-// at (x, y). The images are square with the flag across the middle, so the
-// square is drawn whole. The country chip (or blank flags) until they load.
-// Returns the width used.
-float flags(ui::Ctx& c, const EventSide& s, float x, float y, bool focused) {
+// at (x, y), each at its own shape in a `size` square (the decode trims the
+// clear bands of the square images). The country chip (or blank flags)
+// until they load. Returns the width used.
+float flags(ui::Ctx& c, const EventSide& s, float x, float y, const Look& look) {
   bool pair = s.flags.size() >= 2;
   float size = pair ? 24.0f : 38.0f, step = size + 2;
   size_t n = pair ? 2 : 1;
   bool loaded = true;
   std::vector<logos::Texture> tex(n);
   for (size_t i = 0; i < n; ++i) {
-    if (c.logos) tex[i] = c.logos->get(s.flags[i]);
+    if (c.logos) tex[i] = c.logos->get(s.flags[i], logos::Art::flag);
     loaded = loaded && tex[i].id;
   }
   if (!loaded) {
     if (!pair && !s.country.empty()) {
-      countryChip(c, s.country, x + 3, y + 9, focused);
+      countryChip(c, s.country, x + 3, y + 9);
     } else {
-      Color blank = focused ? theme::black(0.1f) : theme::white(0.16f);
-      for (size_t i = 0; i < n; ++i) c.g.fill({x + step * static_cast<float>(i) + 1, y + 12.5f, size - 2, size * 0.64f}, blank, 2);
+      for (size_t i = 0; i < n; ++i)
+        c.g.fill({x + step * static_cast<float>(i) + 1, y + 12.5f, size - 2, size * 0.64f}, theme::white(0.16f), 2);
     }
     return pair ? step * 2 - 2 : size - 2;
   }
-  for (size_t i = 0; i < n; ++i) c.g.image(tex[i].id, {x + step * static_cast<float>(i), y + 20 - size * 0.5f, size, size});
+  for (size_t i = 0; i < n; ++i) flag(c, tex[i], {x + step * static_cast<float>(i), y + 20 - size * 0.5f, size, size}, look);
   return pair ? step * 2 - 2 : size - 2;
 }
 
@@ -107,17 +139,17 @@ constexpr float kMarkW = 16;  // the winner's caret or possession, after the sco
 // A team (or player) row, 34 tall: badge, rank, name, and the score at the
 // right; tennis and volleyball sets in columns. `dim`: this side trails
 // (live) or lost (final).
-void sideLine(ui::Ctx& c, const EventSide& s, Rect r, bool focused, float alpha, bool dim, bool winner, bool live) {
-  Color ink = focused ? theme::black(alpha) : theme::white(alpha);
+void sideLine(ui::Ctx& c, const EventSide& s, Rect r, const Look& look, float alpha, bool dim, bool winner, bool live) {
+  Color ink = theme::white(alpha);
   Color soft = ink.withAlpha(ink.a * (dim ? 0.5f : 1.0f));
   float x = r.x;
   if (!s.flags.empty()) {
-    x += flags(c, s, x, r.y - 3, focused) + 10;
+    x += flags(c, s, x, r.y - 3, look) + 10;
   } else if (!s.country.empty()) {
-    countryChip(c, s.country, x, r.y + 6, focused);
+    countryChip(c, s.country, x, r.y + 6);
     x += 42;
   } else {
-    badge(c, s, x, r.y + 3, 28, focused);
+    badge(c, s, x, r.y + 3, 28, look.faded);
     x += 38;
   }
   if (!s.rank.empty()) x += ui::label(c, s.rank, x, r.y + 8, Weight::Bold, 15, ink.withAlpha(ink.a * 0.55f)) + 6;
@@ -173,15 +205,15 @@ void sideLine(ui::Ctx& c, const EventSide& s, Rect r, bool focused, float alpha,
 
 // A golf leaderboard line, 34 tall: position, flag, name, holes played and
 // the score to par (the second line's dimmed).
-void leaderLine(ui::Ctx& c, const EventLeader& l, Rect r, bool focused, float alpha, bool dim) {
-  Color ink = focused ? theme::black(alpha) : theme::white(alpha);
+void leaderLine(ui::Ctx& c, const EventLeader& l, Rect r, const Look& look, float alpha, bool dim) {
+  Color ink = theme::white(alpha);
   float x = r.x;
   ui::label(c, l.pos, x, r.y + 8, Weight::Bold, 15, ink.withAlpha(ink.a * 0.55f), 24);
   x += 26;
   logos::Texture tex;
-  if (c.logos && !l.flagUrl.empty()) tex = c.logos->get(l.flagUrl);
-  if (tex.id) c.g.image(tex.id, {x, r.y + 3, 28, 28});  // square, the flag across its middle
-  else c.g.fill({x + 1, r.y + 8, 26, 17}, focused ? theme::black(0.1f) : theme::white(0.16f), 2);
+  if (c.logos && !l.flagUrl.empty()) tex = c.logos->get(l.flagUrl, logos::Art::flag);
+  if (tex.id) flag(c, tex, {x, r.y + 3, 28, 28}, look);
+  else c.g.fill({x + 1, r.y + 8, 26, 17}, theme::white(0.16f), 2);
   x += 38;
   float scoreW = ui::textWidth(c, l.score, Weight::Bold, 25);
   float right = r.x + r.w - kMarkW;
@@ -195,9 +227,9 @@ void leaderLine(ui::Ctx& c, const EventLeader& l, Rect r, bool focused, float al
 // A card's or race weekend's parts as a track: each part a short bar with
 // its name under it. Done parts dim, the one on now filled (red while
 // live), the rest empty; the current one's name bold.
-void timeline(ui::Ctx& c, const std::vector<EventPart>& parts, Rect r, bool focused, float alpha, bool live) {
-  Color ink = focused ? theme::black(alpha) : theme::white(alpha);
-  Color red = focused ? theme::hex(0xD32F2F, alpha) : theme::hex(theme::kWatching, alpha);
+void timeline(ui::Ctx& c, const std::vector<EventPart>& parts, Rect r, float alpha, bool live) {
+  Color ink = theme::white(alpha);
+  Color red = theme::hex(theme::kWatching, alpha);
   constexpr float kGap = 6;
   float n = static_cast<float>(parts.size());
   float w = (r.w - kGap * (n - 1)) / n;
@@ -218,39 +250,41 @@ void timeline(ui::Ctx& c, const std::vector<EventPart>& parts, Rect r, bool focu
 
 }  // namespace
 
-void badge(ui::Ctx& c, const EventSide& side, float x, float y, float size, bool focused, float opacity) {
+void badge(ui::Ctx& c, const EventSide& side, float x, float y, float size, bool faded, float opacity) {
   logos::Texture tex;
   if (c.logos && !side.logoUrl.empty()) tex = c.logos->get(side.logoUrl);
   if (tex.id) {
-    ui::logo(c, side.logoUrl, "", {x, y, size, size}, focused, opacity);
+    // The team's logo in its dark-surface version, with nothing behind it.
+    float in = std::round(size * 0.07f);
+    ui::logoTexture(c, tex, {x + in, y + in, size - 2 * in, size - 2 * in}, faded, opacity);
     return;
   }
   Rect r{x, y, size, size};
   if (side.plain) {
     // A person: initials in a plain circle, no colours of a team.
-    Color ink = focused ? theme::black() : theme::white();
     Rect in{x + 2, y + 2, size - 4, size - 4};
-    c.g.fill(in, ink.withAlpha((focused ? 0.1f : 0.16f) * opacity), in.w * 0.5f);
-    ui::labelIn(c, side.abbr, in, Weight::Bold, static_cast<int>(size * 0.38f), ink.withAlpha(0.85f * opacity), Align::Center);
+    c.g.fill(in, theme::white(0.16f * opacity), in.w * 0.5f);
+    ui::labelIn(c, side.abbr, in, Weight::Bold, static_cast<int>(size * 0.38f), theme::white(0.85f * opacity), Align::Center);
     return;
   }
-  c.g.fill(r, theme::hex(side.color, opacity), size * 0.5f);
-  float ring = std::max(2.0f, size * 0.06f);
-  c.g.stroke(r, theme::hex(side.alt, opacity), size * 0.5f, ring);
+  // The team colour; its own edge ring where the fill alone would not show.
+  const logos::Disc& d = discFor(side.color, side.alt, faded);
+  c.g.fill(r, theme::hex(d.fill, opacity), size * 0.5f);
+  float ring = std::max(2.0f, size * 0.08f);
+  c.g.stroke(r, theme::hex(d.ring, opacity), size * 0.5f, ring);
   int px = static_cast<int>(size * (side.abbr.size() > 3 ? 0.28f : 0.34f));
-  ui::labelIn(c, side.abbr, r, Weight::Bold, px,
-              (isLight(side.color) ? theme::black() : theme::white()).withAlpha(opacity), Align::Center);
+  ui::labelIn(c, side.abbr, r, Weight::Bold, px, theme::hex(d.letters, opacity), Align::Center);
 }
 
-float pill(ui::Ctx& c, const EventTile& t, float x, float y, bool focused) {
-  Color ink = focused ? theme::black() : theme::white();
+float pill(ui::Ctx& c, const EventTile& t, float x, float y) {
+  Color ink = theme::white();
   Color outline = ink.withAlpha(0.6f);
   switch (t.pill) {
     case EventTile::Pill::None: return 0;
     case EventTile::Pill::Live: return smallPill(c, "LIVE", x, y, theme::hex(theme::kWatching), theme::white(), false);
     case EventTile::Pill::LiveOutline:
       return smallPill(c, "LIVE", x, y, theme::hex(theme::kWatching, 0.8f),
-                       focused ? theme::hex(theme::kWatching) : theme::hex(0xF4B4AE), true);
+                       theme::hex(0xF4B4AE), true);
     case EventTile::Pill::OnNow: return smallPill(c, "ON NOW", x, y, outline, ink, true);
     case EventTile::Pill::Delayed:
       return smallPill(c, t.pillText.empty() ? "DELAYED" : t.pillText, x, y, theme::hex(kDelayed), theme::black(), false);
@@ -267,21 +301,21 @@ float pill(ui::Ctx& c, const EventTile& t, float x, float y, bool focused) {
 
 float mark(ui::Ctx& c, const EventSide& s, float x, float y, float size) {
   if (!s.flags.empty()) {
-    // The images are square with the flag across the middle: drawn whole.
+    // Each flag at its own shape in its square.
     bool pair = s.flags.size() >= 2;
     float each = pair ? std::round(size * 0.62f) : size, gap = pair ? 4.0f : 0.0f;
     size_t n = pair ? 2 : 1;
     std::vector<logos::Texture> tex(n);
     bool loaded = true;
     for (size_t i = 0; i < n; ++i) {
-      if (c.logos) tex[i] = c.logos->get(s.flags[i]);
+      if (c.logos) tex[i] = c.logos->get(s.flags[i], logos::Art::flag);
       loaded = loaded && tex[i].id;
     }
     float fy = y + (size - each) * 0.5f;
     for (size_t i = 0; i < n; ++i) {
       float fx = x + (each + gap) * static_cast<float>(i);
       if (loaded) {
-        c.g.image(tex[i].id, {fx, fy, each, each});
+        flag(c, tex[i], {fx, fy, each, each}, Look{kCardSurface, false});
       } else {
         Rect blank{fx + 1, fy + each * 0.17f, each - 2, each * 0.66f};
         c.g.fill(blank, theme::white(0.16f), 4);
@@ -297,7 +331,7 @@ float mark(ui::Ctx& c, const EventSide& s, float x, float y, float size) {
     ui::labelIn(c, s.country, r, Weight::Bold, static_cast<int>(size * 0.3f), theme::white(), Align::Center);
     return size;
   }
-  badge(c, s, x, y, size, false);
+  badge(c, s, x, y, size);
   return size;
 }
 
@@ -314,24 +348,26 @@ float clockPill(ui::Ctx& c, sports::banner::Chip chip, const std::string& text, 
 
 void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool mixed) {
   if (focused) {
-    // Scale 1.04 with a shadow.
+    // Scale 1.04 with a shadow, and the calm focus: the badges look the same
+    // focused or not, and the text stays light.
     float dw = r.w * 0.02f, dh = r.h * 0.02f;
     c.g.fill({r.x - dw + 4, r.y - dh + 12, r.w + 2 * dw - 8, r.h + 2 * dh}, theme::black(0.35f), 20);
     r = {r.x - dw, r.y - dh, r.w + 2 * dw, r.h + 2 * dh};
+    ui::calmFill(c, r, 16);
+  } else {
+    c.g.fill(r, theme::white(t.watchable && !t.finished ? 0.09f : 0.06f), 16);
   }
   float alpha = t.watchable || focused ? 1.0f : 0.6f;
-  Color fill = focused ? theme::white() : theme::white(t.watchable && !t.finished ? 0.09f : 0.06f);
-  c.g.fill(r, fill, 16);
-  Color ink = focused ? theme::black(alpha) : theme::white(alpha);
+  // Not watchable: the badges lose their colour along with the text.
+  Look look{focused ? theme::kFocusFill : t.watchable && !t.finished ? kTileSurface : kTileDimSurface, alpha < 1};
+  Color ink = theme::white(alpha);
   float x = r.x + 16, w = r.w - 32;
   bool live = t.pill == EventTile::Pill::Live || t.pill == EventTile::Pill::LiveOutline;
 
   // Top line: the sport's icon (red while live: it is the live mark), the
   // state, and at the right the competition, an alert and the star.
   float ty = r.y + 14;
-  Color red = t.pill == EventTile::Pill::LiveOutline ? theme::hex(theme::kWatching, 0.6f)
-              : focused                            ? theme::hex(0xD32F2F)
-                                                   : theme::hex(theme::kWatching);
+  Color red = theme::hex(theme::kWatching, t.pill == EventTile::Pill::LiveOutline ? 0.6f : 1.0f);
   Color mark = live ? red : ink;
   Rect ib{x, ty, 21, 21};
   if (t.sport.empty() && !t.highSchool) {
@@ -352,7 +388,7 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool mixed) {
   } else if (t.pill == EventTile::Pill::Final) {
     px += ui::label(c, t.pillText.empty() ? std::string("Final") : t.pillText, px, ty + 1, Weight::Bold, kStatusPx, ink);
   } else {
-    float pw = pill(c, t, px, ty - 2, focused);
+    float pw = pill(c, t, px, ty - 2);
     if (pw > 0) px += pw + 8;
     if (!t.status.empty()) {
       bool bold = t.statusBold || pw == 0;
@@ -360,7 +396,7 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool mixed) {
                       ink.withAlpha(ink.a * (bold ? 1.0f : 0.7f)), x + w - px);
     }
     if (!t.statusExtra.empty()) {
-      Color extra = t.soon ? (focused ? theme::hex(0x9A5B00) : theme::hex(kDelayed)) : ink.withAlpha(ink.a * 0.7f);
+      Color extra = t.soon ? theme::hex(kDelayed) : ink.withAlpha(ink.a * 0.7f);
       std::string made;
       const std::string& line = t.textMade ? t.extraLine : (made = " \xc2\xb7 " + t.statusExtra);
       px += ui::label(c, line, px, ty + 1, t.soon ? Weight::Bold : Weight::Regular, kStatusPx, extra, x + w - px);
@@ -425,12 +461,12 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool mixed) {
       case Part::Side0:
       case Part::Side1: {
         const EventSide& s = t.sides[it.part == Part::Side0 ? 0 : 1];
-        sideLine(c, s, row, focused, alpha, s.trails && (live || t.finished), t.finished && s.leads, live);
+        sideLine(c, s, row, look, alpha, s.trails && (live || t.finished), t.finished && s.leads, live);
         break;
       }
       case Part::Leader0:
       case Part::Leader1:
-        leaderLine(c, t.leaders[it.part == Part::Leader0 ? 0 : 1], row, focused, alpha, it.part == Part::Leader1);
+        leaderLine(c, t.leaders[it.part == Part::Leader0 ? 0 : 1], row, look, alpha, it.part == Part::Leader1);
         break;
       case Part::Title0:
       case Part::Title1:
@@ -451,7 +487,7 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool mixed) {
         break;
       }
       case Part::Timeline:
-        timeline(c, t.parts, row, focused, alpha, live);
+        timeline(c, t.parts, row, alpha, live);
         break;
       case Part::Detail: {
         // The game's own detail: runners, the chase, down and distance,
@@ -462,8 +498,7 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool mixed) {
           fx += 30 + 8;
         }
         const std::string& line = !t.situation.empty() ? t.situation : t.detail;
-        Color sc = t.redZone && !t.situation.empty() ? (focused ? theme::hex(0xBF1A26) : theme::hex(0xFF6B61))
-                                                     : ink.withAlpha(ink.a * 0.75f);
+        Color sc = t.redZone && !t.situation.empty() ? theme::hex(0xFF6B61) : ink.withAlpha(ink.a * 0.75f);
         if (!line.empty()) ui::label(c, line, fx, y + 2, Weight::Bold, 15, sc, x + w - fx);
         break;
       }
@@ -475,9 +510,8 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool mixed) {
   if (t.progress >= 0) {
     c.g.pushClip(r);
     Rect strip{r.x, r.y + r.h - 5, r.w, 5};
-    c.g.fill(strip, focused ? theme::black(0.12f) : theme::white(0.15f));
-    c.g.fill({r.x, strip.y, r.w * static_cast<float>(std::clamp(t.progress, 0.0, 1.0)), 5},
-             focused ? theme::black() : theme::white(0.75f));
+    c.g.fill(strip, theme::white(0.15f));
+    c.g.fill({r.x, strip.y, r.w * static_cast<float>(std::clamp(t.progress, 0.0, 1.0)), 5}, theme::white(0.75f));
     c.g.popClip();
   }
 }
@@ -492,7 +526,7 @@ void backdrop(ui::Ctx& c, const EventTile& t, bool badges) {
   if (!badges || t.sides.size() != 2) return;
   EventSide a = t.sides[0], b = t.sides[1];
   float size = 230, y = 40, x = gfx::kLayoutWidth - 160 - size * 2 - 120;
-  badge(c, a, x, y, size, false, 0.4f);
+  badge(c, a, x, y, size, false, 0.4f);  // decorative: faded, not dimmed
   ui::label(c, "VS", x + size + 18, y + size * 0.5f - 28, Weight::Bold, 44, theme::white(0.3f));
   badge(c, b, x + size + 120, y, size, false, 0.4f);
 }

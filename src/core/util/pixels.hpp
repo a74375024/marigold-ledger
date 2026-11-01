@@ -25,12 +25,18 @@ Image shrinkToFit(Image src, int maxW, int maxH);
 // margins, which makes them look small next to their neighbours).
 Image trimTransparent(Image src, uint8_t threshold = 8);
 
-// How a logo reads on a light background. Light: white or pale grey shapes
-// on transparency (gone on a white cell); Mixed: a fair share of such
-// shapes next to colour; Normal: anything else, including logos on their own
-// solid box.
-enum class Tone : uint8_t { normal, light, mixed };
-Tone toneOf(const Image& image);
+// Clear pixels next to visible ones take their colour (alpha stays 0), two
+// pixels deep. Decoders leave clear pixels black, and linear filtering
+// between a visible edge and a clear neighbour then mixes in that black: a
+// dark fringe on every edge, worst on thin and light logos.
+void bleedEdges(Image& im);
+
+// How thick a logo's strokes are, in pixels: twice its visible area over its
+// outline's length (0 when nothing is visible).
+double strokeWidth(const Image& im);
+// Thickens every visible shape by one pixel (right and down), for strokes
+// too thin to survive drawing small.
+void thicken(Image& im);
 
 // What a logo is made of, measured once on the full-size decode (before
 // trimming and shrinking), for logos::fillsCard().

@@ -826,7 +826,10 @@ class MiniGuide : public Screen {
       // Number and logo.
       Rect cell{left_, y, kChannelW, kRowH};
       c.hit(cell, kHitChannel + row);
-      c.g.fill(cell, rowFocused ? theme::white(0.2f) : theme::hex(0x262A32), 14);
+      // Focused: the same fill and a 3 px white outline, so the logo on it
+      // looks the same focused or not (the dense column does not lift).
+      c.g.fill(cell, theme::hex(0x262A32), 14);
+      if (rowFocused) c.g.stroke(cell, theme::white(), 14, 3);
       if (g.number) ui::label(c, std::to_string(*g.number), cell.x + 14, cell.y + 32, Weight::Bold, 24, theme::white(), 60);
       ui::logo(c, g.logoUrl, g.name, {cell.x + 74, cell.y + 18, 100, 60});
       const std::vector<Listing>* v = listingsOf(row);

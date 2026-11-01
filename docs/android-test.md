@@ -130,3 +130,16 @@ Everything in `docs/m4-test.md` › In-player guide (Build 116) applies, except 
 | Hints | The legend on a Fire TV remote | No "123 jumps to a channel"; "OK" for select |
 | Back order | Back from the lists, again and again | The column, then the grid, then the guide closes |
 | Flip list | A channel picked in Favorites there, then Up/Down in the player | Through Favorites |
+
+## Logos and focus (Build 117)
+
+Everything in `docs/m4-test.md` › Logos and focus (Build 117) applies, except the pointer row. The renderer is the same as LG's.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Dark logos | The guide, not focused, on a Fire TV and on a phone-sized emulator | Black, navy and purple logos readable on the dark cells in a lighter shade of their colour |
+| Focus | D-pad through the guide, Search, Live Events, My Sports | The calm focus (lift, white outline, dark fill, light text); no logo changes as the focus moves |
+| Own boxes | A channel with a logo on a plain white box | The box is gone, the word on the cell |
+| Flags, dimmed | A tennis tile; a not-watchable tile | Flags in their shape; dimmed badges grey but bright |
+| Thin logos | A thin outline logo in the guide's small slot | No dark rim, lines unbroken |
+| Night viewing | A dark room | No white boxes or white focus over logos |

@@ -140,3 +140,16 @@ Everything in `docs/m4-test.md` › In-player guide (Build 116) applies, except 
 | Back | Back (the Menu button) in the lists, the column, the grid | The column, the grid, then the guide closes |
 | Hints | The legend | "Click watch", "Click and hold remind", "Click or ▶ Go" |
 | Flip list | A channel picked in Favorites there, then a swipe up or down in the player | Through Favorites |
+
+## Logos and focus (Build 117)
+
+Everything in `docs/m4-test.md` › Logos and focus (Build 117) applies, except the pointer row; a click is OK. The Metal renderer takes the dimmed rows' colour out like the GLES2 one.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Dark logos | The guide, not focused | Black, navy and purple logos readable on the dark cells in a lighter shade of their colour |
+| Focus | Swipe through the guide, Search, Live Events, My Sports | The calm focus (lift, white outline, dark fill, light text); no logo changes as the focus moves |
+| Dimmed | A not-watchable tile; the games rail with its column open | Badges grey with the text, as bright as before (if they look colourful or dark, the Metal shader change is missing) |
+| Own boxes, flags | A logo on a plain white box; a tennis tile | The box gone; flags in their shape |
+| Thin logos | A thin outline logo in the guide's small slot | No dark rim, lines unbroken |
+| Night viewing | A dark room | No white boxes or white focus over logos |
