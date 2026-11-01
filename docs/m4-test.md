@@ -857,3 +857,11 @@ Every logo sits straight on its cell: no plates, chips or boxes behind it, anywh
 | Night viewing | In a dark room, the guide and Live Events | Nothing glows: no white boxes, no white focus over logos; the outline is easy to follow from the sofa |
 | Restart | Restart the app | The same logos, prepared again from the disk cache, look the same |
 | Channel report | Export it | logo_status adds what was done: "shown, colours tuned", "shown, box removed", "shown, box removed, colours tuned" ("shown" when nothing was needed) |
+
+## Guide focus spacing (Build 118)
+
+| Area | Steps | Expected |
+|---|---|---|
+| First show | Focus the first show in a row (at Now), then Left and Right along the row | The show's white ring stays clear of the channel cell's outline; the channel logo is never covered |
+| Later shows | Focus a show further right | It still grows a little on both sides, as before |
+

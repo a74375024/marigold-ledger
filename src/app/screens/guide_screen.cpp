@@ -1400,6 +1400,14 @@ void GuideScreen::drawRow(ui::Ctx& c, int lineIndex, float y) {
       c.hit(r, kHitProgram + lineIndex * 64 + std::min(idx, 63));
       if (focused) {
         Rect big{r.x - r.w * 0.015f, r.y - 1, r.w * 1.03f, r.h + 2};
+        // The ring stays right of the channel cell (and its lift): the
+        // first show grows rightward only.
+        float minRing = progX();
+        if (big.x - 6 < minRing) {
+          float cut = minRing - (big.x - 6);
+          big.x += cut;
+          big.w -= cut;
+        }
         c.g.fill(big, theme::white(), 12);
         c.g.stroke({big.x - 6, big.y - 6, big.w + 12, big.h + 12}, theme::white(), 16, 3);
       } else {
