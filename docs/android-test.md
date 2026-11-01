@@ -12,6 +12,7 @@ code. These rows are what is new on Android.
 | First run | No accounts yet | The accounts screen, as on the TV |
 | Text | Any screen | Inter Display, crisp; emoji in channel names show (the system's emoji font) |
 | Icons | Live Events title tiles | The sport line icons, white, black when focused |
+| Sport chips (Build 124) | Live Events tiles, during live games | Each sport's icon white in its coloured chip, as on LG (`docs/m4-test.md` › Build 124 — Live Events look); live games by red status text only |
 | 4K TV | A 4K Fire TV or TV | The UI fills the screen, sharp (drawn at 1080p and scaled by the device) |
 
 ## Remote

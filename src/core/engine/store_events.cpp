@@ -40,6 +40,25 @@ std::string tileSport(const std::string& icon) {
   return it == kWords.end() ? std::string() : it->second;
 }
 
+uint32_t sportColor(const std::string& icon) {
+  // Baseball navy and darts olive: no chip is red.
+  static const std::unordered_map<std::string, uint32_t> kColors = {
+      {"soccer", 0x2E9D57},     {"basketball", 0xE0752D}, {"football", 0x8A5A33},   {"hockey", 0x4FA3E0},
+      {"fieldHockey", 0x2F9C8F}, {"baseball", 0x34489A},  {"softball", 0x34489A},   {"tennis", 0x9CAD2C},
+      {"cricket", 0x8F7A4A},    {"rugby", 0x6C4F9E},      {"golf", 0x3B7A57},       {"motorsport", 0x555B66},
+      {"fighting", 0x9B3B6F},   {"wrestling", 0x9B3B6F},  {"volleyball", 0xC49A1C}, {"lacrosse", 0x4A6FA5},
+      {"cycling", 0xC98B2F},    {"darts", 0x5A6B2F},      {"athletics", 0xC0713F},  {"horseRacing", 0x4F6F6A},
+      {"multi", 0xA88A3A},      {"other", 0x555B66}};
+  auto it = kColors.find(icon);
+  return it == kColors.end() ? 0 : it->second;
+}
+
+EventTile::Mark tileMark(const std::string& icon, bool game, bool highSchool) {
+  if (icon != "other" && sportColor(icon)) return EventTile::Mark::Chip;
+  if (highSchool) return EventTile::Mark::Chip;
+  return game ? EventTile::Mark::Unknown : EventTile::Mark::None;
+}
+
 // The competition after the sport: the league's name where it says more
 // than the sport ("ATP", "Premier League", "Women's Division II"), then the
 // tile's tag ("3rd Test", "Swiss Indoors Basel · R2").
@@ -220,6 +239,11 @@ EventTile toTile(const sb::Tile& t, const sports::SportsEvent* event, const time
   o.sport = tileSport(t.icon);
   o.competition = tileCompetition(event, o.sport, o.tagAlert ? std::string() : o.tag);
   o.highSchool = event && event->highSchool;
+  o.mark = tileMark(t.icon, (event && event->game) || o.sides.size() == 2, o.highSchool);
+  if (o.mark == EventTile::Mark::Chip) {
+    o.chipColor = sportColor(t.icon);
+    if (!o.chipColor) o.chipColor = sportColor("other");
+  }
   o.detail = t.detail;
   o.channelName = t.channelDisplay.value_or(t.channelName.value_or(""));
   o.channelLogo = t.channelLogos.empty() ? std::string() : t.channelLogos.front();
@@ -246,7 +270,7 @@ EventTile toTile(const sb::Tile& t, const sports::SportsEvent* event, const time
   else
     o.heroTitle = matchup(o);
   o.heroStatus = o.status + (o.statusExtra.empty() ? "" : " " + o.statusExtra);
-  if (!o.situation.empty()) o.heroStatus += " \xc2\xb7 " + o.situation;
+  if (!o.situation.empty()) o.heroStatus += (o.heroStatus.empty() ? "" : " \xc2\xb7 ") + o.situation;
   o.whereLine = o.channelName.empty() ? o.footer : "On " + o.channelName + (o.footer.empty() ? "" : " \xc2\xb7 " + o.footer);
   if (event && event->start) o.start = *event->start;
   if (t.state == sports::SportsEvent::State::upcoming && !t.notStarted && o.start) {
@@ -1038,12 +1062,35 @@ void Store::boardFlags(EventsBoard& out) const {
   bool whole = coming && e.wholeFirst;
   out.loading = whole || (coming && out.rows.empty()) || (e.schedule.fetching() && e.events->empty());
   out.more = coming && !out.rows.empty() && !whole;
+  out.stage = out.loading || out.more ? loadStage() : EventsBoard::Stage::None;
+}
+
+EventsBoard::Stage Store::loadStage() const {
+  const Impl& m = *impl_;
+  const EventsState& e = m.ev;
+  events_build::Loading l;
+  l.list = m.loading;
+  l.schedule = e.schedule.fetching();
+  l.matching = e.rebuilding || e.restoring || !e.checkedSinceOpen || e.eventsBuiltAt < e.freshAfter;
+  l.holding = e.holding;
+  if (l.holding && !l.list && !l.schedule && !l.matching)
+    l.hold = events_build::holdFor(eventsInputs(), time::now(), host_.zone());
+  return events_build::loadStage(l);
+}
+
+void Store::restage(EventsBoard::Stage stage) {
+  auto out = std::make_shared<EventsBoard>(*events_);
+  out->version = events_->version + 1;
+  out->stage = stage;
+  impl_->ev.retired.push_back(std::move(events_));
+  events_ = out;
 }
 
 void Store::showPlaceholders() {
   auto out = std::make_shared<EventsBoard>();
   out->version = events_->version + 1;
   out->loading = true;
+  out->stage = loadStage();
   out->scoresOn = settings_.showScores;
   impl_->ev.retired.push_back(std::move(events_));
   events_ = out;
@@ -1076,6 +1123,15 @@ Hold holdFor(const Inputs& in, time::Seconds now, const time::Zone& zone) {
                (in.scheduleComing || in.made.scheduleAt != in.scheduleAt);
   h.scores = !in.scoresChecked && in.scoresAwaited;
   return h;
+}
+
+EventsBoard::Stage loadStage(const Loading& l) {
+  using Stage = EventsBoard::Stage;
+  if (l.list) return Stage::Channels;
+  if (l.schedule) return Stage::Schedule;
+  if (l.matching) return Stage::Matching;
+  if (l.holding) return l.hold.list || l.hold.schedule ? Stage::Matching : Stage::Scores;
+  return Stage::Matching;
 }
 
 }  // namespace events_build
@@ -1280,7 +1336,15 @@ void Store::eventsTick(uint32_t ms) {
     EventsBoard flags;
     flags.rows.resize(events_->rows.empty() ? 0 : 1);
     boardFlags(flags);
-    if (flags.loading != events_->loading || flags.more != events_->more) e.boardStale = true;
+    if (flags.loading != events_->loading || flags.more != events_->more) {
+      e.boardStale = true;
+    } else if (flags.stage != events_->stage && events_->loading) {
+      // The next stage of a load the screen names (under the placeholders;
+      // with rows shown it names none): the placeholders' board again with
+      // it at once; a board with rows waiting under them is made again.
+      if (events_->rows.empty()) restage(flags.stage);
+      else e.boardStale = true;
+    }
   }
   // Games too old to show (an open on old ones) wait to be worked out again.
   bool fresh = e.eventsBuiltAt >= e.freshAfter;

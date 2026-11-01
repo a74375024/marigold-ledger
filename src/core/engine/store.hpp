@@ -539,6 +539,11 @@ class Store {
   void putBoard();
   // The board's loading and "more to come" flags (EventsBoard).
   void boardFlags(EventsBoard& out) const;
+  // What a load waits for now (EventsBoard::stage).
+  EventsBoard::Stage loadStage() const;
+  // The board shown (no rows: the placeholders') again with a load's next
+  // stage.
+  void restage(EventsBoard::Stage stage);
   // Placeholders in place of the board (Live Events opened on old games).
   void showPlaceholders();
   void noteEventsTiming(uint32_t ms, std::chrono::steady_clock::time_point start);

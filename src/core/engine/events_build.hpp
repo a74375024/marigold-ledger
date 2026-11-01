@@ -104,6 +104,20 @@ struct Hold {
 };
 Hold holdFor(const Inputs& in, time::Seconds now, const time::Zone& zone);
 
+// What a loading board waits for now (Build 124), from what keeps it
+// loading (Store::boardFlags()): the channel list first, then the schedule,
+// then the games matched to them (a rebuild, the saved board read, or games
+// not yet worked out since the open), then the hold: still for a list or
+// schedule just in (matching), else for scores.
+struct Loading {
+  bool list = false;      // the channel list downloading
+  bool schedule = false;  // the schedule being fetched
+  bool matching = false;  // games being worked out
+  bool holding = false;   // the board waits for fresh inputs (Hold)
+  Hold hold;              // what for, while holding
+};
+EventsBoard::Stage loadStage(const Loading& l);
+
 // Raw channels by id: made once per channel list, shared with the workers.
 using ChannelIndex = std::unordered_map<std::string, size_t>;
 

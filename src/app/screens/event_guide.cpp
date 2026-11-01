@@ -343,9 +343,8 @@ class EventGuide : public Screen {
         ui::label(c, t.subtitle, sx, r.y + 50, Weight::Regular, 17, ink.withAlpha(ink.a * 0.7f), 290);
       }
       float ix = r.x + 322;
-      float px = ix + events_ui::pill(c, t, ix, r.y + 14);
-      if (px > ix) px += 10;
-      ui::label(c, t.status, px, r.y + 14, Weight::Medium, 18, ink, r.x + r.w - 14 - px);
+      // The state and status, as on the board's tiles (live: red text alone).
+      events_ui::status(c, t, t.status, ix, r.y + 14, Weight::Medium, 18, ink, r.x + r.w - 14 - ix, 0, 10);
       std::string where = t.channelName.empty() ? t.footer : t.channelName;
       float ww = ui::label(c, where, ix, r.y + 50, Weight::Regular, 17, ink.withAlpha(ink.a * 0.7f), r.w - 336);
       // The game on screen: WATCHING after its channel.

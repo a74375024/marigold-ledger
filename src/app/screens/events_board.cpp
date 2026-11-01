@@ -16,7 +16,8 @@
 // be, pulsing slowly, for 20 s at most: after an open on an old board (or
 // none) all of them until the whole board is in (Build 123: no tiles and
 // no hero game before, so nothing moves as it fills in); on a board already
-// shown whole, after its rows. Within half an hour of the start, OK plays a
+// shown whole, after its rows; under the title, a spinner and what the load
+// waits for now (Build 124, the board's stage). Within half an hour of the start, OK plays a
 // game whose best source is a channel (views::okPlays()).
 #include <algorithm>
 #include <chrono>
@@ -32,6 +33,7 @@
 #include "app/store/store.hpp"
 #include "core/engine/views.hpp"
 #include "core/input/hints.hpp"
+#include "core/input/wake.hpp"
 #include "core/input/preview_pace.hpp"
 #include "core/sports/my_sports.hpp"
 #include "core/util/log.hpp"
@@ -62,6 +64,21 @@ constexpr uint32_t kPulseStepMs = 250;       // placeholders drawn again this of
 // Then the board as it is, not endless placeholders.
 constexpr uint32_t kLoadingAtMostMs = engine::kPlaceholdersAtMostMs;
 constexpr uint32_t kLogMs = 60000;        // the timing log's line, at most this often
+// The placeholders shown this long: the loading line's second line.
+constexpr uint32_t kSlowLoadMs = 10000;
+
+// Under the title while the board loads: what it waits for now (the
+// store's stage; never where from).
+const char* stageLine(EventsBoard::Stage stage) {
+  switch (stage) {
+    case EventsBoard::Stage::Channels: return "Getting your channels\xe2\x80\xa6";
+    case EventsBoard::Stage::Schedule: return "Getting this week's games\xe2\x80\xa6";
+    case EventsBoard::Stage::Matching: return "Matching games to your channels\xe2\x80\xa6";
+    case EventsBoard::Stage::Scores: return "Getting live scores\xe2\x80\xa6";
+    case EventsBoard::Stage::None: break;
+  }
+  return nullptr;
+}
 
 using Clock = std::chrono::steady_clock;
 double msSince(Clock::time_point t) { return std::chrono::duration<double, std::milli>(Clock::now() - t).count(); }
@@ -114,10 +131,12 @@ class EventsBoardScreen : public Screen {
     // asleep in between; gone after kLoadingAtMostMs.
     bool pulse = false;
     if (placeholders()) {
-      uint32_t step = ms / kPulseStepMs;
+      // The loading line's spinner: at each of its steps (eight a second).
+      uint32_t every = spinnerShown_ ? wake::kSpinnerStepMs : kPulseStepMs;
+      uint32_t step = ms / every;
       pulse = skeletonShown_ && step != pulseStep_;
       pulseStep_ = step;
-      wakeFor((step + 1) * kPulseStepMs);
+      wakeFor((step + 1) * every);
       wakeFor(loadingSince_ + kLoadingAtMostMs);
     } else if (skeletonShown_) {
       pulse = true;  // their time is up: the board without them
@@ -246,7 +265,7 @@ class EventsBoardScreen : public Screen {
 
  private:
   void drawBoard(ui::Ctx& c) {
-    skeletonShown_ = false;
+    skeletonShown_ = spinnerShown_ = false;
     // Under everything: the pointer off any target (the strip's pill goes).
     c.hit({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight}, left_rail::kHitNothing);
     settleSlides(c.ms);
@@ -756,11 +775,16 @@ class EventsBoardScreen : public Screen {
     if (!t) {
       ui::label(c, "Live Events", x, y + 40, Weight::Bold, 44, theme::white());
       if (placeholders()) {
-        // Still loading: placeholders where the game's title and status go.
-        skeletonShown_ = true;
-        ui::Color block = ui::skeleton(c);
-        c.g.fill({x, y + 116, 560, 26}, block, 13);
-        c.g.fill({x, y + 160, 320, 18}, block, 9);
+        // Still loading (Build 124): a spinner and what the load waits for
+        // now, by the store; after a while, that the first load of the day
+        // is the slow one.
+        skeletonShown_ = spinnerShown_ = true;
+        ui::spinner(c, x + 16, y + 127, 14, theme::white(0.85f));
+        if (const char* line = stageLine(board_->stage))
+          ui::label(c, line, x + 46, y + 110, Weight::Medium, 26, theme::white(0.85f), 1200);
+        if (c.ms - loadingSince_ >= kSlowLoadMs)
+          ui::label(c, "Almost there. The first load of the day takes longest.", x + 46, y + 154, Weight::Regular, 22,
+                    theme::white(0.55f), 1200);
         return;
       }
       ui::label(c, "This week's games, and where you can watch them.", x, y + 110, Weight::Regular, 26, theme::white(0.7f));
@@ -776,10 +800,10 @@ class EventsBoardScreen : public Screen {
     }
     ui::label(c, t->heroTitle.empty() ? t->title : t->heroTitle, tx, y + 4, Weight::Bold, 40, theme::white(), x + 1240 - tx);
     y += 72;
-    float sx = x;
-    sx += events_ui::pill(c, *t, sx, y + 4);
-    if (sx > x) sx += 12;
-    ui::label(c, t->heroStatus.empty() ? t->status : t->heroStatus, sx, y, Weight::Medium, 24, theme::white(), x + 1240 - sx);
+    // The state and status, as on the tile: live is red text alone (its
+    // clock, or "LIVE" without one), never a pill.
+    events_ui::status(c, *t, t->heroStatus.empty() ? t->status : t->heroStatus, x, y, Weight::Medium, 24, theme::white(),
+                      1240, 4, 12);
     y += 44;
     if (t->progress >= 0) {
       ui::progress(c, {x, y, 420, 6}, t->progress);
@@ -965,6 +989,7 @@ class EventsBoardScreen : public Screen {
   uint32_t promptAt_ = 0;
   uint32_t wake_ = 0;  // the preview's rest ends then (wakeAt())
   bool skeletonShown_ = false;  // placeholders on screen: the pulse redraws
+  bool spinnerShown_ = false;   // the loading line's spinner too: at its steps
   uint32_t pulseStep_ = 0;
   std::function<void(rail::Item, bool)> go_;
   rail::Nav nav_;

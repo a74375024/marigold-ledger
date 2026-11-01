@@ -299,6 +299,35 @@ float pill(ui::Ctx& c, const EventTile& t, float x, float y) {
   return 0;
 }
 
+bool live(const EventTile& t) { return t.pill == EventTile::Pill::Live || t.pill == EventTile::Pill::LiveOutline; }
+
+Color liveRed(const EventTile& t, float alpha) {
+  return theme::hex(theme::kWatching, (t.pill == EventTile::Pill::LiveOutline ? 0.6f : 1.0f) * alpha);
+}
+
+float status(ui::Ctx& c, const EventTile& t, const std::string& text, float x, float y, Weight weight, int px,
+             Color ink, float maxW, float pillDy, float gap) {
+  if (live(t)) {
+    static const std::string kLive = "LIVE";
+    return ui::label(c, text.empty() ? kLive : text, x, y, Weight::Bold, px, liveRed(t, ink.a), maxW);
+  }
+  float pw = pill(c, t, x, y + pillDy);
+  if (pw > 0) pw += gap;
+  if (text.empty()) return pw;
+  return pw + ui::label(c, text, x + pw, y, weight, px, ink, maxW - pw);
+}
+
+void sportChip(ui::Ctx& c, const EventTile& t, float x, float y, float size, float alpha) {
+  Rect r{x, y, size, size};
+  c.g.fill(r, theme::hex(t.chipColor, alpha), std::round(size * 0.29f));
+  float in = size * 0.16f;
+  Rect ib{x + in, y + in, size - 2 * in, size - 2 * in};
+  Color ink = theme::white(alpha);
+  if (unsigned icon = c.icons ? c.icons->get(t.icon) : 0) c.g.textureAlpha(icon, ib, ink);
+  else ui::labelIn(c, t.symbol.empty() ? "\xe2\x97\x8f" : t.symbol, ib, Weight::Bold, static_cast<int>(size * 0.5f), ink,
+                   Align::Center);
+}
+
 float mark(ui::Ctx& c, const EventSide& s, float x, float y, float size) {
   if (!s.flags.empty()) {
     // Each flag at its own shape in its square.
@@ -362,29 +391,31 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool mixed) {
   Look look{focused ? theme::kFocusFill : t.watchable && !t.finished ? kTileSurface : kTileDimSurface, alpha < 1};
   Color ink = theme::white(alpha);
   float x = r.x + 16, w = r.w - 32;
-  bool live = t.pill == EventTile::Pill::Live || t.pill == EventTile::Pill::LiveOutline;
+  bool live = events_ui::live(t);
 
-  // Top line: the sport's icon (red while live: it is the live mark), the
-  // state, and at the right the competition, an alert and the star.
+  // Top line: the sport's chip (the same live or not: live is the status's
+  // red), the state, and at the right the competition, an alert and the
+  // star. A show that isn't a game of a sport known starts with its state.
   float ty = r.y + 14;
-  Color red = theme::hex(theme::kWatching, t.pill == EventTile::Pill::LiveOutline ? 0.6f : 1.0f);
-  Color mark = live ? red : ink;
-  Rect ib{x, ty, 21, 21};
-  if (t.sport.empty() && !t.highSchool) {
-    // A sport the app doesn't know: a dashed ring, never a guess.
+  float px = x;
+  if (t.mark == EventTile::Mark::Chip) {
+    // 28 square, centred where the 21 px icon was.
+    constexpr float kChip = 28;
+    sportChip(c, t, x, std::round(ty + 10.5f - kChip * 0.5f), kChip, alpha);
+    px += kChip + 9;
+  } else if (t.mark == EventTile::Mark::Unknown) {
+    // A game of a sport the app doesn't know: a dashed ring, never a guess.
+    Rect ib{x, ty, 21, 21};
     for (int i = 0; i < 8; ++i) {
       float a = static_cast<float>(i) * 0.785398f;
-      c.g.fill({ib.x + 10.5f + 8 * std::cos(a) - 1.5f, ib.y + 10.5f + 8 * std::sin(a) - 1.5f, 3, 3}, mark, 1.5f);
+      c.g.fill({ib.x + 10.5f + 8 * std::cos(a) - 1.5f, ib.y + 10.5f + 8 * std::sin(a) - 1.5f, 3, 3}, ink, 1.5f);
     }
-  } else if (unsigned icon = c.icons ? c.icons->get(t.icon) : 0) {
-    c.g.textureAlpha(icon, ib, mark);
-  } else {
-    ui::labelIn(c, t.symbol.empty() ? "\xe2\x97\x8f" : t.symbol, ib, Weight::Bold, 14, mark, Align::Center);
+    px += 30;
   }
-  float px = x + 30;
   constexpr int kStatusPx = 17;
   if (live) {
-    px += ui::label(c, t.status.empty() ? std::string("LIVE") : t.status, px, ty + 1, Weight::Bold, kStatusPx, red);
+    static const std::string kLive = "LIVE";
+    px += ui::label(c, t.status.empty() ? kLive : t.status, px, ty + 1, Weight::Bold, kStatusPx, liveRed(t));
   } else if (t.pill == EventTile::Pill::Final) {
     px += ui::label(c, t.pillText.empty() ? std::string("Final") : t.pillText, px, ty + 1, Weight::Bold, kStatusPx, ink);
   } else {

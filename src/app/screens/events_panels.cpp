@@ -89,11 +89,14 @@ class EventDetail : public Screen {
     ui::paragraph(c, t->heroTitle.empty() ? t->title : t->heroTitle, tx, y, card.x + card.w - 60 - tx, Weight::Bold, 44,
                   theme::white(), 2, 1.15f);
     y += 120;
-    float sx = x + events_ui::pill(c, *t, x, y + 4);
-    if (sx > x) sx += 12;
+    // The state and status, as on the tile (live: red text alone), then
+    // where it plays.
+    bool live = events_ui::live(*t);
     std::string summary = t->heroStatus.empty() ? t->status : t->heroStatus;
-    if (!t->venue.empty()) summary += " \xc2\xb7 " + t->venue;
-    ui::label(c, summary, sx, y, Weight::Regular, 24, theme::white(0.8f), x + w - sx);
+    if (!live && !t->venue.empty()) summary += " \xc2\xb7 " + t->venue;
+    float sw = events_ui::status(c, *t, summary, x, y, Weight::Regular, 24, theme::white(0.8f), w, 4, 12);
+    if (live && !t->venue.empty())
+      ui::label(c, " \xc2\xb7 " + t->venue, x + sw, y, Weight::Regular, 24, theme::white(0.8f), w - sw);
     y += 50;
     ui::paragraph(c, t->whereLine, x, y, w, Weight::Regular, 22, theme::white(0.7f), 2);
     y += 70;

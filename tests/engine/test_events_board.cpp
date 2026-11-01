@@ -9,7 +9,9 @@
 // only ever comes from a score answered lately or from the clock. Build
 // 123: placeholders until the whole board is in after such an open (never
 // again once shown), a score waited for only while one can come, and OK
-// playing a game about to start on a channel.
+// playing a game about to start on a channel. Build 124: each tile's sport
+// chip (or ring, or nothing) made with it, and what a loading board waits
+// for.
 #include <doctest.h>
 
 #include <set>
@@ -44,6 +46,7 @@ std::string dump(const EventsBoard& board) {
   auto flag = [&out](bool b) { out += b ? "1|" : "0|"; };
   out += board.loading ? "loading\n" : "\n";
   out += board.more ? "more\n" : "\n";
+  out += "stage " + std::to_string(static_cast<int>(board.stage)) + "\n";
   for (const EventRow& r : board.rows) {
     out += "ROW ";
     add(r.id);
@@ -65,7 +68,8 @@ std::string dump(const EventsBoard& board) {
                        t.watchable, t.finished, t.upcoming, t.textMade})
           flag(b);
         add(std::to_string(static_cast<int>(t.pill)) + "/" + std::to_string(t.progress) + "/" +
-            std::to_string(t.start));
+            std::to_string(t.start) + "/" + std::to_string(static_cast<int>(t.mark)) + "/" +
+            std::to_string(t.chipColor));
         for (const auto& s : t.sides) {
           for (const std::string* x : {&s.abbr, &s.name, &s.country, &s.logoUrl, &s.rank, &s.score, &s.pens})
             add(*x);
@@ -779,4 +783,97 @@ TEST_CASE("views: within half an hour of the start, OK plays a game whose best s
   EventTile nowhere = onChannel;
   nowhere.watchable = false;
   CHECK_FALSE(views::okPlays(nowhere, now));
+}
+
+// Build 124: each tile's mark is made with it, and live is never in the
+// text (the screens show it by the text's red).
+TEST_CASE("engine: tiles come with their sport's chip, the ring or nothing") {
+  using Mark = EventTile::Mark;
+  fake::Tv tv;
+  tv.pool.answer(fake::kPlaylist, playlist());
+  Store store(tv.host());
+  REQUIRE(fake::addPlaylist(store, tv).empty());
+  store.eventsOpen(true);
+  for (int i = 0; i < 4; ++i) fake::settle(store, tv);
+  auto board = store.events();
+  REQUIRE(tiles(*board) > 10);
+  for (const EventRow& r : board->rows)
+    for (const EventGroup& g : r.groups)
+      for (const EventTile& t : g.tiles) {
+        INFO(t.id, " ", t.icon);
+        bool known = t.icon != "other" && marigold::engine::sportColor(t.icon) != 0;
+        if (known || t.highSchool) CHECK(t.mark == Mark::Chip);
+        else CHECK(t.mark != Mark::Chip);
+        if (t.mark == Mark::None) CHECK(t.sides.empty());
+        if (t.mark == Mark::Chip) CHECK(t.chipColor != 0);
+        else CHECK(t.chipColor == 0);
+        // The provider's slots name two teams of a sport not known: games,
+        // with the ring.
+        if (t.sides.size() == 2 && t.icon == "other") CHECK(t.mark == Mark::Unknown);
+        CHECK(t.status.find("LIVE") == std::string::npos);
+        CHECK(t.heroStatus.rfind(" \xc2\xb7", 0) == std::string::npos);
+      }
+  store.eventsOpen(false);
+}
+
+// Build 124: what a loading board waits for, from the store.
+TEST_CASE("engine: a loading board says what it waits for; loaded, nothing") {
+  using Stage = EventsBoard::Stage;
+  fake::Tv tv;
+  tv.pool.answer(fake::kPlaylist, playlist());
+  Store store(tv.host());
+  REQUIRE(fake::addPlaylist(store, tv).empty());
+  CHECK(store.events()->stage == Stage::None);  // closed: nothing loading
+  store.eventsOpen(true);
+  std::string seen;
+  for (int i = 0; i < 400 && (store.events()->loading || store.events()->more); ++i) {
+    auto b = store.events();
+    CHECK(b->stage != Stage::None);
+    char ch = "NCSMR"[static_cast<int>(b->stage)];
+    if (seen.empty() || seen.back() != ch) seen += ch;
+    tv.pool.drain();
+    tick(store, tv);
+  }
+  // The schedule still coming (it doesn't answer here): this week's games.
+  INFO(seen);
+  CHECK(seen.find('S') != std::string::npos);
+  CHECK(seen.find('C') == std::string::npos);
+  CHECK_FALSE(store.events()->loading);
+  CHECK_FALSE(store.events()->more);
+  CHECK(store.events()->stage == Stage::None);
+  store.eventsOpen(false);
+  fake::settle(store, tv);
+
+  // The next launch, the channel list slow to come.
+  tv.pool.hold(fake::kPlaylist);
+  Store again(tv.host());
+  again.eventsOpen(true);
+  CHECK(again.events()->loading);
+  CHECK(again.events()->stage == Stage::Channels);
+  seen.clear();
+  for (int i = 0; i < 30; ++i) {
+    auto b = again.events();
+    char ch = "NCSMR"[static_cast<int>(b->stage)];
+    if (seen.empty() || seen.back() != ch) seen += ch;
+    tv.pool.drain();
+    tick(again, tv);
+  }
+  tv.pool.letGo(fake::kPlaylist);
+  for (int i = 0; i < 400 && (again.events()->loading || again.events()->more); ++i) {
+    auto b = again.events();
+    char ch = "NCSMR"[static_cast<int>(b->stage)];
+    if (seen.empty() || seen.back() != ch) seen += ch;
+    tv.pool.drain();
+    tick(again, tv);
+  }
+  // The channels first, as long as the list takes; then the next stage on
+  // the placeholders at once (never back to the channels).
+  INFO(seen);
+  REQUIRE(seen.size() >= 2);
+  CHECK(seen[0] == 'C');
+  CHECK(seen.find('C', 1) == std::string::npos);
+  CHECK(seen.find('N') == std::string::npos);
+  CHECK_FALSE(again.events()->loading);
+  CHECK(again.events()->stage == Stage::None);
+  again.eventsOpen(false);
 }

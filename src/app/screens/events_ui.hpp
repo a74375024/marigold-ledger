@@ -29,9 +29,26 @@ float mark(ui::Ctx& c, const EventSide& side, float x, float y, float size);
 // The game banner's status by the clock, in the tiles' pills: "in 25 min"
 // amber, LIVE, "Likely over" outlined. Returns its width (0 = none).
 float clockPill(ui::Ctx& c, sports::banner::Chip chip, const std::string& text, float x, float y);
+// Live by the scoreboard or the clock (LIVE, or the dimmer LIVE of an old
+// score): shown by red text only (Build 124), no pill and no red icon.
+bool live(const EventTile& t);
+// That red: dimmer for an old score's LIVE (LiveOutline).
+ui::Color liveRed(const EventTile& t, float alpha = 1);
+// A game's state and status on a dark row, as the tile's top line has them
+// (the hero, the detail card, the event guide): live, `text` in red (its
+// clock, "2nd · 8:41"), or "LIVE" in red when it has none; otherwise the
+// pill (`pillDy` below `y`) and `gap`, then `text` in `ink`. Returns the
+// width used.
+float status(ui::Ctx& c, const EventTile& t, const std::string& text, float x, float y, ui::Weight weight, int px,
+             ui::Color ink, float maxW, float pillDy, float gap);
+// The sport's chip (Build 124): its icon, white, in a rounded square of its
+// colour (`size` square; the icon about two thirds of it), faded with
+// `alpha`. Never red: live is the status text's.
+void sportChip(ui::Ctx& c, const EventTile& t, float x, float y, float size, float alpha = 1);
 // `mixed`: a row of several sports (Live now, Your teams), where the top
 // line names the sport; in a sport's own row it gives the competition only.
-// Focused: lifted, with the calm focus (ui::calmFill()).
+// Focused: lifted, with the calm focus (ui::calmFill()). Its top line starts
+// with the sport's chip (Build 124; none for a show of no sport known).
 void tile(ui::Ctx& c, const EventTile& t, ui::Rect r, bool focused, bool mixed);
 // The focused game's two badges, big and faded, over a blue glow (top
 // right). Only the glow when `badges` is off (the corner preview is there).

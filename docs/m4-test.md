@@ -1026,3 +1026,23 @@ Live Events reads cricket better. A senior national side never matches its A, U1
 | Two matches | While two T20s are on and Willow's description names neither | Willow is on neither tile (never a guess) |
 | Still slate | Pick the provider's feed for a cricket match in Where to Watch when it shows a still slate (LG) | After 45 s "picture check · static 45 s; …" and "No picture on this source — trying 2 of 2", then Willow plays |
 | Matcher log | Send a log after Live Events builds | The matcher line has "… by description, N on cricket channels)"; no titles or links |
+
+## Build 124 — Live Events look
+
+Each Live Events tile now starts with its sport's icon, white, in a small rounded chip of the sport's own colour (green soccer, orange basketball, ice-blue hockey, navy baseball and softball, olive darts…; none is red). The chip never changes when the game goes live: live is shown only by red status text, the game's clock or period ("2nd · 8:41", "Q3 · 4:12", "Day 2 · 31 ov") with no "LIVE" word, or a red "LIVE" when the game has no clock yet. An old score's live (by the clock) keeps its dimmer red. The look-alike icons are redrawn: baseball and softball a bat and ball, tennis a racket and ball, rugby goal posts and a ball, ice hockey a stick and puck, horse racing a horse's head, cricket stumps and a ball, wrestling a ring's ropes, athletics a runner, and "Other" a whistle. A TV show in "Time not listed" with no sport gets no chip (its line starts with its time); a game of a sport the app doesn't know keeps the dashed ring. The hero, a game's card and the games list in the player's guide show live the same way (red status, no LIVE pill). While the board loads, the hero shows a spinner and one line that says what it is waiting for ("Getting your channels…", "Getting this week's games…", "Matching games to your channels…", "Getting live scores…"); after 10 s a second line, "Almost there. The first load of the day takes longest." The tile placeholders below are as before.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Chips | Open Live Events with soccer, NBA, NHL, MLB and cricket on | Each tile's top line starts with a coloured chip (28 px, rounded) with the white icon; the status starts right after it and the competition stays at the right, as before |
+| Live | A row with live and later games | Live tiles: the chip the same colour as on later ones; the clock in red ("2nd · 8:41"), no "LIVE" word, no red dot, no red icon; a live game with no clock: red "LIVE" |
+| Old live | A game live only by the clock (scores off or old) | Its status in the dimmer red, as in Build 123 |
+| Icons | Look at tiles of each sport from the couch | Baseball, tennis, rugby, ice hockey, field hockey, football, cricket, horse racing each tell apart at a glance |
+| Dimmed | Games not on my channels on (Filter › Also); a finished game | The not-watchable tile's chip fades with its text; nothing else on it changes |
+| Focus | Move through a row | The chip looks the same focused or not |
+| Time not listed | Settings › Live Events › Show on the board › Time not listed; look at a TV show there | No chip, no whistle: its line starts with the state; a provider's game slot of an unknown sport still has the dashed ring |
+| Hero | Focus a live game, then a later one | Live: the status in red, no LIVE pill; later: as before |
+| Card and player guide | Hold OK › a live game's card; in the player, Left to the games list | The status in red, no LIVE pill; other states keep their pills |
+| Banner | Watch a game | The player's game banner as in Build 112 (its own LIVE chip); its sport icon is the redrawn one |
+| Loading | Leave Live Events for over 15 minutes (or start the app) and open it | Under "Live Events" a turning spinner and one line for the step it's on ("Getting your channels…", then "Getting this week's games…", "Matching games to your channels…" or "Getting live scores…"), changing as it goes; no grey bars there |
+| Slow load | The same on a slow network (or the first open of the day) | After 10 s "Almost there. The first load of the day takes longest." under it; at most 20 s, then the board |
+| Redraws | Watch the loading screen, then the board, and send a log | The spinner turns smoothly; once the board is in, nothing redraws while idle (the "loop" line as in Build 120) |

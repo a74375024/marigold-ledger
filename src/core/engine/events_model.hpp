@@ -85,6 +85,13 @@ struct EventTile {
   std::vector<EventLeader> leaders;  // golf: the top two, instead of sides
   std::string icon;       // sport icon for no-sides tiles: an app/icons name ("golf")
   std::string symbol;     // a glyph in its place until the icons load
+  // What starts the top line (Build 124, tileMark()): the sport's icon in a
+  // chip of its colour (sportColor(); never red, which means live), a
+  // dashed ring for a game of a sport not known, or nothing (a show that
+  // isn't a game, of no sport known). Live never changes it.
+  enum class Mark : uint8_t { None, Chip, Unknown };
+  Mark mark = Mark::None;
+  uint32_t chipColor = 0;
   std::string channelName, channelLogo;  // footer channel
   std::string pill2;      // footer pill when no channel ("Event feed")
   bool pill2Outlined = false;
@@ -121,6 +128,14 @@ struct EventTile {
 // it says more than the sport ("ATP", "Women's Division II"), then the tag
 // ("3rd Test"), without repeating the sport.
 std::string tileSport(const std::string& icon);
+// A sport icon's chip colour, the same on every screen (Build 124): one per
+// sport, none red (red means live only); "other" a grey; 0 for a name with
+// none.
+uint32_t sportColor(const std::string& icon);
+// The tile's mark: a chip for a sport known (and a high-school event of any
+// sport, in the "other" chip); a dashed ring for a game (from the schedule,
+// or two sides) of a sport not known; else none.
+EventTile::Mark tileMark(const std::string& icon, bool game, bool highSchool);
 std::string tileCompetition(const sports::SportsEvent* event, const std::string& sport, const std::string& tag);
 
 // "Rams at Seahawks" (never a score): "A at B" only with the second side at
@@ -159,6 +174,11 @@ struct BoardShows {
 constexpr uint32_t kPlaceholdersAtMostMs = 20000;
 
 struct EventsBoard {
+  // While it loads (loading or more), what it waits for now (Build 124):
+  // the channel list, the week's schedule, games matched to the channels,
+  // or live scores (the wait for them). The screen names it under the
+  // title; None once loaded.
+  enum class Stage : uint8_t { None, Channels, Schedule, Matching, Scores };
   uint64_t version = 0;
   std::vector<EventRow> rows;
   // Still loading: the board's placeholders in place of every row. Build
@@ -169,6 +189,7 @@ struct EventsBoard {
   // Still loading, some rows in, on a board already shown whole: placeholder
   // rows after them.
   bool more = false;
+  Stage stage = Stage::None;
   bool scoresOn = true;
   // Where each tile is, by id: the first one in the rows (index()).
   struct Place {
