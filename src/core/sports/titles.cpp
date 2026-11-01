@@ -239,6 +239,55 @@ bool initialed(const std::string& name) { return rx::test("^\\p{Lu}\\.\\s*\\p{L}
 
 }  // namespace
 
+std::string tidy(std::string_view titleIn, std::string_view league) {
+  std::string title(str::trimUnicode(titleIn));
+  // "live:  A vs B": the marker, any case; other tags ("hoops:") only in
+  // the shape below.
+  std::string tag, rest = title;
+  if (auto m = rx::first("^([\\p{L} ]{2,16}?)\\s*:\\s+(?=\\S)", title)) {
+    std::string head(str::trimUnicode(m->group(1)));
+    if (rx::test(kLiveWords, head, true)) {
+      title = title.substr(m->end);
+      rest = title;
+    } else {
+      tag = head;
+      rest = title.substr(m->end);
+    }
+  }
+  // "A vs B _ Women`s Cricket (A vs B)": the matchup, then its tail.
+  size_t cut = rest.find(" _ ");
+  if (cut == std::string::npos) return title;
+  std::string matchupPart(str::trimUnicode(rest.substr(0, cut)));
+  if (!rx::test("\\s(?:vs\\.?|v\\.?|at|@)\\s", matchupPart, true)) return title;
+  const std::string after = rest.substr(cut + 3);
+  auto tail = rx::first("^\\s*([^()\\[\\]]*?)\\s*(?:[\\(\\[](.*?)[\\)\\]]?)?\\s*$", after);
+  if (!tail) return title;
+  std::string tailText = str::replaceAll(std::string(tail->group(1)), "`", "'");
+  std::string bracket(str::trimUnicode(tail->group(2)));
+  // "Women's Cricket" -> Women's and the sport; "Field Hockey" the sport only.
+  std::string side, sport = tailText;
+  if (auto m = rx::first("^((?:wo)?men)\\W?s\\b\\s*(.*)$", tailText, true)) {
+    side = str::lower(m->group(1)) == "women" ? "Women's" : "Men's";
+    sport = std::string(str::trimUnicode(m->group(2)));
+  }
+  static const std::set<std::string> kMoreSports = {"swimming", "swimming and diving", "diving", "water polo",
+                                                    "cross country", "rowing", "bowling", "ice hockey"};
+  std::string lowerSport = str::lower(sport);
+  const Word* word = wordFor(sport);
+  bool isSport = (!side.empty() && sport.empty()) || (word && word->sport) || kMoreSports.count(lowerSport) ||
+                 (!lowerSport.empty() && lowerSport == str::lower(league));
+  if (!isSport) return title;
+  // A lower-case tag naming no sport of its own ("hoops", "fc") says nothing.
+  const Word* tagWord = tag.empty() ? nullptr : wordFor(tag);
+  bool keepTag = !tag.empty() && (tag != str::lower(tag) || (tagWord && (tagWord->chip || tagWord->icon)));
+  std::string out = keepTag ? tag + ": " + matchupPart : matchupPart;
+  if (!side.empty()) out += " (" + side + ")";
+  // The matchup again in short names ("(Hurricanes vs Sixers)") goes; any
+  // other aside ("(Mat 1)") stays.
+  if (!bracket.empty() && !rx::test("\\s(?:vs\\.?|v\\.?|at|@)\\s", bracket, true)) out += " (" + bracket + ")";
+  return out;
+}
+
 std::optional<std::string> stageIn(std::string_view s) {
   auto m = rx::first(kStage, s, true);
   if (!m) return std::nullopt;
@@ -247,7 +296,7 @@ std::optional<std::string> stageIn(std::string_view s) {
 
 Title read(std::string_view title, std::string_view league) {
   Title out;
-  std::string full = cleanTitle(std::string(str::trimUnicode(title)));
+  std::string full = cleanTitle(tidy(title, league));
   std::string lowerTitle = str::lower(full);
 
   // "Rugby: ..." / "MotoGP: ..." / "Pro Bull Riding: ...": a sport or a series first.

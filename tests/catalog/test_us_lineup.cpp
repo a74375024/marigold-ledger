@@ -232,6 +232,106 @@ TEST_CASE("other countries: sports and event groups kept, the rest left out") {
   CHECK(admitGroups(list, kMaxChannels, countryRank({})).channels.size() == list.size());
 }
 
+TEST_CASE("free streaming and 24/7 groups: told by their names or by most of their channels") {
+  auto group = [](const std::string& name, const std::vector<std::string>& names, bool favorite = false) {
+    std::vector<Channel> list;
+    for (size_t i = 0; i < names.size(); ++i) list.push_back(channel(name + std::to_string(i), names[i], name));
+    if (favorite) list.front().isFavorite = true;
+    return list;
+  };
+  auto isFree = [](const std::vector<Channel>& list) {
+    std::vector<const Channel*> members;
+    for (const Channel& c : list) members.push_back(&c);
+    return freeStreamingGroup(*list.front().group, members);
+  };
+  CHECK(isFree(group("US| ROKU ᴿᴬᵂ ⁶⁰ᶠᵖˢ", {"RK: BUZZR", "RK: HISTORY & WARFARE"})));
+  CHECK(isFree(group("US Roku & Free TV", {"(US) (RK) TheGrio", "Court TV"})));
+  CHECK(isFree(group("US| PRIME ᴿᴬᵂ ⁶⁰ᶠᵖˢ", {"PRIME: LOVE KILLS", "PRIME: HBO LATINO"})));
+  CHECK(isFree(group("US| 24/7 COMEDY ᴿᴬᵂ ⁶⁰ᶠᵖˢ", {"US: 24/7 SEINFELD", "US: 24/7 FRIENDS"})));
+  CHECK(isFree(group("US| 24/7 PPV", {"US: 24/7 BILLY THE EXTERMINATOR"})));
+  // Mostly copies named as a free service's (three in four).
+  CHECK(isFree(group("Free Mix", {"(PLUTO USA) BUZZR", "(PLUTO USA) Cheers", "(RK) Bob Ross", "Court TV"})));
+  // A mixed group stays: its cable channels go where it goes.
+  CHECK_FALSE(isFree(group("United States", {"(PLUTO USA) BUZZR", "(PLUTO UK) Cheers", "USA CBS EAST", "USA TNT"})));
+  // A free service's pay-per-view group is sports.
+  CHECK_FALSE(isFree(group("IT| AMAZON PRIME PPV", {"IT: SERIE A 01", "IT: SERIE A 02"})));
+  CHECK_FALSE(isFree(group("US| ENTERTAINMENT", {"US: USA NETWORK", "US: TNT"})));
+  // A group holding a server favourite never is.
+  CHECK_FALSE(isFree(group("US| PLUTO TV", {"PLUTO: CHEERS", "PLUTO: BUZZR"}, true)));
+}
+
+TEST_CASE("over the channel cap: free streaming and 24/7 groups after other countries' sports, unless free is on") {
+  std::vector<Channel> list;
+  auto add = [&](const std::string& group, const std::string& name, int count) {
+    for (int i = 0; i < count; ++i) list.push_back(channel(group + std::to_string(i), name + " " + std::to_string(i), group));
+  };
+  add("US| ROKU ᴿᴬᵂ ⁶⁰ᶠᵖˢ", "RK: Channel", 20);
+  add("US| ENTERTAINMENT", "US: Channel", 20);
+  add("US| 24/7 COMEDY ᴿᴬᵂ ⁶⁰ᶠᵖˢ", "US: 24/7 Show", 10);
+  add("SE| SVENSK HOCKEY PPV", "LIVE | LULEA VS FROLUNDA | SE: SVENSK HOCKEY PPV", 20);
+  add("ES| DAZN PPV", "Live | Real Betis - Sevilla | ES: DAZN PPV", 20);
+  add("4K| 24/7 ᵁᴴᴰ ³⁸⁴⁰ᴾ", "4K: 24/7 Loop", 5);
+  auto groupsOf = [](const Admission& a) {
+    std::set<std::string> groups;
+    for (const Channel& c : a.channels) groups.insert(*c.group);
+    return groups;
+  };
+  // Free channels off: the US group and both sports groups; the free
+  // groups, whatever their country, wait for room.
+  Admission off = admitGroups(list, 65, countryRank({"US"}, false));
+  CHECK(groupsOf(off) == std::set<std::string>{"US| ENTERTAINMENT", "SE| SVENSK HOCKEY PPV", "ES| DAZN PPV", "4K| 24/7 ᵁᴴᴰ ³⁸⁴⁰ᴾ"});
+  CHECK(off.cutGroups == 2);
+  CHECK(off.leftOut == 0);
+  // Free channels on: they keep their country's rank; the sports groups wait.
+  Admission on = admitGroups(list, 65, countryRank({"US"}, true));
+  CHECK(groupsOf(on) == std::set<std::string>{"US| ROKU ᴿᴬᵂ ⁶⁰ᶠᵖˢ", "US| ENTERTAINMENT", "US| 24/7 COMEDY ᴿᴬᵂ ⁶⁰ᶠᵖˢ",
+                                              "4K| 24/7 ᵁᴴᴰ ³⁸⁴⁰ᴾ"});
+  CHECK(on.cutGroups == 2);
+  // No countries chosen: free streaming last all the same.
+  Admission any = admitGroups(list, 65, countryRank({}, false));
+  CHECK_FALSE(groupsOf(any).count("US| ROKU ᴿᴬᵂ ⁶⁰ᶠᵖˢ"));
+  CHECK(admitGroups(list, kMaxChannels, countryRank({}, false)).channels.size() == list.size());
+  // Nothing over the cap: nothing cut, whatever the setting.
+  CHECK(admitGroups(list, kMaxChannels, countryRank({"US"}, false)).channels.size() == list.size());
+}
+
+TEST_CASE("over the channel cap: other countries' sports groups with games before those of empty slots") {
+  std::vector<Channel> list;
+  auto add = [&](const std::string& group, int games, int empty, const std::string& emptyName) {
+    for (int i = 0; i < games; ++i)
+      list.push_back(channel(group + "g" + std::to_string(i), "LIVE | TEAM A VS TEAM B | " + std::to_string(i), group));
+    for (int i = 0; i < empty; ++i)
+      list.push_back(channel(group + "e" + std::to_string(i), emptyName + " " + std::to_string(i), group));
+  };
+  // In provider order, the emptiest first.
+  add("SE| SVENSK HOCKEY PPV", 1, 9, "- NO EVENT STREAMING - | 8K EXCLUSIVE | SE: SVENSK HOCKEY PPV");
+  add("MX| VIX PPV", 0, 10, "(MX) (VIX 17) |  (2098-12-31 08:00:01) VIX");
+  add("ES| SOCCER PPV", 8, 2, "End | Ended Game | ES: SOCCER PPV");
+  add("CA| TSN+ PPV", 10, 0, "");
+  add("DE| SOCCER PPV", 5, 5, "NO EVENT STREAMING NOW - | DE: SOCCER PPV");
+  Admission a = admitGroups(list, 30, countryRank({"US"}, false));
+  std::set<std::string> groups;
+  for (const Channel& c : a.channels) groups.insert(*c.group);
+  CHECK(groups == std::set<std::string>{"CA| TSN+ PPV", "ES| SOCCER PPV", "DE| SOCCER PPV"});
+  CHECK(a.cutGroups == 2);
+  // Admitted channels keep the provider's order.
+  CHECK(*a.channels.front().group == "ES| SOCCER PPV");
+  // The place within the rank: empty slots per thousand.
+  GroupRank rank = countryRank({"US"});
+  std::vector<const Channel*> se;
+  for (const Channel& c : list)
+    if (*c.group == "SE| SVENSK HOCKEY PPV") se.push_back(&c);
+  GroupPlace place = rank("SE| SVENSK HOCKEY PPV", se);
+  CHECK(place.rank == 2);
+  CHECK(place.within == 900);
+  // A custom rank: ties keep the provider's order.
+  Admission tied = admitGroups(list, 20, [](const std::string&, const std::vector<const Channel*>&) {
+    return GroupPlace{1, 5};
+  });
+  CHECK(*tied.channels.front().group == "SE| SVENSK HOCKEY PPV");
+  CHECK(tied.channels.size() == 20);
+}
+
 TEST_CASE("channel list fingerprint: same list, same value; any change, another") {
   std::vector<Channel> list = {channel("1", "ESPN", "US| SPORTS"), channel("2", "CNN", "US| NEWS")};
   uint64_t first = fingerprint(list);
@@ -247,6 +347,8 @@ TEST_CASE("channel list fingerprint: same list, same value; any change, another"
   std::vector<Channel> logo = list;
   logo[0].imageUrl = "logo";
   CHECK(fingerprint(logo) != first);
+  // What decides the sort: the countries, and whether free channels are on.
+  CHECK(fingerprint(list, {"US", "free:on"}) != fingerprint(list, {"US", "free:off"}));
 }
 
 TEST_CASE("free streaming: decided by all of a channel's copies, premium channels never") {

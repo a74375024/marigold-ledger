@@ -30,9 +30,9 @@ std::optional<size_t> column(const std::vector<std::string>& head, std::string_v
   return static_cast<size_t>(it - head.begin());
 }
 
-// "MTV2" -> "mtv2", "mtv-2"; "LAW & CRIME" -> "law-and-crime", then with
-// "-network" etc.: the file names the library might use for a channel name.
-std::vector<std::string> logoSetKeys(std::string_view name) {
+// A channel name's words for the library's file names: lower case, "&"
+// as "and", "+" as "plus", without quality and feed words.
+std::vector<std::string> logoSetTokens(std::string_view name) {
   static const std::set<std::string> kDrop = {"hd",  "fhd", "uhd",   "sd",    "4k",    "8k",   "hevc",
                                               "raw", "vip", "60fps", "50fps", "1080p", "720p", "east",
                                               "feed", "alt", "backup", "us",  "usa"};
@@ -49,6 +49,30 @@ std::vector<std::string> logoSetKeys(std::string_view name) {
     else flush();
   }
   flush();
+  return tokens;
+}
+
+// The same words as the library more likely writes them, asked only when
+// the name as written has no file: "Xtra" for "Extra" ("The Movie Channel
+// Extra"), without a coast ("Starz Kids West": a West feed shows its
+// network's logo), a language feed's last word ("YES Network Latin") or a
+// country mark the provider left in front ("CA Fox Sports Racing").
+std::vector<std::string> plainerTokens(std::vector<std::string> tokens) {
+  for (std::string& t : tokens) {
+    if (t == "extra") t = "xtra";
+  }
+  tokens.erase(std::remove_if(tokens.begin(), tokens.end(),
+                              [](const std::string& t) { return t == "west" || t == "pacific"; }),
+               tokens.end());
+  if (tokens.size() > 1 && (tokens.back() == "latin" || tokens.back() == "espanol" || tokens.back() == "spanish"))
+    tokens.pop_back();
+  if (tokens.size() > 1 && (tokens.front() == "ca" || tokens.front() == "uk")) tokens.erase(tokens.begin());
+  return tokens;
+}
+
+// "MTV2" -> "mtv2", "mtv-2"; "LAW & CRIME" -> "law-and-crime", then with
+// "-network" etc.: the file names the library might use for a channel name.
+std::vector<std::string> logoSetKeys(const std::vector<std::string>& tokens) {
   std::vector<std::string> out;
   if (tokens.empty()) return out;
   auto add = [&out](std::string key) {
@@ -91,14 +115,35 @@ std::optional<std::string> logoSetFile(std::string_view name) {
     for (std::string_view n : logoSetNames()) m.emplace(str::replaceAll(std::string(n), "-", ""), n);
     return m;
   }();
-  std::vector<std::string> keys = logoSetKeys(name);
-  for (const std::string& key : keys) {
-    if (kNames.count(key)) return key + "-us.png";
+  auto lookup = [](const std::vector<std::string>& keys) -> std::optional<std::string> {
+    for (const std::string& key : keys) {
+      if (kNames.count(key)) return key + "-us.png";
+    }
+    for (const std::string& key : keys) {
+      auto it = kJoined.find(str::replaceAll(key, "-", ""));
+      if (it != kJoined.end()) return std::string(it->second) + "-us.png";
+    }
+    return std::nullopt;
+  };
+  std::vector<std::string> tokens = logoSetTokens(name);
+  if (auto file = lookup(logoSetKeys(tokens))) return file;
+  std::vector<std::string> plainer = plainerTokens(tokens);
+  if (plainer != tokens) {
+    if (auto file = lookup(logoSetKeys(plainer))) return file;
   }
-  for (const std::string& key : keys) {
-    auto it = kJoined.find(str::replaceAll(key, "-", ""));
-    if (it != kJoined.end()) return std::string(it->second) + "-us.png";
-  }
+  // Names the library spells otherwise, as the providers write them.
+  static const std::unordered_map<std::string, std::string> kSpelledOtherwise = [] {
+    std::unordered_map<std::string, std::string> m;
+    for (auto [provider, file] :
+         {std::pair{"All Reality WE tv", "we-tv"}, std::pair{"Starz Kids", "starz-kids-and-family"},
+          std::pair{"StarzKids", "starz-kids-and-family"}, std::pair{"TMC", "the-movie-channel"},
+          std::pair{"TMC Xtra", "the-movie-channel-xtra"}, std::pair{"TMC Extra", "the-movie-channel-xtra"}}) {
+      m.emplace(catalog::coreKey(provider).key, std::string(file) + "-us.png");
+    }
+    return m;
+  }();
+  std::string key = catalog::coreKey(name).key;
+  if (auto other = kSpelledOtherwise.find(key); !key.empty() && other != kSpelledOtherwise.end()) return other->second;
   return std::nullopt;
 }
 
@@ -142,6 +187,17 @@ std::optional<std::string> handPicked(std::string_view name) {
   return hit->second;
 }
 
+std::optional<std::string> stationNetwork(std::string_view name, const std::string& callsign,
+                                          const catalog::reference::Index& reference) {
+  if (auto network = catalog::networkWord(name)) return network;
+  // Only a network the name could have said ("UNIMAS", "INDEPENDENT"),
+  // never another affiliation's words ("Story Television").
+  if (const catalog::reference::Station* station = reference.station(callsign)) {
+    return catalog::networkWord(station->network);
+  }
+  return std::nullopt;
+}
+
 LogoSpec spec(std::string_view name, const std::optional<std::string>& core, bool isWest,
               bool isLocal, const std::optional<std::string>& callsign,
               std::optional<int> virtualNumber, const std::string& provider,
@@ -157,7 +213,7 @@ LogoSpec spec(std::string_view name, const std::optional<std::string>& core, boo
   if (category) out.subtitle = std::string(catalog::genreTitle(*category));
 
   if (isLocal && callsign) {
-    std::optional<std::string> network = catalog::networkWord(name);
+    std::optional<std::string> network = stationNetwork(name, *callsign, catalog::reference::builtInIndex());
     // The network's own logo first (consistent and made for dark
     // backgrounds), then the station's, then the provider's.
     if (network) {
@@ -175,6 +231,12 @@ LogoSpec spec(std::string_view name, const std::optional<std::string>& core, boo
     }
     if (!file && stations.size() == 1) file = &stations.begin()->second;
     if (file) add(url(*file), "logo set");
+    // Neither: the network the provider names beside the call sign, in
+    // the same library ("MeTV Plus (WZME) HD").
+    if (std::string sign = str::upper(*callsign); out.urls.empty() && rx::test("^[A-Z0-9]{2,8}$", sign)) {
+      std::string brand = rx::replace(std::string(name), "\\(\\s*" + sign + "\\b[^()]*\\)|\\b" + sign + "\\b", " ", true);
+      if (auto brandFile = logoSetFile(brand)) add(url(*brandFile), "logo set");
+    }
     if (!provider.empty()) add(provider, "provider");
     std::vector<std::string> parts;
     if (network) parts.push_back(displayNetwork(*network));
@@ -201,8 +263,15 @@ LogoSpec spec(std::string_view name, const std::optional<std::string>& core, boo
   // The reference data's logo for a channel it knows.
   if (category != catalog::LineupCategory::local && category != catalog::LineupCategory::international) {
     const catalog::reference::Channel* known = catalog::reference::builtInIndex().match(name).channel;
-    if (known && !known->logo.empty()) {
-      add(url(known->logo), "logo set");
+    std::optional<std::string> file;
+    if (known && !known->logo.empty()) file = known->logo;
+    // None of its own: by its name or another name in the library ("TMC
+    // Xtra" is "The Movie Channel Extra").
+    for (size_t i = 0; known && !file && i <= known->aliases.size(); ++i) {
+      file = logoSetFile(i == 0 ? known->name : known->aliases[i - 1]);
+    }
+    if (file) {
+      add(url(*file), "logo set");
       if (!provider.empty()) add(provider, "provider");
       out.style = LogoSpec::Style::logoOnly;
       out.isWest = isWest;
@@ -365,13 +434,25 @@ std::optional<std::string> IptvOrgIndex::url(const std::optional<std::string>& e
     for (auto [provider, id] : {std::pair{"EarthX", "earthxtv.us"}, std::pair{"FlixFling Now", "flixfling.us"},
                                 std::pair{"The Victory Channel", "victorychannel.us"},
                                 std::pair{"Fox Sports Racing", "foxsportsracing.us"},
-                                std::pair{"Al Jazeera English", "aljazeera.qa"}}) {
+                                std::pair{"Al Jazeera English", "aljazeera.qa"},
+                                std::pair{"Euronews", "euronewsenglish.fr"}}) {
       m.emplace(catalog::coreKey(provider).key, id);
     }
     return m;
   }();
   if (auto other = kSpelledOtherwise.find(key); other != kSpelledOtherwise.end()) {
     if (auto byId = saved_.byID.find(other->second); byId != saved_.byID.end()) return byId->second;
+  }
+  // The same name as the database more likely writes it: without a
+  // country mark left in front ("CA Fox Sports Racing"), "TV" for
+  // "Television" ("Jewelry TV"), with or without a last "TV" or "Channel"
+  // ("TheGrio TV", "Victory Channel").
+  std::string bare = rx::replace(key, "^(ca|uk|us|usa) (?=\\S)", "");
+  std::string tv = rx::replace(bare, "\\btelevision\\b", "tv");
+  std::string plain = rx::replace(tv, " (tv|channel|network)$", "");
+  for (const std::string& k : {bare, tv, plain, plain + " tv", plain + " channel"}) {
+    if (k == key) continue;
+    if (auto found = saved_.byName.find(k); found != saved_.byName.end()) return found->second;
   }
   return std::nullopt;
 }

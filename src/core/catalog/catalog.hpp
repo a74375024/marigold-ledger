@@ -120,6 +120,16 @@ bool freeStreamingName(std::string_view name);
 // Provider groups (any case) for sports: event slots, pay-per-view, sports
 // channels ("UK| SKY SPORTS", "DE| SOCCER PPV", "CA| TSN+", "SE| HOCKEY").
 bool sportsGroup(std::string_view group);
+// What kindFor() reads a name or group by (also for admission, before any
+// build). An empty slot by its lower-cased name ("no event streaming",
+// "off air", "ended | ..."); a 24/7 loop by its name ("24/7 COMEDY",
+// "CINEBOX: HORROR"; `lower` is the name lower-cased); a free streaming
+// service's group, lower-cased ("us| roku", "us| prime", "pluto tv"); a
+// copy named as a free streaming service's ("RK: ...", "(Pluto TV) ...").
+bool placeholderName(std::string_view lower);
+bool loopName(std::string_view name, std::string_view lower);
+bool freeServiceGroup(std::string_view group);
+bool freeServiceName(std::string_view name);
 ChannelKind kindFor(std::string_view name, std::string_view lower, std::string_view group,
                     bool isCore);
 

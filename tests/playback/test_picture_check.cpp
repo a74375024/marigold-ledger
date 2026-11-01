@@ -216,6 +216,27 @@ TEST_CASE("picture check: a static game flips to a source not tried yet; a chann
   CHECK(one.opens == 1);
 }
 
+TEST_CASE("picture check: a game's provider feed showing a still slate moves on to its cricket channel") {
+  // A cricket match: the provider's feed first (picked in Where to Watch),
+  // the cricket channel the matcher linked after it.
+  TuneOptions game;
+  game.game = true;
+  Rig g = started({xt("feed"), xt("cricket")}, game);
+  Actions a = hold(g, Verdict::Static, 45250, "P 210 B, I 9 KB, 69 kbps");
+  CHECK(logDetail(a, "picture check") == "static 45 s; P 210 B, I 9 KB, 69 kbps");
+  CHECK(notes(a) == std::vector<std::string>{"No picture on this source — trying 2 of 2"});
+  g.untilOpen();
+  CHECK(g.feed == 1);
+  // The channel's picture moves: it stays.
+  g.hand();
+  g.picture();
+  a = hold(g, Verdict::Picture, 120000);
+  CHECK(recordedWhy(a).empty());
+  CHECK_FALSE(logged(a, "picture check"));
+  CHECK(g.feed == 1);
+  CHECK(g.opens == 2);
+}
+
 TEST_CASE("picture check: no feed with a picture leaves the sound playing and asks") {
   Rig r = started({xt("a"), xt("b")});
   hold(r, Verdict::NoVideo, 6250);

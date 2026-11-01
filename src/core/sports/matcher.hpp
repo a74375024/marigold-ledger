@@ -43,11 +43,16 @@ struct GuideListing {
   // Live: Vienna-ATP & Basel-ATP Semifinals"): a likely way to watch their
   // matches on at the time, never a tile of its own.
   bool tennisCoverage = false;
+  // A cricket channel's live match that names no teams ("Live: T20
+  // Cricket", described "3rd T20I."): the scheduled match in play then, when
+  // only one is (or its number or format picks one out).
+  bool cricket = false;
 
   bool operator==(const GuideListing& o) const {
     return entryID == o.entryID && inLineup == o.inLineup && spanish == o.spanish &&
            title == o.title && start == o.start && end == o.end && detail == o.detail &&
-           venue == o.venue && city == o.city && rank == o.rank && tennisCoverage == o.tennisCoverage;
+           venue == o.venue && city == o.city && rank == o.rank && tennisCoverage == o.tennisCoverage &&
+           cricket == o.cricket;
   }
   bool operator!=(const GuideListing& o) const { return !(*this == o); }
 };
@@ -60,6 +65,17 @@ std::optional<std::pair<std::string, std::string>> venueOf(std::string_view desc
 
 // "NBA Basketball", "Live: College Football": a sport with no teams.
 bool isGenericSportsTitle(std::string_view title);
+
+// A live cricket match by its format, without the teams: "Live: T20
+// Cricket", "LIVE Test Cricket", "Live: ODI". Not highlights, replays or
+// shows ("Cricket Live", "Cricket Highlights").
+bool isLiveCricket(std::string_view title);
+
+// The scheduled cricket match (a game index) a cricket channel's live
+// listing shows: the one in play during it whose format and match number
+// ("3rd T20I", "2nd ODI", "1st Test", in the title or description) don't
+// say otherwise; among several, only the one they name. Never a guess.
+std::optional<int> cricketTarget(const GuideListing& listing, const std::vector<SportsGame>& games);
 
 struct ProviderEvent {
   std::string id;
@@ -109,6 +125,8 @@ struct Stats {
   int mergedPlain = 0;
   int venueListings = 0;
   int describedListings = 0;
+  // A cricket channel's live match joined to the match in play.
+  int cricketListings = 0;
   int trimmedStations = 0;
   // Fight feeds joined to a card part (from the schedule or each other).
   int fightFeeds = 0;
@@ -224,6 +242,13 @@ std::string normalized(std::string_view text);
 // Ways a team is written: full name, short names, the nickname (last word
 // or two); the place name only for college teams ("Utah").
 std::vector<std::string> teamVariants(const SportsTeam& team, bool college);
+// A side that isn't a country's or a club's first team, read from the end
+// of its name: "New Zealand A" -> ("new zealand", "a"), "India U19" ->
+// ("india", "u19"), "Australia Women" -> ("australia", "women"), "Prime
+// Minister's XI", "Sri Lanka Emerging", "Harbor FC Reserves", "Harbor JV".
+// The first team never matches it, nor it the first team. nullopt for a
+// first team.
+std::optional<std::pair<std::string, std::string>> squadOf(std::string_view teamName);
 // A sport named without its level ("Football: ...") covers its pro and
 // college leagues.
 const std::map<std::string, std::set<std::string>>& sportFamilies();
@@ -268,6 +293,15 @@ class TeamIndex {
     std::optional<std::string> abbreviation;
     // A city name ("Atlanta"): only counts when the league is known.
     bool loose = false;
+    // A squad's name without its qualifier ("australia" for Australia
+    // Women): counts only when the title says it somewhere ("Women's").
+    std::optional<std::string> needs;
+    // A first team in a game: not when the title's next word makes it
+    // another squad ("India A", "Harbor FC U19").
+    bool firstTeam = false;
+    // Its sport names women's sides "Australia Women" (cricket): a title
+    // saying "Women" is never its first team's.
+    bool womenSides = false;
   };
 
   explicit TeamIndex(const std::vector<SportsGame>& games);
@@ -299,7 +333,9 @@ class TeamIndex {
     int end;
     int length() const { return end - start; }
   };
-  void add(const SportsTeam& team, int slot, int side, bool college, bool abbreviations);
+  // `game`: the team's game (a game index), else nullptr (a plain list).
+  void add(const SportsTeam& team, int slot, int side, bool college, bool abbreviations,
+           const SportsGame* game = nullptr);
   std::vector<Hit> hits(std::string_view title, const Filter& allowed, const Filter& allowLoose,
                         std::set<std::string>* written) const;
 

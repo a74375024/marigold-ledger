@@ -992,11 +992,16 @@ void Store::setSettings(const Settings& s) {
 
 void Store::setPrefs(const catalog::LineupPrefs& p) {
   bool countriesChanged = p.countries != impl_->prefs.countries;
+  auto freeOn = [](const catalog::LineupPrefs& prefs) {
+    return prefs.categories.count(catalog::LineupCategory::free) > 0;
+  };
+  bool freeChanged = freeOn(p) != freeOn(impl_->prefs);
   impl_->prefs = p;
   host_.files.write(kLineupFile, catalog::toJson(p));
-  if (countriesChanged && impl_->admissionCut) {
-    // Which groups are kept depends on the countries: read the channel
-    // lists again, and sort them even if they haven't changed.
+  if ((countriesChanged || freeChanged) && impl_->admissionCut) {
+    // Which groups are kept depends on the countries and on whether free
+    // channels are on: read the channel lists again, and sort them even if
+    // they haven't changed.
     impl_->admissionChanged = true;
     refreshAll();
     return;
@@ -1495,6 +1500,7 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
   time::Seconds now = time::now();
   auto stations = m.stations;
   std::set<std::string> wanted = m.prefs.guideCountries();  // "US" for US English and US Spanish
+  bool freeOn = m.prefs.categories.count(catalog::LineupCategory::free) > 0;
   auto cut = std::make_shared<bool>(false);
   uint64_t lastPrint = showing && !m.admissionChanged ? m.listFingerprint : 0;
   auto print = std::make_shared<uint64_t>(0);
@@ -1504,7 +1510,8 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
   http::Pool* pool = &host_.pool;
   std::string linksPath = host_.files.path(kM3uStreamsFile);
   host_.pool.post(
-      [merged, old, oldCatalog, result, renamedCount, now, stations, wanted, cut, lastPrint, print, unchanged, progress,
+      [merged, old, oldCatalog, result, renamedCount, now, stations, wanted, freeOn, cut, lastPrint, print, unchanged,
+       progress,
        foreground = m.foregroundJobs, parts, total, mergeHere, mergeParts, links, allLinks = m.links, files, pool,
        linksPath] {
         Foreground busy(foreground);
@@ -1518,6 +1525,7 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
         // this run or saved by the last one: nothing to sort again.
         // (The built-in channel directory too: a new one sorts again.)
         std::set<std::string> also = wanted;
+        also.insert(freeOn ? "free:on" : "free:off");
         also.insert("directory:" + catalog::directory::builtIn().made);
         also.insert("reference:" + catalog::reference::builtIn().made);
         *print = catalog::fingerprint(list, also);
@@ -1529,10 +1537,12 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
         // sports and events (Live Events finds games on them); the rest is
         // left out. Over the cap: the viewer's countries first, then
         // unmarked groups ("United States", "4K|", event groups), then those
-        // sports groups. Provider order alone kept Europe and cut every US
-        // group.
+        // sports groups (the emptiest last), then free streaming and 24/7
+        // groups unless free channels are on. Provider order alone kept
+        // Europe and cut every US group.
         if (!wanted.empty() || list.size() > catalog::kMaxChannels) {
-          catalog::Admission adm = catalog::admitGroups(list, catalog::kMaxChannels, catalog::countryRank(wanted));
+          catalog::Admission adm =
+              catalog::admitGroups(list, catalog::kMaxChannels, catalog::countryRank(wanted, freeOn));
           MLOG_I("store", "admitted %zu channels in %zu groups; %zu groups cut for room, %zu other countries' left out",
                  adm.channels.size(), adm.admittedGroups, adm.cutGroups, adm.leftOut);
           *cut = adm.cutGroups > 0 || adm.leftOut > 0;

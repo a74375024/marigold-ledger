@@ -235,6 +235,13 @@ bool isEventish(std::string_view name) {
       name, true);
 }
 
+// A provider group (lower-cased) of single-show channels: "us| cinema tv
+// shows", "series". Not a sports group's ("mlb world series").
+bool showsGroup(std::string_view group) {
+  return (contains(group, "show") || contains(group, "series")) && rx::test("\\b(tv shows?|shows|series)\\b", group) &&
+         !sportsGroup(group);
+}
+
 // Names that use a network word but aren't a local station.
 bool isNationalish(std::string_view name) {
   return rx::test(
@@ -1168,11 +1175,13 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
   // only another country's channels have, in a language a US English
   // lineup doesn't carry under the same name, is that country's.
   const directory::Entry* listed = nullptr;
+  bool listedNetwork = false;  // the directory knows the name, even loosely, outside its free tier
   const std::optional<std::string> marketBefore = market;
   bool usMarket = market == std::string("US") || market == std::string("US-ES") || !country;
   if (context.directory && kind == ChannelKind::channel && !core && !familyKey && !callsign && usMarket &&
       !stationLike()) {
     directory::Match m = context.directory->match(display);
+    listedNetwork = m.entry && m.entry->list != "free";
     if (m.entry && (m.kind == directory::MatchKind::exact || m.kind == directory::MatchKind::alias)) {
       if (m.entry->list == "local") {
         if (auto sign = text::firstGroup("^([KW][A-Z]{2,3})(-[A-Z]{2})?$", m.entry->name, 1)) callsign = *sign;
@@ -1192,6 +1201,15 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
   }
 
   if (familyKey && kind == ChannelKind::channel) kind = ChannelKind::event;
+  // A provider's single-show channels ("US| CINEMA TV SHOWS": "BLUE
+  // BLOODS", "CHEERS") play one series around the clock: 24/7 channels,
+  // which follow the Free setting. Never a real network: a core one, a
+  // station, one the reference data knows or one the directory lists
+  // (but for its free tier, which has such channels).
+  if (kind == ChannelKind::channel && !core && !callsign && !refChannel && !listedNetwork && showsGroup(group) &&
+      !stationLike()) {
+    kind = ChannelKind::loop247;
+  }
 
   std::string key;
   if (kind == ChannelKind::event || kind == ChannelKind::placeholder ||
@@ -1355,6 +1373,35 @@ bool sportsGroup(std::string_view group) {
                   lower);
 }
 
+bool placeholderName(std::string_view lower) {
+  // Only when the name holds a word every alternative needs (a cheap scan).
+  bool words = contains(lower, "no") || contains(lower, "off") || contains(lower, "coming") ||
+               contains(lower, "end") || contains(lower, "tvg-id") || contains(lower, "209");
+  return words && rx::test("no event|no stream|no games?\\b|no live|offline|off ?air|coming "
+                           "soon|^\\W*ended\\b|^\\W*end\\s*\\||tvg-id=|2098 12 31|2099 01 0",
+                           lower);
+}
+
+bool loopName(std::string_view name, std::string_view lower) {
+  // The provider's own movie loops ("CINEBOX: HORROR") are loops too.
+  return contains(name, "24/7") || str::startsWith(lower, "cinebox:") ||
+         (contains(lower, "247") && rx::test("\\b247\\b", lower));
+}
+
+bool freeServiceGroup(std::string_view group) {
+  return rx::test(
+      "\\b(prime|roku|tubi|pluto|samsung|plex|xumo|free tv|fast|netflix on air|vizio|local "
+      "now|distro|stirr)\\b",
+      group);
+}
+
+bool freeServiceName(std::string_view name) {
+  return hasAnyOf(name, "(:") &&
+         rx::test("^\\s*\\((pluto[^)]*|rk|roku|tubi|samsung[^)]*|plex|xumo)\\)|^\\s*(pluto|roku|tubi|"
+                  "prime|samsung|plex|xumo)[^:]{0,8}:",
+                  name, true);
+}
+
 ChannelKind kindFor(std::string_view name, std::string_view lower, std::string_view group,
                     bool isCore) {
   // Each pattern below only runs when the name holds a character or word
@@ -1364,15 +1411,7 @@ ChannelKind kindFor(std::string_view name, std::string_view lower, std::string_v
   if (separatorChars && rx::test("^\\s*(#{2,}|={2,}|-{3,}|\\*{2,}|▬|━|═|~{2,})|#{3,}\\s*$", name)) {
     return ChannelKind::separator;
   }
-  bool placeholderWords = contains(lower, "no") || contains(lower, "off") ||
-                          contains(lower, "coming") || contains(lower, "end") ||
-                          contains(lower, "tvg-id") || contains(lower, "209");
-  if (placeholderWords &&
-      rx::test("no event|no stream|no games?\\b|no live|offline|off ?air|coming "
-               "soon|^\\W*ended\\b|^\\W*end\\s*\\||tvg-id=|2098 12 31|2099 01 0",
-               lower)) {
-    return ChannelKind::placeholder;
-  }
+  if (placeholderName(lower)) return ChannelKind::placeholder;
   // A numbered slot ("NCAAF 16: USA NETWORK") is an event even when it names a network.
   bool digits = mayHaveDigit(name);
   if (digits && hasAnyOf(name, ":|") &&
@@ -1395,21 +1434,8 @@ ChannelKind kindFor(std::string_view name, std::string_view lower, std::string_v
       isEventish(name)) {
     return ChannelKind::event;
   }
-  // The provider's own movie loops ("CINEBOX: HORROR") are loops too.
-  if (contains(name, "24/7") || contains(group, "24/7") || str::startsWith(lower, "cinebox:") ||
-      (contains(lower, "247") && rx::test("\\b247\\b", lower))) {
-    return ChannelKind::loop247;
-  }
-  if (rx::test(
-          "\\b(prime|roku|tubi|pluto|samsung|plex|xumo|free tv|fast|netflix on air|vizio|local "
-          "now|distro|stirr)\\b",
-          group) ||
-      (hasAnyOf(name, "(:") &&
-       rx::test("^\\s*\\((pluto[^)]*|rk|roku|tubi|samsung[^)]*|plex|xumo)\\)|^\\s*(pluto|roku|tubi|"
-                "prime|samsung|plex|xumo)[^:]{0,8}:",
-                name, true))) {
-    return ChannelKind::fast;
-  }
+  if (loopName(name, lower) || contains(group, "24/7")) return ChannelKind::loop247;
+  if (freeServiceGroup(group) || freeServiceName(name)) return ChannelKind::fast;
   if (contains(group, "radio") || ((contains(lower, "radio") || contains(lower, "iheart")) &&
                                    rx::test("\\b(radio|iheart)\\b", lower))) {
     return ChannelKind::radio;

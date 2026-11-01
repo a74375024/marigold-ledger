@@ -51,7 +51,13 @@ struct ListingChannel {
   // A sports channel (not a station, not a free streaming channel): its
   // tennis coverage of named tournaments counts.
   bool sportsChannel = false;
+  // A cricket channel (a sports channel named for it: Willow, Willow Xtra,
+  // Sky Sports Cricket): its live match counts though it names no teams.
+  bool cricketChannel = false;
 };
+// A cricket channel's name: "Willow", "Willow Cricket Xtra", "Sky Sports
+// Cricket", "SuperSport Cricket", "Fox Cricket".
+bool cricketChannelName(std::string_view name);
 // Which channels to read, with their rank (station_rank) and language.
 std::vector<ListingChannel> listingChannels(const std::set<std::string>& lineup,
                                             const std::vector<std::string>& browseIDs,

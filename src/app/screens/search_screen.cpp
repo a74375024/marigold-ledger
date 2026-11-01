@@ -127,6 +127,12 @@ bool liveTile(const EventTile& t) {
   return t.pill == P::Live || t.pill == P::LiveOutline || t.pill == P::OnNow || t.pill == P::Delayed;
 }
 
+// OK plays a game: live in your channels, or (as on the board) starting
+// within half an hour on a channel (views::startsSoonOnChannel()).
+bool playsGame(const EventTile& t, time::Seconds now) {
+  return (t.watchable && liveTile(t)) || engine::views::startsSoonOnChannel(t, now);
+}
+
 // "in 20 min", "Tonight 7:30 PM", "Tomorrow 7:30 PM", "Sat 7:30 PM".
 std::string whenText(const ui::Ctx& c, time::Seconds t) {
   time::Seconds d = t - c.now;
@@ -1323,7 +1329,7 @@ class SearchScreen : public Screen {
 
   void selectGame(const EventTile& t) {
     Store& s = app_.store();
-    if (t.watchable && liveTile(t)) {
+    if (playsGame(t, time::now())) {
       watchGame(t.id);
     } else if (!t.watchable || t.finished) {
       // Not in your channels (or streaming only): where it is, no reminder.
@@ -1855,7 +1861,7 @@ class SearchScreen : public Screen {
         }
         const EventTile* t = s.eventTile(id);
         if (!t) return {};
-        if (t->watchable && liveTile(*t)) return "OK: Watch";
+        if (playsGame(*t, time::now())) return "OK: Watch";
         if (!t->watchable || t->finished) return "OK: Where to Watch";
         return s.hasReminder(id) ? "Hold OK: Cancel reminder" : "OK: Remind me";
       }
@@ -2147,6 +2153,8 @@ class SearchScreen : public Screen {
                        " \xc2\xb7 OK: Where to Watch";
       else if (t->finished) l.cornerLine = "Ended";
       else if (liveTile(*t)) l.cornerLine = "LIVE " + t->status;
+      else if (t->start && playsGame(*t, c.now))
+        l.cornerLine = whenText(c, t->start) + " \xc2\xb7 OK: Watch";
       else if (t->start)
         l.cornerLine = whenText(c, t->start) + (s.hasReminder(t->id) ? " \xc2\xb7 Reminder set \xe2\x9c\x93" : " \xc2\xb7 OK: Remind me");
     }

@@ -136,6 +136,16 @@ struct EventsState {
   uint32_t holdSinceMs = 0;
   events_build::Hold boardHold;
   int heldMost = 0, oldLiveMost = 0;
+  // Build 123: the leagues of the games the last board left out for their
+  // scores, and the look and games it was made for (BoardMade::heldScores;
+  // the wait for scores ends once none of them can still answer).
+  std::set<std::string> heldScores;
+  std::pair<uint64_t, uint64_t> heldScoresOf{0, 0};
+  uint64_t boardDoneLook = 0;
+  // Opened on an old board (or none): the board shows placeholders in place
+  // of its rows until it is whole (EventsBoard::loading), at most
+  // kPlaceholdersAtMostMs after the open (holdSinceMs).
+  bool wholeFirst = false;
   // The live scores round for this open and schedule: each open or wake
   // (`lookSerial`) and new schedule asks for one; the round begun for them
   // and the last one over.

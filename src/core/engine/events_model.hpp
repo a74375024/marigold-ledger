@@ -96,7 +96,12 @@ struct EventTile {
   double progress = -1;   // live progress strip, -1 = none
   bool watchable = false;
   bool finished = false;
-  bool upcoming = false;  // OK opens the detail card instead of playing
+  bool upcoming = false;  // OK opens the detail card instead of playing...
+  // ...unless it starts within half an hour and its best source is a
+  // channel (My Lineup or the guide, which show the pre-game; not an event
+  // feed, often blank until the start, or a team channel's guess):
+  // views::okPlays() (Build 123).
+  bool channelFirst = false;
   // Hero and detail card.
   std::string leagueChip;  // "NFL · Week 8 · Monday Night"
   std::string heroTitle;   // "Chiefs 17 – 14 Chargers"
@@ -149,12 +154,20 @@ struct BoardShows {
   bool more = false, untimed = false, families = false;
 };
 
+// The board's placeholders show this long at most after they first show;
+// then the board as it is (Build 123: whatever it has, or the empty board).
+constexpr uint32_t kPlaceholdersAtMostMs = 20000;
+
 struct EventsBoard {
   uint64_t version = 0;
   std::vector<EventRow> rows;
-  // Still loading with nothing to show yet: the board's placeholders.
+  // Still loading: the board's placeholders in place of every row. Build
+  // 123: also with rows in, after an open on an old board (or none) until
+  // the whole board is in (kPlaceholdersAtMostMs at most), so it appears in
+  // one go instead of filling in and moving.
   bool loading = false;
-  // Still loading, some rows in: placeholder rows after them.
+  // Still loading, some rows in, on a board already shown whole: placeholder
+  // rows after them.
   bool more = false;
   bool scoresOn = true;
   // Where each tile is, by id: the first one in the rows (index()).

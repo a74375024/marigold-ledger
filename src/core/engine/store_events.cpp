@@ -233,6 +233,10 @@ EventTile toTile(const sb::Tile& t, const sports::SportsEvent* event, const time
   o.watchable = t.watchable;
   o.finished = t.state == sports::SportsEvent::State::finished;
   o.upcoming = !t.selectWatches;
+  if (event && t.state == sports::SportsEvent::State::upcoming && !event->sources.empty()) {
+    sports::EventSource::Kind best = event->sources.front().kind;  // best first
+    o.channelFirst = best == sports::EventSource::Kind::lineup || best == sports::EventSource::Kind::guide;
+  }
   // Hero / detail lines from the tile and its event.
   std::string chip = event ? event->leagueShort : "";
   if (!o.tag.empty() && !o.tagAlert) chip += chip.empty() ? o.tag : " \xc2\xb7 " + o.tag;
@@ -320,7 +324,7 @@ void Store::eventsOpen(bool open) {
     e.scores.start(sports::scores::Holder::board, settings_.scheduleEnabled);
     eventsArrive(0);
   } else if (!open && eventsOpen_ == 0) {
-    e.holding = e.freshNote = false;
+    e.holding = e.freshNote = e.wholeFirst = false;
     if (e.scores.stop(sports::scores::Holder::board)) {
       e.scores.cancelRound();
       e.scoresRound = false;
@@ -357,6 +361,8 @@ void Store::eventsArrive(time::Seconds away) {
   }
   e.freshAfter = keep ? 0 : now;
   e.holding = e.freshNote = !keep;
+  // Not kept: placeholders until the whole board is in (boardFlags()).
+  e.wholeFirst = !keep;
   e.holdCapped = false;
   e.holdSinceMs = host_.ms();
   e.heldMost = e.oldLiveMost = 0;
@@ -380,6 +386,13 @@ events_build::Inputs Store::eventsInputs() const {
   in.scheduleAt = e.schedule.saved().fetchedAt.value_or(0);
   in.scheduleComing = e.schedule.fetching();
   in.scoresChecked = !e.scores.looking() || e.scoresDone == EventsState::Look{e.lookSerial, e.scheduleRevision};
+  // The games the last board (of this look and these games) left out for
+  // their scores: still waited for while one of their leagues can answer.
+  if (!in.scoresChecked && e.heldScoresOf == std::make_pair(e.lookSerial, e.eventsSerial)) {
+    time::Seconds now = time::now();
+    in.scoresAwaited = std::any_of(e.heldScores.begin(), e.heldScores.end(),
+                                   [&e, now](const std::string& league) { return e.scores.awaits(league, now); });
+  }
   return in;
 }
 
@@ -729,14 +742,17 @@ BoardMade board(const BoardInput& in) {
   }
   if (in.hold.any()) {
     // Waiting for fresh inputs: what older ones decide is left out (games
-    // around now until a score answers for them, or the clock does).
-    auto old = [&in](const sports::SportsEvent& ev) {
+    // around now until a score answers for them while one can, or the
+    // clock does). The leagues waited for are noted even under the
+    // schedule's wait, so the wait for scores never ends before they answer.
+    auto old = [&in, &made](const sports::SportsEvent& ev) {
       if (ev.game) {
-        if (in.hold.schedule) return true;
         const sports::SportsGame& g = *ev.game;
         bool around = !g.completed && in.now >= g.start - sports::scores::kLeadBeforeStart &&
                       in.now <= g.start + sports::scores::kWindowAfterStart;
-        if (in.hold.scores && around && !in.statuses.count(g.id)) return true;
+        bool scores = in.hold.scores && around && !in.statuses.count(g.id) && in.awaited.from(g.leagueShort);
+        if (scores) made.heldScores.insert(g.leagueShort);
+        if (in.hold.schedule || scores) return true;
       }
       return in.hold.list && (!ev.game || ev.hasFeeds());
     };
@@ -888,6 +904,7 @@ std::shared_ptr<events_build::BoardInput> Store::boardInput() {
   // Only scores answered lately: an older LIVE goes by the clock.
   in->statuses = e.scores.current(now, &in->oldLive);
   if (e.holding) in->hold = events_build::holdFor(eventsInputs(), now, host_.zone());
+  if (in->hold.scores) in->awaited = e.scores.awaited(now);
   in->finalSeen = e.scores.finalSeen();
   // Whip-around channels: once per lineup.
   uint64_t lineupKey = lineupKeyOf(m);
@@ -922,13 +939,14 @@ void Store::startBoard(uint32_t ms) {
   e.boardBusy = true;
   e.boardStartMs = e.boardBuiltMs = ms;
   auto made = std::make_shared<events_build::BoardMade>();
-  uint64_t gen = m.generation, serial = e.eventsSerial;
+  uint64_t gen = m.generation, serial = e.eventsSerial, look = e.lookSerial;
   host_.pool.post([in, made] { *made = events_build::board(*in); },
-                  [this, gen, serial, in, made] {
+                  [this, gen, serial, look, in, made] {
                     EventsState& ev = impl_->ev;
                     ev.boardBusy = false;
                     if (gen != impl_->generation) return;
                     ev.boardDoneSerial = serial;
+                    ev.boardDoneLook = look;
                     ev.channelIndex = made->index;
                     ev.channelIndexOf = in->channels;
                     ev.boardDone = made;  // put in by the tick
@@ -945,9 +963,16 @@ void Store::putBoard() {
   // Games left out while waiting stay asked about.
   if (made->hold.any()) e.watchableListed.insert(made->watchableListed.begin(), made->watchableListed.end());
   else e.watchableListed.swap(made->watchableListed);
+  // What it left out for scores: waited for while those leagues can answer.
+  if (made->hold.scores) {
+    e.heldScores.swap(made->heldScores);
+    e.heldScoresOf = {e.boardDoneLook, e.boardDoneSerial};
+  }
   std::shared_ptr<EventsBoard> out = std::move(made->events);
   out->version = events_->version + 1;
   boardFlags(*out);
+  // Whole: from now on a board still coming in shows its rows.
+  if (!out->loading && !out->more) e.wholeFirst = false;
   e.boardMadeAt = made->madeAt;
   e.boardSerial = e.boardDoneSerial;
   e.retired.push_back(std::move(events_));
@@ -982,7 +1007,8 @@ void Store::putBoard() {
       if (r.id == "live") live = r.count;
     }
     std::string note = "board: " + std::to_string(e.board.events.size()) + " games in " + std::to_string(rows) +
-                       " rows, " + std::to_string(live) + " live now" + (out->more ? "; more coming" : "");
+                       " rows, " + std::to_string(live) + " live now" +
+                       (out->loading ? "; more coming, placeholders shown" : out->more ? "; more coming" : "");
     if (note != e.lastBoardNote) {
       e.lastBoardNote = note;
       e.logNotes.push_back(std::move(note));
@@ -1007,8 +1033,11 @@ void Store::boardFlags(EventsBoard& out) const {
   // rebuild, or games worked out since an open on old ones.
   bool coming = eventsOpen_ > 0 && (m.loading || e.restoring || e.schedule.fetching() || e.rebuilding ||
                                     !e.checkedSinceOpen || e.eventsBuiltAt < e.freshAfter || e.holding);
-  out.loading = (coming && out.rows.empty()) || (e.schedule.fetching() && e.events->empty());
-  out.more = coming && !out.rows.empty();
+  // Opened on an old board (or none): placeholders in place of the rows in
+  // until the whole board is, so it never shows part and then moves.
+  bool whole = coming && e.wholeFirst;
+  out.loading = whole || (coming && out.rows.empty()) || (e.schedule.fetching() && e.events->empty());
+  out.more = coming && !out.rows.empty() && !whole;
 }
 
 void Store::showPlaceholders() {
@@ -1045,7 +1074,7 @@ Hold holdFor(const Inputs& in, time::Seconds now, const time::Zone& zone) {
   h.list = !listFresh(in.made.listAt, now) && (in.listComing || in.made.listAt != in.listAt);
   h.schedule = !scheduleCurrent(in.made.scheduleAt, now, zone) &&
                (in.scheduleComing || in.made.scheduleAt != in.scheduleAt);
-  h.scores = !in.scoresChecked;
+  h.scores = !in.scoresChecked && in.scoresAwaited;
   return h;
 }
 
@@ -1199,8 +1228,10 @@ void Store::eventsTick(uint32_t ms) {
             ev.madeFrom = {0, ev.schedule.saved().fetchedAt.value_or(0)};
             time::Seconds age = std::max<time::Seconds>(0, time::now() - job->savedAt);
             // Opened before it was in: shown (made from the clock) only while new.
-            if (eventsOpen_ > 0 && events_build::keptBoardShows(job->savedAt, time::now(), host_.zone()))
+            if (eventsOpen_ > 0 && events_build::keptBoardShows(job->savedAt, time::now(), host_.zone())) {
               ev.freshAfter = 0;
+              ev.wholeFirst = false;  // shown at once, as a board kept from before
+            }
             ev.logNotes.push_back("saved board from " + ageText(age) + " ago shown until the rebuild");
           },
           http::Priority::Visible);
@@ -1232,6 +1263,12 @@ void Store::eventsTick(uint32_t ms) {
   // Loading since the open ends once the channel list, the schedule and a
   // rebuild from them are in.
   if (m.loading || e.schedule.fetching() || e.rebuilding) e.checkedSinceOpen = false;
+  // The placeholders' time is up (the list or the schedule still coming,
+  // the scores' wait over by then): the board as it is, now.
+  if (e.wholeFirst && ms - e.holdSinceMs >= kPlaceholdersAtMostMs) {
+    e.wholeFirst = false;
+    e.boardDirty = true;
+  }
   // One board at a time: asked for meanwhile, the next starts once it is in.
   // Scores, a rebuild and the clock wait a moment after the last began, so
   // a burst of answers makes one board; your own changes don't wait.

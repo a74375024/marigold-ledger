@@ -1,4 +1,5 @@
 // Logo specs, the iptv-org index and the CSV reader.
+#include "core/catalog/reference.hpp"
 #include "core/logos/logos.hpp"
 #include "core/logos/table.hpp"
 #include "core/util/strings.hpp"
@@ -254,6 +255,71 @@ TEST_CASE("logos: any channel with a logo to try may show it alone, a local keep
                         LineupCategory::local, nullptr);
   CHECK(local.style == LogoSpec::Style::named);
   CHECK(local.urls == std::vector<std::string>{base(networkLogos().at("FOX")), provider});
+}
+
+TEST_CASE("logos: names the library spells otherwise, coast feeds, language feeds") {
+  CHECK(logoSetFile("TMC Xtra") == std::string("the-movie-channel-xtra-us.png"));
+  CHECK(logoSetFile("The Movie Channel Extra") == std::string("the-movie-channel-xtra-us.png"));
+  CHECK(logoSetFile("STARZKIDS WEST") == std::string("starz-kids-and-family-us.png"));
+  CHECK(logoSetFile("All Reality WE tv") == std::string("we-tv-us.png"));
+  CHECK(logoSetFile("Yes Network Latin") == std::string("yes-network-us.png"));
+  CHECK(logoSetFile("CA Fox Sports Racing") == logoSetFile("Fox Sports Racing"));
+  // A name the library has as written wins over the plainer one.
+  CHECK(logoSetFile("Bally Sports West") == std::string("bally-sports-west-us.png"));
+  CHECK(logoSetFile("HBO Latino") == std::string("hbo-latino-us.png"));
+  CHECK_FALSE(logoSetFile("West"));
+  CHECK_FALSE(logoSetFile("Latin"));
+
+  // A station with no logo of its own: the network the provider names
+  // beside its call sign, from the same library.
+  LogoSpec metv = spec("MeTV Plus (KZZZ) HD", std::nullopt, false, true, std::string("KZZZ"), 43, "", std::nullopt,
+                       LineupCategory::local, nullptr);
+  CHECK(metv.style == LogoSpec::Style::local);
+  CHECK(metv.urls == std::vector<std::string>{base("me-tv-plus-us.png")});
+  CHECK(metv.callsign == "KZZZ");
+  CHECK(spec("KZZZ", std::nullopt, false, true, std::string("KZZZ"), 9, "", std::nullopt, LineupCategory::local,
+             nullptr)
+            .urls.empty());
+}
+
+TEST_CASE("logos: a station's network from its name, else from the reference data by its call sign") {
+  auto data = catalog::reference::fromJson(R"({"made": "2026-11-01", "channels": [], "stations": [
+    {"c": "KFSF-DT", "n": "UNIMAS", "m": "San Francisco-Oakland-San Jose", "v": "66", "l": "es"},
+    {"c": "KPYX", "n": "INDEPENDENT", "m": "San Francisco-Oakland-San Jose", "v": "44"},
+    {"c": "WZME", "n": "Story Television", "m": "New York", "v": "43"}]})");
+  REQUIRE(data);
+  catalog::reference::Index index(*data);
+  CHECK(stationNetwork("KFSF", "KFSF", index) == std::string("UNIMAS"));
+  CHECK(stationNetwork("KPYX", "KPYX", index) == std::string("INDEPENDENT"));
+  // The name first: what the provider carries on it.
+  CHECK(stationNetwork("FOX 2 (KFSF)", "KFSF", index) == std::string("FOX"));
+  // Only a network word the name could have said.
+  CHECK_FALSE(stationNetwork("MeTV Plus (WZME) HD", "WZME", index));
+  CHECK_FALSE(stationNetwork("KQQQ", "KQQQ", index));
+}
+
+TEST_CASE("logos: the public database's names spelled otherwise") {
+  std::string channels =
+      "id,name,alt_names,network,country,closed\n"
+      "JewelryTV.us,Jewelry TV,,,US,\n"
+      "TheGrioTV.us,TheGrio TV,,,US,\n"
+      "VictoryChannel.us,Victory Channel,,,US,\n"
+      "FoxSportsRacing.us,Fox Sports Racing,,,US,\n";
+  std::string logos =
+      "channel,feed,in_use,tags,width,height,format,url\n"
+      "JewelryTV.us,,TRUE,,1,1,PNG,https://example.invalid/jtv.png\n"
+      "TheGrioTV.us,,TRUE,,1,1,PNG,https://example.invalid/grio.png\n"
+      "VictoryChannel.us,,TRUE,,1,1,PNG,https://example.invalid/victory.png\n"
+      "FoxSportsRacing.us,,TRUE,,1,1,PNG,https://example.invalid/fsr.png\n";
+  auto saved = IptvOrgIndex::build(channels, logos);
+  REQUIRE(saved);
+  IptvOrgIndex index(*saved);
+  CHECK(index.url(std::nullopt, "Jewelry Television") == std::string("https://example.invalid/jtv.png"));
+  CHECK(index.url(std::nullopt, "TheGrio") == std::string("https://example.invalid/grio.png"));
+  CHECK(index.url(std::nullopt, "Victory") == std::string("https://example.invalid/victory.png"));
+  CHECK(index.url(std::nullopt, "CA Fox Sports Racing") == std::string("https://example.invalid/fsr.png"));
+  CHECK_FALSE(index.url(std::nullopt, "Dream"));
+  CHECK_FALSE(index.url(std::nullopt, "CA"));
 }
 
 TEST_CASE("fillsCard: good logos stand alone whatever their source, poor ones keep the name") {

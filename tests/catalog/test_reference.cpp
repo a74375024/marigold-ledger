@@ -6,7 +6,10 @@
 
 #include "catalog/helpers.hpp"
 #include "core/catalog/catalog.hpp"
+#include "core/catalog/directory.hpp"
+#include "core/catalog/lineup.hpp"
 #include "core/catalog/reference.hpp"
+#include "core/catalog/work.hpp"
 #include "core/logos/logos.hpp"
 #include "core/util/gunzip.hpp"
 #include "core/util/strings.hpp"
@@ -222,7 +225,7 @@ TEST_CASE("reference lineup: a shut-down channel isn't suggested unless the guid
   CHECK_FALSE(b.entryOf("4")->closed.empty());
 }
 
-TEST_CASE("reference lineup: a US channel nothing knows is free streaming; show loops and known feeds aren't") {
+TEST_CASE("reference lineup: a US channel nothing knows is free streaming; show loops are 24/7, known feeds channels") {
   Built b({channel("1", "AT&T: LOVE KILLS ᴿᴬᵂ", "US| AT&T"), channel("2", "US: CHEERS 4K", "US| CINEMA TV SHOWS"),
            channel("3", "TV: TENNIS CHANNEL 3", "US| TV"), channel("4", "TV: ABC7 NEW YORK", "US| TV"),
            channel("5", "US: SOME SPORTS FEED", "US| SPORTS")});
@@ -230,13 +233,80 @@ TEST_CASE("reference lineup: a US channel nothing knows is free streaming; show 
   CHECK(b.entryOf("1")->kind == ChannelKind::fast);
   CHECK(b.entryOf("1")->category == LineupCategory::free);
   REQUIRE(b.entryOf("2"));
-  CHECK(b.entryOf("2")->kind == ChannelKind::channel);
+  CHECK(b.entryOf("2")->kind == ChannelKind::loop247);
+  CHECK(b.entryOf("2")->category == LineupCategory::free);
   REQUIRE(b.entryOf("3"));
   CHECK(b.entryOf("3")->kind == ChannelKind::channel);
   REQUIRE(b.entryOf("4"));
   CHECK(b.entryOf("4")->kind == ChannelKind::channel);
   REQUIRE(b.entryOf("5"));
   CHECK(b.entryOf("5")->kind == ChannelKind::channel);
+}
+
+TEST_CASE("single-show channels in a provider's TV shows group are 24/7; real networks there never") {
+  const std::string shows = "US| CINEMA TV SHOWS ᴴᴰ/ᴿᴬᵂ ⁶⁰ᶠᵖˢ";
+  std::vector<Channel> list = {
+      channel("1", "US: BLUE BLOODS 4K", shows), channel("2", "US: CHEERS 4K", shows),
+      channel("3", "US: LAW & ORDER 4K", shows),
+      // Real networks: a core one, one the reference data knows, one only
+      // the directory knows (loosely), a station by its network's name.
+      channel("4", "US: COMEDY CENTRAL 4K", shows), channel("5", "US: PARAMOUNT NETWORK", shows),
+      channel("6", "US: BOUNCE 4K", shows), channel("7", "US: DREAM TEAM 4K", shows),
+      channel("8", "US: FOX 5 TESTVILLE", shows),
+      // A sports group's "series" isn't a show's.
+      channel("10", "WORLD SERIES CAM", "MLB| WORLD SERIES"),
+      // A group named for series.
+      channel("11", "BONANZA", "Classic TV Series")};
+  directory::Data dirData;
+  directory::Entry bluebloods;
+  bluebloods.id = "iptv:BlueBloods.us";
+  bluebloods.name = "Blue Bloods";
+  bluebloods.list = "free";  // iptv-org's free tier has single-show channels
+  directory::Entry dream;
+  dream.id = "The Dream Team Channel";
+  dream.name = "The Dream Team Channel";
+  dream.list = "pay";
+  dirData.entries = {bluebloods, dream};
+  directory::Index directory(dirData);
+  reference::Data refData = *reference::fromJson(kSample);
+  reference::Index reference(refData);
+  // As an Xtream list comes: the category is the first tag.
+  for (Channel& c : list) c.tags = {*c.group};
+  std::vector<Channel> annotated = catalog::annotated(list);
+  CatalogResult r = build(annotated, utc(2026, 10, 30, 18, 0), {}, &directory, nullptr, &reference);
+  auto kindOf = [&](const std::string& id) {
+    const std::string& e = r.entryOf.at("xt:1|" + id);
+    return std::find_if(r.entries.begin(), r.entries.end(), [&](const EntryInfo& x) { return x.id == e; })->kind;
+  };
+  for (const char* id : {"1", "2", "3", "11"}) {
+    INFO(id);
+    CHECK(kindOf(id) == ChannelKind::loop247);
+  }
+  for (const char* id : {"4", "5", "6", "7", "8", "10"}) {
+    INFO(id);
+    CHECK(kindOf(id) == ChannelKind::channel);
+  }
+
+  // 24/7 follows the Free setting: off, the shows stay out of My Lineup.
+  LineupInput in;
+  in.infos = r.entries;
+  in.channels = annotated;
+  for (size_t i = 0; i < annotated.size(); ++i) in.indexByID[annotated[i].id] = i;
+  in.prefs.configured = true;
+  in.prefs.categories.erase(LineupCategory::free);
+  in.prefs.requireGuide = false;
+  in.otherGroup = "Other";
+  auto inLineup = [&](const LineupOutput& out, const std::string& id) {
+    return out.lineupIDs.count(r.entryOf.at("xt:1|" + id)) > 0;
+  };
+  LineupOutput off = lineup(in);
+  CHECK_FALSE(inLineup(off, "1"));
+  CHECK_FALSE(inLineup(off, "2"));
+  CHECK(inLineup(off, "4"));
+  in.prefs.categories.insert(LineupCategory::free);
+  LineupOutput on = lineup(in);
+  CHECK(inLineup(on, "1"));
+  CHECK(inLineup(on, "2"));
 }
 
 TEST_CASE("reference lineup: without the data the rules decide as before") {

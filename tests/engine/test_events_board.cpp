@@ -6,7 +6,10 @@
 // clock; otherwise placeholders until fresh games are in. Build 119: a board
 // made now from old inputs (the channel list and schedule saved last time,
 // scores answered hours ago) waits the same way, at most a while; a LIVE
-// only ever comes from a score answered lately or from the clock.
+// only ever comes from a score answered lately or from the clock. Build
+// 123: placeholders until the whole board is in after such an open (never
+// again once shown), a score waited for only while one can come, and OK
+// playing a game about to start on a channel.
 #include <doctest.h>
 
 #include <set>
@@ -295,9 +298,15 @@ TEST_CASE("engine: Live Events shows placeholders until its board is made from t
   fake::settle(store, tv);
   auto board = store.events();
   REQUIRE(tiles(*board) > 10);
-  CHECK_FALSE(board->loading);
-  // The schedule still coming (it doesn't answer here): placeholder rows
-  // after the rows in, until it gives up.
+  // The schedule still coming (it doesn't answer here): Build 123, the
+  // placeholders stand in for the rows in until the board is whole...
+  CHECK(board->loading);
+  CHECK_FALSE(board->more);
+  // ...or kPlaceholdersAtMostMs after the open: then the board as it is,
+  // placeholder rows after it until the schedule gives up.
+  fake::settle(store, tv);
+  tick(store, tv);
+  CHECK_FALSE(store.events()->loading);
   for (int i = 0; i < 60 && store.events()->more; ++i) fake::settle(store, tv);
   CHECK_FALSE(store.events()->more);
   CHECK(tiles(*store.events()) == tiles(*board));
@@ -517,10 +526,21 @@ TEST_CASE("engine: after a relaunch, games from the list saved last time wait fo
   fake::settle(store, tv);  // ten seconds
   CHECK(tiles(*store.events()) == 0);
   CHECK(store.events()->loading);
-  // Past the wait: the board from what there is, made from the clock, with
-  // placeholder rows after it while the list still comes.
-  fake::settle(store, tv);
+  // Past the wait (kHoldAtMostMs): the board from what there is, made from
+  // the clock, under the placeholders while the list still comes (no board
+  // before: it shows whole)...
+  for (int i = 0; i < 85; ++i) tick(store, tv);
+  tv.pool.drain();
+  tick(store, tv);
   CHECK(tiles(*store.events()) > 10);
+  CHECK(store.events()->loading);
+  // ...until kPlaceholdersAtMostMs after the open: the board as it is,
+  // placeholder rows after it.
+  for (int i = 0; i < 20; ++i) tick(store, tv);
+  tv.pool.drain();
+  tick(store, tv);
+  CHECK(tiles(*store.events()) > 10);
+  CHECK_FALSE(store.events()->loading);
   CHECK(store.events()->more);
   // The list in: the board from it.
   tv.pool.letGo(fake::kPlaylist);
@@ -558,4 +578,205 @@ TEST_CASE("engine: waking after hours with Live Events open shows placeholders u
   CHECK(tiles(*store.events()) == before);
   CHECK_FALSE(store.events()->loading);
   store.eventsOpen(false);
+}
+
+// Build 123: never part of a board with the rest moving in around it.
+TEST_CASE("engine: opened on an old board, placeholders stand in for its rows until it is whole; once shown, never") {
+  fake::Tv tv;
+  tv.pool.answer(fake::kPlaylist, playlist());
+  Store store(tv.host());
+  REQUIRE(fake::addPlaylist(store, tv).empty());
+  store.eventsOpen(true);
+  uint32_t opened = tv.ms;
+  CHECK(store.events()->loading);
+  // The rows are made from the games there are while the schedule is still
+  // coming (it doesn't answer here): placeholders in their place, never
+  // rows with more to come after them.
+  bool rowsIn = false;
+  while (store.events()->loading && tv.ms - opened < marigold::engine::kPlaceholdersAtMostMs - 500) {
+    CHECK_FALSE(store.events()->more);
+    rowsIn = rowsIn || tiles(*store.events()) > 0;
+    tv.pool.drain();
+    tick(store, tv);
+  }
+  CHECK(rowsIn);
+  // Whole, or the placeholders' time up: the board as it is.
+  for (int i = 0; i < 60 && (store.events()->loading || store.events()->more); ++i) fake::settle(store, tv);
+  REQUIRE_FALSE(store.events()->loading);
+  REQUIRE_FALSE(store.events()->more);
+  size_t whole = tiles(*store.events());
+  REQUIRE(whole > 10);
+  // Shown whole, a board coming in again (the schedule fetched from
+  // Settings) keeps its rows, placeholder rows after them.
+  store.refreshSchedule();
+  for (int i = 0; i < 30; ++i) {
+    tv.pool.drain();
+    tick(store, tv);
+    CHECK_FALSE(store.events()->loading);
+    CHECK(tiles(*store.events()) == whole);
+  }
+  CHECK(store.events()->more);
+  store.eventsOpen(false);
+}
+
+TEST_CASE("sports: a score is waited for only from a league that can still answer") {
+  using marigold::sports::SportsGame;
+  mtime::Seconds now = sportsdata::utc(2026, 11, 1, 18, 0);
+  mtime::Zone zone = mtime::Zone::usEastern();
+  auto game = [now](const char* league, const char* id) {
+    return sportsdata::game(league, league, id, sportsdata::team("h" + std::string(id), "Home " + std::string(id)),
+                            sportsdata::team("a" + std::string(id), "Away " + std::string(id)), now - 1800);
+  };
+  SportsGame nba = game("NBA", "1"), nhl = game("NHL", "2");
+  scores::LiveScores live;
+  REQUIRE(live.start(scores::Holder::board, true));
+  // Before any round: every known league may answer; no scoreboard, none.
+  CHECK(live.awaits("NBA", now));
+  CHECK(live.awaits("NFL", now));
+  CHECK_FALSE(live.awaits("Not a league", now));
+  scores::RoundInput in;
+  in.now = now;
+  in.zone = zone;
+  in.games = {nba, nhl};
+  live.beginRound(in);
+  auto first = live.nextRequest(now);
+  REQUIRE(first);
+  REQUIRE(first->league.shortName == "NBA");
+  CHECK(live.awaits("NBA", now));  // being asked
+  live.onResponse(500, "", now);
+  auto second = live.nextRequest(now);
+  REQUIRE(second);
+  REQUIRE(second->league.shortName == "NHL");
+  CHECK_FALSE(live.awaits("NBA", now));  // its request failed
+  CHECK(live.awaits("NHL", now));
+  live.onResponse(200, "{}", now);  // answered, without its game
+  CHECK_FALSE(live.nextRequest(now));
+  CHECK_FALSE(live.awaits("NHL", now));
+  CHECK(live.awaits("NFL", now));  // not asked
+  // The copy for the board's worker says the same.
+  scores::Awaited copy = live.awaited(now);
+  for (const char* league : {"NBA", "NHL", "NFL", "Not a league"}) CHECK(copy.from(league) == live.awaits(league, now));
+  // Its next look due: NHL may answer again.
+  CHECK(live.awaits("NHL", now + 3600));
+
+  // A source refusing us: none of its leagues wait; another source's do.
+  scores::LiveScores refused;
+  REQUIRE(refused.start(scores::Holder::board, true));
+  in.games = {nba};
+  refused.beginRound(in);
+  REQUIRE(refused.nextRequest(now));
+  refused.onResponse(429, "", now);
+  CHECK_FALSE(refused.awaits("NFL", now));
+  CHECK(refused.awaits("D3WSO", now));
+  CHECK_FALSE(refused.awaited(now).from("NFL"));
+  CHECK(refused.awaited(now).from("D3WSO"));
+}
+
+TEST_CASE("engine: the board doesn't wait for a score that can't come; the wait ends when none can") {
+  using marigold::sports::EventSource;
+  mtime::Seconds now = sportsdata::utc(2026, 11, 1, 18, 0);
+  mtime::Zone zone = mtime::Zone::usEastern();
+  auto game = [now](const char* league, const char* id) {
+    return sportsdata::game(league, league, id, sportsdata::team("h" + std::string(id), "Home " + std::string(id)),
+                            sportsdata::team("a" + std::string(id), "Away " + std::string(id)), now - 1800);
+  };
+  // Under way, no score yet: NFL (its scoreboard due), NHL (asked a moment
+  // ago, without it), NBA (its last request failed), Division III soccer
+  // (its source refusing us) and a league with no scoreboard.
+  auto channel = sportsdata::source("ch1", EventSource::Kind::guide);
+  auto events = std::make_shared<std::vector<marigold::sports::SportsEvent>>();
+  for (auto g : {game("NFL", "1"), game("NHL", "2"), game("NBA", "3"), game("D3WSO", "4"), game("ZZZ", "5")})
+    events->push_back(sportsdata::eventOf(g, {channel}));
+  events_build::BoardInput in;
+  in.events = events;
+  in.catalog = std::make_shared<marigold::catalog::CatalogResult>();
+  in.guide = std::make_shared<marigold::engine::Channels>();
+  in.channels = std::make_shared<std::vector<marigold::Channel>>();
+  in.now = now;
+  in.zone = zone;
+  in.settings.showsUnwatchable = true;
+  in.hold = {false, false, true};
+  in.awaited.now = now;
+  in.awaited.due["NHL"] = now + 60;
+  in.awaited.failing.insert("NBA");
+  in.awaited.refused.insert("ncaa.com");
+  events_build::BoardMade made = events_build::board(in);
+  std::set<std::string> shown = ids(*made.events);
+  CHECK(made.held == 1);
+  CHECK(made.heldScores == std::set<std::string>{"NFL"});
+  CHECK_FALSE(shown.count("sev|NFL|1"));
+  CHECK(shown.count("sev|NHL|2"));
+  CHECK(shown.count("sev|NBA|3"));
+  // Its score in: nothing waits.
+  in.statuses = {{"NFL|1", phase(LivePhase::live)}};
+  made = events_build::board(in);
+  CHECK(made.held == 0);
+  CHECK(made.heldScores.empty());
+  CHECK(ids(*made.events).count("sev|NFL|1"));
+
+  // The wait itself: on while a game left out can still get a score, or
+  // before a board has said which; over once none can.
+  events_build::Inputs inputs;
+  inputs.made = {now - 120, now - 3 * 3600};
+  inputs.listAt = inputs.made.listAt;
+  inputs.scheduleAt = inputs.made.scheduleAt;
+  inputs.scoresChecked = false;
+  CHECK(events_build::holdFor(inputs, now, zone).scores);
+  inputs.scoresAwaited = false;
+  CHECK_FALSE(events_build::holdFor(inputs, now, zone).any());
+}
+
+TEST_CASE("views: within half an hour of the start, OK plays a game whose best source is a channel") {
+  using marigold::sports::EventSource;
+  mtime::Seconds now = sportsdata::utc(2026, 11, 1, 18, 0);
+  auto game = [](const char* id, mtime::Seconds start) {
+    return sportsdata::game("NFL", "NFL", id, sportsdata::team("h" + std::string(id), "Home " + std::string(id)),
+                            sportsdata::team("a" + std::string(id), "Away " + std::string(id)), start);
+  };
+  auto events = std::make_shared<std::vector<marigold::sports::SportsEvent>>();
+  // Starting in 20 minutes: on a channel (an event feed too), in My Lineup,
+  // only on an event feed, only on a team channel's guess; in 40 minutes on
+  // a channel; and one under way on an event feed.
+  events->push_back(sportsdata::eventOf(game("1", now + 20 * 60),
+                                        {sportsdata::source("ch1", EventSource::Kind::guide), sportsdata::feed("f1")}));
+  events->push_back(sportsdata::eventOf(game("2", now + 20 * 60), {sportsdata::source("ch2", EventSource::Kind::lineup)}));
+  events->push_back(sportsdata::eventOf(game("3", now + 20 * 60), {sportsdata::feed("f3")}));
+  events->push_back(sportsdata::eventOf(game("4", now + 20 * 60), {sportsdata::source("ch4", EventSource::Kind::team)}));
+  events->push_back(sportsdata::eventOf(game("5", now + 40 * 60), {sportsdata::source("ch5", EventSource::Kind::guide)}));
+  events->push_back(sportsdata::eventOf(game("6", now - 30 * 60), {sportsdata::feed("f6")}));
+  events_build::BoardInput in;
+  in.events = events;
+  in.catalog = std::make_shared<marigold::catalog::CatalogResult>();
+  in.guide = std::make_shared<marigold::engine::Channels>();
+  in.channels = std::make_shared<std::vector<marigold::Channel>>();
+  in.now = now;
+  in.zone = mtime::Zone::usEastern();
+  std::shared_ptr<EventsBoard> board = events_build::board(in).events;
+  auto tile = [&board](const char* id) {
+    const EventTile* t = board->tile(std::string("sev|NFL|") + id);
+    REQUIRE(t);
+    return *t;
+  };
+  EventTile onChannel = tile("1");
+  CHECK(onChannel.upcoming);  // still upcoming (Remind me, the detail card's buttons): only OK changes
+  CHECK(onChannel.channelFirst);
+  CHECK(views::okPlays(onChannel, now));
+  CHECK(views::okPlays(tile("2"), now));
+  CHECK_FALSE(views::okPlays(tile("3"), now));  // an event feed is often blank before the start
+  CHECK_FALSE(views::okPlays(tile("4"), now));
+  EventTile later = tile("5");
+  CHECK_FALSE(views::okPlays(later, now));
+  CHECK(views::okPlays(later, now + 10 * 60));  // 30 minutes before
+  CHECK_FALSE(views::okPlays(later, now + 10 * 60 - 1));
+  CHECK(views::okPlays(tile("6"), now));  // under way: plays, whatever the source
+  CHECK_FALSE(tile("6").channelFirst);
+  // Not begun though past its start (the scoreboard says so): still plays.
+  CHECK(views::okPlays(onChannel, now + 25 * 60));
+  // Over, or nowhere to watch: never.
+  EventTile over = onChannel;
+  over.finished = true;
+  CHECK_FALSE(views::okPlays(over, now));
+  EventTile nowhere = onChannel;
+  nowhere.watchable = false;
+  CHECK_FALSE(views::okPlays(nowhere, now));
 }

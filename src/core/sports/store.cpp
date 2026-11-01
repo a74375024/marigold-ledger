@@ -45,9 +45,15 @@ std::vector<ListingChannel> listingChannels(const std::set<std::string>& lineup,
     channel.spanish = info.category == LineupCategory::spanish || info.market == std::string("US-ES");
     channel.rank = stationRank(info, markets, channel.inLineup);
     channel.sportsChannel = info.category == LineupCategory::sports && info.kind == catalog::ChannelKind::channel;
+    channel.cricketChannel = channel.sportsChannel && cricketChannelName(info.name);
     out.push_back(std::move(channel));
   }
   return out;
+}
+
+bool cricketChannelName(std::string_view name) {
+  std::string words = matcher::normalized(name);
+  return words.find(" willow ") != std::string::npos || words.find(" cricket ") != std::string::npos;
 }
 
 std::optional<matcher::GuideListing> listingFor(const ListingChannel& channel, const std::string& rawTitle,
@@ -68,6 +74,12 @@ std::optional<matcher::GuideListing> listingFor(const ListingChannel& channel, c
     // "Center Court Live" / "Vienna-ATP & Basel-ATP Semifinals": matched
     // with those tournaments' matches.
     listing.tennisCoverage = true;
+    return listing;
+  }
+  if (channel.cricketChannel && matcher::isLiveCricket(title)) {
+    // "Live: T20 Cricket", described "3rd T20I.": the match in play then.
+    listing.cricket = true;
+    if (overview) listing.detail = text::prefix(overview.view(), 120);
     return listing;
   }
   if (overview && text::count(overview.view()) > 12 && (sports || matcher::isGenericSportsTitle(rawTitle)) &&

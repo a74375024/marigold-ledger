@@ -16,6 +16,10 @@
 #include "core/util/pixels.hpp"
 #include "core/util/time.hpp"
 
+namespace marigold::catalog::reference {
+class Index;
+}
+
 namespace marigold::logos {
 
 // iptv-org channel database logos, for national channels with no curated
@@ -92,6 +96,13 @@ std::optional<std::string> logoSetFile(std::string_view name);
 // A hand-picked logo link for a channel no logo database has ("Bowling
 // TV"), when there is one.
 std::optional<std::string> handPicked(std::string_view name);
+
+// A station's network word ("FOX", "UNIMAS", "INDEPENDENT"), for its logo
+// and the line under its call sign: from its name ("FOX 2"), else from the
+// reference data by its call sign ("KFSF" is UniMás); nullopt when neither
+// tells.
+std::optional<std::string> stationNetwork(std::string_view name, const std::string& callsign,
+                                          const catalog::reference::Index& reference);
 
 // Logos for a guide row. Locals show a logo with the call sign and "FOX 2";
 // any other channel with a logo to try shows it alone when the one that

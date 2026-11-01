@@ -13,6 +13,7 @@
 #include "core/sports/network_map.hpp"
 #include "core/sports/profiles.hpp"
 #include "core/sports/text.hpp"
+#include "core/sports/titles.hpp"
 
 namespace marigold::sports::matcher {
 
@@ -69,7 +70,8 @@ bool compatible(const std::string& league, const SportsGame& game) {
 SportsEvent plainEvent(const ProviderEvent& event) {
   SportsEvent e;
   e.id = event.id;
-  e.title = event.title;
+  // "live: A vs B _ Cricket" shows as "A vs B".
+  e.title = titles::tidy(event.title, event.league);
   e.league = event.league;
   e.leagueShort = shortLeague(event.league);
   e.start = event.start;
@@ -78,6 +80,20 @@ SportsEvent plainEvent(const ProviderEvent& event) {
   e.boards = event.boards;
   e.highSchool = event.highSchool;
   return e;
+}
+
+// A feed's time inside a cricket match's span, from three hours before it.
+// One day: until its end. Several days (a Test; `end` is the last day's
+// start): at about one of its days' start, since each day's play starts at
+// the same time and runs into the evening; not overnight between two days,
+// nor days after its last.
+bool onAnyDay(const SportsGame& game, Seconds at) {
+  if (!game.end || *game.end <= game.start || at < game.start - 3 * 3600) return false;
+  if (*game.end - game.start < 20 * 3600) return at <= *game.end;
+  if (at > *game.end + 8 * 3600) return false;
+  // From three hours before that day's start.
+  Seconds into = (at - game.start + 3 * 3600) % 86'400 - 3 * 3600;
+  return into <= 8 * 3600;
 }
 
 bool closeEnough(std::optional<Seconds> a, std::optional<Seconds> b) {
@@ -220,6 +236,7 @@ json::Value toJson(const GuideListing& l) {
   if (l.city) v.set("city", *l.city);
   if (l.rank) v.set("rank", *l.rank);
   if (l.tennisCoverage) v.set("tennisCoverage", true);
+  if (l.cricket) v.set("cricket", true);
   return v;
 }
 
@@ -239,6 +256,7 @@ std::optional<GuideListing> listingFromJson(const json::Value& v) {
   if (v["city"].isString()) l.city = v["city"].asString();
   if (v["rank"].isNumber()) l.rank = static_cast<int>(v["rank"].asInt());
   l.tennisCoverage = v["tennisCoverage"].asBool();
+  l.cricket = v["cricket"].asBool();
   return l;
 }
 
@@ -257,6 +275,87 @@ bool isGenericSportsTitle(std::string_view title) {
   return rx::test(
       "\\b(nfl|nba|wnba|nhl|mlb|mls|nwsl|ncaa|college|basketball|football|hockey|baseball|soccer|f[u\xC3\xBA]tbol|b[e\xC3\xA9]isbol|baloncesto)\\b",
       title, true);
+}
+
+bool isLiveCricket(std::string_view title) {
+  std::string t = normalized(title);
+  // "Live: ..." first, or "LIVE" in capitals anywhere.
+  if (!str::startsWith(t, " live ") && !rx::test("\\bLIVE\\b", title)) return false;
+  if (!has(t, " cricket ") && !has(t, " t20 ") && !has(t, " t20i ") && !has(t, " odi ") && !has(t, " test match ")) {
+    return false;
+  }
+  // Shows around the cricket aren't a match.
+  return !excluded(t) && !isStudioShow(title) && !has(t, " magazine ");
+}
+
+namespace {
+
+// A cricket format named in normalized text: "t20", "odi", "test"; empty
+// when none is.
+std::string cricketFormat(const std::string& norm) {
+  if (has(norm, " t20i ") || has(norm, " t20 ") || has(norm, " t20is ") || has(norm, " twenty20 ")) return "t20";
+  if (has(norm, " odi ") || has(norm, " odis ") || has(norm, " one day ")) return "odi";
+  if (has(norm, " test ") || has(norm, " tests ")) return "test";
+  return "";
+}
+
+// "3rd T20I" -> "3 t20": a numbered match of a series; nullopt when none is
+// named.
+std::optional<std::string> cricketNumber(const std::string& norm) {
+  auto m = rx::first("\\b(\\d{1,2})(?:st|nd|rd|th) (t20i?|odi|test|twenty20)\\b", norm);
+  if (!m) return std::nullopt;
+  return std::to_string(text::toInt(std::string(m->group(1))).value_or(0)) + " " +
+         cricketFormat(" " + std::string(m->group(2)) + " ");
+}
+
+// A match's format; a match over several days of unknown format is "multi"
+// (a Test or a first-class match: never a T20 or an ODI).
+std::string cricketFormatOf(const SportsGame& game) {
+  std::string format = cricketFormat(normalized(game.matchFormat.value_or("") + " " + game.note.value_or("")));
+  if (format.empty() && game.end && *game.end - game.start >= 20 * 3600) format = "multi";
+  return format;
+}
+
+bool formatsAgree(const std::string& said, const std::string& game) {
+  if (said.empty() || game.empty()) return true;
+  if (game == "multi") return said == "test";
+  return said == game;
+}
+
+// A cricket match being played (or about to start) at some point from
+// `from` to `to`: a one-day match for its usual length; one over several
+// days on each day's play.
+bool cricketInPlay(const SportsGame& game, Seconds from, Seconds to) {
+  if (game.end && *game.end - game.start >= 20 * 3600) {
+    for (Seconds day = game.start; day <= *game.end + 3600; day += 86'400) {
+      if (from < day + 8 * 3600 && to > day - 30 * 60) return true;
+    }
+    return false;
+  }
+  Seconds end = game.start + lengthOf(game.league, &game);
+  if (game.end) end = std::max(end, *game.end);
+  return from < end && to > game.start - 30 * 60;
+}
+
+}  // namespace
+
+std::optional<int> cricketTarget(const GuideListing& listing, const std::vector<SportsGame>& games) {
+  std::string said = normalized(listing.title + " " + listing.detail.value_or(""));
+  std::string format = cricketFormat(said);
+  std::optional<std::string> number = cricketNumber(said);
+  std::vector<int> playing, named;
+  for (size_t i = 0; i < games.size(); ++i) {
+    const SportsGame& game = games[i];
+    if (!game.isCricket() || game.completed || game.postponed) continue;
+    if (!cricketInPlay(game, listing.start, listing.end) || !formatsAgree(format, cricketFormatOf(game))) continue;
+    std::optional<std::string> its = game.note ? cricketNumber(normalized(*game.note)) : std::nullopt;
+    if (number && its && *its != *number) continue;
+    playing.push_back(static_cast<int>(i));
+    if (number && its) named.push_back(static_cast<int>(i));
+  }
+  if (playing.size() == 1) return playing.front();
+  if (named.size() == 1) return named.front();
+  return std::nullopt;
 }
 
 const std::set<std::string>& completeLeagues() {
@@ -284,7 +383,8 @@ std::string Stats::summary() const {
                     n(replays) + " replays and " + n(stale) + " stale hidden, " + n(mergedPlain) +
                     " duplicate feeds merged, listings " + n(listings) + " \xE2\x86\x92 " +
                     n(matchedListings) + " matched (" + n(venueListings) + " by venue, " +
-                    n(describedListings) + " by description), " + n(trimmedStations) +
+                    n(describedListings) + " by description, " + n(cricketListings) + " on cricket channels), " +
+                    n(trimmedStations) +
                     " extra stations folded, school pairs " + n(schoolPairs) + ", name pairs " +
                     n(namePairs) + ", fight feeds " + n(fightFeeds) + ", shows " + n(shows) +
                     " and past cards " + n(pastCards) + " hidden";
@@ -718,8 +818,7 @@ std::optional<BuildResult> build(const BuildInput& in) {
       for (int g : candidates) {
         const SportsGame& game = games[static_cast<size_t>(g)];
         Seconds gap = std::llabs(*event.start - game.start);
-        // A match over several days (a Test): any of its days.
-        if (game.end && *event.start >= game.start - 3 * 3600 && *event.start <= *game.end + 10 * 3600) gap = 0;
+        if (onAnyDay(game, *event.start)) gap = 0;
         if (!best || gap < best->second) best = std::make_pair(g, gap);
       }
       // Tennis: a later match on a court can start hours after its listed time.
@@ -835,7 +934,12 @@ std::optional<BuildResult> build(const BuildInput& in) {
   // A tennis channel's coverage of named tournaments, once the listings
   // naming players have had their say.
   std::vector<const GuideListing*> coverage;
-  if (anyRelevant) {
+  // A cricket channel's live match ("Live: T20 Cricket") goes by the match
+  // in play, which may have started days ago (a Test).
+  const bool anyCricket = std::any_of(games.begin(), games.end(), [](const SportsGame& g) {
+    return g.isCricket() && !g.completed;
+  });
+  if (anyRelevant || anyCricket) {
     auto started = std::chrono::steady_clock::now();
     for (const GuideListing& listing : in.listings) {
       if (elapsedMs(started) > kListingsBudgetMs) {
@@ -854,13 +958,29 @@ std::optional<BuildResult> build(const BuildInput& in) {
         }
         return out;
       };
-      std::vector<int> candidates = filtered(index.matches(listing.title, isRelevant), airing);
+      std::vector<int> candidates;
+      std::string how = "title";
+      if (listing.cricket) {
+        // The match in play then (or the one its number names), else the
+        // one its description names ("Harbor v Valley, 3rd T20I").
+        how = "cricket";
+        if (auto target = cricketTarget(listing, games)) {
+          candidates = {*target};
+        } else if (listing.detail) {
+          std::vector<int> found = index.matches(*listing.detail, [&](int g) {
+            const SportsGame& game = games[static_cast<size_t>(g)];
+            return game.isCricket() && !game.completed && cricketInPlay(game, listing.start, listing.end);
+          });
+          if (found.size() == 1) candidates = found;
+        }
+      } else if (anyRelevant) {
+        candidates = filtered(index.matches(listing.title, isRelevant), airing);
+      }
       if (candidates.empty() && listing.tennisCoverage) {
         if (!tennisMatches.empty()) coverage.push_back(&listing);
         continue;
       }
-      std::string how = "title";
-      if (candidates.empty() && (listing.venue || listing.detail)) {
+      if (candidates.empty() && !listing.cricket && (listing.venue || listing.detail)) {
         std::string league = catalog::leagueFor("", "", listing.title);
         auto fits = [&](int g) { return airing(g) && compatible(league, games[static_cast<size_t>(g)]); };
         if (listing.venue) {
@@ -891,6 +1011,8 @@ std::optional<BuildResult> build(const BuildInput& in) {
           stats.venueListings += 1;
         } else if (how == "description") {
           stats.describedListings += 1;
+        } else if (how == "cricket") {
+          stats.cricketListings += 1;
         }
       }
       for (int gi : candidates) {
@@ -1626,7 +1748,103 @@ const std::map<std::string, std::vector<std::string>>& teamAliases() {
   return kAliases;
 }
 
+namespace {
+
+// "u19" (as read from the end of a name, or after a team in a title).
+bool ageWord(const std::string& w) { return w.size() == 3 && w[0] == 'u' && text::isAllDigits(w.substr(1)); }
+
+// Words after a first team's name that make it another squad: "XI",
+// "Emerging", "JV", "U19" / "U-19" / "Under 19". "A" and "B" (written in
+// capitals) and "Women" are the caller's to check.
+bool squadWord(const std::string& w, const std::string& next) {
+  static const std::set<std::string> kWords = {"xi",    "emerging", "development", "academy",
+                                               "reserves", "youth", "jv"};
+  return kWords.count(w) > 0 || ageWord(w) || ((w == "u" || w == "under") && next.size() == 2 && text::isAllDigits(next));
+}
+
+// A squad as its first team is named ("Australia" for Australia Women), and
+// its qualifier.
+std::optional<std::pair<SportsTeam, std::string>> squadCore(const SportsTeam& team) {
+  auto squad = squadOf(team.name);
+  if (!squad) return std::nullopt;
+  SportsTeam core = team;
+  core.name = squad->first;
+  core.alternates.clear();
+  for (const std::string& alternate : team.alternates) {
+    auto other = squadOf(alternate);
+    core.alternates.push_back(other ? other->first : alternate);
+  }
+  return std::make_pair(core, squad->second);
+}
+
+// Whether a squad's bare name may count: the title says its qualifier
+// somewhere ("Brisbane Heat vs Sydney Thunder _ Women`s Cricket", "India vs
+// Australia, U19 World Cup"). Women's and age sides only: an "A" side, an
+// XI or a reserve side is never named without its qualifier.
+bool saysQualifier(const std::string& normalizedTitle, const std::string& qualifier) {
+  for (const std::string& w : text::words(qualifier)) {
+    if (w == "women") {
+      if (!has(normalizedTitle, " women ") && !has(normalizedTitle, " womens ")) return false;
+    } else if (ageWord(w)) {
+      std::string age = w.substr(1);
+      if (!has(normalizedTitle, " " + w + " ") && !has(normalizedTitle, " u " + age + " ") &&
+          !has(normalizedTitle, " under " + age + " "))
+        return false;
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool bareNameCounts(const std::string& qualifier) {
+  for (const std::string& w : text::words(qualifier))
+    if (w != "women" && !ageWord(w)) return false;
+  return true;
+}
+
+}  // namespace
+
+std::optional<std::pair<std::string, std::string>> squadOf(std::string_view teamName) {
+  std::vector<std::string> words = splitWords(normalized(teamName));
+  std::vector<std::string> tail;
+  while (words.size() >= 2) {
+    size_t n = words.size();
+    const std::string& w = words.back();
+    if (w == "s" && n >= 3 && words[n - 2] == "women") {
+      // "Women's"
+      tail.insert(tail.begin(), "women");
+      words.resize(n - 2);
+    } else if (w == "women" || w == "womens") {
+      tail.insert(tail.begin(), "women");
+      words.pop_back();
+    } else if (n >= 3 && w.size() == 2 && text::isAllDigits(w) && (words[n - 2] == "u" || words[n - 2] == "under")) {
+      tail.insert(tail.begin(), "u" + w);
+      words.resize(n - 2);
+    } else if (w == "a" || w == "b" || squadWord(w, "")) {
+      tail.insert(tail.begin(), w);
+      words.pop_back();
+    } else {
+      break;
+    }
+  }
+  if (tail.empty() || words.empty()) return std::nullopt;
+  return std::make_pair(str::join(words, " "), str::join(tail, " "));
+}
+
 std::vector<std::string> teamVariants(const SportsTeam& team, bool college) {
+  // A squad ("New Zealand A", "Brisbane Heat Women"): its first team's ways,
+  // each with the qualifier ("new zealand a", "heat women"), never the
+  // qualifier alone.
+  if (auto squad = squadCore(team)) {
+    std::vector<std::string> out;
+    std::set<std::string> seen;
+    for (const std::string& v : teamVariants(squad->first, college)) {
+      std::string named = v + " " + squad->second;
+      if (seen.insert(named).second) out.push_back(named);
+    }
+    return out;
+  }
   std::vector<std::string> names = {team.name};
   names.insert(names.end(), team.alternates.begin(), team.alternates.end());
   for (const std::optional<std::string>& key : {std::optional<std::string>(team.name), team.location}) {
@@ -1855,6 +2073,8 @@ TeamIndex::TeamIndex(const std::vector<SportsGame>& games) {
   // "Castres" for Castres Olympique): soccer and rugby, when no other team
   // of the sport has that first word.
   auto firstWord = [](const SportsTeam& team) {
+    // Never a squad's ("Harbor B" isn't "Harbor").
+    if (squadOf(team.name)) return std::string();
     std::vector<std::string> words = splitWords(normalized(team.name));
     return words.size() >= 2 && text::count(words.front()) >= 5 && !genericWords().count(words.front())
                ? words.front()
@@ -1874,7 +2094,8 @@ TeamIndex::TeamIndex(const std::vector<SportsGame>& games) {
     for (const SportsTeam* team : {&game.home, &game.away}) {
       std::string w = firstWord(*team);
       if (!w.empty() && clubsByWord[{game.league, w}].size() == 1) {
-        byFirstWord_[w].push_back(Name{static_cast<int>(i), side, team->id, {w}, std::nullopt, false});
+        byFirstWord_[w].push_back(
+            Name{static_cast<int>(i), side, team->id, {w}, std::nullopt, false, std::nullopt, true, false});
       }
       side += 1;
     }
@@ -1885,8 +2106,8 @@ TeamIndex::TeamIndex(const std::vector<SportsGame>& games) {
     const League* league = leagueByShort(game.leagueShort);
     bool college = game.league == "College Football" || game.league == "College Basketball" ||
                    (league && league->everyGame);
-    add(game.home, static_cast<int>(i), 0, college, true);
-    add(game.away, static_cast<int>(i), 1, college, true);
+    add(game.home, static_cast<int>(i), 0, college, true, &game);
+    add(game.away, static_cast<int>(i), 1, college, true, &game);
   }
 }
 
@@ -1897,19 +2118,42 @@ TeamIndex TeamIndex::fromTeams(const std::vector<SportsTeam>& list, bool college
   return index;
 }
 
-void TeamIndex::add(const SportsTeam& team, int slot, int side, bool college, bool abbreviations) {
+void TeamIndex::add(const SportsTeam& team, int slot, int side, bool college, bool abbreviations,
+                    const SportsGame* game) {
   std::set<std::string> seen;
+  auto squad = squadCore(team);
+  // A first team in a game between two teams (not players, a race or a
+  // tournament); cricket writes its women's sides "Australia Women".
+  const bool firstTeam = game && !squad && !game->isTennis() && !game->isRacing() && !game->isGolf() && !game->cardKey;
+  const bool womenSides = game && game->isCricket();
+  auto put = [&](std::vector<std::string> words, std::optional<std::string> abbreviation, bool loose,
+                 std::optional<std::string> needs) {
+    std::string first = words.front();
+    byFirstWord_[first].push_back(Name{slot, side, team.id, std::move(words), std::move(abbreviation), loose,
+                                       std::move(needs), firstTeam, womenSides});
+  };
   for (const std::string& variant : teamVariants(team, college)) {
     std::vector<std::string> words = text::words(variant);
     if (words.empty() || !seen.insert(variant).second) continue;
-    byFirstWord_[words.front()].push_back(Name{slot, side, team.id, words, std::nullopt, false});
+    put(std::move(words), std::nullopt, false, std::nullopt);
   }
-  // Pro teams' city ("Atlanta vs. Chicago"), only when the league is known.
-  if (!college && team.location) {
+  // A women's or age side by its first team's name: only when the title
+  // says which side elsewhere ("_ Women`s Cricket").
+  const bool bare = squad && bareNameCounts(squad->second);
+  if (bare) {
+    for (const std::string& variant : teamVariants(squad->first, college)) {
+      std::vector<std::string> words = text::words(variant);
+      if (words.empty() || !seen.insert(variant).second) continue;
+      put(std::move(words), std::nullopt, false, squad->second);
+    }
+  }
+  // Pro teams' city ("Atlanta vs. Chicago"), only when the league is known;
+  // a squad's ("New Zealand" for New Zealand A) only as its bare name.
+  if (!college && team.location && (!squad || bare)) {
     std::string variant = trimmed(normalized(*team.location));
     std::vector<std::string> words = text::words(variant);
     if (!words.empty() && text::count(variant) >= 4 && seen.insert(variant).second) {
-      byFirstWord_[words.front()].push_back(Name{slot, side, team.id, words, std::nullopt, true});
+      put(std::move(words), std::nullopt, true, squad ? std::optional<std::string>(squad->second) : std::nullopt);
     }
   }
   if (abbreviations && team.shortName) {
@@ -1917,16 +2161,15 @@ void TeamIndex::add(const SportsTeam& team, int slot, int side, bool college, bo
     size_t n = text::count(shortName);
     if (n >= 2 && n <= 5) {
       std::string word = str::lower(shortName);
-      if (seen.insert(word).second) {
-        byFirstWord_[word].push_back(Name{slot, side, team.id, {word}, str::upper(shortName), false});
-      }
+      if (seen.insert(word).second) put({word}, str::upper(shortName), false, std::nullopt);
     }
   }
 }
 
 std::vector<TeamIndex::Hit> TeamIndex::hits(std::string_view title, const Filter& allowed,
                                             const Filter& allowLoose, std::set<std::string>* written) const {
-  std::vector<std::string> words = splitWords(normalized(title));
+  const std::string norm = normalized(title);
+  std::vector<std::string> words = splitWords(norm);
   if (words.size() < 2) return {};
   // Words as written, for "abbreviations count only in capitals". In an
   // all-capitals title every word looks like an abbreviation, so none
@@ -1936,7 +2179,23 @@ std::vector<TeamIndex::Hit> TeamIndex::hits(std::string_view title, const Filter
       for (std::string& w : guide::letterNumberTokens(title)) written->insert(std::move(w));
     }
   }
-  std::vector<Hit> found;
+  // The same words as written, for an "A" or "B" side (read when needed).
+  std::optional<std::vector<std::string>> cased;
+  // The word after a first team's name makes it another squad: "India A",
+  // "Harbor FC U19", "Australia XI". Where the sport names its women's sides
+  // "Australia Women" (cricket), a title saying "Women" anywhere is theirs.
+  const bool saysWomen = saysQualifier(norm, "women");
+  auto anotherSquad = [&](const Name& name, size_t at) {
+    if (name.womenSides && saysWomen) return true;
+    if (at >= words.size()) return false;
+    const std::string& w = words[at];
+    if (squadWord(w, at + 1 < words.size() ? words[at + 1] : std::string())) return true;
+    // "A-League" is a league, not an A side.
+    if ((w != "a" && w != "b") || (at + 1 < words.size() && words[at + 1] == "league")) return false;
+    if (!cased) cased = guide::letterNumberTokens(str::replaceAll(str::foldDiacritics(title), "&", " and "));
+    return cased->size() == words.size() && ((*cased)[at] == "A" || (*cased)[at] == "B");
+  };
+  std::vector<Hit> found, squads;
   for (size_t position = 0; position < words.size(); ++position) {
     auto names = byFirstWord_.find(words[position]);
     if (names == byFirstWord_.end()) continue;
@@ -1948,8 +2207,25 @@ std::vector<TeamIndex::Hit> TeamIndex::hits(std::string_view title, const Filter
       if (!std::equal(name.words.begin(), name.words.end(), words.begin() + static_cast<std::ptrdiff_t>(position))) {
         continue;
       }
+      if (name.needs && !saysQualifier(norm, *name.needs)) continue;
+      if (name.firstTeam && anotherSquad(name, end)) {
+        squads.push_back(Hit{&name, static_cast<int>(position), static_cast<int>(end)});
+        continue;
+      }
       found.push_back(Hit{&name, static_cast<int>(position), static_cast<int>(end)});
     }
+  }
+  // Nor the team's shorter names inside that squad's ("Harbor" in "Harbor
+  // FC U19").
+  if (!squads.empty()) {
+    found.erase(std::remove_if(found.begin(), found.end(),
+                               [&](const Hit& hit) {
+                                 return std::any_of(squads.begin(), squads.end(), [&](const Hit& squad) {
+                                   return squad.name->team == hit.name->team && squad.start <= hit.start &&
+                                          squad.end >= hit.end;
+                                 });
+                               }),
+                found.end());
   }
   // The longest name wins its words: "michigan state" keeps "michigan"
   // (another team) from counting.

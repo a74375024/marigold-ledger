@@ -103,6 +103,23 @@ sources::Request scoreboardRequest(const League& league, std::string_view day);
 // guide. Polling runs while anyone is.
 enum class Holder { board, guide };
 
+// Whether a score can still come for a game of a league (Build 123): the
+// league is known, its next look is due (one asked lately has answered,
+// with the game or without it), its last request didn't fail, its source
+// isn't refusing us and the day's requests aren't used up. Live Events
+// waits for these games' scores after an open (engine/events_build.hpp);
+// the rest go by the clock at once. A copy of the poller's state, for the
+// board's worker (LiveScores::awaited()); LiveScores::awaits() asks the
+// same of the poller itself.
+struct Awaited {
+  std::map<std::string, Seconds> due;  // league -> its next look
+  std::set<std::string> failing;       // leagues whose last request failed
+  std::set<std::string> refused;       // sources refusing us now ("espn.com")
+  bool capped = false;                 // the day's requests are used up
+  Seconds now = 0;
+  bool from(const std::string& leagueShort) const;
+};
+
 struct RoundInput {
   // The published schedule.
   std::vector<SportsGame> games;
@@ -175,6 +192,9 @@ class LiveScores {
   std::optional<LiveStatus> status(const std::string& gameID) const;
   // Bumped when statuses change.
   int revision() const { return revision_; }
+  // Whether a score can still come for a game of `leagueShort` (Awaited).
+  bool awaits(const std::string& leagueShort, Seconds now) const;
+  Awaited awaited(Seconds now) const;
   // Persist across launches (UserDefaults in Swift).
   const DailyCount& daily() const { return daily_; }
   int requestsToday(Seconds now, const time::Zone& zone) const;

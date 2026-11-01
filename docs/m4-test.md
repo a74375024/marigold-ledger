@@ -977,3 +977,52 @@ Screens draw only when something on them changes. While a screen only waits (the
 | Update | Update over Build 119 and export the playback log at once | Everything logged before the update is there |
 | Idle | Leave the guide idle for an hour | The playback log file isn't written (the memory lines show in an export all the same) |
 | Loop line | Use the guide and the player for a few minutes, then send a log | One "loop" line a minute while you use it ("guide: N frames in M steps; slowest … ms (events …, store …, screen …, draw …); K over 50 ms …; hidden: …"); none while idle; no titles, names or links |
+
+## Build 123 — Live Events
+
+Opening Live Events on an old board (or before there is one) no longer shows part of the board and then moves it around: the placeholders stay, with no tiles and no hero game, until the whole board is in, and then it appears in one go. They stay 20 s at most; then the board shows whatever it has. The whole board also comes sooner: a game under way waits for its score only while one can still come (its league has a scoreboard that is answering and hasn't just answered without it); a game whose league has no scoreboard, whose source is refusing us for the day, whose last request failed, or that its league's answer left out goes by the clock at once, and the wait ends as soon as no game left out can still get a score (18 s at most, as before). A board already on screen never goes back to placeholders: scores and the clock change it in place, and a board kept from before (under 15 minutes old, the same day) still shows at once. Within 30 minutes of a game's start, OK plays it straight away when its best source is a channel (My Lineup or the guide, e.g. ESPN or a local station, which usually show the pre-game); a game only on provider event feeds or a team channel's guess still opens its card, as before.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Old board | Leave Live Events for over 15 minutes during live games (or until the next day); open it | Placeholders only (no tiles, no hero game, nothing pulsing between rows), then the whole board at once; no tile moves, appears or loses its LIVE pill in the seconds after |
+| How long | The same, a few times, with the playback log on | The board usually in a few seconds (not ~20 s); the log's "board: … more coming, placeholders shown" line, if any, followed by the whole board's line ("board: … live now") |
+| First start | Start the app and open Live Events at once | Placeholders until the board is whole, 20 s at most, then the board as it is (placeholder rows after it while the rest still comes) |
+| Nothing comes | Open with the network unplugged | The board from what the TV has within a few seconds, or "No games this week in your sports." after 20 s; never endless placeholders |
+| Refreshing | Stay on the board through several score rounds and a clock tick (30 s) | The rows stay; tiles change in place; no placeholders in place of the rows |
+| Reopen at once | Close Live Events and open it again within a minute | The same board at once, no placeholders |
+| Wake | Turn the TV off on Live Events for over 15 minutes, turn it on | Placeholders straight away, then the whole board in one go |
+| Starting soon | OK on a game starting within 30 minutes on ESPN, a local station or another channel in your lineup or guide | It plays full screen at once (the pre-game) |
+| Event feed only | OK on a game starting within 30 minutes only on a provider event feed | Its card opens (Remind Me, Where to Watch), as before |
+| Later | OK on a game starting in over 30 minutes | Its card opens, as before; at 30 minutes before, OK plays it |
+| Search | Search a team or game starting within 30 minutes on a channel | "OK: Watch" on it; OK plays it; a game only on event feeds still says "OK: Remind me" |
+| Hold OK | Hold OK on a game starting soon | The Game menu (Where to Watch, Remind Me) as before |
+
+## Build 123 — Channels
+
+The same rule on every device decides what a TV keeps when the providers list more channels than it can hold: what is least useful goes first. With free channels off in My Lineup, free streaming and 24/7 groups (Roku, Pluto, Tubi, Prime, "24/7 …") now wait until after other countries' sports and event groups, so Live Events keeps those games; with free channels on they keep their place. Among other countries' sports groups, the ones made mostly of empty slots ("No Event Streaming", ended games) go first. A group is never split. A provider's single-show channels ("Blue Bloods", "Cheers", "Law & Order" in a TV shows group) are 24/7 channels now and follow the Free setting; real networks in such a group (Comedy Central, Bounce) stay channels. Logos: TMC Xtra, Starz Kids, All Reality WE tv, YES Network Latin, MeTV Plus and other names the logo library spells otherwise find its logo; a station whose name has no network (KFSF) shows its network's logo and line from the station data.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Live Events (LG) | Free channels off, both providers signed in; open Live Events next to the Apple TV's | About as many games and scores as the Apple TV (Swedish hockey, Spanish and Argentine football, F1 cameras, boxing); a few empty-slot groups may still be missing |
+| Log | Send a log after a list refresh | "admitted N channels in G groups; X groups cut for room, Y other countries' left out" with far fewer groups cut than Build 122 (about 105 instead of 204 on the LG); no names or links |
+| Free on | Turn free channels on in My Lineup, wait for the list to sort | The free streaming and 24/7 groups come back (All Channels), and some sports groups wait instead; turning it off again swaps them back |
+| Apple TV | Same provider alone | Nothing cut, as before |
+| Single-show channels | Free channels off: My Lineup on the Apple TV | Blue Bloods, Cheers, Law & Order, I Love Lucy, Bonanza, Criminal Minds, CSI: NY, Happy Days, Three's Company, Tosh.0, Bar Rescue, Ink Master, A Different World, Boy Meets World, Charmed, Jurassic World: Camp Cretaceous, The Andy Griffith Show are gone; nothing else changes |
+| With free on | Turn free channels on | They come back (with a guide), filed under Free |
+| Networks stay | All Channels › the TV shows group | Any real network in it (Comedy Central, Paramount Network, Bounce) is still a channel in its section |
+| Logos | My Lineup: TMC Xtra, Starz Kids West, All Reality WE tv, YES Network Latin, MeTV Plus (WZME), TheGrio, Jewelry Television, Victory, CA Fox Sports Racing, Euronews | Each shows its own logo (library or public database) instead of the provider's; channel report logo_sources says "logo set" or "public database" |
+| Station logos | KFSF, KPYX, KTVU Plus (KICU) | KFSF: the UniMás logo, call sign and "UniMás 66"; KPYX: call sign and "Ind. 44"; KICU: its network's logo and line |
+| E! | E! and E! West | Unchanged: E!'s logo is tall, so it sits small next to the name |
+
+## Build 123 — Cricket
+
+Live Events reads cricket better. A senior national side never matches its A, U19, Women's, XI, Emerging or reserve side (nor the other way round), so a provider slot for "India vs New Zealand" two days ahead is its own tile at its own time, not the A-team match being played now. A feed is joined to a match over several days only when its time falls on one of the match's days of play (from 3 h before a day's start to 8 h after it), and to a one-day match only up to its end. Provider titles in the "live: A vs B _ Cricket (A vs B)" shape (and the same shape for other sports: field hockey, water polo, wrestling) show as "A vs B"; a "_ Women`s Cricket" tail keeps the WOMEN'S tag. A cricket channel (Willow, Willow Xtra, Sky Sports Cricket and the like) whose guide says "Live: T20 Cricket" (or Test, ODI) joins the one scheduled match in play then, or the one its description's match number or format ("3rd T20I.", "1st Test") names; with several in play and nothing to tell them apart it joins none. It is then an ordinary channel source: first in Where to Watch and first to play when it is in My Lineup, ahead of the provider's event feeds. The app log's matcher line counts these ("N on cricket channels").
+
+| Area | How to check | Pass |
+|---|---|---|
+| A sides | With an A-team (or U19 / Women's) match and a provider slot for the senior sides on another day, open Live Events and export the Live Events report | The slot is its own tile ("India vs New Zealand") at its own time, not "Live now" under the A-team match; the A-team tile has no provider feed from it |
+| Titles | Find the provider's cricket slots ("live: Zimbabwe vs Afghanistan _ Cricket …") and a field hockey one in the same group | Tiles, Where to Watch and the details card read "Zimbabwe vs Afghanistan"; no "live:", no "_ Cricket", no repeated short names; women's cricket tiles show the WOMEN'S tag |
+| Willow | During a match on Willow (guide: "Live: T20 Cricket", "3rd T20I.") with Willow in My Lineup, open the match's tile | Where to Watch lists Willow first under Your channels, the provider's feeds under Event feeds; OK on the tile plays Willow |
+| Two matches | While two T20s are on and Willow's description names neither | Willow is on neither tile (never a guess) |
+| Still slate | Pick the provider's feed for a cricket match in Where to Watch when it shows a still slate (LG) | After 45 s "picture check · static 45 s; …" and "No picture on this source — trying 2 of 2", then Willow plays |
+| Matcher log | Send a log after Live Events builds | The matcher line has "… by description, N on cricket channels)"; no titles or links |

@@ -266,6 +266,16 @@ std::vector<EventLine> eventGuide(const EventsBoard& board, size_t row) {
   return out;
 }
 
+bool startsSoonOnChannel(const EventTile& t, time::Seconds now) {
+  // Past its start but not begun (the scoreboard says so) counts too.
+  return t.watchable && t.upcoming && t.channelFirst && !t.finished && t.start > 0 &&
+         t.start - now <= kPlaysBeforeStart;
+}
+
+bool okPlays(const EventTile& t, time::Seconds now) {
+  return (t.watchable && !t.upcoming && !t.finished) || startsSoonOnChannel(t, now);
+}
+
 namespace {
 
 // boardFocus() over any rows: `n` of them, each one's id, tile count and

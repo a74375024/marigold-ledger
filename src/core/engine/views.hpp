@@ -133,6 +133,15 @@ struct EventLine {
 };
 std::vector<EventLine> eventGuide(const EventsBoard& board, size_t row);
 
+// OK on a game (the board, Search): plays it when it is on (live, likely
+// over, untimed) with somewhere to watch, or (Build 123) when it starts
+// within kPlaysBeforeStart and its best source is a channel
+// (EventTile::channelFirst: the pre-game is usually on). Otherwise the
+// screen's own: the detail card, Where to Watch or a reminder.
+constexpr time::Seconds kPlaysBeforeStart = 30 * 60;
+bool startsSoonOnChannel(const EventTile& t, time::Seconds now);
+bool okPlays(const EventTile& t, time::Seconds now);
+
 // Where the board's focus goes when a new board comes in under it (the
 // rows as shown, after any filter): the same game in the same row (by id);
 // that row at the same place when the game left it; the game in another

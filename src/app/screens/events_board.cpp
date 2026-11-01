@@ -13,8 +13,11 @@
 // board says so); each row's layout and text are worked out when it comes
 // in, and the focus stays on its game. While the
 // games load, placeholders in the board's own layout stand where rows will
-// be (all of them until the first rows are in, then after those), pulsing
-// slowly, for 20 s at most.
+// be, pulsing slowly, for 20 s at most: after an open on an old board (or
+// none) all of them until the whole board is in (Build 123: no tiles and
+// no hero game before, so nothing moves as it fills in); on a board already
+// shown whole, after its rows. Within half an hour of the start, OK plays a
+// game whose best source is a channel (views::okPlays()).
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -56,7 +59,8 @@ constexpr int kHitTile = 100000;  // + row * 1000 + tile
 constexpr int kHitFilter = 51;    // the rail's ids are left_rail::kHit*, 1-499
 constexpr int kHitShowHidden = 52;  // the empty board's "Show them in Settings"
 constexpr uint32_t kPulseStepMs = 250;       // placeholders drawn again this often (the pulse is 1.2 s)
-constexpr uint32_t kLoadingAtMostMs = 20000;  // then the empty board, not endless placeholders
+// Then the board as it is, not endless placeholders.
+constexpr uint32_t kLoadingAtMostMs = engine::kPlaceholdersAtMostMs;
 constexpr uint32_t kLogMs = 60000;        // the timing log's line, at most this often
 
 using Clock = std::chrono::steady_clock;
@@ -99,7 +103,8 @@ class EventsBoardScreen : public Screen {
       app_.nav().push(makeMySports(app_));
       return true;
     }
-    if (app_.store().events()->version != version_) {
+    if (app_.store().events()->version != version_ || (rowsHidden_ && !placeholders())) {
+      // A new board, or the placeholders' time is up: the rows under them show.
       refresh();
       app_.invalidate();
     }
@@ -417,7 +422,7 @@ class EventsBoardScreen : public Screen {
     if (!board_->loading && !board_->more) loadingSince_ = 0;
     else if (!loadingSince_ || (board_->loading && !wasLoading)) loadingSince_ = std::max<uint32_t>(1, app_.ms());
     showRows();
-    rows_ = shownRows(show_, sport_);
+    makeRows();
     layoutRows();
     engine::views::BoardFocus f = engine::views::boardFocusShown(rows(), focusRow_, focusId_, row_, tile_);
     row_ = f.row;
@@ -429,6 +434,13 @@ class EventsBoardScreen : public Screen {
   // The rows shown: the board's own, or a filter's (pointing into the
   // board either way).
   const std::vector<ShownRow>& rows() const { return rows_; }
+  // None while the board is still loading (Build 123: rows already in wait
+  // under the placeholders until the whole board is, so nothing moves).
+  void makeRows() {
+    rowsHidden_ = board_->loading && placeholders();
+    if (rowsHidden_) rows_.clear();
+    else rows_ = shownRows(show_, sport_);
+  }
 
   // Show on the board (Build 119): the board's rows without More events,
   // Time not listed and Event channels unless switched on (their indices).
@@ -536,9 +548,9 @@ class EventsBoardScreen : public Screen {
       app_.nav().push(makePlayer(app_));
       return;
     }
-    // Live, likely over or untimed with somewhere to watch: play. Otherwise
-    // the detail card.
-    if (t.watchable && !t.upcoming && !t.finished) {
+    // Live, likely over or untimed with somewhere to watch, or starting
+    // within half an hour on a channel: play. Otherwise the detail card.
+    if (engine::views::okPlays(t, time::now())) {
       watch(t.id);
       return;
     }
@@ -639,7 +651,7 @@ class EventsBoardScreen : public Screen {
   void setFilter(Show show, const std::string& sport) {
     show_ = show;
     sport_ = show == Show::Sport ? sport : std::string();
-    rows_ = shownRows(show_, sport_);
+    makeRows();
     layoutRows();
     row_ = tile_ = 0;
     focusId_.clear();
@@ -968,6 +980,7 @@ class EventsBoardScreen : public Screen {
   std::vector<RowLayout> layout_;   // rows()'s
   size_t tiles_ = 0;
   uint32_t loadingSince_ = 0;  // placeholders first shown (app ms; 0: none)
+  bool rowsHidden_ = false;    // the board's rows wait under the placeholders (makeRows())
   Stats stats_;
   Show show_ = Show::All;
   std::string sport_;  // a "sport|..." row id

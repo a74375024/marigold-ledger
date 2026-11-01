@@ -493,6 +493,37 @@ std::optional<LiveStatus> LiveScores::status(const std::string& gameID) const {
   return it->second;
 }
 
+bool Awaited::from(const std::string& leagueShort) const {
+  const League* league = leagueByShort(leagueShort);
+  if (!league || capped || failing.count(leagueShort)) return false;
+  auto next = due.find(leagueShort);
+  if (next != due.end() && next->second > now) return false;
+  return !refused.count(refusals::sourceOf(*league));
+}
+
+bool LiveScores::awaits(const std::string& leagueShort, Seconds now) const {
+  const League* league = leagueByShort(leagueShort);
+  if (!league || requestsToday(now, zone_) >= kDailyCap) return false;
+  auto failed = failures_.find(leagueShort);
+  if (failed != failures_.end() && failed->second > 0) return false;
+  auto next = nextDue_.find(leagueShort);
+  if (next != nextDue_.end() && next->second > now) return false;
+  auto refused = refusedUntil_.find(refusals::sourceOf(*league));
+  return refused == refusedUntil_.end() || refused->second <= now;
+}
+
+Awaited LiveScores::awaited(Seconds now) const {
+  Awaited a;
+  a.due = nextDue_;
+  for (const auto& [league, count] : failures_)
+    if (count > 0) a.failing.insert(league);
+  for (const auto& [source, until] : refusedUntil_)
+    if (until > now) a.refused.insert(source);
+  a.capped = requestsToday(now, zone_) >= kDailyCap;
+  a.now = now;
+  return a;
+}
+
 int LiveScores::requestsToday(Seconds now, const time::Zone& zone) const {
   return daily_.day == text::isoDay(now, zone) ? daily_.count : 0;
 }
