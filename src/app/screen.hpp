@@ -8,6 +8,7 @@
 
 #include "app/ui/ui.hpp"
 #include "core/input/keys.hpp"
+#include "core/input/wake.hpp"
 #include "platform/window.hpp"
 
 namespace marigold::app {
@@ -42,14 +43,18 @@ class Screen {
   virtual void pointerGone() {}
   // The system keyboard sent the whole field value (or closed).
   virtual void text(const std::string& /*value*/, bool /*closed*/, bool /*confirmed*/) {}
-  // Called on the top screen once per loop; true while animating (the app
-  // then draws every frame instead of waiting for events).
+  // Called on the top screen once per loop; true when it needs drawing:
+  // while animating (the app then draws every frame instead of waiting for
+  // events), or once as something on it changes by itself.
   virtual bool tick(uint32_t /*ms*/) { return false; }
   // After tick(): when it next has something due (app ms; 0 = nothing).
-  // A screen that is only waiting (a pause in typing, a preview's rest)
-  // returns false from tick() and this, and the app sleeps until then
-  // instead of drawing every frame.
+  // A screen that is only waiting (a pause in typing, a preview's rest, a
+  // message's few seconds) or moving in steps (a spinner's dots) returns
+  // false from tick() until then, and the app sleeps instead of drawing
+  // every frame (core/input/wake.hpp).
   virtual uint32_t wakeAt() const { return 0; }
+  // For the log's once-a-minute loop line.
+  virtual const char* name() const { return "screen"; }
   virtual bool opaque() const { return true; }
   // A corner preview may keep playing under this screen (the guide). Under
   // any other full screen it stops.

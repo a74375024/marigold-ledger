@@ -1,6 +1,7 @@
 #include "app/app.hpp"
 
 #include <algorithm>
+#include <chrono>
 
 #include "app/playback.hpp"
 #include "app/screens/screens.hpp"
@@ -11,6 +12,7 @@ namespace marigold::app {
 namespace {
 
 constexpr uint32_t kToastMs = 3500;
+constexpr uint32_t kReminderMs = 15000;  // the reminder card hides itself then
 // OK held this long counts as a long press (Legacy's NV_HOLD_MS, as Android TV).
 constexpr uint32_t kHoldMs = 700;
 constexpr int kPoolThreads = 4;
@@ -67,8 +69,10 @@ void App::closeKeyboard() { window_.closeKeyboard(); }
 bool App::keyboardOpen() const { return window_.keyboardOpen(); }
 
 void App::suspend() {
-  // Leaving the app: the decoder goes back to the TV.
+  // Leaving the app: the decoder goes back to the TV, and the playback log
+  // writes what it holds.
   video_.stop();
+  playback_->saveLogNow();
   dirty_ = true;
 }
 
@@ -126,12 +130,17 @@ void App::handle(const platform::Event& e) {
       quit_ = true;
       break;
     case Type::Hidden:
-      if (!keyboardOpen()) suspend();
+      if (!keyboardOpen()) {
+        hidden_ = true;
+        suspend();
+      }
       break;
     case Type::Shown:
+      hidden_ = false;
       dirty_ = true;
       break;
     case Type::Background:
+      hidden_ = true;
       suspend();
       break;
     case Type::KeyDown: {
@@ -287,7 +296,7 @@ void App::drawReminder(ui::Ctx& c) {
   const auto& due = store_->dueReminder();
   if (!due) return;
   // The card hides itself after 15 s.
-  if (ms_ - store_->dueReminderAt() > 15000) {
+  if (ms_ - store_->dueReminderAt() > kReminderMs) {
     store_->dismissReminder();
     return;
   }
@@ -316,24 +325,72 @@ void App::frame() {
   window_.swap();
 }
 
+bool App::tickOwn(wake::Due& due) {
+  bool draw = false;
+  // What the screens show of playback (a picture coming up, a note, giving
+  // up): drawn again as it changes.
+  if (engine::Session::Look look = playback_->look(); look != look_) {
+    look_ = std::move(look);
+    draw = true;
+  }
+  // A channel opening: its spinner (the player's, a corner's) moves on
+  // every 125 ms; nothing is drawn in between.
+  if (playback_->opening()) {
+    if (spinner_.moved(ms_)) draw = true;
+    due.at(spinner_.next(ms_));
+  }
+  // The toast and the reminder card stay still: drawn as they come, and
+  // once more as they go.
+  if (!toast_.empty()) {
+    if (ms_ >= toastUntil_) draw = true;
+    else due.at(toastUntil_);
+  }
+  if (store_->dueReminder()) {
+    uint32_t at = store_->dueReminderAt();
+    if (at != reminderAt_) draw = true;
+    reminderAt_ = at;
+    if (ms_ - at > kReminderMs) draw = true;
+    else due.at(at + kReminderMs + 1);
+  }
+  return draw;
+}
+
 void App::run() {
+  using Clock = std::chrono::steady_clock;
+  auto since = [](Clock::time_point t) {
+    return std::chrono::duration<float, std::milli>(Clock::now() - t).count();
+  };
+  using Part = report::LoopStats::Part;
   while (!quit_ && !nav_.empty()) {
+    // Where each step's time goes (once a minute in the log): the screen's
+    // and playback's ticks, the event pump (keys, workers' results, the
+    // video), the store's tick and the draw.
+    report::LoopStats::Times spent{};
     ms_ = window_.ticks();
+    Clock::time_point t = Clock::now();
     Screen* top = nav_.top();
     bool animating = top && top->tick(ms_);
     // Failover runs whatever is on top (a panel over the player too).
     playbackBusy_ = playback_->tick(ms_);
-    if (playbackBusy_) animating = true;
-    if (!toast_.empty()) animating = animating || ms_ < toastUntil_ + 50;
-    if (store_->dueReminder()) animating = true;
-    bool okHeld = okDown_ && !okLongSent_;
-    // Idle: sleep until an event, a worker result or the next clock minute.
-    int timeout = animating ? 0 : okHeld ? 50 : dirty_ ? 0 : 500;
     // A screen waiting for a moment is woken then (not drawn meanwhile).
-    if (uint32_t due = top ? top->wakeAt() : 0; due && timeout > 0)
-      timeout = std::min(timeout, due > ms_ ? static_cast<int>(std::min<uint32_t>(due - ms_, 500)) : 0);
+    wake::Due due;
+    if (top) due.at(top->wakeAt());
+    if (tickOwn(due)) animating = true;
+    spent[Part::Screen] = since(t);
+    // Idle: sleep until an event, a worker result, the next moment due or
+    // the next clock minute. While a channel opens the loop looks at it
+    // every frame, but draws only what changes.
+    wake::Loop loop;
+    loop.now = ms_;
+    loop.animating = animating;
+    loop.okHeld = okDown_ && !okLongSent_;
+    loop.dirty = dirty_;
+    loop.poll = playbackBusy_;
+    loop.due = due.get();
     platform::Event e;
-    if (window_.nextEvent(e, timeout)) {
+    bool woke = window_.nextEvent(e, wake::sleepMs(loop));
+    t = Clock::now();
+    if (woke) {
       handle(e);
       while (window_.nextEvent(e, 0)) handle(e);
     }
@@ -343,8 +400,14 @@ void App::run() {
       dispatch({Key::Ok, false, true});
     }
     window_.frame();
-    if (pool_.pump() > 0) dirty_ = true;
-    if (store_->tick(ms_)) dirty_ = true;
+    bool results = pool_.pump() > 0;
+    if (results) dirty_ = true;
+    spent[Part::Events] = since(t);
+    t = Clock::now();
+    bool stored = store_->tick(ms_);
+    if (stored) dirty_ = true;
+    spent[Part::Store] = since(t);
+    t = Clock::now();
     video_.pump();
     if (nav_.settle()) {
       dirty_ = true;
@@ -360,10 +423,18 @@ void App::run() {
       lastMinute_ = minute;
       dirty_ = true;  // clock and the now line
     }
-    if (dirty_ || animating) {
+    spent[Part::Events] += since(t);
+    bool drew = dirty_ || animating;
+    if (drew) {
+      t = Clock::now();
       dirty_ = false;
       frame();
+      spent[Part::Draw] = since(t);
     }
+    loopStats_.step(spent, drew, hidden_, drew || stored || results);
+    Screen* shown = nav_.top();
+    std::string line = loopStats_.line(ms_, shown ? shown->name() : "none");
+    if (!line.empty()) MLOG_I("loop", "%s", line.c_str());
   }
   MLOG_I("app", "main loop ended");
   video_.stop();

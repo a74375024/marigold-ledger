@@ -23,6 +23,7 @@ class DiagnosticsScreen : public Screen {
     return true;
   }
   bool key(const KeyEvent&) override { return true; }
+  const char* name() const override { return "key test"; }
   bool tick(uint32_t) override {
     if (test_.wantsQuit()) {
       test_.suspend();

@@ -167,9 +167,17 @@ class AllSettings : public Screen {
     if (c != SettingsCategory::Providers && c != SettingsCategory::Help) return false;
     if (ms - rebuiltAt_ < 1000) return false;
     rebuiltAt_ = ms;
+    // Drawn again only when what the rows (or the summaries) say changed.
+    auto look = [this] {
+      std::string out = rows_.look();
+      for (const std::string& s : summaries_) out += '\x1d' + s;
+      return out;
+    };
+    std::string before = look();
     buildRows(true);
-    return true;
+    return look() != before;
   }
+  const char* name() const override { return "settings"; }
 
   bool key(const KeyEvent& e) override {
     if (e.wheel) return wheel(e.key == Key::Up ? -1 : 1);
@@ -484,6 +492,7 @@ void eventsQuickRows(App& app, ui::ListPanel& p) {
 class GettingAround : public Screen {
  public:
   explicit GettingAround(App& app) : Screen(app) {}
+  const char* name() const override { return "getting around"; }
   bool opaque() const override { return false; }
   bool key(const KeyEvent& e) override {
     if (e.key == Key::Ok || e.key == Key::Back) app_.nav().pop();

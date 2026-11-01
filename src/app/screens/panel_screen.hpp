@@ -29,6 +29,7 @@ class PanelScreen : public Screen {
   // Rebuild the rows once a second (rows that show live state).
   bool liveRows = false;
   bool tick(uint32_t ms) override;
+  const char* name() const override { return "panel"; }
 
  private:
   Side side_;

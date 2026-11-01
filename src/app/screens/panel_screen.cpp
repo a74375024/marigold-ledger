@@ -22,8 +22,10 @@ void PanelScreen::shown() { rebuild(); }
 bool PanelScreen::tick(uint32_t ms) {
   if (!liveRows || ms - rebuiltAt_ < 1000) return false;
   rebuiltAt_ = ms;
+  // Drawn again only when what the rows say changed.
+  std::string before = panel_.look();
   rebuild();
-  return true;
+  return panel_.look() != before;
 }
 
 bool PanelScreen::key(const KeyEvent& e) {

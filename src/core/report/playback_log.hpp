@@ -6,8 +6,8 @@
 // is scrubbed when it is added.
 //
 // tvOS kept one shared instance and saved it itself 2 s after a change; here
-// the app owns one PlaybackLog (UI thread) and saves toJson() when
-// revision() moves, debounced as it likes.
+// the app owns one PlaybackLog (UI thread) and keeps it on disk as a journal
+// (log_journal.hpp): each save appends only the events added since the last.
 #pragma once
 
 #include <cstddef>
@@ -29,6 +29,8 @@ class PlaybackLog {
   // Longest field kept, in bytes (cut at a character boundary). Swift had no
   // limit; this bounds the log's memory on the TV (4000 x 6 fields).
   static constexpr size_t kFieldCap = 512;
+  // A memory reading's event (Session::logMemory).
+  static constexpr std::string_view kMemoryEvent = "memory";
 
   struct Entry {
     int64_t atMs = 0;  // Unix time in milliseconds
@@ -66,6 +68,10 @@ class PlaybackLog {
   size_t size() const { return entries_.size(); }
   // Bumps on every change, for saving.
   uint64_t revision() const { return revision_; }
+  // Events ever added and clear()s, for the journal (log_journal.hpp): the
+  // newest added() - n entries are the ones added since it was n.
+  uint64_t added() const { return added_; }
+  uint64_t clears() const { return clears_; }
 
   // A spreadsheet (CSV) of the log, newest last:
   // time,session,event,channel,feed,provider,detail. Times are ISO 8601
@@ -83,12 +89,24 @@ class PlaybackLog {
   // leaving the log as it was, when the text is not a saved log.
   bool restore(std::string_view json);
 
+  // One event as a journal line: its saved form (an element of toJson())
+  // and "\n".
+  static std::string journalLine(const Entry& e);
+  // Restores a journal (one saved event per line, oldest first) as
+  // restore() does a saved log: the newest kCap, fields scrubbed again. A
+  // last line cut short (no "\n": the app stopped while writing it) and
+  // lines that don't read are left out. Returns the file's lines.
+  size_t restoreJournal(std::string_view text);
+
  private:
   void push(Entry entry);
+
+  void restored(std::deque<Entry> entries);
 
   std::deque<Entry> entries_;
   int lastSession_ = 0;
   uint64_t revision_ = 0;
+  uint64_t added_ = 0, clears_ = 0;
 };
 
 // "2026-10-26T14:05:09.120-04:00" (ISO 8601, milliseconds, `zone`'s offset;

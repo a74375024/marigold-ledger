@@ -29,6 +29,32 @@ float ListPanel::rowHeight(Ctx& c, const PanelItem& it, float width) const {
   }
 }
 
+std::string ListPanel::look() const {
+  std::string out = title + '\x1f' + subtitle + '\x1f' + hint;
+  auto add = [&out](const std::string& s) {
+    out += '\x1f';
+    out += s;
+  };
+  for (const PanelItem& it : items) {
+    out += '\x1e';
+    out += static_cast<char>('0' + static_cast<int>(it.kind));
+    out += it.on ? '1' : '0';
+    out += it.enabled ? '1' : '0';
+    out += it.dot ? '1' : '0';
+    out += it.stepper ? '1' : '0';
+    add(std::to_string(it.choice) + ',' + std::to_string(it.coast));
+    add(it.title);
+    add(it.detail);
+    add(it.value);
+    add(it.tag);
+    add(it.why);
+    add(it.about);
+    add(it.preview);
+    for (const std::string& c : it.choices) add(c);
+  }
+  return out;
+}
+
 void ListPanel::settle() {
   if (items.empty()) {
     focus_ = -1;

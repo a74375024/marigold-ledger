@@ -939,3 +939,41 @@ More events, Time not listed and Event channels are hidden on the Live Events bo
 | Up/Down | Up/Down while watching a game from More events; while on an event channel | Live games of the same sport; the event channel's own group, as before |
 | Tiles | Turn Event channels on | Its tiles say the group's name and "Up/Down to surf", never how many feeds; the row header shows no number |
 | Typing speed | Type quickly in Search on a large provider | As fast as Build 118 |
+
+## Responsiveness (Build 120)
+
+Nothing on screen changes; the TV stops freezing for moments it used to. The channel rows' names, logos, sections and order are worked out once per channel list and lineup, on a worker, with the lineup; a tune, a favourite, a hidden group or a lineup edit only copies them and sets the stars, numbers and lists, on a worker too (before, every one of these worked out all of a big list's rows on the UI thread: about a quarter to half a second on the LG C1). The M3U stream links (tens of thousands for a big playlist) are read on a worker after the first frame and merged on the sort's worker after each refresh; the same links aren't written again. Favourites, recents and the playback memory are written on a worker (a burst once), so a tune no longer waits for flash. The provider's guide and the outside listings refresh by their own age (12 h and 20 h) on a TV left on, and on waking from standby, even when the channel list doesn't change.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Same rows | Compare the guide, My Lineup, All Channels and a provider group with Build 119 on the same provider | Same rows, order, numbers, names, second lines, logos and fallbacks, stars, East/West pairs |
+| Tune | Pick channels from the guide, go full screen, Back, several times with a big playlist | No pause on the way in or out; Recent has them, newest first |
+| Favourite | Toggle a favourite in the guide and in the player | The star changes at once, no freeze; Favourites lists it; still there after a restart |
+| Lineup edits | Add and remove channels, switch East/West, change countries | The rows change as in Build 119, no freeze |
+| Hidden group | Hide a provider group in All Channels | Its channels leave All Channels as before, no freeze |
+| Launch | Restart the app with a big playlist | The first frame and the guide come up at least as fast as Build 119; a tune straight away plays (it reads the links then) |
+| List refresh | Leave the guide on through a list refresh (30 min with Live Events in use, else 2 h) | No pause when it comes in; channels still play afterwards |
+| Provider removed | Remove an M3U provider | Its channels go; the others still play |
+| Saved lists | Toggle a favourite, tune, then pull the power after a second | Both are there after the restart |
+| Guides on time | Leave the TV on the guide (or asleep) for over 12 h with the same channel list | The provider's guide refreshes ("Updating the provider's guide…" briefly), the outside listings after 20 h; listings never run out; a failed refresh is tried again after 2 h, not sooner |
+| Timing log | Use the app a few minutes, then send a log | "store timing opened=…ms", once "store timing launch ready=… firstRows=… fullList=… rows=…", and at most one "store timing publishes full=… patched=… onWorker=… rowsMade=…" line a minute; counts and milliseconds only, no names or links |
+
+### Redraws, log and timing
+
+Screens draw only when something on them changes. While a screen only waits (the guide's corner preview resting after a focus move, a typed channel number's pause, the player's controls left alone, a notice, a toast or a reminder card's few seconds) the app sleeps until that moment and draws once; spinners ("Updating your channel list…", a channel opening, "Reconnecting…", signing in, building a report, looking up teams) draw at each of their eight steps a second instead of every frame. A channel opening is still looked at every frame, so its picture shows as soon as before. Slides, fades, the launch flower and the lineup progress bar move as before. The playback log is now kept as a journal: each save (at most every 10 s, on a worker) adds only the new lines; the file is written whole only when it reaches 8,000 lines or the log is cleared; the five-minute memory reading alone writes nothing (it goes with the next line, or when the app is left). The first start after the update reads the old log once and keeps it. Once a minute while something happens, the app log has a "loop" line: frames drawn, the slowest step and how many took over 50 ms (split into events, store, screen and draw), the screen on top, and the wakeups (and those with work) while hidden; counts and ms only.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Guide preview | Move the focus in the guide and wait for the corner preview | The preview starts after the same rest as before; the corner's spinner turns smoothly until the picture; nothing else on screen changes |
+| Header spinner | Start the app on a saved channel list (or change a provider) and watch the guide's header | "Updating your channel list…" with its spinner turning as before; "Channel list updated" then fades as before |
+| Numbers | Type a channel number in the guide, the player and the guide in the player | The digits show, then the channel tunes 1.5 s after the last one (or at once when no longer number starts with them); "No channel N" as before |
+| Controls | OK while watching, then leave the remote | The controls hide after 12 s as before; with the pointer on them they stay |
+| Opening | Tune a slow channel full screen and in the corner | The spinner turns steadily (centre, banner and corner); "Still trying…" after 7 s; the picture appears as quickly as before |
+| Recovery | A channel that buffers or reconnects | "Reconnecting…" with its spinner while it lasts; "Back on …" for 2 s after a backup takes over; the banner hides as before |
+| Notices | Green (CC), Pause, Back on a clear picture, a reminder coming due, a toast | Each shows and goes at the same moment as before |
+| Panels | Sources while a channel opens; Settings › Providers while signing in; Help › About | "Opening…" turns into "Playing now"; signing-in and memory rows update as before |
+| Setup | Phone sign-in, My Lineup setup, My Sports teams, Export | Spinners turn; the pause after "Your channel list is in" is the same |
+| Playback log | Watch for an hour, export the playback log; restart the app and export again | The same lines (columns, order, memory lines every 5 minutes) both times; the file on the TV (playback-log.jsonl) grows by the new lines only |
+| Update | Update over Build 119 and export the playback log at once | Everything logged before the update is there |
+| Idle | Leave the guide idle for an hour | The playback log file isn't written (the memory lines show in an export all the same) |
+| Loop line | Use the guide and the player for a few minutes, then send a log | One "loop" line a minute while you use it ("guide: N frames in M steps; slowest … ms (events …, store …, screen …, draw …); K over 50 ms …; hidden: …"); none while idle; no titles, names or links |

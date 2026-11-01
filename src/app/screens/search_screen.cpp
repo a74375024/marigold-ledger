@@ -250,6 +250,7 @@ class SearchScreen : public Screen {
   }
 
   uint32_t wakeAt() const override { return wake_; }
+  const char* name() const override { return "search"; }
 
   bool key(const KeyEvent& e) override {
     Key k = e.key;

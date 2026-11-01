@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cstdio>
 #include <utility>
 
 #include "core/engine/store.hpp"
@@ -19,7 +18,10 @@ playback::FeedKind kindOf(const Feed& f) {
   return playback::FeedKind::Playlist;
 }
 
-constexpr const char* kLogFile = "playback-log.json";
+// The playback log's journal; before Build 120 the whole log was saved at
+// once (read once more, then written as a journal and removed).
+constexpr const char* kLogFile = "playback-log.jsonl";
+constexpr const char* kOldLogFile = "playback-log.json";
 constexpr uint32_t kLogSaveMs = 10000;
 constexpr uint32_t kMemoryEveryMs = 5 * 60 * 1000;
 // Watched this long, a channel becomes the one "Back to" goes to.
@@ -34,9 +36,24 @@ int64_t wallMs() {
 }  // namespace
 
 Session::Session(Store& store, Host host, std::unique_ptr<Player> player, Hooks hooks)
-    : store_(store), host_(std::move(host)), player_(std::move(player)), hooks_(std::move(hooks)) {
-  if (auto text = host_.files.read(kLogFile)) log_.restore(*text);
-  logSaved_ = log_.revision();
+    : store_(store), host_(std::move(host)), player_(std::move(player)), hooks_(std::move(hooks)),
+      logFile_(std::make_shared<report::JournalFile>(host_.files.path(kLogFile))) {
+  if (auto text = host_.files.read(kLogFile)) {
+    journal_.restored(log_, log_.restoreJournal(*text));
+  } else if (auto old = host_.files.read(kOldLogFile)) {
+    log_.restore(*old);
+    journal_.restored(log_, 0, true);
+    logFile_->replaces(host_.files.path(kOldLogFile));
+  }
+  logSeen_ = log_.revision();
+}
+
+Session::~Session() {
+  // Closing: the rest of the log, written here (the workers are stopping).
+  if (std::optional<report::LogJournal::Write> w = journal_.take(log_, true)) {
+    logFile_->queue(std::move(*w));
+    logFile_->flush();
+  }
 }
 
 void Session::logEvent(std::string_view event, std::string_view detail) {
@@ -55,25 +72,21 @@ void Session::logMemory(std::string_view what) {
   std::string reading = memory::describe(memory::read());
   if (reading.empty()) return;
   std::string detail = what.empty() ? reading : std::string(what) + ": " + reading;
-  log_.add(wallMs(), "memory", 0, {}, {}, {}, detail);
+  log_.add(wallMs(), report::PlaybackLog::kMemoryEvent, 0, {}, {}, {}, detail);
 }
 
-void Session::saveLog(uint32_t now) {
-  if (log_.revision() == logSaved_ || now < logSaveAt_) return;
-  logSaved_ = log_.revision();
+void Session::saveLog(uint32_t now, bool all) {
+  if (logFile_->broken()) journal_.rewrite();  // a write was lost: the whole log next
+  bool changed = log_.revision() != logSeen_ || journal_.wantsWhole();
+  if (!all && (!changed || now < logSaveAt_)) return;
+  logSeen_ = log_.revision();
+  // Only the events added since the last save (memory readings alone wait).
+  std::optional<report::LogJournal::Write> w = journal_.take(log_, all);
+  if (!w) return;
   logSaveAt_ = now + kLogSaveMs;
-  std::string text = log_.toJson();
-  std::string path = host_.files.path(kLogFile);
-  host_.pool.post(
-      [path, text] {
-        std::string tmp = path + ".tmp";
-        std::FILE* f = std::fopen(tmp.c_str(), "wb");
-        if (!f) return;
-        bool ok = std::fwrite(text.data(), 1, text.size(), f) == text.size();
-        ok = std::fclose(f) == 0 && ok;
-        if (ok) std::rename(tmp.c_str(), path.c_str());
-      },
-      nullptr, http::Priority::Background);
+  logFile_->queue(std::move(*w));
+  std::shared_ptr<report::JournalFile> file = logFile_;
+  host_.pool.post([file] { file->flush(); }, nullptr, http::Priority::Background);
 }
 
 std::optional<Session::FeedProblem> Session::feedProblem(const std::string& channelId) const {
@@ -408,6 +421,20 @@ std::string Session::previous() {
 void Session::setShowingFull(bool full) {
   full_ = full;
   if (full) watched();
+}
+
+Session::Look Session::look() const {
+  Look l;
+  l.entry = entry_;
+  l.note = note();
+  l.feed = feedIndex();
+  l.full = full_;
+  l.ready = ready();
+  l.failed = failed();
+  l.noPicture = noPicture_;
+  l.hadPicture = hadPicture_;
+  l.backup = backup_.has_value();
+  return l;
 }
 
 bool Session::tick(uint32_t now) {

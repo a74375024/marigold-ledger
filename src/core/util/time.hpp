@@ -67,4 +67,8 @@ class Zone {
 
 Seconds now();
 
+// Moves now() on by `s` seconds from here on (tests: a TV left running for
+// hours). Never called on a TV.
+void advanceForTests(Seconds s);
+
 }  // namespace marigold::time

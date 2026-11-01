@@ -59,7 +59,7 @@ void Store::setGroupHidden(const std::string& name, bool hidden) {
   Impl& m = *impl_;
   bool changed = hidden ? m.hiddenGroups.insert(name).second : m.hiddenGroups.erase(name) > 0;
   if (!changed) return;
-  saveLists();
+  saveListsLater();
   m.channelsDirty = true;
   m.ev.boardDirty = true;
 }

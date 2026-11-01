@@ -29,6 +29,7 @@
 #include "core/engine/model.hpp"
 #include "core/media/picture.hpp"
 #include "core/playback/recovery.hpp"
+#include "core/report/log_journal.hpp"
 #include "core/report/playback_log.hpp"
 
 namespace marigold::engine {
@@ -109,7 +110,8 @@ class Session {
   };
 
   Session(Store& store, Host host, std::unique_ptr<Player> player, Hooks hooks);
-  virtual ~Session() = default;
+  // Writes what the playback log has not saved yet (on this thread).
+  virtual ~Session();
   Session(const Session&) = delete;
   Session& operator=(const Session&) = delete;
 
@@ -159,6 +161,21 @@ class Session {
   bool active() const { return !entry_.empty(); }
   bool ready() const { return rec_.sawFirstFrame(); }
   bool failed() const { return rec_.phase() == playback::Recovery::Phase::Failed; }
+  // A channel is opening: no picture yet, not given up (a spinner shows).
+  bool opening() const { return active() && !ready() && !failed(); }
+  // What the screens show of playback. The app draws again when it changes
+  // (a picture coming up, a note, giving up), not every frame meanwhile.
+  struct Look {
+    std::string entry, note;
+    size_t feed = 0;
+    bool full = false, ready = false, failed = false, noPicture = false, hadPicture = false, backup = false;
+    bool operator==(const Look& o) const {
+      return entry == o.entry && note == o.note && feed == o.feed && full == o.full && ready == o.ready &&
+             failed == o.failed && noPicture == o.noPicture && hadPicture == o.hadPicture && backup == o.backup;
+    }
+    bool operator!=(const Look& o) const { return !(*this == o); }
+  };
+  Look look() const;
   const std::string& failMessage() const { return failMessage_; }
   // No feed shows a picture but the sound plays on: the player asks what to
   // do (its card says `noPictureMessage()`).
@@ -193,6 +210,9 @@ class Session {
   // Settings › Help & info › Send a report to your phone › Playback log.
   const report::PlaybackLog& log() const { return log_; }
   void clearLog() { log_.clear(); }
+  // Leaving the app (to the background): what the log has not saved yet,
+  // memory readings too, written now (on a worker).
+  void saveLogNow() { saveLog(ms(), true); }
   // A "memory" line in the log: the app's memory now, after `what` ("channels
   // sorted"; empty for the regular reading every few minutes).
   void logMemory(std::string_view what = {});
@@ -210,7 +230,7 @@ class Session {
   void watched();
   void rememberGame();
   void logEvent(std::string_view event, std::string_view detail = {});
-  void saveLog(uint32_t ms);
+  void saveLog(uint32_t ms, bool all = false);
   uint32_t ms() const { return host_.ms(); }
 
   Store& store_;
@@ -241,7 +261,10 @@ class Session {
   std::map<std::string, FeedProblem> problems_;  // by raw channel id
   report::PlaybackLog log_;
   int session_ = 0;
-  uint64_t logSaved_ = 0;
+  // The log on disk: appended at most every 10 s (log_journal.hpp).
+  report::LogJournal journal_;
+  std::shared_ptr<report::JournalFile> logFile_;
+  uint64_t logSeen_ = 0;  // the log's revision when last saved (or found with nothing to save)
   uint32_t logSaveAt_ = 0;
   uint32_t memoryAt_ = 0;
 };

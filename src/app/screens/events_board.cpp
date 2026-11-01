@@ -117,11 +117,13 @@ class EventsBoardScreen : public Screen {
     } else if (skeletonShown_) {
       pulse = true;  // their time is up: the board without them
     }
+    if (promptAt_) wakeFor(promptAt_);  // My Sports is offered in a moment: asleep until then
     previewTick(ms);
     logStats(ms);
-    return pulse || sliding || promptAt_ != 0;
+    return pulse || sliding;
   }
   uint32_t wakeAt() const override { return wake_; }
+  const char* name() const override { return "live events"; }
 
   bool key(const KeyEvent& e) override {
     Key k = e.key;

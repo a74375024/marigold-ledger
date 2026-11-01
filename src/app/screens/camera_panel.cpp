@@ -51,6 +51,8 @@ class CameraPanelScreen : public Screen {
 
   bool opaque() const override { return false; }
 
+  const char* name() const override { return "cameras"; }
+
   bool tick(uint32_t) override {
     if (!app_.playback().active() || app_.playback().entry() != event_) {
       app_.nav().pop();

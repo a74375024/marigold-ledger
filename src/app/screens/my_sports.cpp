@@ -64,7 +64,8 @@ class MySportsSetup : public Screen {
   }
   ~MySportsSetup() override { app_.store().releaseRosters(); }
 
-  bool tick(uint32_t) override {
+  bool tick(uint32_t ms) override {
+    wake_.clear();
     if (step_ == 2 && app_.store().teamsRevision() != teamsRevision_) {
       std::string keep = focus_ >= 0 && focus_ < static_cast<int>(teams_.size()) ? teams_[static_cast<size_t>(focus_)].id : "";
       loadTeams();
@@ -73,8 +74,11 @@ class MySportsSetup : public Screen {
           if (teams_[i].id == keep) focus_ = static_cast<int>(i);
       return true;
     }
-    return step_ == 2 && teams_.empty();
+    // Looking up the teams: the spinner moves every 125 ms, asleep in between.
+    return step_ == 2 && teams_.empty() && spinner_.tick(ms, wake_);
   }
+  uint32_t wakeAt() const override { return wake_.get(); }
+  const char* name() const override { return "my sports"; }
 
   // Pointer: ids 100+ tiles, 10/11 the two buttons, 20+ the leagues, 30 the
   // reminders row.
@@ -616,6 +620,8 @@ class MySportsSetup : public Screen {
   int tab_ = 0;
   int reviewRow_ = 1;
   int teamsRevision_ = -1;
+  wake::Due wake_;
+  wake::Steps spinner_;
   // Step 1 layout (see layoutPicks) and the scroll positions.
   std::vector<std::vector<int>> rows_;
   std::vector<int> rowOf_, colOf_;

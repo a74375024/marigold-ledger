@@ -72,6 +72,9 @@ class ListPanel {
   // `hitBase` offsets the pointer ids this panel registers.
   // `showFocus` false draws the focused row like the others (focus is elsewhere).
   void draw(Ctx& c, Rect r, int hitBase = 1000, bool showFocus = true);
+  // What the rows say (their words, values and states, not the focus): rows
+  // rebuilt with live state are drawn again only when it changed.
+  std::string look() const;
 
   static constexpr int kHitBase = 1000;
   // Choice k of row i: kHitBase + kChoiceHits + i * 8 + k.

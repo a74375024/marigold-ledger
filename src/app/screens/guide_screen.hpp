@@ -28,6 +28,8 @@ class GuideScreen : public Screen {
   bool key(const KeyEvent& e) override;
   void draw(ui::Ctx& c) override;
   bool tick(uint32_t ms) override;
+  uint32_t wakeAt() const override { return wake_.get(); }
+  const char* name() const override { return "guide"; }
   void hover(int id) override;
   void pointerGone() override { pointer_ = 0; }
   void shown() override;
@@ -189,6 +191,10 @@ class GuideScreen : public Screen {
   // focus stays on it).
   preview::Pace pace_{false};
   uint32_t backAt_ = 0;
+  // When tick() next has something to show (wakeAt()), and the header
+  // spinner's step.
+  wake::Due wake_;
+  wake::Steps spinner_;
 };
 
 }  // namespace marigold::app

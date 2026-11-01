@@ -234,6 +234,10 @@ class Store {
   bool tick(uint32_t ms);
 
   std::shared_ptr<const Channels> channels() const { return channels_; }
+  // Every row worked out here and now from what the store holds, as each
+  // publish did before the rows were made once per lineup (what the
+  // published ones must equal), for checks. Nothing changes.
+  std::shared_ptr<const Channels> channelsNow() const;
   std::shared_ptr<const Listings> listings() const { return listings_; }
   const StoreStatus& status() const { return status_; }
   // How far the full sort under way has got (Stage::Done when none is).
@@ -440,11 +444,17 @@ class Store {
 
  private:
   void saveAccounts();
+  // lists.json now (recent searches switched off: forgotten on file too).
   void saveLists();
-  // The same on a worker (recent searches): the newest list is written.
+  // The same on a worker (a tune, a favourite, a search): the newest list
+  // is written, a burst of changes once or twice; the destructor writes one
+  // still waiting.
   void saveListsLater();
   std::string listsText() const;
-  void saveM3uStreams();
+  // The saved M3U links read on a worker (after the first frame); the links
+  // of the providers with these prefixes ("m3u:..|") dropped on one.
+  void readLinksLater();
+  void dropLinks(std::vector<std::string> prefixes);
   void setPrefs(const catalog::LineupPrefs& p);
   std::string currentSignature() const;
   void reset();
@@ -495,9 +505,16 @@ class Store {
   void scheduleProvider(bool force);
   void scheduleOutside(bool force);
   void scheduleLineupRefresh();
+  // Each guide started again once due by its own age, whatever the channel
+  // list does: looked at every minute and on waking from standby.
+  void lookAtGuides(uint32_t ms);
   void runProviderGuide();
   void runOutsideGuide();
+  // The rows made for the list and lineup on screen are still theirs.
+  bool rowsCurrent() const;
   void publishChannels();
+  void putChannels(std::shared_ptr<Channels> out);
+  void noteChannelsTiming(uint32_t ms);
   void publishListings();
   double reliabilityOf(const std::string& channelId) const;
   std::vector<std::string> versionsOf(const std::string& id) const;

@@ -1,5 +1,6 @@
 #include "core/report/playback_log.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <utility>
 
@@ -67,6 +68,7 @@ void PlaybackLog::push(Entry entry) {
   entries_.push_back(std::move(entry));
   while (entries_.size() > kCap) entries_.pop_front();
   ++revision_;
+  ++added_;
 }
 
 void PlaybackLog::add(int64_t atMs, std::string_view event, int session, std::string_view channel,
@@ -95,6 +97,7 @@ void PlaybackLog::addLoad(int64_t atMs, std::string_view event, std::string_view
 void PlaybackLog::clear() {
   entries_.clear();
   ++revision_;
+  ++clears_;
 }
 
 std::string PlaybackLog::csv(const time::Zone& zone) const {
@@ -125,47 +128,87 @@ std::string PlaybackLog::text(const time::Zone& zone) const {
   return out;
 }
 
+namespace {
+
+json::Value saved(const PlaybackLog::Entry& e) {
+  json::Value o = json::Value::object();
+  o.set("at", e.atMs);
+  o.set("session", e.session);
+  o.set("event", e.event);
+  o.set("channel", e.channel);
+  o.set("feed", e.feed);
+  o.set("provider", e.provider);
+  o.set("detail", e.detail);
+  return o;
+}
+
+// A saved event read back (scrubbed again); false when it isn't one.
+bool entryFrom(const json::Value& v, PlaybackLog::Entry& e) {
+  if (!v.isObject() || !v["at"].isNumber()) return false;
+  e.atMs = v["at"].asInt();
+  e.session = static_cast<int>(v["session"].asInt());
+  e.event = scrub(v["event"].asString());
+  e.channel = scrub(v["channel"].asString());
+  e.feed = scrub(v["feed"].asString());
+  e.provider = scrub(v["provider"].asString());
+  e.detail = scrub(v["detail"].asString());
+  return true;
+}
+
+}  // namespace
+
 std::string PlaybackLog::toJson() const {
   json::Value list = json::Value::array();
-  for (const Entry& e : entries_) {
-    json::Value o = json::Value::object();
-    o.set("at", e.atMs);
-    o.set("session", e.session);
-    o.set("event", e.event);
-    o.set("channel", e.channel);
-    o.set("feed", e.feed);
-    o.set("provider", e.provider);
-    o.set("detail", e.detail);
-    list.push(std::move(o));
-  }
+  for (const Entry& e : entries_) list.push(saved(e));
   return json::write(list);
+}
+
+std::string PlaybackLog::journalLine(const Entry& e) { return json::write(saved(e)) + "\n"; }
+
+void PlaybackLog::restored(std::deque<Entry> entries) {
+  entries_ = std::move(entries);
+  // Swift: lastSession = saved.last?.session ?? 0.
+  lastSession_ = entries_.empty() ? 0 : entries_.back().session;
+  ++revision_;
 }
 
 bool PlaybackLog::restore(std::string_view text) {
   std::optional<json::Value> doc = json::parse(text);
   if (!doc || !doc->isArray()) return false;
-  std::deque<Entry> restored;
+  std::deque<Entry> out;
   const json::Value::Array& items = doc->items();
   // Only the newest kCap can be kept.
   size_t first = items.size() > kCap ? items.size() - kCap : 0;
   for (size_t i = first; i < items.size(); ++i) {
-    const json::Value& v = items[i];
-    if (!v.isObject() || !v["at"].isNumber()) continue;
     Entry e;
-    e.atMs = v["at"].asInt();
-    e.session = static_cast<int>(v["session"].asInt());
-    e.event = scrub(v["event"].asString());
-    e.channel = scrub(v["channel"].asString());
-    e.feed = scrub(v["feed"].asString());
-    e.provider = scrub(v["provider"].asString());
-    e.detail = scrub(v["detail"].asString());
-    restored.push_back(std::move(e));
+    if (entryFrom(items[i], e)) out.push_back(std::move(e));
   }
-  entries_ = std::move(restored);
-  // Swift: lastSession = saved.last?.session ?? 0.
-  lastSession_ = entries_.empty() ? 0 : entries_.back().session;
-  ++revision_;
+  restored(std::move(out));
   return true;
+}
+
+size_t PlaybackLog::restoreJournal(std::string_view text) {
+  // The complete lines: up to the last "\n" (anything after it was cut
+  // short). Only the newest kCap are read.
+  size_t end = text.rfind('\n');
+  size_t lines = text.empty() ? 0 : std::count(text.begin(), text.end(), '\n') + (text.back() == '\n' ? 0 : 1);
+  std::string_view whole = end == std::string_view::npos ? std::string_view() : text.substr(0, end + 1);
+  size_t from = whole.size();
+  for (size_t kept = 0; from > 0 && kept < kCap; ++kept) {
+    // `from` is just past a "\n": that line starts after the one before.
+    size_t before = from >= 2 ? whole.rfind('\n', from - 2) : std::string_view::npos;
+    from = before == std::string_view::npos ? 0 : before + 1;
+  }
+  std::deque<Entry> out;
+  while (from < whole.size()) {
+    size_t nl = whole.find('\n', from);
+    std::optional<json::Value> v = json::parse(whole.substr(from, nl - from));
+    Entry e;
+    if (v && entryFrom(*v, e)) out.push_back(std::move(e));
+    from = nl + 1;
+  }
+  restored(std::move(out));
+  return lines;
 }
 
 }  // namespace marigold::report

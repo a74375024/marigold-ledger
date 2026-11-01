@@ -26,6 +26,7 @@ class DetailScreen : public Screen {
   }
 
   bool opaque() const override { return false; }
+  const char* name() const override { return "details"; }
 
   bool key(const KeyEvent& e) override {
     int rows = static_cast<int>(airings_.size());

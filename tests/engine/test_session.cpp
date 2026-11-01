@@ -242,7 +242,7 @@ TEST_CASE("session: the playback log is saved and read back") {
   r.session->stop();
   CHECK(r.player->stops >= 1);
   r.run(11000);  // saved every 10 s
-  REQUIRE(r.tv.files.read("playback-log.json"));
+  REQUIRE(r.tv.files.read("playback-log.jsonl"));
   Session again(*r.store, r.tv.host(), std::make_unique<FakePlayer>(r.player), {});
   CHECK(again.log().entries().size() == r.session->log().entries().size());
 }
@@ -474,4 +474,89 @@ TEST_CASE("session: what plays is logged once, with the picture") {
   auto video = r.logged("video");
   REQUIRE(video.size() == 1);
   CHECK(video[0] == "1920x1080 59.94p \xc2\xb7 h264 High 8-bit \xc2\xb7 aac");
+}
+
+TEST_CASE("session: what the screens show changes as the picture comes, not every tick") {
+  Rig r;
+  auto ids = r.entries(1);
+  REQUIRE(!ids.empty());
+  CHECK_FALSE(r.session->opening());
+  REQUIRE(r.session->tune(ids[0]));
+  CHECK(r.session->opening());
+  Session::Look opening = r.session->look();
+  r.run(1000);  // still opening: nothing new to draw but the spinner
+  CHECK(r.session->opening());
+  CHECK(r.session->look() == opening);
+  r.picture();
+  CHECK_FALSE(r.session->opening());
+  CHECK(r.session->look() != opening);
+  Session::Look playing = r.session->look();
+  CHECK(playing.ready);
+  r.run(5000);
+  CHECK(r.session->look() == playing);
+  r.session->stop();
+  CHECK(r.session->look() != playing);
+}
+
+TEST_CASE("session: memory readings alone don't write the log; leaving the app writes them") {
+  Rig r;
+  auto ids = r.entries(1);
+  REQUIRE(!ids.empty());
+  REQUIRE(r.session->tune(ids[0]));
+  r.picture();
+  r.session->stop();
+  r.run(11000);
+  std::optional<std::string> saved = r.tv.files.read("playback-log.jsonl");
+  REQUIRE(saved);
+  // Half an hour with nothing but the five-minute memory reading: the
+  // file stays as it was (the readings are in the log all the same).
+  size_t before = r.session->log().size();
+  r.run(30 * 60 * 1000);
+  const auto& entries = r.session->log().entries();
+  CHECK(entries.size() > before);
+  for (size_t i = before; i < entries.size(); ++i) CHECK(entries[i].event == "memory");
+  CHECK(r.tv.files.read("playback-log.jsonl") == saved);
+  // Leaving the app writes them, and a start reads back the same log.
+  r.session->saveLogNow();
+  r.tv.pool.drain();
+  CHECK(r.tv.files.read("playback-log.jsonl") != saved);
+  Session again(*r.store, r.tv.host(), std::make_unique<FakePlayer>(r.player), {});
+  CHECK(again.log().csv() == r.session->log().csv());
+}
+
+TEST_CASE("session: a log an older build saved whole is read once, then kept as a journal") {
+  Rig r;
+  marigold::report::PlaybackLog old;
+  int s = old.newSession();
+  old.add(1793037909120, "tune", s, "US: ESPN FHD", "US: ESPN HD", "Provider A", "1 feed");
+  old.add(1793037909920, "first frame", s, "US: ESPN FHD", "US: ESPN HD", "Provider A", "0.8 s");
+  REQUIRE(r.tv.files.write("playback-log.json", old.toJson(), false));
+  std::string csv;
+  {
+    Session upgraded(*r.store, r.tv.host(), std::make_unique<FakePlayer>(r.player), {});
+    CHECK(upgraded.log().csv() == old.csv());
+    CHECK(upgraded.log().lastSession() == s);
+    upgraded.tick(r.tv.ms + 1);
+    r.tv.pool.drain();
+    CHECK(r.tv.files.read("playback-log.jsonl"));
+    CHECK_FALSE(r.tv.files.read("playback-log.json"));
+    csv = upgraded.log().csv();  // (with the store's Live Events line since)
+  }
+  Session again(*r.store, r.tv.host(), std::make_unique<FakePlayer>(r.player), {});
+  CHECK(again.log().csv() == csv);
+  CHECK(again.log().size() >= old.size());
+}
+
+TEST_CASE("session: closing writes what the log hasn't saved yet") {
+  Rig r;
+  auto ids = r.entries(1);
+  REQUIRE(!ids.empty());
+  REQUIRE(r.session->tune(ids[0]));
+  r.run(500);
+  r.session->logNote("captions", "in the stream");
+  // Within the 10 s between saves: not all on disk yet...
+  std::string csv = r.session->log().csv();
+  r.session.reset();  // ... until the app closes
+  Session again(*r.store, r.tv.host(), std::make_unique<FakePlayer>(r.player), {});
+  CHECK(again.log().csv() == csv);
 }

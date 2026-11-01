@@ -201,13 +201,23 @@ class MiniGuide : public Screen {
       nav_.setList(itemOf(tab_));
       syncSlides();
     }
+    // A typed number's pause and a notice's few seconds: asleep until they
+    // end (wakeAt()), then drawn once.
+    bool changed = wake_.reached(ms);
+    wake_.clear();
     if (!digits_.empty() &&
-        (ms - digitsAt_ >= kDigitsMs || views::digitsSettled(digits_, *app_.store().channels())))
+        (ms - digitsAt_ >= kDigitsMs || views::digitsSettled(digits_, *app_.store().channels()))) {
       jumpToNumber();
+      changed = true;
+    }
+    if (!digits_.empty()) wake_.at(digitsAt_ + kDigitsMs);
+    if (!notice_.empty() && ms < noticeUntil_) wake_.at(noticeUntil_);
     bool moving = push_.moving(ms) || lists_.moving(ms);
     settleSlides(ms);
-    return moving || !digits_.empty() || (!notice_.empty() && ms < noticeUntil_ + 50);
+    return moving || changed;
   }
+  uint32_t wakeAt() const override { return wake_.get(); }
+  const char* name() const override { return "mini guide"; }
 
   void draw(ui::Ctx& c) override {
     li_ = app_.store().listings();
@@ -964,6 +974,7 @@ class MiniGuide : public Screen {
   uint32_t digitsAt_ = 0;
   std::string notice_;
   uint32_t noticeUntil_ = 0;
+  wake::Due wake_;  // when tick() next has something to show
 };
 
 }  // namespace

@@ -40,13 +40,18 @@ class ExportScreen : public Screen {
     start();
   }
 
-  bool tick(uint32_t) override {
+  bool tick(uint32_t ms) override {
     platform::LanShare::Status st = share_.status();
     bool changed = st.state != status_.state || st.secondsLeft != status_.secondsLeft || st.downloads != status_.downloads;
     if (st.state != status_.state && st.state != platform::LanShare::State::Ready) qr_.reset();
     status_ = st;
-    return changed || building_;
+    // Building the report: its spinner moves every 125 ms, asleep in between.
+    wake_.clear();
+    if (building_ && spinner_.tick(ms, wake_)) changed = true;
+    return changed;
   }
+  uint32_t wakeAt() const override { return wake_.get(); }
+  const char* name() const override { return "export"; }
 
   bool key(const KeyEvent& e) override {
     int buttons = static_cast<int>(buttonTitles().size());
@@ -205,6 +210,8 @@ class ExportScreen : public Screen {
   std::optional<report::QrMatrix> qr_;
   std::string problem_;
   bool started_ = false, building_ = false, sharedOnce_ = false;
+  wake::Due wake_;
+  wake::Steps spinner_;
   int button_ = 0;
   std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 };

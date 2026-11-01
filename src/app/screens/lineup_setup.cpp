@@ -125,7 +125,8 @@ class LineupSetup : public Screen {
     }
   }
 
-  bool tick(uint32_t) override {
+  bool tick(uint32_t ms) override {
+    wake_.clear();
     const StoreStatus& status = app_.store().status();
     // The area suggestion, once the downloaded names are in.
     if (suggestionPending_ && !suggestionAsked_ &&
@@ -164,8 +165,12 @@ class LineupSetup : public Screen {
       }
       return ui::skeletonMoved(app_.ms(), pulseStep_);
     }
-    return busy_ || loading_;
+    // Working: its spinner moves every 125 ms, asleep in between. (The
+    // markets loading say so in a still line.)
+    return busy_ && spinner_.tick(ms, wake_);
   }
+  uint32_t wakeAt() const override { return wake_.get(); }
+  const char* name() const override { return "lineup setup"; }
 
   void draw(ui::Ctx& c) override {
     c.g.fill({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight}, theme::hex(theme::kBackground));
@@ -595,6 +600,8 @@ class LineupSetup : public Screen {
   bool summaryReady_ = true;  // the summary's lineup is in
   uint32_t pulseStep_ = 0;
   bool busy_ = false;
+  wake::Due wake_;
+  wake::Steps spinner_;
   bool searching_ = false;
   std::string query_;
   std::string problem_;

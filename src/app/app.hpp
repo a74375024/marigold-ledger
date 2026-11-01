@@ -9,7 +9,10 @@
 #include <string>
 
 #include "app/screen.hpp"
+#include "core/engine/session.hpp"
 #include "core/input/pointer_mode.hpp"
+#include "core/input/wake.hpp"
+#include "core/report/loop_stats.hpp"
 #include "core/util/time.hpp"
 #include "platform/gfx.hpp"
 #include "platform/http.hpp"
@@ -84,6 +87,9 @@ class App {
   // Asks the system to take its arrow down, when it may be up.
   void hideArrow();
   void frame();
+  // The app's own moments: a channel's spinner, the toast, the reminder
+  // card. True when one needs drawing now; `due` gets the next.
+  bool tickOwn(wake::Due& due);
   void suspend();
   void drawToast(ui::Ctx& c);
   void drawReminder(ui::Ctx& c);
@@ -109,6 +115,13 @@ class App {
   uint32_t lastKeyMs_ = 0;    // the last key press (host.idle)
   bool playbackBusy_ = false;  // a channel is starting or recovering
   time::Seconds lastMinute_ = 0;
+  // What the screens last drew of playback, the spinner's step, and the
+  // reminder card drawn (its due ms).
+  engine::Session::Look look_;
+  wake::Steps spinner_;
+  uint32_t reminderAt_ = UINT32_MAX;
+  bool hidden_ = false;  // in the background, or the window hidden
+  report::LoopStats loopStats_;
 
   // OK is reported on release, or as a long press after kHoldMs (700 ms).
   bool okDown_ = false;

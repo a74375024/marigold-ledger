@@ -31,6 +31,7 @@ bool watchEvent(App& app, const std::string& id, const std::string& entryOrChann
 class EventDetail : public Screen {
  public:
   EventDetail(App& app, std::string id) : Screen(app), id_(std::move(id)) {}
+  const char* name() const override { return "game details"; }
 
   bool opaque() const override { return false; }
 

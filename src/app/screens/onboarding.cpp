@@ -48,6 +48,7 @@ void iconRemote(ui::Ctx& c, float cx, float cy, Color ink) {
 class Welcome : public Screen {
  public:
   explicit Welcome(App& app) : Screen(app) {}
+  const char* name() const override { return "welcome"; }
 
   bool key(const KeyEvent& e) override {
     switch (e.key) {
@@ -119,6 +120,7 @@ class PhoneSignIn : public Screen {
 
   bool tick(uint32_t ms) override {
     bool changed = false;
+    wake_.clear();
     platform::LanServer::Status st = server_.status();
     if (st.state != serverStatus_.state || st.secondsLeft != serverStatus_.secondsLeft) changed = true;
     serverStatus_ = st;
@@ -152,8 +154,14 @@ class PhoneSignIn : public Screen {
         return true;
       }
     }
-    return changed || busy_ || (signedIn_ && !loaded_) || continueAt_ != 0;
+    // Working: the spinners move every 125 ms; then a moment's pause
+    // before going on. Asleep in between.
+    if ((busy_ || (signedIn_ && !loaded_)) && spinner_.tick(ms, wake_)) changed = true;
+    wake_.at(continueAt_);
+    return changed;
   }
+  uint32_t wakeAt() const override { return wake_.get(); }
+  const char* name() const override { return "phone sign-in"; }
 
   bool key(const KeyEvent& e) override {
     std::vector<std::string> titles = buttonTitles();
@@ -390,6 +398,8 @@ class PhoneSignIn : public Screen {
   bool firstRun_;
   bool started_ = false, busy_ = false, signedIn_ = false, loaded_ = false;
   uint32_t continueAt_ = 0;
+  wake::Due wake_;
+  wake::Steps spinner_;
   size_t channels_ = 0;
   int button_ = 0;
   std::string problem_, providerName_;
@@ -413,8 +423,10 @@ class SetupDone : public Screen {
     bool changed = ready != ready_ || ch->lineup.size() != lineup_;
     ready_ = ready;
     lineup_ = ch->lineup.size();
-    return changed || !ready_;
+    // (Nothing moves while My Lineup is built: drawn as it changes.)
+    return changed;
   }
+  const char* name() const override { return "setup done"; }
 
   bool key(const KeyEvent& e) override {
     switch (e.key) {

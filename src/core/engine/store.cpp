@@ -122,7 +122,14 @@ constexpr double kGuideHours = 3.0;
 constexpr uint32_t kGuideFlushMs = 120;
 constexpr uint32_t kProviderDelayMs = 4000;
 constexpr uint32_t kOutsideDelayMs = 8000;
+// Whether a guide is due by its age is looked at this often (and on a
+// wake); one that started lately waits as long as a stale outside guide
+// does before it is tried again.
+constexpr uint32_t kGuidesLookMs = 60000;
+constexpr time::Seconds kGuideRetryAfter = guide::kStaleRetry;
 constexpr uint32_t kLineupRefreshMs = 600;
+// Timing lines: at most one a minute.
+constexpr uint32_t kTimingLineMs = 60000;
 constexpr const char* kOtherGroup = "Other";
 
 constexpr const char* kAccountsFile = "accounts.json";
@@ -285,6 +292,325 @@ bool writeFileStreaming(const std::string& path, const std::function<bool(const 
   return std::rename(tmp.c_str(), path.c_str()) == 0;
 }
 
+using SteadyClock = std::chrono::steady_clock;
+
+// Near enough the process's start (static set-up runs before main), for
+// the launch timing line.
+const SteadyClock::time_point kProcessStart = SteadyClock::now();
+
+double msSince(SteadyClock::time_point t) {
+  return std::chrono::duration<double, std::milli>(SteadyClock::now() - t).count();
+}
+
+// Lets go of a big snapshot on a worker (thousands of rows' strings take
+// milliseconds to free); one a screen still holds goes when it lets go.
+template <class T>
+void releaseLater(http::Pool& pool, std::shared_ptr<T> held) {
+  if (!held) return;
+  pool.post([last = std::move(held)]() mutable { last.reset(); }, nullptr, http::Priority::Background);
+}
+
+// ---- guide rows
+
+// The rows' list-dependent fields from a lineup and the catalog and list it
+// was made from: on the lineup's worker, or on the spot when a publish finds
+// none for them. `entryAt` and `channelAt` are the store's own indexes when
+// they belong to `cat` and `list` (else made here).
+std::shared_ptr<ChannelRows> makeRows(const catalog::LineupOutput& lo, const CatalogResult& cat,
+                                      const std::vector<Channel>& list, const logos::IptvOrgIndex* iptvOrg,
+                                      const std::unordered_map<std::string, size_t>* entryAt,
+                                      const std::unordered_map<std::string, size_t>* channelAt) {
+  std::unordered_map<std::string, size_t> ownEntries, ownChannels;
+  if (!entryAt) {
+    ownEntries.reserve(cat.entries.size());
+    for (size_t i = 0; i < cat.entries.size(); ++i) ownEntries.emplace(cat.entries[i].id, i);
+    entryAt = &ownEntries;
+  }
+  if (!channelAt) {
+    // Only each row's first version is looked up (the first of an id wins,
+    // as in the store's index).
+    constexpr size_t kNone = ~size_t(0);
+    for (const Channel& e : lo.entries) {
+      auto info = entryAt->find(e.id);
+      if (info != entryAt->end() && !cat.entries[info->second].members.empty())
+        ownChannels.emplace(cat.entries[info->second].members.front(), kNone);
+    }
+    for (size_t i = 0; i < list.size(); ++i) {
+      auto it = ownChannels.find(list[i].id);
+      if (it != ownChannels.end() && it->second == kNone) it->second = i;
+    }
+    for (auto it = ownChannels.begin(); it != ownChannels.end();) {
+      if (it->second == kNone) it = ownChannels.erase(it);
+      else ++it;
+    }
+    channelAt = &ownChannels;
+  }
+  auto out = std::make_shared<ChannelRows>();
+  for (const EntryInfo& e : cat.entries) {
+    for (const std::string& former : e.formerIds) out->renamed.emplace(former, e.id);
+  }
+  out->all.reserve(lo.entries.size());
+  out->rows.reserve(lo.entries.size());
+  out->byId.reserve(lo.entries.size());
+  for (const Channel& e : lo.entries) {
+    GuideChannel g;
+    ChannelRows::Row row;
+    g.id = e.id;
+    g.radio = e.isRadio;
+    auto info = entryAt->find(e.id);
+    const EntryInfo* ei = info == entryAt->end() ? nullptr : &cat.entries[info->second];
+    catalog::LineupCategory category = ei ? ei->category : catalog::LineupCategory::entertainment;
+    row.category = category;
+    g.section = catalog::genreTitle(category);
+    g.sectionRank = catalog::rank(category);
+    g.name = ei ? ei->name : e.displayName();
+    g.group = catalog::groupOf(e);
+    if (g.group.empty()) g.group = kOtherGroup;
+    g.feeds = ei ? static_cast<int>(ei->members.size()) : 1;
+    g.west = catalog::isWestId(e.id);
+    if (std::string other = catalog::coastPartnerId(e.id); lo.entryIndex.count(other)) g.partner = other;
+    row.serverFavorite = e.isFavorite;
+    // Which logo a row tries and how its cell reads (ChannelLogos.spec).
+    const Channel* member = nullptr;
+    if (ei && !ei->members.empty()) {
+      auto ci = channelAt->find(ei->members.front());
+      if (ci != channelAt->end()) member = &list[ci->second];
+    }
+    bool local = category == catalog::LineupCategory::local;
+    logos::LogoSpec spec = logos::spec(g.name, ei ? ei->core : std::nullopt, g.west, ei && local && ei->callsign,
+                                       ei ? ei->callsign : std::nullopt, ei ? ei->virtualNumber : std::nullopt,
+                                       e.imageUrl, member ? member->epgId : std::nullopt, category, iptvOrg,
+                                       directoryIptvOrg(ei));
+    g.logoUrl = logos::chain(spec.urls);
+    g.logoSources = str::join(spec.sources, ", ");
+    g.subtitle = spec.subtitle.value_or(catalog::genreTitle(category));
+    switch (spec.style) {
+      case logos::LogoSpec::Style::local:
+        g.style = GuideChannel::Style::Local;
+        if (!spec.callsign.empty()) g.name = spec.callsign;
+        g.subtitle = spec.line;
+        break;
+      case logos::LogoSpec::Style::logoOnly:
+        g.style = g.logoUrl.empty() ? GuideChannel::Style::Named : GuideChannel::Style::LogoOnly;
+        break;
+      case logos::LogoSpec::Style::named:
+        g.style = GuideChannel::Style::Named;
+        break;
+    }
+    // Locals go by their broadcast number (the rest by blocks, at publish).
+    if (ei && local && ei->virtualNumber) row.number = *ei->virtualNumber;
+    out->byId.emplace(g.id, static_cast<int>(out->all.size()));
+    out->all.push_back(std::move(g));
+    out->rows.push_back(row);
+  }
+  for (const Channel& e : lo.lineupEntries) {
+    auto it = out->byId.find(e.id);
+    if (it != out->byId.end()) out->lineup.push_back(it->second);
+  }
+  for (const Channel& e : lo.browseEntries) {
+    auto it = out->byId.find(e.id);
+    if (it != out->byId.end()) out->browse.push_back(it->second);
+  }
+  return out;
+}
+
+// What a publish sets on the rows: the viewer's lists and the lineup's
+// membership. The store's own, or copies for a worker.
+struct RowFlags {
+  const std::set<std::string>* lineupIDs = nullptr;
+  const std::set<std::string>* favorites = nullptr;
+  const std::set<std::string>* hiddenGroups = nullptr;
+  const std::vector<std::string>* recents = nullptr;
+  bool configured = false;
+  size_t rawChannels = 0;
+};
+
+RowFlags rowFlags(const Store::Impl& m) {
+  return RowFlags{&m.lineup.lineupIDs, &m.favorites, &m.hiddenGroups, &m.recents, m.prefs.configured,
+                  m.channels->size()};
+}
+
+// The same, copied (a few hundred ids) for a patch made on a worker.
+struct RowFlagsCopy {
+  std::set<std::string> lineupIDs, favorites, hiddenGroups;
+  std::vector<std::string> recents;
+  RowFlags flags;
+  explicit RowFlagsCopy(const Store::Impl& m)
+      : lineupIDs(m.lineup.lineupIDs), favorites(m.favorites), hiddenGroups(m.hiddenGroups), recents(m.recents),
+        flags{&lineupIDs, &favorites, &hiddenGroups, &recents, m.prefs.configured, m.channels->size()} {}
+  RowFlagsCopy(const RowFlagsCopy&) = delete;
+  RowFlagsCopy& operator=(const RowFlagsCopy&) = delete;
+};
+
+// A publish: the rows' fields copied, then what the viewer's lists and the
+// lineup's membership make of them (favourites, recents, numbers, hidden
+// groups). Milliseconds (the copy) where working out every row took tens.
+std::shared_ptr<Channels> patchRows(const ChannelRows& r, const RowFlags& f) {
+  auto out = std::make_shared<Channels>();
+  out->rawChannels = f.rawChannels;
+  out->lineupConfigured = f.configured;
+  out->renamed = r.renamed;
+  out->byId = r.byId;
+  out->all = r.all;
+  std::map<catalog::LineupCategory, int> blockNext;
+  for (size_t i = 0; i < out->all.size(); ++i) {
+    GuideChannel& g = out->all[i];
+    const ChannelRows::Row& row = r.rows[i];
+    g.inLineup = f.lineupIDs->count(g.id) > 0;
+    g.favorite = row.serverFavorite || f.favorites->count(g.id) > 0;
+    // Locals by their broadcast number; the rest by cable-style blocks.
+    if (row.number) {
+      g.number = row.number;
+    } else if (g.inLineup || !f.configured) {
+      int& next = blockNext[row.category];
+      if (next == 0)
+        next = catalog::numberBlock(row.category) + (row.category == catalog::LineupCategory::local ? 50 : 0);
+      g.number = next++;
+    }
+    g.browsable = false;
+  }
+  out->lineup = r.lineup;
+  for (int i : r.browse) {
+    GuideChannel& g = out->all[static_cast<size_t>(i)];
+    g.browsable = true;
+    if (f.hiddenGroups->count(g.group)) continue;
+    out->browse.push_back(i);
+  }
+  out->every.reserve(out->all.size());
+  for (size_t i = 0; i < out->all.size(); ++i) {
+    out->every.push_back(static_cast<int>(i));
+    if (out->all[i].favorite) out->favorites.push_back(static_cast<int>(i));
+  }
+  for (const std::string& id : *f.recents) {
+    auto it = out->byId.find(id);
+    if (it != out->byId.end()) out->recent.push_back(it->second);
+  }
+  return out;
+}
+
+// ---- M3U links
+
+// A set of links' fingerprint (only a changed set is written).
+uint64_t linksPrint(const StreamLinks::Map& links) {
+  uint64_t print = 1469598103934665603ull;
+  auto mix = [&print](std::string_view text) {
+    for (unsigned char c : text) print = (print ^ c) * 1099511628211ull;
+    print = (print ^ 0xff) * 1099511628211ull;
+  };
+  std::vector<const std::pair<const std::string, sources::m3u::StreamInfo>*> sorted;
+  sorted.reserve(links.size());
+  for (const auto& link : links) sorted.push_back(&link);
+  std::sort(sorted.begin(), sorted.end(), [](const auto* a, const auto* b) { return a->first < b->first; });
+  for (const auto* link : sorted) {
+    mix(link->first);
+    mix(link->second.url);
+    for (const std::string& line : link->second.headers) mix(line);
+  }
+  return print;
+}
+
+// Reads the saved links once (the caller holds `work`).
+void readLinks(StreamLinks& l, const Files& files) {
+  {
+    std::lock_guard<std::mutex> lock(l.mu);
+    if (l.read) return;
+  }
+  auto map = std::make_shared<StreamLinks::Map>();
+  bool saved = false;
+  if (auto text = files.read(kM3uStreamsFile)) {
+    if (auto v = json::parse(*text)) {
+      saved = true;
+      for (const auto& [id, x] : v->fields()) {
+        sources::m3u::StreamInfo info;
+        info.url = x["url"].asString();
+        for (const json::Value& h : x["headers"].items()) info.headers.push_back(h.asString());
+        (*map)[id] = std::move(info);
+      }
+    }
+  }
+  // The same links downloaded again aren't written again.
+  l.savedPrint = saved ? linksPrint(*map) : 0;
+  std::lock_guard<std::mutex> lock(l.mu);
+  l.map = std::move(map);
+  l.read = true;
+}
+
+// The links now (read here first, or waited for, when a tune comes before
+// the read on its worker is done).
+std::shared_ptr<const StreamLinks::Map> currentLinks(StreamLinks& l, const Files& files) {
+  {
+    std::lock_guard<std::mutex> lock(l.mu);
+    if (l.read) return l.map;
+  }
+  std::lock_guard<std::mutex> work(l.work);
+  readLinks(l, files);
+  std::lock_guard<std::mutex> lock(l.mu);
+  return l.map;
+}
+
+// Writes the newest links, unless a job before this one has (the file is
+// secret: 0600).
+void writeLinks(StreamLinks& l, const std::string& path) {
+  std::lock_guard<std::mutex> file(l.fileMu);
+  uint64_t asked = l.writes.load();
+  if (asked <= l.written) return;
+  std::shared_ptr<const StreamLinks::Map> map;
+  {
+    std::lock_guard<std::mutex> lock(l.mu);
+    map = l.map;
+  }
+  json::Value v = json::Value::object();
+  for (const auto& [id, info] : *map) {
+    json::Value x = json::Value::object();
+    x.set("url", info.url);
+    json::Value h = json::Value::array();
+    for (const std::string& line : info.headers) h.push(line);
+    x.set("headers", h);
+    v.set(id, x);
+  }
+  writeFileAtomic(path, json::write(v), true);
+  l.written = asked;
+}
+
+// A download's links, merged on a worker: the accounts that answered
+// (`prefixes`, "m3u:..|") lose their old links and take the new ones; the
+// rest keep theirs. A changed set is written in the background.
+struct LinksUpdate {
+  std::vector<std::string> prefixes;
+  std::vector<StreamLinks::Map> fresh;
+};
+
+void updateLinks(const std::shared_ptr<StreamLinks>& l, LinksUpdate& u, const Files& files, http::Pool& pool,
+                 const std::string& path) {
+  std::lock_guard<std::mutex> work(l->work);
+  readLinks(*l, files);
+  std::shared_ptr<const StreamLinks::Map> before;
+  {
+    std::lock_guard<std::mutex> lock(l->mu);
+    before = l->map;
+  }
+  auto next = std::make_shared<StreamLinks::Map>();
+  next->reserve(before->size());
+  for (const auto& [id, info] : *before) {
+    bool replaced = std::any_of(u.prefixes.begin(), u.prefixes.end(),
+                                [&key = id](const std::string& p) { return str::startsWith(key, p); });
+    if (!replaced) next->emplace(id, info);
+  }
+  for (StreamLinks::Map& fresh : u.fresh) {
+    for (auto& [id, info] : fresh) (*next)[id] = std::move(info);
+    fresh.clear();
+  }
+  uint64_t print = linksPrint(*next);
+  {
+    std::lock_guard<std::mutex> lock(l->mu);
+    l->map = std::move(next);
+  }
+  if (print == l->savedPrint) return;
+  l->savedPrint = print;
+  ++l->writes;
+  pool.post([l, path] { writeLinks(*l, path); }, nullptr, http::Priority::Background);
+}
+
 }  // namespace
 
 
@@ -308,6 +634,7 @@ json::Value stringArray(const std::vector<std::string>& v) {
 }  // namespace
 
 Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()) {
+  auto started = SteadyClock::now();
   Files& st = host_.files;
   Impl& m = *impl_;
 
@@ -376,16 +703,8 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
   if (auto text = st.read(kLineupFile)) {
     if (auto p = catalog::lineupPrefsFromJson(*text)) m.prefs = *p;
   }
-  if (auto text = st.read(kM3uStreamsFile)) {
-    if (auto v = json::parse(*text)) {
-      for (const auto& [id, x] : v->fields()) {
-        sources::m3u::StreamInfo info;
-        info.url = x["url"].asString();
-        for (const json::Value& h : x["headers"].items()) info.headers.push_back(h.asString());
-        m.m3uStreams[id] = std::move(info);
-      }
-    }
-  }
+  // The saved M3U links (tens of thousands) are read on a worker once the
+  // first frame is up (tick): only a tune needs them.
   for (sources::Account& a : m.accounts) {
     if (settings_.preferTS) a.preferTS = true;
     m.runs[a.sourceId()];
@@ -401,6 +720,8 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
     status_.line = "Loading channels\xe2\x80\xa6";
     load(false);
   }
+  m.launch.ready = msSince(kProcessStart);
+  MLOG_I("store", "timing opened=%.1fms", msSince(started));
 }
 
 Store::~Store() {
@@ -532,43 +853,29 @@ std::string Store::listsText() const {
   return json::write(v);
 }
 
-void Store::saveM3uStreams() {
+void Store::readLinksLater() {
   Impl& m = *impl_;
-  // Only a changed set of links is written (every download otherwise), and
-  // the JSON is made on a worker, not the UI thread.
-  uint64_t print = 1469598103934665603ull;
-  auto mix = [&print](std::string_view text) {
-    for (unsigned char c : text) print = (print ^ c) * 1099511628211ull;
-    print = (print ^ 0xff) * 1099511628211ull;
-  };
-  std::vector<const std::string*> ids;
-  ids.reserve(m.m3uStreams.size());
-  for (const auto& [id, info] : m.m3uStreams) ids.push_back(&id);
-  std::sort(ids.begin(), ids.end(), [](const std::string* a, const std::string* b) { return *a < *b; });
-  for (const std::string* id : ids) {
-    const auto& info = m.m3uStreams.at(*id);
-    mix(*id);
-    mix(info.url);
-    for (const std::string& line : info.headers) mix(line);
-  }
-  if (print == m.savedM3uPrint) return;
-  m.savedM3uPrint = print;
-  auto streams = std::make_shared<std::unordered_map<std::string, sources::m3u::StreamInfo>>(m.m3uStreams);
-  std::string path = host_.files.path(kM3uStreamsFile);
+  m.linksAsked = true;
+  auto links = m.links;
+  const Files* files = &host_.files;
   host_.pool.post(
-      [path, streams] {
-        json::Value v = json::Value::object();
-        for (const auto& [id, info] : *streams) {
-          json::Value x = json::Value::object();
-          x.set("url", info.url);
-          json::Value h = json::Value::array();
-          for (const std::string& line : info.headers) h.push(line);
-          x.set("headers", h);
-          v.set(id, x);
-        }
-        writeFileAtomic(path, json::write(v), true);
+      [links, files] {
+        std::lock_guard<std::mutex> work(links->work);
+        readLinks(*links, *files);
       },
-      nullptr, http::Priority::Background);
+      nullptr, http::Priority::Normal);
+}
+
+void Store::dropLinks(std::vector<std::string> prefixes) {
+  // Rare (a provider removed, an empty playlist): a job of its own.
+  auto u = std::make_shared<LinksUpdate>();
+  u->prefixes = std::move(prefixes);
+  auto links = impl_->links;
+  const Files* files = &host_.files;
+  http::Pool* pool = &host_.pool;
+  std::string path = host_.files.path(kM3uStreamsFile);
+  pool->post([u, links, files, pool, path] { updateLinks(links, *u, *files, *pool, path); }, nullptr,
+             http::Priority::Background);
 }
 
 SubtitleChoice subtitleChoice(const Settings& s, bool spanishChannel) {
@@ -630,7 +937,7 @@ void Store::setSettings(const Settings& s) {
   bool searchesOff = settings_.recentSearches && !s.recentSearches;
   settings_ = s;
   if (searchesOff && !impl_->searches.empty()) {
-    // Turning Recent searches off forgets them too.
+    // Turning Recent searches off forgets them too, on file at once.
     impl_->searches.clear();
     saveLists();
   }
@@ -841,13 +1148,10 @@ void Store::removeAccount(const std::string& id) {
   m.runs.erase(source);
   m.accountChange = "Updating your channel list\xe2\x80\xa6";
   m.accountChangeDone = "Channel list updated";
-  for (auto s = m.m3uStreams.begin(); s != m.m3uStreams.end();) {
-    if (str::startsWith(s->first, source + "|")) s = m.m3uStreams.erase(s);
-    else ++s;
-  }
   saveAccounts();
-  saveM3uStreams();
   refreshAll();
+  // After refreshAll: it drops the jobs queued before it.
+  dropLinks({source + "|"});
 }
 
 // ------------------------------------------------------------ loading
@@ -863,6 +1167,11 @@ void Store::refreshAll() {
   ++m.generation;
   host_.pool.cancelAll();
   if (host_.requestsCancelled) host_.requestsCancelled();
+  // A patch on its way was dropped with the rest: published again.
+  if (m.patching) {
+    m.patching.reset();
+    m.channelsDirty = true;
+  }
   m.loading = false;
   m.activeGuideFetches = 0;
   m.providerRunning = m.outsideRunning = false;
@@ -895,6 +1204,9 @@ void Store::reset() {
   m.entryInfo.clear();
   m.familyAt.clear();
   m.lineup = catalog::LineupOutput{};
+  ++m.lineupSerial;
+  releaseLater(host_.pool, std::move(m.rows));
+  m.patching.reset();
   m.programs.clear();
   m.serverPrograms.clear();
   m.providerMatches.clear();
@@ -1105,6 +1417,7 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
   Impl& m = *impl_;
   std::vector<std::string> problems;
   size_t total = 0;
+  auto links = std::make_shared<LinksUpdate>();
   for (size_t i = 0; i < parts->size() && i < m.accounts.size(); ++i) {
     Fetched& f = (*parts)[i];
     sources::Account& a = m.accounts[i];
@@ -1120,12 +1433,9 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
     }
     total += f.channels.size();
     if (a.kind == sources::AccountKind::M3U && f.problem.empty()) {
-      std::string prefix = a.sourceId() + "|";
-      for (auto s = m.m3uStreams.begin(); s != m.m3uStreams.end();) {
-        if (str::startsWith(s->first, prefix)) s = m.m3uStreams.erase(s);
-        else ++s;
-      }
-      for (auto& [id, info] : f.streams) m.m3uStreams[id] = std::move(info);
+      // Its links take the place of its old ones (on the sort's worker).
+      links->prefixes.push_back(a.sourceId() + "|");
+      links->fresh.push_back(std::move(f.streams));
       f.streams.clear();
       // The playlist's own guide link, unless one was typed in.
       if (f.guideUrl && (a.guideUrl.empty() || a.guideFromPlaylist) && a.guideUrl != *f.guideUrl) {
@@ -1137,10 +1447,10 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
   }
   for (const std::string& p : problems) MLOG_W("store", "%s", p.c_str());
   saveAccounts();
-  if (std::any_of(m.accounts.begin(), m.accounts.end(), [](const sources::Account& a) { return a.kind == sources::AccountKind::M3U; }))
-    saveM3uStreams();
 
   if (total == 0) {
+    // A playlist that answered with no channels: its links go.
+    if (!links->prefixes.empty()) dropLinks(std::move(links->prefixes));
     m.loading = false;
     m.channelsLoadedAt = time::now();
     if (!m.channels->empty() && !problems.empty()) m.loadFailed = true;  // the list on screen stays
@@ -1157,13 +1467,18 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
   }
   // Merge, admit whole groups up to the cap, then build the catalog on a
   // worker (or refresh only Live Events when just event slots were renamed).
+  // The providers' lists are put together there too, but for a first list:
+  // the area suggestion reads its names while it sorts.
   auto merged = std::make_shared<std::vector<Channel>>();
-  merged->reserve(total);
-  for (Fetched& f : *parts) {
-    for (Channel& c : f.channels) merged->push_back(std::move(c));
-    f.channels.clear();
-    f.channels.shrink_to_fit();
-  }
+  auto mergeParts = [](std::vector<Fetched>& from, std::vector<Channel>& into, size_t count) {
+    into.reserve(count);
+    for (Fetched& f : from) {
+      for (Channel& c : f.channels) into.push_back(std::move(c));
+      f.channels.clear();
+      f.channels.shrink_to_fit();
+    }
+  };
+  if (m.channels->empty()) mergeParts(*parts, *merged, total);
   // Local favourites (Xtream and M3U have no favorites API).
   bool showing = !m.channels->empty() && !m.partial;
   auto old = showing ? m.channels : nullptr;
@@ -1184,11 +1499,20 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
   uint64_t lastPrint = showing && !m.admissionChanged ? m.listFingerprint : 0;
   auto print = std::make_shared<uint64_t>(0);
   auto unchanged = std::make_shared<bool>(false);
+  bool mergeHere = merged->empty();
+  const Files* files = &host_.files;
+  http::Pool* pool = &host_.pool;
+  std::string linksPath = host_.files.path(kM3uStreamsFile);
   host_.pool.post(
       [merged, old, oldCatalog, result, renamedCount, now, stations, wanted, cut, lastPrint, print, unchanged, progress,
-       foreground = m.foregroundJobs] {
+       foreground = m.foregroundJobs, parts, total, mergeHere, mergeParts, links, allLinks = m.links, files, pool,
+       linksPath] {
         Foreground busy(foreground);
         auto started = std::chrono::steady_clock::now();
+        // The links first (tens of thousands for a big playlist): before
+        // any row of this list can be tuned to.
+        if (!links->prefixes.empty()) updateLinks(allLinks, *links, *files, *pool, linksPath);
+        if (mergeHere) mergeParts(*parts, *merged, total);
         std::vector<Channel> list = std::move(*merged);
         // The same download (and countries) as the list on screen, from
         // this run or saved by the last one: nothing to sort again.
@@ -1407,8 +1731,14 @@ void Store::installCatalog(std::shared_ptr<const std::vector<Channel>> list, std
 void Store::installRenamed(std::shared_ptr<const std::vector<Channel>> list,
                            std::shared_ptr<const CatalogResult> cat) {
   Impl& m = *impl_;
+  // Only event slots' names changed (catalog::renamedEventSlots: the same
+  // channels, guide ids and regular names; the catalog's rows copied): no
+  // row can have, so the rows made for the old list hold for this one, and
+  // the publish below is a patch.
+  bool rowsHold = rowsCurrent();
   m.channels = std::move(list);
   m.catalog = std::move(cat);
+  if (rowsHold) m.rowsFrom = {m.channels, m.catalog, m.lineupSerial};
   m.indexByID.clear();
   m.indexByID.reserve(m.channels->size());
   for (size_t i = 0; i < m.channels->size(); ++i) m.indexByID.emplace((*m.channels)[i].id, i);
@@ -1523,11 +1853,30 @@ void Store::rebuildEntries() {
   }
   input->favoriteIDs = std::move(favorites);
   auto out = std::make_shared<catalog::LineupOutput>();
+  // The rows' names, logos and order with it, on the same worker: a publish
+  // then only copies them (a tune or a favourite no longer works out every
+  // row's logo on the UI thread).
+  auto rows = std::make_shared<std::shared_ptr<const ChannelRows>>();
+  auto rowsMs = std::make_shared<double>(0);
+  std::shared_ptr<const CatalogResult> cat = m.catalog;
+  std::shared_ptr<const std::vector<Channel>> list = m.channels;
   uint64_t gen = m.generation;
-  host_.pool.post([input, out] { *out = catalog::lineup(*input); },
-                   [this, gen, generation, out] {
+  host_.pool.post([input, out, rows, rowsMs, cat, list, iptvOrg = m.iptvOrg] {
+                     *out = catalog::lineup(*input);
+                     auto started = SteadyClock::now();
+                     *rows = makeRows(*out, *cat, *list, iptvOrg.get(), nullptr, nullptr);
+                     *rowsMs = msSince(started);
+                   },
+                   [this, gen, generation, out, rows, rowsMs, cat, list] {
                      if (gen != impl_->generation || generation != impl_->rebuildGeneration) return;
                      impl_->lineup = std::move(*out);
+                     ++impl_->lineupSerial;
+                     releaseLater(host_.pool, std::move(impl_->rows));
+                     impl_->rows = std::move(*rows);
+                     impl_->rowsFrom = {list, cat, impl_->lineupSerial};
+                     Impl::PublishTiming& t = impl_->publishTiming;
+                     ++t.made;
+                     t.madeMax = std::max(t.madeMax, *rowsMs);
                      ++impl_->lineupRevision;
                      impl_->channelsDirty = true;
                      impl_->rowsBuilt = true;
@@ -1724,7 +2073,7 @@ void Store::addToLineup(const std::vector<std::string>& entryIds) {
 void Store::toggleFavorite(const std::string& entryId) {
   Impl& m = *impl_;
   if (!m.favorites.erase(entryId)) m.favorites.insert(entryId);
-  saveLists();
+  saveListsLater();
   m.channelsDirty = true;
   // Emby favourites also go to the server.
   auto it = m.entryInfo.find(entryId);
@@ -1749,7 +2098,7 @@ void Store::noteWatched(const std::string& entryId) {
   m.recents.erase(std::remove(m.recents.begin(), m.recents.end(), entryId), m.recents.end());
   m.recents.insert(m.recents.begin(), entryId);
   if (m.recents.size() > kRecentMax) m.recents.resize(kRecentMax);
-  saveLists();
+  saveListsLater();
   m.channelsDirty = true;
 }
 
@@ -2221,6 +2570,46 @@ void Store::scheduleLineupRefresh() {
   impl_->lineupRefreshAt = host_.ms() + kLineupRefreshMs;
 }
 
+void Store::lookAtGuides(uint32_t ms) {
+  // Guides were started only at launch, by a sorted list and by settings: a
+  // TV left on with the same channel list (or only event names changing)
+  // kept listings until they ran out. A few lookups a minute.
+  Impl& m = *impl_;
+  time::Seconds now = time::now();
+  bool woke = m.lastTickAt && now - m.lastTickAt >= events_build::kAsleepFor;
+  m.lastTickAt = now;
+  if (!woke && ms < m.guidesLookAt) return;
+  m.guidesLookAt = ms + kGuidesLookMs;
+  if (m.partial || m.channels->empty() || m.loading) return;
+  // Due by its own age; none yet is due only once one was tried (launch
+  // starts the first, and may still be reading the saved one). A guide that
+  // started lately waits (a failed download is tried again that often).
+  if (!m.providerRunning && !m.providerAt && now - m.providerTriedAt >= kGuideRetryAfter) {
+    bool due = false;
+    for (const sources::Account& a : m.accounts) {
+      if (!hasGuideFile(a)) continue;
+      auto saved = m.providerSaved.find(guide::provider::cacheKey("default", a.sourceId()));
+      if (saved == m.providerSaved.end() ? m.providerTriedAt != 0
+                                         : now - saved->second.built > guide::provider::kRefreshAge)
+        due = true;
+    }
+    if (due) {
+      m.providerTriedAt = now;
+      scheduleProvider(false);
+    }
+  }
+  if (settings_.fillMissingListings && !m.outsideRunning && !m.outsideAt &&
+      now - m.outsideTriedAt >= kGuideRetryAfter) {
+    const guide::Saved* saved = m.outsideSaved ? &*m.outsideSaved : nullptr;
+    bool due = saved ? now - saved->built > guide::kRefreshAge || (saved->nextCheck && now >= saved->nextCheck)
+                     : m.outsideTriedAt != 0;
+    if (due) {
+      m.outsideTriedAt = now;
+      scheduleOutside(false);
+    }
+  }
+}
+
 namespace {
 
 // Streams a guide download through gunzip into an XMLTV reader, on the
@@ -2294,6 +2683,7 @@ void Store::runProviderGuide() {
   }
   if (jobs.empty()) return;
   m.providerRunning = true;
+  m.providerTriedAt = time::now();
   auto results = std::make_shared<std::vector<std::pair<std::string, guide::provider::Outcome>>>();
   // No guide yet: it loads while you watch too (there is nothing to show
   // in its place).
@@ -2411,6 +2801,7 @@ void Store::runOutsideGuide() {
   }
   if (!force && !guide::needsRebuild(saved, shards, static_cast<int>(snapshot->size()), time::now())) return;
   m.outsideRunning = true;
+  m.outsideTriedAt = time::now();
   auto previous = std::make_shared<std::optional<guide::Saved>>(m.outsideSaved);
   auto built = std::make_shared<guide::BuildResult>();
   std::string guideDir = host_.files.path("guides");
@@ -2670,6 +3061,7 @@ std::vector<Feed> Store::feeds(const std::string& entryId) const {
 std::vector<Feed> Store::feedsFor(const std::vector<std::string>& members) const {
   const Impl& m = *impl_;
   std::vector<Feed> out;
+  std::shared_ptr<const StreamLinks::Map> links;  // M3U links, once one is needed
   for (const std::string& id : members) {
     auto ci = m.indexByID.find(id);
     if (ci == m.indexByID.end()) continue;
@@ -2706,8 +3098,9 @@ std::vector<Feed> Store::feedsFor(const std::vector<std::string>& members) const
         break;
       }
       case sources::AccountKind::M3U: {
-        auto s = m.m3uStreams.find(id);
-        if (s == m.m3uStreams.end() || s->second.url.empty()) continue;
+        if (!links) links = currentLinks(*m.links, host_.files);
+        auto s = links->find(id);
+        if (s == links->end() || s->second.url.empty()) continue;
         f.url = s->second.url;
         f.headers = str::join(s->second.headers, "\r\n");
         f.loadMode = 2;
@@ -2774,11 +3167,11 @@ void Store::quickStartRefused(const std::string& channelId) {
   Impl& m = *impl_;
   auto ci = m.indexByID.find(channelId);
   if (ci == m.indexByID.end()) return;
-  if (m.quickStartRefused.insert((*m.channels)[ci->second].serverId).second) saveLists();
+  if (m.quickStartRefused.insert((*m.channels)[ci->second].serverId).second) saveListsLater();
 }
 
 void Store::captionsSeen(const std::string& channelId) {
-  if (!channelId.empty() && impl_->captionChannels.insert(channelId).second) saveLists();
+  if (!channelId.empty() && impl_->captionChannels.insert(channelId).second) saveListsLater();
 }
 
 bool Store::captionsKnown(const std::string& channelId) const { return impl_->captionChannels.count(channelId) > 0; }
@@ -2851,7 +3244,7 @@ void Store::recordFeed(const std::string& channelId, bool worked) {
     ++(worked ? g.worked : g.failed);
     g.at = now;
   }
-  saveLists();
+  saveListsLater();
 }
 
 bool Store::groupKeepsFailing(const std::string& familyKey) const {
@@ -2869,13 +3262,13 @@ std::string Store::groupStartsText(const std::string& familyKey) const {
 
 void Store::markUnplayable(const std::string& channelId) {
   impl_->unplayable[channelId] = time::now();
-  saveLists();
+  saveListsLater();
 }
 
 void Store::markAudioOnly(const std::string& id) {
   if (id.empty()) return;
   impl_->audioOnly[id] = time::now();
-  saveLists();
+  saveListsLater();
 }
 
 bool Store::audioOnly(const std::string& id) const {
@@ -2902,13 +3295,13 @@ void Store::rememberFeed(const std::string& entryId, const std::string& channelI
   auto it = m.lastFeed.find(entryId);
   if (it != m.lastFeed.end() && it->second == channelId) return;
   m.lastFeed[entryId] = channelId;
-  saveLists();
+  saveListsLater();
 }
 
 void Store::pinFeed(const std::string& entryId, const std::string& channelId) {
   if (channelId.empty()) impl_->pinned.erase(entryId);
   else impl_->pinned[entryId] = channelId;
-  saveLists();
+  saveListsLater();
 }
 
 std::string Store::pinnedFeed(const std::string& entryId) const {
@@ -2927,10 +3320,82 @@ std::string Store::pinnedFeed(const std::string& entryId) const {
 
 // ------------------------------------------------------------ snapshots
 
+bool Store::rowsCurrent() const {
+  const Impl& m = *impl_;
+  return m.rows && m.rowsFrom.lineup == m.lineupSerial && m.rowsFrom.catalog.lock() == m.catalog &&
+         m.rowsFrom.channels.lock() == m.channels;
+}
+
 void Store::publishChannels() {
   Impl& m = *impl_;
-  auto out = std::make_shared<Channels>();
+  auto started = SteadyClock::now();
+  // Rows made for another list or lineup (published while the new lineup
+  // is on its worker, or after a reset): worked out here, as every publish
+  // once was.
+  bool full = !rowsCurrent();
+  if (full) {
+    releaseLater(host_.pool, std::move(m.rows));
+    m.rows = makeRows(m.lineup, *m.catalog, *m.channels, m.iptvOrg.get(), &m.entryInfo, &m.indexByID);
+    m.rowsFrom = {m.channels, m.catalog, m.lineupSerial};
+  }
+  m.patching.reset();  // one on its way is out of date
+  // Nothing waits for these rows (not the launch's first, nor the progress
+  // screen's): the copy and patch go to a worker and tick() puts them in.
+  if (!full && !m.readyOnPublish && !channels_->all.empty()) {
+    auto job = std::make_shared<Impl::PatchJob>();
+    m.patching = job;
+    auto flags = std::make_shared<const RowFlagsCopy>(m);
+    host_.pool.post(
+        [job, flags, rows = m.rows] {
+          auto began = SteadyClock::now();
+          job->out = patchRows(*rows, flags->flags);
+          job->ms = msSince(began);
+        },
+        [job] { job->done = true; }, http::Priority::Visible);
+    return;
+  }
+  putChannels(patchRows(*m.rows, rowFlags(m)));
+  Impl::PublishTiming& t = m.publishTiming;
+  ++(full ? t.full : t.patched);
+  double& most = full ? t.fullMax : t.patchMax;
+  most = std::max(most, msSince(started));
+}
+
+void Store::putChannels(std::shared_ptr<Channels> out) {
+  Impl& m = *impl_;
   out->version = ++m.publishVersion;
+  std::shared_ptr<const Channels> before = std::move(channels_);
+  channels_ = out;
+  releaseLater(host_.pool, std::move(before));
+  // The launch's steps: the first rows on screen (the saved first screen,
+  // or a download), then the whole list.
+  if (!m.launch.said && !out->all.empty()) {
+    if (m.launch.firstRows < 0) m.launch.firstRows = msSince(kProcessStart);
+    if (!m.partial) {
+      m.launch.said = true;
+      MLOG_I("store", "timing launch ready=%.0fms firstRows=%.0fms fullList=%.0fms rows=%zu",
+             m.launch.ready, m.launch.firstRows, msSince(kProcessStart), out->all.size());
+    }
+  }
+}
+
+void Store::noteChannelsTiming(uint32_t ms) {
+  Impl::PublishTiming& t = impl_->publishTiming;
+  if (!t.since) t.since = ms;
+  if (ms - t.since < kTimingLineMs) return;
+  if (t.full || t.patched || t.patchedLater || t.made)
+    MLOG_I("store",
+           "timing publishes full=%d fullMax=%.1fms patched=%d patchMax=%.1fms onWorker=%d workerMax=%.1fms "
+           "rowsMade=%d rowsMax=%.0fms",
+           t.full, t.fullMax, t.patched, t.patchMax, t.patchedLater, t.laterMax, t.made, t.madeMax);
+  t = Impl::PublishTiming{};
+  t.since = ms;
+}
+
+std::shared_ptr<const Channels> Store::channelsNow() const {
+  const Impl& m = *impl_;
+  auto out = std::make_shared<Channels>();
+  out->version = channels_->version;
   out->rawChannels = m.channels->size();
   out->lineupConfigured = m.prefs.configured;
   for (const EntryInfo& e : m.catalog->entries) {
@@ -3015,7 +3480,7 @@ void Store::publishChannels() {
     auto it = out->byId.find(r);
     if (it != out->byId.end()) out->recent.push_back(it->second);
   }
-  channels_ = out;
+  return out;
 }
 
 void Store::publishListings() {
@@ -3078,6 +3543,9 @@ bool Store::tick(uint32_t ms) {
   uint64_t eventsVersion = events_->version;
   eventsTick(ms);
   *m.playingFull = host_.playingFull();
+  // The saved M3U links, once the first frame is up (the second tick).
+  if (!m.linksAsked && ++m.ticks > 1) readLinksLater();
+  lookAtGuides(ms);
   if (m.guideFlushAt && ms >= m.guideFlushAt) {
     m.guideFlushAt = 0;
     startGuideFetches();
@@ -3110,6 +3578,15 @@ bool Store::tick(uint32_t ms) {
     }
   }
   bool changed = events_->version != eventsVersion;
+  // A patch made on a worker goes in.
+  if (m.patching && m.patching->done) {
+    std::shared_ptr<Impl::PatchJob> job = std::move(m.patching);
+    putChannels(std::move(job->out));
+    Impl::PublishTiming& t = m.publishTiming;
+    ++t.patchedLater;
+    t.laterMax = std::max(t.laterMax, job->ms);
+    changed = true;
+  }
   if (m.channelsDirty) {
     m.channelsDirty = false;
     publishChannels();
@@ -3119,6 +3596,7 @@ bool Store::tick(uint32_t ms) {
       status_.phase = StoreStatus::Phase::Ready;
     }
   }
+  noteChannelsTiming(ms);
   if (m.listingsDirty || m.allListingsDirty) {
     m.listingsDirty = false;
     publishListings();

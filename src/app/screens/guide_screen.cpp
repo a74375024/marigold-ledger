@@ -46,7 +46,6 @@ constexpr Rect kPreview = top_bar::kPreview;
 constexpr time::Seconds kShift = 90 * 60;       // Right/Left past the edge
 constexpr time::Seconds kMaxAhead = 48 * 3600;  // how far later the grid goes
 constexpr uint32_t kIdleBackToNowMs = 120000;
-constexpr uint32_t kPreviewDelayMs = top_bar::kPreviewDelayMs;
 constexpr uint32_t kDigitsMs = 1500;
 constexpr uint32_t kBackExitMs = 2500;
 
@@ -997,6 +996,10 @@ void GuideScreen::hover(int id) {
 
 bool GuideScreen::tick(uint32_t ms) {
   bool animating = !launchOff_;  // the launch mark moves every frame
+  // Something due since the last tick (the spinner's next step, a typed
+  // number's pause, the preview's rest): drawn once; asleep in between.
+  bool due = wake_.reached(ms);
+  wake_.clear();
   Store& s = app_.store();
   if (s.channels()->version != chVersion_ || s.listings()->version != liVersion_) {
     refresh();
@@ -1021,17 +1024,21 @@ bool GuideScreen::tick(uint32_t ms) {
     }
     app_.invalidate();
   }
-  if (!digits_.empty()) animating = true;
+  if (!digits_.empty()) wake_.at(digitsAt_ + kDigitsMs);
   // The column's push and the menu's slide.
   settleSlides(ms);
   if (push_.moving(ms) || menu_.moving(ms)) animating = true;
   // Placeholders pulse (a few redraws a second) while rows load.
   if (skeletonShown_ && ui::skeletonMoved(ms, pulseStep_)) animating = true;
-  // The progress screen, the header's spinner and a result fading out move.
+  // The progress screen and a result fading out move; the header's spinner
+  // ("Updating your channel list…") only every 125 ms.
   const StoreStatus& status = s.status();
-  if (status.phase == StoreStatus::Phase::Loading || status.mark == StoreStatus::Mark::Busy ||
-      (!shownLine_.empty() && status.line.empty()))
+  if (status.phase == StoreStatus::Phase::Loading || (!shownLine_.empty() && status.line.empty())) {
     animating = true;
+  } else if (status.mark == StoreStatus::Mark::Busy) {
+    if (spinner_.moved(ms)) animating = true;
+    wake_.at(spinner_.next(ms));
+  }
   // Two idle minutes in a later window: back to now. A window left behind
   // as time passed (it never starts before now) moves on with it.
   if (later() && ms - lastKeyMs_ > kIdleBackToNowMs) returnToNow();
@@ -1043,13 +1050,20 @@ bool GuideScreen::tick(uint32_t ms) {
   const GuideChannel* g = focusedChannel();
   bool onTop = app_.nav().top() == this;
   if (onTop && g && area_ == Area::Grid && nav_.mode() == rail::Mode::Content && s.settings().previewChannels) {
-    if (pace_.step(g->id, p.entry() == g->id, ms) == preview::Pace::Step::Tune) {
-      p.setCorner(kPreview);
-      p.tune(g->id, flipList());
+    switch (pace_.step(g->id, p.entry() == g->id, ms)) {
+      case preview::Pace::Step::Tune:
+        // (The app draws the corner again as the channel opens.)
+        p.setCorner(kPreview);
+        p.tune(g->id, flipList());
+        break;
+      case preview::Pace::Step::Wait:  // resting: nothing on screen changes until then
+        wake_.at(pace_.due());
+        break;
+      case preview::Pace::Step::Idle:
+        break;
     }
-    if (p.entry() != g->id) animating = animating || ms - pace_.since() < kPreviewDelayMs + 100;
   }
-  return animating;
+  return animating || due;
 }
 
 // ---------------------------------------------------------------- drawing

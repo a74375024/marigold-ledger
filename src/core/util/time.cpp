@@ -1,5 +1,6 @@
 #include "core/util/time.hpp"
 
+#include <atomic>
 #include <ctime>
 
 namespace marigold::time {
@@ -169,6 +170,12 @@ Seconds Zone::fromLocal(const Civil& local) const {
   return wall - standard_;
 }
 
-Seconds now() { return static_cast<Seconds>(std::time(nullptr)); }
+namespace {
+std::atomic<Seconds> gAhead{0};
+}  // namespace
+
+Seconds now() { return static_cast<Seconds>(std::time(nullptr)) + gAhead.load(std::memory_order_relaxed); }
+
+void advanceForTests(Seconds s) { gAhead += s; }
 
 }  // namespace marigold::time

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 
+#include "core/input/wake.hpp"
 #include "core/logos/logos.hpp"
 #include "core/logos/tune.hpp"
 #include "platform/icons.hpp"
@@ -162,8 +163,9 @@ bool skeletonMoved(uint32_t ms, uint32_t& step) {
 }
 
 void spinner(Ctx& c, float x, float y, float radius, Color col) {
-  // Eight dots, the brightest one turning once a second.
-  int lead = static_cast<int>((c.ms / 125) % 8);
+  // Eight dots, the brightest one turning once a second (a step every
+  // wake::kSpinnerStepMs: the screens wake for each).
+  int lead = static_cast<int>((c.ms / wake::kSpinnerStepMs) % 8);
   for (int i = 0; i < 8; ++i) {
     float ang = static_cast<float>(i) * 0.785398f;
     float d = radius * 0.22f;

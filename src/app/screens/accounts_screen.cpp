@@ -53,7 +53,13 @@ class AccountsScreen : public Screen {
     else drawList(c);
   }
 
-  bool tick(uint32_t) override { return busy_; }
+  // Signing in: its spinner moves every 125 ms, asleep in between.
+  bool tick(uint32_t ms) override {
+    wake_.clear();
+    return busy_ && spinner_.tick(ms, wake_);
+  }
+  uint32_t wakeAt() const override { return wake_.get(); }
+  const char* name() const override { return "accounts"; }
 
  private:
   // ----- list
@@ -302,6 +308,8 @@ class AccountsScreen : public Screen {
   bool formOnly_;
   bool form_ = false;
   bool busy_ = false;
+  wake::Due wake_;
+  wake::Steps spinner_;
   int focus_ = 0;
   int editing_ = -1;
   std::string error_;

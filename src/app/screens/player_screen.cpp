@@ -205,16 +205,23 @@ class PlayerScreen : public Screen {
 
   bool tick(uint32_t ms) override {
     Playback& p = app_.playback();
-    bool opening = !p.ready() && !p.failed();
     if (!p.active()) {
       app_.nav().pop();
       return false;
     }
+    // Drawn again only when something on it changes: a moment due since the
+    // last tick (a flip settling, a typed number's pause, a message or
+    // notice ending, the controls hiding, a spinner's step) or a change
+    // made here; asleep in between (wakeAt()). The app draws it as the
+    // picture comes, a note shows or the channel gives up.
+    bool changed = wake_.reached(ms);
+    wake_.clear();
     // Channel keys: the channel stopped on tunes.
     if (!pendingFlip_.empty() && ms >= flipAt_) {
       std::string id = std::move(pendingFlip_);
       pendingFlip_.clear();
       if (id != p.entry()) flipped(p.tune(id) ? id : std::string());
+      changed = true;
     }
     if (p.entry() != shownEntry_) {
       shownEntry_ = p.entry();
@@ -226,6 +233,7 @@ class PlayerScreen : public Screen {
       prefetch(shownEntry_);
       cameras_ = app_.store().isEvent(shownEntry_) && app_.store().hasCameras(shownEntry_);
       if (cameras_) say("Onboard cameras: OK, then Cameras", 5000);
+      changed = true;
     }
     // The first picture ever: the one-time "Getting around" card.
     if (p.ready() && !p.failed() && !tips_ && !app_.store().settings().playerTipsShown) {
@@ -233,10 +241,12 @@ class PlayerScreen : public Screen {
       Settings s = app_.store().settings();
       s.playerTipsShown = true;
       app_.store().setSettings(s);
+      changed = true;
     }
     if (zone_ == Zone::Row && ms - rowTouched_ > kRowIdleMs && !pointer_) {
       zone_ = Zone::None;
       bannerUntil_ = ms;
+      changed = true;
     }
     // The picture (first, or back after a reconnect or another feed): the
     // banner's usual few seconds from now.
@@ -248,12 +258,20 @@ class PlayerScreen : public Screen {
       if (!pictureSeen_) p.dismissBackupNotice();
       if (!pictureSeen_) pictureAt_ = ms;
       pictureSeen_ = true;
+      changed = true;
     }
     // Subtitles on and none here: said once, quietly, while the banner is
     // still up from tuning in.
-    if (pictureSeen_ && !noSubtitlesSaid_ && ms - pictureAt_ > 4500 && p.subtitleChoice().on) {
-      noSubtitlesSaid_ = true;
-      if (!offersSubtitles() && bannerVisible()) say("No subtitles on this channel so far", 3000);
+    if (pictureSeen_ && !noSubtitlesSaid_ && p.subtitleChoice().on) {
+      if (ms - pictureAt_ > 4500) {
+        noSubtitlesSaid_ = true;
+        if (!offersSubtitles() && bannerVisible()) {
+          say("No subtitles on this channel so far", 3000);
+          changed = true;
+        }
+      } else {
+        wake_.at(pictureAt_ + 4501);
+      }
     }
     wasReady_ = p.ready();
     if (p.ready()) pictureFeed_ = p.feedIndex();
@@ -262,29 +280,50 @@ class PlayerScreen : public Screen {
       if (!bannerVisible()) bannerFrom_ = ms;
       bannerUntil_ = std::max(bannerUntil_, ms + 1500);
     }
-    if (const auto& b = p.backupNotice(); b && ms - b->at > kBackOnMs) p.dismissBackupNotice();
+    if (const auto& b = p.backupNotice(); b && ms - b->at > kBackOnMs) {
+      p.dismissBackupNotice();
+      changed = true;
+    } else if (b) {
+      wake_.at(b->at + kBackOnMs + 1);
+    }
     if (!digits_.empty() &&
-        (ms - digitsAt_ >= kDigitsMs || engine::views::digitsSettled(digits_, *app_.store().channels())))
+        (ms - digitsAt_ >= kDigitsMs || engine::views::digitsSettled(digits_, *app_.store().channels()))) {
       commitDigits();
+      changed = true;
+    }
     // The banner at rest: drawn again only when its "Hides in" second moves
-    // on, a message on it ends, and it hides; asleep in between (wakeAt()).
-    wake_ = 0;
+    // on, a message on it ends, and it hides. (The controls show no
+    // countdown: only their hiding.)
     bool message = !message_.empty() && ms < messageUntil_;
     int second = bannerVisible() ? hidesIn(ms) * 2 + (message ? 1 : 0) : 0;
-    bool bannerAnim = second != bannerSecond_;
+    if (zone_ == Zone::Row) second = bannerVisible() ? 1 : 0;
+    if (second != bannerSecond_) changed = true;
     bannerSecond_ = second;
-    if (second > 0 && !loading()) {
-      wake_ = countdown::nextChange(bannerUntil_, ms);
-      if (message && (!wake_ || messageUntil_ < wake_)) wake_ = messageUntil_;
+    if (second > 0 && !loading() && zone_ != Zone::Row) wake_.at(countdown::nextChange(bannerUntil_, ms));
+    if (message) wake_.at(messageUntil_);
+    if (zone_ == Zone::Row && !pointer_) wake_.at(rowTouched_ + kRowIdleMs + 1);
+    // Spinners ("Tuning in", "Reconnecting…", the one where the picture
+    // will be): a step every 125 ms.
+    if (!p.failed() && (!pendingFlip_.empty() || !p.ready() || !p.note().empty())) {
+      if (spinner_.moved(ms)) changed = true;
+      wake_.at(spinner_.next(ms));
     }
-    bool note = !p.note().empty();
-    if (!missed_.empty() && ms >= missedUntil_) missed_.clear();
-    bool noticeUp = !notice_.empty() && ms < noticeUntil_ + 50;
-    return opening || bannerAnim || note || !digits_.empty() || !missed_.empty() || p.backupNotice().has_value() ||
-           zone_ == Zone::Row || !pendingFlip_.empty() || noticeUp;
+    if (!pendingFlip_.empty()) wake_.at(flipAt_);
+    if (!digits_.empty()) wake_.at(digitsAt_ + kDigitsMs);
+    if (!missed_.empty()) {
+      if (ms >= missedUntil_) {
+        missed_.clear();
+        changed = true;
+      } else {
+        wake_.at(missedUntil_);
+      }
+    }
+    if (!notice_.empty() && ms < noticeUntil_) wake_.at(noticeUntil_);
+    return changed;
   }
 
-  uint32_t wakeAt() const override { return wake_; }
+  uint32_t wakeAt() const override { return wake_.get(); }
+  const char* name() const override { return "player"; }
 
   void draw(ui::Ctx& c) override {
     Playback& p = app_.playback();
@@ -1335,9 +1374,11 @@ class PlayerScreen : public Screen {
 
   uint32_t bannerFrom_ = 0, bannerUntil_ = 0, rowTouched_ = 0;
   // The banner's "Hides in" second (and its message) when last ticked (0:
-  // hidden), and when either next moves on (wakeAt(); 0: nothing due).
+  // hidden); when tick() next has something to show (wakeAt()), and the
+  // spinners' step.
   int bannerSecond_ = 0;
-  uint32_t wake_ = 0;
+  wake::Due wake_;
+  wake::Steps spinner_;
   std::string pendingFlip_;  // channel keys: the channel the banner shows, tuned once they stop
   uint32_t flipAt_ = 0;
   bool wasReady_ = false, pictureSeen_ = false;  // this tune's picture: now, and ever

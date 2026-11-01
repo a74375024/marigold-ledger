@@ -77,6 +77,8 @@ class EventGuide : public Screen {
 
   bool opaque() const override { return false; }
 
+  const char* name() const override { return "event guide"; }
+
   bool tick(uint32_t ms) override {
     if (app_.store().events()->version != board_->version) {
       std::string keep = focusedTile() ? focusedTile()->id : std::string();

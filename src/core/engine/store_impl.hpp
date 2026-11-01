@@ -188,6 +188,40 @@ struct EventsState {
   int teamsRevision = 0;
 };
 
+// The guide rows' fields that follow from the channel list, the lineup and
+// the reference data alone (names, logos, sections, groups, order), worked
+// out once per lineup on its worker. A publish copies them and sets what a
+// tune, a favourite or a lineup edit changes (Store::publishChannels).
+// Immutable once made.
+struct ChannelRows {
+  struct Row {
+    catalog::LineupCategory category = catalog::LineupCategory::entertainment;
+    std::optional<int> number;    // a local's broadcast number
+    bool serverFavorite = false;  // an Emby / Jellyfin favourite
+  };
+  std::vector<GuideChannel> all;  // favorite, inLineup, number and browsable unset
+  std::vector<Row> rows;          // by `all` index
+  std::unordered_map<std::string, int> byId;
+  std::unordered_map<std::string, std::string> renamed;
+  std::vector<int> lineup, browse;  // the lineup's and the browse list's rows
+};
+
+// M3U links and headers by raw channel id. Secret: memory and a 0600 file.
+// Shared with workers: the saved file is read on one after launch (or on
+// the spot by a tune that comes first), each download's links are merged on
+// its sort's worker, and a changed set is written in the background.
+struct StreamLinks {
+  using Map = std::unordered_map<std::string, sources::m3u::StreamInfo>;
+  std::mutex work;  // held while the file is read or links are merged
+  std::mutex mu;    // `map` and `read`, held briefly
+  std::shared_ptr<const Map> map = std::make_shared<const Map>();
+  bool read = false;
+  uint64_t savedPrint = 0;  // what was last written (under `work`)
+  std::mutex fileMu;
+  std::atomic<uint64_t> writes{0};  // writes asked for
+  uint64_t written = 0;             // and done (under `fileMu`)
+};
+
 struct Store::Impl {
   EventsState ev;
   int catalogRevision = 0, lineupRevision = 0;
@@ -230,8 +264,9 @@ struct Store::Impl {
   catalog::LineupPrefs prefs;
 
   std::map<std::string, AccountRun> runs;  // by source id ("xt:..")
-  // M3U links and headers by raw channel id. Secret: memory and a 0600 file.
-  std::unordered_map<std::string, sources::m3u::StreamInfo> m3uStreams;
+  std::shared_ptr<StreamLinks> links = std::make_shared<StreamLinks>();
+  bool linksAsked = false;  // the saved links' read has been started
+  int ticks = 0;            // tick() calls (the read waits for the first frame)
 
   // Catalog.
   std::shared_ptr<const std::vector<Channel>> channels = std::make_shared<std::vector<Channel>>();
@@ -240,6 +275,24 @@ struct Store::Impl {
   std::unordered_map<std::string, size_t> entryInfo;  // entry id -> catalog->entries index
   std::unordered_map<std::string, size_t> familyAt;   // family id -> catalog->families index (the first)
   catalog::LineupOutput lineup;
+  uint64_t lineupSerial = 0;  // bumped whenever `lineup` is replaced
+  // The rows' list-dependent fields and what they were made from: a publish
+  // from anything else works them out on the spot.
+  std::shared_ptr<const ChannelRows> rows;
+  struct RowsFrom {
+    std::weak_ptr<const std::vector<Channel>> channels;
+    std::weak_ptr<const CatalogResult> catalog;
+    uint64_t lineup = 0;
+  };
+  RowsFrom rowsFrom;
+  // A publish's copy and patch made on a worker (a tune, a favourite), put
+  // in by tick(): only the newest one asked for.
+  struct PatchJob {
+    std::shared_ptr<Channels> out;
+    double ms = 0;
+    bool done = false;  // set by the job's UI half
+  };
+  std::shared_ptr<PatchJob> patching;
   bool partial = false;
   bool admissionCut = false;
   // The last downloaded list (before admission), and whether what admission
@@ -289,6 +342,11 @@ struct Store::Impl {
 
   bool providerRunning = false, outsideRunning = false;
   uint32_t providerAt = 0, outsideAt = 0;  // scheduled start (ms), 0 = none
+  // When each guide last started (wall clock), and the next look at whether
+  // one is due by its age (tick ms; waking from standby looks at once).
+  time::Seconds providerTriedAt = 0, outsideTriedAt = 0;
+  uint32_t guidesLookAt = 0;
+  time::Seconds lastTickAt = 0;
   bool providerForce = false, outsideForce = false;
   std::map<std::string, guide::provider::Saved> providerSaved;  // by cache key
   std::map<std::string, std::string> providerProblems;          // by cache key, last failure
@@ -373,7 +431,19 @@ struct Store::Impl {
   time::Seconds catalogSavedAt = 0;
   // What was last written, so an unchanged file isn't written again.
   std::string savedAccounts, savedSecrets;
-  uint64_t savedM3uPrint = 0;
+  // The timing lines (counts and milliseconds): publishes, at most a line a
+  // minute; the launch's steps (ms since the process started), once.
+  struct PublishTiming {
+    uint32_t since = 0;
+    int full = 0, patched = 0, patchedLater = 0, made = 0;
+    double fullMax = 0, patchMax = 0, laterMax = 0, madeMax = 0;
+  };
+  PublishTiming publishTiming;
+  struct LaunchSteps {
+    double ready = 0, firstRows = -1;
+    bool said = false;
+  };
+  LaunchSteps launch;
   // A big job finished: memory goes back to the system when idle (ms; 0 =
   // nothing due), noted in the playback log as `releaseWhat`.
   // Live Events was last open then (the channel list re-read interval).
