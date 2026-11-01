@@ -111,7 +111,9 @@ TEST_CASE("engine: published rows equal every row worked out again, through tune
   Store store(tv.host());
   REQUIRE(fake::addPlaylist(store, tv).empty());
   auto ch = store.channels();
-  REQUIRE(ch->all.size() > 100);
+  // 142 rows without the built-in station list, 79 with it (CI builds one
+  // in, and the made-up locals then join their city's station).
+  REQUIRE(ch->all.size() > 50);
   CHECK_ROWS(store);
 
   // My Lineup set up.
