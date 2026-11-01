@@ -111,6 +111,10 @@ TEST_CASE("engine: published rows equal every row worked out again, through tune
   Store store(tv.host());
   REQUIRE(fake::addPlaylist(store, tv).empty());
   auto ch = store.channels();
+  if (ch->all.size() <= 100) {
+    for (const std::string& l : log::recent(200)) MESSAGE(l);
+    MESSAGE("now: " << store.channelsNow()->all.size());
+  }
   REQUIRE(ch->all.size() > 100);
   CHECK_ROWS(store);
 
