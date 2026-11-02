@@ -107,12 +107,26 @@ struct Settings {
   bool showsScores = true;
   // "8:00 PM" or "20:00".
   bool twelveHour = true;
+  // Build 125: tiles come from the schedule. An event no schedule has (only
+  // provider feeds, no game) is a tile only when `showsUnscheduled` ("Games
+  // without a schedule"), and then only in its own row ("unscheduled") with
+  // a start and a clear title, never in a sport's row, Live now or the hero;
+  // otherwise it's left out. Untimed ones stay in Time not listed. Not while
+  // `fromSchedule` is off (Game schedule off) or no schedule could be had
+  // (Input::scheduleLoaded): the board is then the provider's events. Nor
+  // for high-school games and pro wrestling, which no schedule has and which
+  // show only when picked in My Sports.
+  bool fromSchedule = true;
+  bool showsUnscheduled = false;
 };
 
 struct Input {
   // The store's events (or the plain provider events before the first build).
   std::vector<SportsEvent> events;
   std::vector<catalog::EventFamily> families;
+  // Build 125: a schedule is in (some event is a scheduled game), told by
+  // the caller from before it left any out; unset: from `events`.
+  std::optional<bool> scheduleLoaded;
   MySportsPrefs prefs;
   scores::Statuses statuses;
   std::map<std::string, Seconds> finalSeen;  // LiveScores::finalSeen (0: when unknown)

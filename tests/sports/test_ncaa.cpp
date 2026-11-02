@@ -57,6 +57,46 @@ TEST_CASE("ncaa: school names written out, and the names channels use") {
   CHECK(std::find(other.begin(), other.end(), "Harbor") != other.end());
   other = ncaa::otherNames("N.C. Harbor");
   CHECK(std::find(other.begin(), other.end(), "NC Harbor") != other.end());
+  // States and words the pages shorten.
+  CHECK(ncaa::writtenOut("Southern N.H.") == "Southern New Hampshire");
+  CHECK(ncaa::writtenOut("Western N.M.") == "Western New Mexico");
+  CHECK(ncaa::writtenOut("American Int'l") == "American International");
+  CHECK(ncaa::writtenOut("Tex. A&M Int'l") == "Texas A&M International");
+  CHECK(ncaa::writtenOut("San Fran. St.") == "San Francisco State");
+  CHECK(ncaa::writtenOut("Western New Eng.") == "Western New England");
+  CHECK(ncaa::writtenOut("Chris. Newport") == "Christopher Newport");
+  CHECK(ncaa::writtenOut("East. Mennonite") == "Eastern Mennonite");
+  // "St." before a bracket, or after a state, is State; else Saint.
+  CHECK(ncaa::writtenOut("Wayne St. (MI)") == "Wayne State (MI)");
+  CHECK(ncaa::writtenOut("Mont. St. Billings") == "Montana State Billings");
+  CHECK(ncaa::writtenOut("Mt. St. Joseph") == "Mount Saint Joseph");
+  CHECK(ncaa::writtenOut("St. Joseph's (L.I.)") == "Saint Joseph's (L.I.)");
+}
+
+TEST_CASE("ncaa: a game with no time set, and the names channels use for a school") {
+  std::string body = page(
+      "{\"contestId\":7,\"gameState\":\"P\",\"statusCodeDisplay\":\"pre\",\"currentPeriod\":\"\","
+      "\"contestClock\":\"\",\"finalMessage\":\"\",\"startTimeEpoch\":1793682000,\"startTime\":\"00:00\","
+      "\"hasStartTime\":false,\"roundDescription\":\"\",\"teams\":["
+      "{\"isHome\":true,\"seoname\":\"coast-guard\",\"nameShort\":\"Coast Guard\",\"score\":null},"
+      "{\"isHome\":false,\"seoname\":\"mount-holyoke\",\"nameShort\":\"Mount Holyoke\",\"score\":null}]}," +
+      contest("8", "P", "pre", "", "", "Assumption", "null", "Southern N.H.", "null"));
+  auto games = ncaa::parseGames(body, d3Women());
+  REQUIRE(games);
+  REQUIRE(games->size() == 2);
+  const SportsGame& tba = (*games)[0];
+  CHECK(tba.isDayOnly());
+  CHECK(tba.start == 1793682000);  // that day's midnight, US Eastern
+  const std::vector<std::string>& guard = tba.home.alternates;
+  CHECK(std::find(guard.begin(), guard.end(), "Coast Guard Academy") != guard.end());
+  CHECK(std::find(guard.begin(), guard.end(), "USCGA") != guard.end());
+  CHECK_FALSE((*games)[1].isDayOnly());  // a time set (no "hasStartTime" at all: one too)
+  CHECK((*games)[1].away.name == "Southern New Hampshire");
+  // Saved and read back.
+  auto back = gameFromJson(toJson(tba));
+  REQUIRE(back);
+  CHECK(back->isDayOnly());
+  CHECK(*back == tba);
 }
 
 TEST_CASE("ncaa: games and statuses from a page") {

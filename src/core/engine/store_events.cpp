@@ -114,6 +114,10 @@ constexpr uint32_t kBoardRefreshMs = 30000;  // clock texts ("in 25 m")
 // after the last began (your own changes don't wait).
 constexpr uint32_t kBoardGapMs = 1500;
 constexpr uint32_t kTimingLogMs = 60000;
+// The day's schedule in the background: this long after the channels are
+// in, then looked at again this often (a new day while the app runs).
+constexpr uint32_t kScheduleBackgroundAfterMs = 20000;
+constexpr uint32_t kScheduleBackgroundCheckMs = 5 * 60000;
 
 using Clock = std::chrono::steady_clock;
 
@@ -308,6 +312,15 @@ void Store::loadEvents() {
 void Store::saveEvents() {
   EventsState& e = impl_->ev;
   Files& st = host_.files;
+  saveSchedule();
+  st.write(kRemindersFile, e.reminders.toJson());
+  st.write(kMemoryFile, e.memory.toJson());
+  st.write(kSeenFile, json::write(sports::toJson(e.seen)));
+}
+
+void Store::saveSchedule() {
+  EventsState& e = impl_->ev;
+  Files& st = host_.files;
   if (e.schedule.takeDirty()) {
     // Made into text and written on a worker; the newest save wins.
     auto saved = std::make_shared<const sports::schedule::Saved>(e.schedule.saved());
@@ -322,9 +335,6 @@ void Store::saveEvents() {
       events_build::writeFile(path, sports::schedule::toJson(*saved), writes.get(), turn);
     }, nullptr, http::Priority::Background);
   }
-  st.write(kRemindersFile, e.reminders.toJson());
-  st.write(kMemoryFile, e.memory.toJson());
-  st.write(kSeenFile, json::write(sports::toJson(e.seen)));
 }
 
 sports::schedule::Context Store::scheduleContext() const {
@@ -422,11 +432,20 @@ events_build::Inputs Store::eventsInputs() const {
 
 // ------------------------------------------------------------ requests
 
-void Store::pumpSchedule(uint32_t ms) {
+void Store::pumpSchedule(uint32_t ms, bool background) {
   EventsState& e = impl_->ev;
   if (e.scheduleBusy) return;
   if (!e.schedulePending) {
     e.schedulePending = e.schedule.nextRequest();
+    // Today's games are in (the rest of the week still coming): matched at
+    // once, one rebuild for the lot.
+    if (e.schedule.takeBatch()) {
+      MLOG_I("events", "schedule: today's games in");
+      ++e.scheduleRevision;
+      e.nextCheckMs = 0;
+      if (eventsOpen_ > 0 && !e.scoresRound) e.scoresAt = ms;
+      saveSchedule();
+    }
     if (!e.schedulePending) {
       if (auto done = e.schedule.takeFinished()) {
         MLOG_I("events", "schedule: %s", done->note.c_str());
@@ -447,7 +466,10 @@ void Store::pumpSchedule(uint32_t ms) {
   auto pending = std::make_shared<sports::schedule::Schedule::Pending>(*e.schedulePending);
   e.schedulePending.reset();
   auto answer = std::make_shared<sports::schedule::Schedule::Answer>();
-  http::Request q = toHttp(pending->request, "events.schedule");
+  bool calendar = pending->kind == sports::schedule::Schedule::Pending::Kind::calendar;
+  http::Request q = toHttp(pending->request, calendar ? "events.calendar" : "events.schedule");
+  // In the background (Live Events closed): behind anything on screen.
+  if (background) q.priority = http::Priority::Background;
   q.afterTransfer = [pending, answer](http::Response& r) {
     if (r.status == 200) *answer = sports::schedule::Schedule::parse(*pending, r.body);
     r.body.clear();
@@ -459,6 +481,32 @@ void Store::pumpSchedule(uint32_t ms) {
     if (gen != impl_->generation) return;
     ev.schedule.onAnswer(r.status, std::move(*answer), r.retryAfterS);
   });
+}
+
+void Store::scheduleInBackground(uint32_t ms) {
+  Impl& m = *impl_;
+  EventsState& e = m.ev;
+  if (!settings_.scheduleEnabled || m.channels->empty() || status_.phase != StoreStatus::Phase::Ready) return;
+  // Nothing else needs the TV: the list isn't loading or sorting, no key
+  // pressed this moment, no channel starting (host idle) and nothing playing
+  // full screen (a weak TV's decoder and relay come first; opening Live
+  // Events still fetches at once).
+  bool quiet = !m.loading && *m.foregroundJobs == 0 && (!host_.idle || host_.idle()) && !host_.playingFull();
+  if (!e.scheduleBackgroundFrom) {
+    // Shortly after the first frame and the channel list.
+    e.scheduleBackgroundFrom = std::max<uint32_t>(1, ms + kScheduleBackgroundAfterMs);
+    return;
+  }
+  if (!quiet || ms < e.scheduleBackgroundFrom) return;
+  if (e.schedule.busy()) {
+    pumpSchedule(ms, true);
+    return;
+  }
+  if (ms < e.scheduleBackgroundCheck) return;
+  e.scheduleBackgroundCheck = ms + kScheduleBackgroundCheckMs;
+  // Only on a TV that uses Live Events; a first open fetches as before.
+  if (!e.schedule.usedLately(time::now())) return;
+  if (e.schedule.refreshIfNeeded(scheduleContext())) MLOG_I("events", "schedule: the day's fetch in the background");
 }
 
 void Store::pumpScores(uint32_t ms) {
@@ -586,7 +634,7 @@ RebuildMade rebuild(RebuildJob& job) {
     // Saved for an instant board next launch.
     Clock::time_point save = Clock::now();
     if (auto saved = ss::resultToSave(made.result->events, job.catalog->events, in.listings, true, time::now(),
-                                      made.lastSaved)) {
+                                      made.lastSaved, made.result->slotsSeen)) {
       if (!job.savePath.empty()) writeFile(job.savePath, ss::toJson(*saved));
       made.saved = true;
     }
@@ -656,6 +704,7 @@ void Store::rebuildEvents() {
   auto traits = in.sharedTraits;
   in.channelExists = [traits](const std::string& id) { return traits->count(id) > 0; };
   in.isCameraName = sports::special_feeds::isCameraName;
+  in.slotsSeen = e.slotsSeen;
   auto stop = m.stopJobs;
   in.shouldStop = [stop]() -> std::optional<std::string> {
     if (stop->load()) return std::string("closing");
@@ -699,6 +748,7 @@ void Store::rebuildEvents() {
                     }
                     if (!made->result) return;
                     ev.lastSaved = made->lastSaved;
+                    ev.slotsSeen = std::move(made->result->slotsSeen);
                     // The last list is freed on a worker (unless a board job still reads it).
                     auto old = std::move(ev.events);
                     ev.events = std::make_shared<const std::vector<sports::SportsEvent>>(std::move(made->result->events));
@@ -720,7 +770,8 @@ void Store::rebuildEvents() {
                     ev.logNotes.push_back(
                         "rebuilt in " + std::string(secs) + " s; " + std::to_string(ev.events->size()) + " events from " +
                         n(st.events) + " feed titles and " + n(st.games) + " scheduled games; hidden: " +
-                        n(st.shows) + " shows, " + n(st.replays) + " replays, " + n(st.stale) + " leftovers, " +
+                        n(st.shows) + " shows, " + n(st.replays) + " replays, " + n(st.stale + st.seenBefore) +
+                        " leftovers, " +
                         n(st.pastCards) + " past fight cards; " + n(st.mergedPlain) + " duplicate feeds merged");
                     ++ev.timing.rebuilds;
                     ev.timing.rebuildMax = std::max(ev.timing.rebuildMax, made->prepMs + made->matchMs + made->saveMs);
@@ -747,6 +798,10 @@ BoardMade board(const BoardInput& in) {
   const std::vector<Channel>& channels = *in.channels;
   sb::Input b;
   b.events = *in.events;
+  // Tiles come from the schedule once one is in (sb::Settings::fromSchedule),
+  // told from every event, before any are left out while waiting below.
+  b.scheduleLoaded = std::any_of(in.events->begin(), in.events->end(),
+                                 [](const sports::SportsEvent& ev) { return ev.game.has_value(); });
   b.families = in.catalog->families;
   if (!in.proWrestling) {
     // Pro wrestling only when picked in My Sports.
@@ -942,6 +997,8 @@ std::shared_ptr<events_build::BoardInput> Store::boardInput() {
   in->settings.showsUnwatchable = settings_.showUnwatchable;
   in->settings.showsScores = settings_.showScores;
   in->settings.twelveHour = !settings_.clock24;
+  in->settings.fromSchedule = settings_.scheduleEnabled;
+  in->settings.showsUnscheduled = settings_.boardUnscheduled;
   for (const auto& [family, starts] : m.groupStarts)
     if (groupKeepsFailing(family)) in->failing.insert(family);
   in->lineupPrefs = m.prefs;
@@ -1235,6 +1292,8 @@ void Store::eventsTick(uint32_t ms) {
     it = e.retired.erase(it);
     host_.pool.post([old]() mutable { old.reset(); }, nullptr, http::Priority::Background);
   }
+  // Closed: the day's schedule in the background (Build 125).
+  if (eventsOpen_ <= 0) scheduleInBackground(ms);
   // Closed: only the launch's first pass (the saved list in, a rebuild and a
   // board from it).
   if (eventsOpen_ <= 0 && !e.events->empty() && !e.launchPass) return;
@@ -1251,6 +1310,7 @@ void Store::eventsTick(uint32_t ms) {
       struct Restore {
         std::string text;
         std::optional<ss::Restored> restored;
+        std::shared_ptr<const sports::matcher::SlotsSeen> slotsSeen;
         time::Seconds savedAt = 0;
       };
       auto job = std::make_shared<Restore>();
@@ -1261,6 +1321,7 @@ void Store::eventsTick(uint32_t ms) {
           [job, catalog] {
             if (auto saved = ss::savedResultFromJson(job->text)) {
               job->savedAt = saved->savedAt;
+              job->slotsSeen = saved->slotsSeen;
               job->restored = ss::restore(*saved, catalog->events, time::now());
               // A scoreboard's word saved with a game is from then: the
               // clock decides until scores answer again.
@@ -1274,6 +1335,7 @@ void Store::eventsTick(uint32_t ms) {
             ev.restoring = false;
             if (gen != impl_->generation) return;
             ev.launchPass = true;  // the next tick rebuilds and makes the board, open or not
+            if (job->slotsSeen && !ev.slotsSeen) ev.slotsSeen = std::move(job->slotsSeen);
             if (!job->restored) return;
             ev.events = std::make_shared<const std::vector<sports::SportsEvent>>(std::move(job->restored->events));
             ++ev.eventsSerial;

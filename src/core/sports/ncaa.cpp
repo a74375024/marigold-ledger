@@ -63,6 +63,28 @@ std::string readablePeriod(std::string_view period) {
   return str::join(words, " ");
 }
 
+// Names channels use that the page's short name doesn't lead to (initials,
+// the full name), by the school's page name.
+const std::map<std::string, std::vector<std::string>, std::less<>>& knownAs() {
+  static const std::map<std::string, std::vector<std::string>, std::less<>> kNames = {
+      {"american-intl", {"AIC"}},
+      {"ala-huntsville", {"Alabama Huntsville"}},
+      {"aub-montgomery", {"Auburn Montgomery"}},
+      {"case", {"Case Western Reserve", "Case Western"}},
+      {"chicago", {"Chicago", "University of Chicago"}},
+      {"coast-guard", {"Coast Guard Academy", "USCGA"}},
+      {"dallas-baptist", {"Dallas Baptist"}},
+      {"mcla", {"Massachusetts College of Liberal Arts", "Mass Liberal Arts", "Massachusetts Liberal Arts"}},
+      {"mt-st-vincent", {"Mount Saint Vincent", "Mount St. Vincent", "Mt. St. Vincent"}},
+      {"southern-nh", {"SNHU"}},
+      {"st-thomas-aquinas", {"STAC"}},
+      {"tex-am-intl", {"TAMIU"}},
+      {"washington-st-louis", {"Washington University", "WashU"}},
+      {"western-conn-st", {"Western Connecticut State", "Western Connecticut", "Western Conn. St."}},
+  };
+  return kNames;
+}
+
 }  // namespace
 
 std::string pageUrl(const League& league, std::string_view day) {
@@ -73,33 +95,50 @@ std::string pageUrl(const League& league, std::string_view day) {
 
 std::string writtenOut(std::string_view name) {
   static const std::map<std::string, std::string> kWords = {
-      {"Col.", "College"},       {"Univ.", "University"}, {"Mt.", "Mount"},       {"Ft.", "Fort"},
-      {"Wm.", "William"},        {"Conn.", "Connecticut"}, {"Me.", "Maine"},       {"Wis.", "Wisconsin"},
-      {"Minn.", "Minnesota"},    {"Wash.", "Washington"}, {"Mass.", "Massachusetts"}, {"Ark.", "Arkansas"},
-      {"Ala.", "Alabama"},       {"Fla.", "Florida"},     {"Ga.", "Georgia"},     {"Ill.", "Illinois"},
-      {"Ind.", "Indiana"},       {"Ky.", "Kentucky"},     {"La.", "Louisiana"},   {"Md.", "Maryland"},
-      {"Mich.", "Michigan"},     {"Miss.", "Mississippi"}, {"Mo.", "Missouri"},   {"Neb.", "Nebraska"},
-      {"Okla.", "Oklahoma"},     {"Ore.", "Oregon"},      {"Pa.", "Pennsylvania"}, {"Tenn.", "Tennessee"},
-      {"Tex.", "Texas"},         {"Va.", "Virginia"},     {"Vt.", "Vermont"},     {"Colo.", "Colorado"},
-      {"Calif.", "California"},  {"Cal.", "California"},  {"Dom.", "Dominguez"},  {"Ariz.", "Arizona"},   {"Kan.", "Kansas"},
-      {"Ia.", "Iowa"},           {"Del.", "Delaware"},
+      {"Col.", "College"},        {"Univ.", "University"},    {"Mt.", "Mount"},         {"Ft.", "Fort"},
+      {"Wm.", "William"},         {"Int'l", "International"}, {"Fran.", "Francisco"},   {"Sch.", "School"},
+      {"East.", "Eastern"},       {"Eng.", "England"},        {"Atl.", "Atlantic"},     {"Bapt.", "Baptist"},
+      {"Christ.", "Christian"},   {"Chris.", "Christopher"},  {"Jeff.", "Jefferson"},   {"Pitt.", "Pittsburgh"},
+      {"M'head", "Moorhead"},     {"Dom.", "Dominguez"},      {"Dist.", "District of"},
+  };
+  // States as the names shorten them ("Southern N.H.", "Mont. St. Billings").
+  static const std::map<std::string, std::string> kStates = {
+      {"Conn.", "Connecticut"},   {"Me.", "Maine"},           {"Wis.", "Wisconsin"},    {"Minn.", "Minnesota"},
+      {"Wash.", "Washington"},    {"Mass.", "Massachusetts"}, {"Ark.", "Arkansas"},     {"Ala.", "Alabama"},
+      {"Fla.", "Florida"},        {"Ga.", "Georgia"},         {"Ill.", "Illinois"},     {"Ind.", "Indiana"},
+      {"Ky.", "Kentucky"},        {"La.", "Louisiana"},       {"Md.", "Maryland"},      {"Mich.", "Michigan"},
+      {"Miss.", "Mississippi"},   {"Mo.", "Missouri"},        {"Neb.", "Nebraska"},     {"Okla.", "Oklahoma"},
+      {"Ore.", "Oregon"},         {"Pa.", "Pennsylvania"},    {"Tenn.", "Tennessee"},   {"Tex.", "Texas"},
+      {"Va.", "Virginia"},        {"Vt.", "Vermont"},         {"Colo.", "Colorado"},    {"Calif.", "California"},
+      {"Cal.", "California"},     {"Ariz.", "Arizona"},       {"Kan.", "Kansas"},       {"Ia.", "Iowa"},
+      {"Del.", "Delaware"},       {"Mont.", "Montana"},       {"Alas.", "Alaska"},      {"N.H.", "New Hampshire"},
+      {"N.M.", "New Mexico"},     {"N.C.", "North Carolina"}, {"S.C.", "South Carolina"}, {"N.Y.", "New York"},
+      {"N.J.", "New Jersey"},     {"N.D.", "North Dakota"},   {"S.D.", "South Dakota"}, {"W.Va.", "West Virginia"},
   };
   std::string out;
   std::string word;
   std::string_view rest = name;
+  // The word before was a state ("Mont." in "Mont. St. Billings").
+  bool afterState = false;
   // Word by word, keeping what's between words (spaces, hyphens, brackets).
   auto flush = [&](char next) {
     if (word.empty()) return;
+    bool state = false;
     if (word == "St.") {
-      // At the end (or before a hyphen or bracket) a state; else a saint.
-      // "Cal St. Dom. Hills" is Cal State Dominguez Hills.
+      // At the end, before a hyphen or bracket, or after a state, a state;
+      // else a saint. "Cal St. Dom. Hills" is Cal State Dominguez Hills,
+      // "Wayne St. (MI)" Wayne State (MI).
       bool cal = str::endsWith(out, "Cal ");
-      out += cal || next == '\0' || next == '-' || next == ')' ? "State" : "Saint";
+      out += cal || afterState || next == '\0' || next == '-' || next == '(' || next == ')' ? "State" : "Saint";
     } else if (auto found = kWords.find(word); found != kWords.end()) {
       out += found->second;
+    } else if (auto st = kStates.find(word); st != kStates.end()) {
+      out += st->second;
+      state = true;
     } else {
       out += word;
     }
+    afterState = state;
     word.clear();
   };
   for (size_t i = 0; i < rest.size(); ++i) {
@@ -160,6 +199,9 @@ std::optional<std::vector<SportsGame>> parseGames(std::string_view body, const L
       team.name = writtenOut(*name);
       team.alternates = otherNames(*name);
       if (*name != team.name) team.alternates.insert(team.alternates.begin(), *name);
+      if (auto more = knownAs().find(*seo); more != knownAs().end()) {
+        team.alternates.insert(team.alternates.end(), more->second.begin(), more->second.end());
+      }
       if (text::flag(t["isHome"])) home = std::move(team);
       else away = std::move(team);
     }
@@ -174,6 +216,9 @@ std::optional<std::vector<SportsGame>> parseGames(std::string_view body, const L
     game.home = std::move(*home);
     game.away = std::move(*away);
     game.start = epoch.asInt();
+    // No time set yet: the start is the day's midnight.
+    const json::Value& timed = contest["hasStartTime"];
+    if (timed.isBool() && !timed.asBool()) game.dayOnly = true;
     game.postponed = state == "O" || display == "postponed" || display == "canceled" || display == "cancelled";
     game.completed = state == "F";
     // A championship's round in place of the side of the sport, when it fits.

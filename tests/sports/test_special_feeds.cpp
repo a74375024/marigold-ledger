@@ -56,6 +56,12 @@ TEST_CASE("camera names: the cheap test over the whole list") {
   CHECK_FALSE(isCameraName("Channel One | UK | ENG"));      // not an F1 team
   CHECK_FALSE(isCameraName("Driver Alpha | Team Alpha | DRA"));
   CHECK_FALSE(isCameraName("Tennis Multiview"));            // no NASCAR, no driver
+  // The same feeds by their slot titles (bars read as dots).
+  CHECK(isCameraName("DRIVER ALPHA \xc2\xb7 RED BULL RACING \xc2\xb7 DRA"));
+  CHECK(isCameraName("F1-DATA"));
+  CHECK(isCameraName("F1-TRACKER"));
+  CHECK_FALSE(isCameraName("Harbor \xc2\xb7 Team Alpha \xc2\xb7 DRA"));  // not an F1 team
+  CHECK_FALSE(isCameraName("F1-TV"));  // the main feed stays a tile
 }
 
 TEST_CASE("in-car feeds by car number, not ranked games or team shows") {

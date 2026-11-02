@@ -453,13 +453,14 @@ void eventsQuickRows(App& app, ui::ListPanel& p) {
       quickToggle(app, "Show scores", "Off keeps live and final, without numbers", &Settings::showScores);
   needsSchedule(scores);
   p.items.push_back(scores);
-  // Show on the board: its four switches in a panel of their own, so Quick
+  // Show on the board: its five switches in a panel of their own, so Quick
   // settings stays at four rows (the board behind changes as they do).
   const Settings& set = app.store().settings();
   BoardShows shows = boardShows(set);
   std::vector<std::string> hidden;
   if (schedule && !set.showUnwatchable) hidden.push_back("Games not on my channels");
   if (!shows.more) hidden.push_back("More events");
+  if (schedule && !set.boardUnscheduled) hidden.push_back("Games without a schedule");
   if (!shows.untimed) hidden.push_back("Time not listed");
   if (!shows.families) hidden.push_back("Event channels");
   ui::PanelItem board{ui::PanelItem::Kind::Chevron, "Show on the board"};

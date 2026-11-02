@@ -167,6 +167,8 @@ struct EventRow {
 // draws (views::boardShown()).
 struct BoardShows {
   bool more = false, untimed = false, families = false;
+  // Build 125: the row of games no schedule has ("Games without a schedule").
+  bool unscheduled = false;
 };
 
 // The board's placeholders show this long at most after they first show;

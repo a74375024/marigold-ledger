@@ -655,6 +655,7 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
       settings_.boardMoreEvents = (*v)["boardMoreEvents"].asBool(false);
       settings_.boardUntimed = (*v)["boardUntimed"].asBool(false);
       settings_.boardEventChannels = (*v)["boardEventChannels"].asBool(false);
+      settings_.boardUnscheduled = (*v)["boardUnscheduled"].asBool(false);
       settings_.showScores = (*v)["showScores"].asBool(true);
       settings_.clock24 = (*v)["clock24"].asBool(false);
       settings_.recentSearches = (*v)["recentSearches"].asBool(true);
@@ -930,6 +931,7 @@ void Store::setSettings(const Settings& s) {
   same.systemCaptions = settings_.systemCaptions;
   bool boardChanged = !(same.previewChannels == settings_.previewChannels && same.scheduleEnabled == settings_.scheduleEnabled &&
                         same.showUnwatchable == settings_.showUnwatchable && same.showScores == settings_.showScores &&
+                        same.boardUnscheduled == settings_.boardUnscheduled &&
                         same.clock24 == settings_.clock24 && same.allChannelsTab == settings_.allChannelsTab &&
                         same.preferTS == settings_.preferTS && same.embyQuickStart == settings_.embyQuickStart &&
                         same.fillMissingListings == settings_.fillMissingListings &&
@@ -952,6 +954,7 @@ void Store::setSettings(const Settings& s) {
   v.set("boardMoreEvents", s.boardMoreEvents);
   v.set("boardUntimed", s.boardUntimed);
   v.set("boardEventChannels", s.boardEventChannels);
+  v.set("boardUnscheduled", s.boardUnscheduled);
   v.set("showScores", s.showScores);
   v.set("clock24", s.clock24);
   v.set("recentSearches", s.recentSearches);

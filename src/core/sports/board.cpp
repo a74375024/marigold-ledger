@@ -4,7 +4,9 @@
 #include <cstdio>
 #include <unordered_map>
 
+#include "core/catalog/catalog.hpp"
 #include "core/guide/names.hpp"
+#include "core/sports/calendars.hpp"
 #include "core/sports/leagues.hpp"
 #include "core/sports/matcher.hpp"
 #include "core/sports/player_photos.hpp"
@@ -1229,7 +1231,10 @@ Board build(const Input& in) {
     // Cricket too: the listing has every domestic match as well.
     if (e.game && e.game->isCricket()) return !e.sources.empty();
     // And the listings of every game of a day (all soccer, a college division).
-    if (e.game && (e.game->leagueShort == kSoccerAll || listsEveryGame(*e.game, in.prefs))) return !e.sources.empty();
+    // And the other calendars (a gap source: games your provider carries).
+    if (e.game && (e.game->leagueShort == kSoccerAll || listsEveryGame(*e.game, in.prefs) ||
+                   calendars::isCalendarGame(*e.game)))
+      return !e.sources.empty();
     return !e.sources.empty() || in.settings.showsUnwatchable;
   };
 
@@ -1280,6 +1285,23 @@ Board build(const Input& in) {
     return std::all_of(e.sources.begin(), e.sources.end(), [&](const EventSource& s) {
       return s.kind == EventSource::Kind::provider && in.feedAbroad(s.channelID);
     });
+  };
+  // Build 125: tiles come from the schedule (Settings::fromSchedule). An
+  // event no schedule has is only in its own row, "Games without a
+  // schedule", and only with that switch on and a clear title. While the
+  // schedule is still coming the board shows its placeholders; only when no
+  // schedule could be had at all (offline on a first launch) is the board
+  // the provider's events.
+  const bool scheduleIn = in.scheduleLoaded ? *in.scheduleLoaded
+                                            : std::any_of(in.events.begin(), in.events.end(),
+                                                          [](const SportsEvent& e) { return e.game.has_value(); });
+  const bool fromSchedule = in.settings.fromSchedule && scheduleIn;
+  auto unscheduled = [&](const SportsEvent& e) {
+    return fromSchedule && !e.game && !e.highSchool && e.league != catalog::kProWrestling &&
+           !str::startsWith(e.id, "whip|");
+  };
+  auto clearTitle = [](const SportsEvent& e) {
+    return matcher::looksLikeGame(e.title) || matcher::titleWords(e.title).size() >= 2;
   };
   auto grouped = [&](const std::vector<SportsEvent>& list) {
     std::vector<std::pair<Bucket, SportsEvent>> keyed;
@@ -1335,7 +1357,7 @@ Board build(const Input& in) {
   }
   std::vector<SportsEvent> live;
   for (const SportsEvent& e : all) {
-    if (abroad(e)) continue;
+    if (abroad(e) || unscheduled(e)) continue;
     if (isLive(e) && !e.sources.empty() && (!picked || picked->count(e.league) || e.highSchool)) live.push_back(e);
   }
   std::stable_sort(live.begin(), live.end(), [&](const SportsEvent& a, const SportsEvent& b) {
@@ -1350,9 +1372,13 @@ Board build(const Input& in) {
     drafts.push_back({"live", "Live now", live, {}, static_cast<int>(live.size()), mixed(live)});
   }
   std::map<std::string, std::vector<SportsEvent>> bySport;
-  std::vector<SportsEvent> more;
+  std::vector<SportsEvent> more, unlisted;
   for (const SportsEvent& e : all) {
     if (!shown(e)) continue;
+    if (unscheduled(e)) {
+      if (in.settings.showsUnscheduled && !e.sources.empty() && clearTitle(e)) unlisted.push_back(e);
+      continue;
+    }
     std::string group = e.league.empty() ? "Other" : e.league;
     // High-school games are a row of their own, whatever the sport.
     if (e.highSchool) group = kHighSchoolRow;
@@ -1385,6 +1411,11 @@ Board build(const Input& in) {
     const std::vector<SportsEvent>& source = bySport[sport];
     Grouped g = grouped(source);
     drafts.push_back({"sport|" + sport, sport, g.events, g.buckets, liveWatchable(source), mixed(source)});
+  }
+  if (!unlisted.empty()) {
+    Grouped g = grouped(unlisted);
+    int unlistedLive = static_cast<int>(std::count_if(unlisted.begin(), unlisted.end(), isLive));
+    drafts.push_back({"unscheduled", "Games without a schedule", g.events, g.buckets, unlistedLive, true});
   }
   if (!more.empty()) {
     Grouped g = grouped(more);
@@ -1424,6 +1455,9 @@ Board build(const Input& in) {
     const char* why = "not in your sports (My Sports)";
     if (board.studio.count(e.id)) why = "a studio show";
     else if (state == State::finished || (state == State::live && e.dayOver)) why = "over";
+    else if (unscheduled(e) && e.start && !in.settings.showsUnscheduled)
+      why = "not on the schedule (Games without a schedule is off)";
+    else if (unscheduled(e) && e.start && !clearTitle(e)) why = "not on the schedule, and no clear title";
     else if (e.sources.empty()) why = "not on your channels";
     else if (!e.start) why = "no time listed";
     else if (*e.start >= horizon) why = "more than a week away";
@@ -1506,7 +1540,7 @@ Board build(const Input& in) {
   const SportsEvent* hero = nullptr;
   const SportsEvent* upcoming = nullptr;
   for (const SportsEvent& e : all) {
-    if (e.sources.empty() || str::startsWith(e.id, "whip|") || board.studio.count(e.id)) continue;
+    if (e.sources.empty() || str::startsWith(e.id, "whip|") || board.studio.count(e.id) || unscheduled(e)) continue;
     if (isLive(e)) {
       hero = &e;
       break;

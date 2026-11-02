@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "core/catalog/text.hpp"
+#include "core/guide/names.hpp"
 #include "core/sports/text.hpp"
 #include "core/util/rx.hpp"
 #include "core/util/strings.hpp"
@@ -499,6 +500,58 @@ std::string inEnglish(std::string_view title) {
   // "Dag 2 Dag 2" (the round named twice) once.
   out = rx::replace(out, "\\b((?:Day|Matchday|Round) \\d{1,2})(?:\\s+\\1\\b)+", "$1");
   return out;
+}
+
+std::optional<std::string> racePlace(std::string_view text) {
+  // Places of the Grand Prix calendar in the languages feeds use, each with
+  // its key; a longer name before one it contains.
+  static const std::vector<std::pair<std::string, std::string>> kPlaces = {
+      {"las vegas", "las vegas"},       {"mexico city", "mexico"},        {"ciudad de mexico", "mexico"},
+      {"cidade do mexico", "mexico"},   {"mexico", "mexico"},             {"mexikos", "mexico"},
+      {"united states", "usa"},         {"estados unidos", "usa"},        {"austin", "usa"},
+      {"usa", "usa"},                   {"sao paulo", "brazil"},          {"brazilian", "brazil"},
+      {"brazil", "brazil"},             {"brasil", "brazil"},             {"brasiliens", "brazil"},
+      {"interlagos", "brazil"},         {"abu dhabi", "abu dhabi"},       {"qatar", "qatar"},
+      {"lusail", "qatar"},              {"saudi arabian", "saudi"},       {"saudi", "saudi"},
+      {"jeddah", "saudi"},              {"bahrain", "bahrain"},           {"great britain", "britain"},
+      {"storbritanniens", "britain"},   {"storbritannien", "britain"},    {"british", "britain"},
+      {"britannique", "britain"},       {"gran bretana", "britain"},      {"gran bretagna", "britain"},
+      {"silverstone", "britain"},       {"emilia romagna", "imola"},      {"imola", "imola"},
+      {"monaco", "monaco"},             {"monte carlo", "monaco"},        {"miami", "miami"},
+      {"canadian", "canada"},           {"canada", "canada"},             {"kanadas", "canada"},
+      {"montreal", "canada"},           {"spanish", "spain"},             {"espana", "spain"},
+      {"spaniens", "spain"},            {"barcelona", "spain"},           {"madrid", "madrid"},
+      {"austrian", "austria"},          {"osterreich", "austria"},        {"osterrikes", "austria"},
+      {"ostrigs", "austria"},           {"austria", "austria"},           {"spielberg", "austria"},
+      {"belgian", "belgium"},           {"belgium", "belgium"},           {"belgiens", "belgium"},
+      {"belgica", "belgium"},           {"spa francorchamps", "belgium"}, {"hungarian", "hungary"},
+      {"hungary", "hungary"},           {"ungerns", "hungary"},           {"ungarns", "hungary"},
+      {"hungria", "hungary"},           {"dutch", "netherlands"},         {"netherlands", "netherlands"},
+      {"nederlandenes", "netherlands"}, {"nederlandernas", "netherlands"}, {"zandvoort", "netherlands"},
+      {"italian", "italy"},             {"italia", "italy"},              {"italiens", "italy"},
+      {"italy", "italy"},               {"monza", "italy"},               {"azerbaijan", "azerbaijan"},
+      {"baku", "azerbaijan"},           {"singapore", "singapore"},       {"japanese", "japan"},
+      {"japan", "japan"},               {"japans", "japan"},              {"suzuka", "japan"},
+      {"chinese", "china"},             {"china", "china"},               {"kinas", "china"},
+      {"shanghai", "china"},            {"australian", "australia"},      {"australia", "australia"},
+      {"australiens", "australia"},     {"melbourne", "australia"}};
+  std::string padded = " ";
+  for (const std::string& token : guide::letterNumberTokens(str::lower(str::foldDiacritics(text)))) {
+    padded += token + " ";
+  }
+  for (const auto& [words, key] : kPlaces) {
+    if (padded.find(" " + words + " ") != std::string::npos) return key;
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string> grandPrixPlace(std::string_view title) {
+  std::string lower = str::lower(str::foldDiacritics(title));
+  bool named = lower.find("grand prix") != std::string::npos || lower.find("gran premio") != std::string::npos ||
+               lower.find("grande premio") != std::string::npos || lower.find("grand-prix") != std::string::npos ||
+               catalog::text::hasWord(lower, "gp");
+  if (!named) return std::nullopt;
+  return racePlace(title);
 }
 
 }  // namespace marigold::sports::titles

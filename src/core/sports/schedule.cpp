@@ -1,6 +1,7 @@
 #include "core/sports/schedule.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <unordered_set>
 
 #include "core/sports/cricket.hpp"
@@ -955,6 +956,8 @@ std::string toJson(const Saved& s) {
     v.set("leagueSet", set);
   }
   if (s.schema) v.set("schema", *s.schema);
+  if (s.restPending) v.set("restPending", true);
+  v.set("calendars", calendars::toJson(s.calendars));
   return json::write(v);
 }
 
@@ -989,6 +992,8 @@ std::optional<Saved> savedFromJson(std::string_view textBody) {
     s.leagueSet = std::move(set);
   }
   if (v["schema"].isNumber()) s.schema = static_cast<int>(v["schema"].asInt());
+  s.restPending = v["restPending"].asBool();
+  s.calendars = calendars::savedFromJson(v["calendars"]);
   return s;
 }
 
@@ -1013,12 +1018,73 @@ std::vector<SportsTeam> sortedByName(std::vector<SportsTeam> teams) {
   return teams;
 }
 
+// The days a query asks for: a day, a month, or (this week, next week, a
+// current listing) everything after tomorrow.
+std::pair<Seconds, Seconds> coverOf(const std::string& query, Seconds now, const time::Zone& zone) {
+  const Seconds later = text::startOfDay(text::addDays(now, kTodayDays, zone), zone);
+  std::string date = str::startsWith(query, "dates=") ? query.substr(6) : std::string();
+  bool digits = !date.empty() && std::all_of(date.begin(), date.end(), [](char c) { return c >= '0' && c <= '9'; });
+  if (!digits || (date.size() != 6 && date.size() != 8)) return {later, std::numeric_limits<Seconds>::max()};
+  int year = std::stoi(date.substr(0, 4)), month = std::stoi(date.substr(4, 2));
+  if (month < 1 || month > 12) return {later, std::numeric_limits<Seconds>::max()};
+  if (date.size() == 6) {
+    Seconds from = zone.fromLocal({year, month, 1, 0, 0, 0});
+    Seconds to = month == 12 ? zone.fromLocal({year + 1, 1, 1, 0, 0, 0}) : zone.fromLocal({year, month + 1, 1, 0, 0, 0});
+    return {from, to};
+  }
+  int day = std::stoi(date.substr(6, 2));
+  Seconds from = zone.fromLocal({year, month, day, 0, 0, 0});
+  return {from, text::startOfDay(text::addDays(from + 12 * 3600, 1, zone), zone)};
+}
+
+// Not part of today's: a day-by-day league's days after tomorrow, a month
+// or a day that has neither today nor tomorrow (last week's matchday in
+// last month's listing, next Sunday's race).
+bool laterQuery(const League& league, size_t queryIndex, const std::string& query, Seconds now,
+                const time::Zone& zone) {
+  if (league.mode == League::Mode::days) return queryIndex >= static_cast<size_t>(kTodayDays);
+  if (!str::startsWith(query, "dates=")) return false;
+  std::string date = query.substr(6);
+  for (int i = 0; i < kTodayDays; ++i) {
+    Seconds day = text::addDays(now, i, zone);
+    if (date == (date.size() == 6 ? text::yearMonth(day, zone) : text::yearMonthDay(day, zone))) return false;
+  }
+  return true;
+}
+
 }  // namespace
 
-Schedule::Schedule(Saved saved, std::string appBuild) : saved_(std::move(saved)), appBuild_(std::move(appBuild)) {}
+Schedule::Schedule(Saved saved, std::string appBuild) : saved_(std::move(saved)), appBuild_(std::move(appBuild)) {
+  noteTags();
+}
+
+void Schedule::noteTags() {
+  soccerTags_.clear();
+  for (const SportsGame& g : saved_.games) {
+    if (g.leagueShort == kSoccerAll && g.tournament) soccerTags_.insert(str::lower(*g.tournament));
+  }
+}
+
+std::set<std::string> Schedule::coveredCalendars(const std::vector<League>& active) const {
+  return calendars::coveredBy(shortsOf(active), soccerTags_);
+}
+
+std::vector<const calendars::Calendar*> Schedule::activeCalendars(const Context& ctx) const {
+  if (!ctx.enabled) return {};
+  std::vector<League> active = activeLeagues(ctx.prefs, ctx.seen, ctx.now);
+  return calendars::active(ctx.prefs, ctx.seen, ctx.now, coveredCalendars(active));
+}
+
+bool Schedule::calendarsDue(const Context& ctx, bool force) const {
+  return calendars::Pass::due(saved_.calendars, activeCalendars(ctx), ctx.now, ctx.zone, force);
+}
+
+bool Schedule::usedLately(Seconds now) const {
+  return saved_.fetchedAt && now - *saved_.fetchedAt < kUsedLatelyFor;
+}
 
 bool Schedule::refreshIfNeeded(const Context& ctx) {
-  if (!ctx.enabled || fetching()) return false;
+  if (!ctx.enabled || busy()) return false;
   const Seconds now = ctx.now;
   if (saved_.fetchedAt && text::dayDifference(*saved_.fetchedAt, now, ctx.zone) == 0 &&
       now - *saved_.fetchedAt < kFreshFor && (saved_.schema == kSchema || saved_.failedAt)) {
@@ -1029,7 +1095,12 @@ bool Schedule::refreshIfNeeded(const Context& ctx) {
     for (const League& l : activeLeagues(ctx.prefs, ctx.seen, now)) {
       if (!known.count(l.shortName)) missing.insert(l.shortName);
     }
-    if (!missing.empty() && !saved_.failedAt) return start(ctx, false, missing);
+    if (saved_.failedAt) return false;
+    if (!missing.empty()) return start(ctx, false, missing);
+    // The days after tomorrow, when the app closed before they came.
+    if (saved_.restPending) return start(ctx, false, std::nullopt, true);
+    // A calendar newly seen, or not looked at yet today.
+    if (calendarsDue(ctx, false)) return start(ctx, false, std::set<std::string>());
     return false;
   }
   if (saved_.failureBuild != appBuild_) saved_.failures = 0;
@@ -1043,7 +1114,7 @@ bool Schedule::refreshIfNeeded(const Context& ctx) {
 }
 
 bool Schedule::refreshNow(const Context& ctx) {
-  if (!ctx.enabled || fetching()) return false;
+  if (!ctx.enabled || busy()) return false;
   return start(ctx, true, std::nullopt);
 }
 
@@ -1065,8 +1136,8 @@ bool Schedule::leaguesChanged(const Context& ctx) {
                    return wantedRosters_.count(l.shortName) && l.college();
                  });
   bool needsSchools = college && (!saved_.schools || saved_.schools->empty());
-  if (missing.empty() && !needsSchools) return false;
-  if (fetching()) {
+  if (missing.empty() && !needsSchools && !calendarsDue(ctx, false)) return false;
+  if (busy()) {
     recheckPending_ = true;
     return false;
   }
@@ -1099,7 +1170,7 @@ Published Schedule::publish(const Context& ctx) const {
   Published out;
   if (!ctx.enabled) return out;
   std::vector<League> active = activeLeagues(ctx.prefs, ctx.seen, ctx.now);
-  out.games = gamesOf(active, ctx.now);
+  out.games = gamesOf(active, ctx);
   out.updatedAt = saved_.fetchedAt;
   out.rosters = saved_.rosters;
   if (anyCollege(active) && saved_.schools) out.schools = *saved_.schools;
@@ -1108,10 +1179,11 @@ Published Schedule::publish(const Context& ctx) const {
 
 std::vector<SportsGame> Schedule::games(const Context& ctx) const {
   if (!ctx.enabled) return {};
-  return gamesOf(activeLeagues(ctx.prefs, ctx.seen, ctx.now), ctx.now);
+  return gamesOf(activeLeagues(ctx.prefs, ctx.seen, ctx.now), ctx);
 }
 
-std::vector<SportsGame> Schedule::gamesOf(const std::vector<League>& active, Seconds now) const {
+std::vector<SportsGame> Schedule::gamesOf(const std::vector<League>& active, const Context& ctx) const {
+  const Seconds now = ctx.now;
   std::vector<SportsGame> out;
   std::set<std::string> shorts = shortsOf(active);
   // A game of a league asked for on its own isn't also kept from the
@@ -1131,6 +1203,11 @@ std::vector<SportsGame> Schedule::gamesOf(const std::vector<League>& active, Sec
     if (!shorts.count(g.leagueShort)) continue;
     if (g.leagueShort == kSoccerAll && elsewhere.count(eventOf(g.id))) continue;
     out.push_back(std::move(g));
+  }
+  // The other calendars' games of the competitions looked up.
+  std::vector<const calendars::Calendar*> cals = calendars::active(ctx.prefs, ctx.seen, now, coveredCalendars(active));
+  if (!cals.empty()) {
+    for (SportsGame& g : calendars::games(saved_.calendars, cals, now)) out.push_back(std::move(g));
   }
   std::stable_sort(out.begin(), out.end(), [](const SportsGame& a, const SportsGame& b) { return a.start < b.start; });
   return out;
@@ -1158,10 +1235,11 @@ bool Schedule::skip(const std::string& league, Seconds now) const {
   return now - fetched->second < kSkipFor;
 }
 
-bool Schedule::start(const Context& ctx, bool force, std::optional<std::set<std::string>> only) {
+bool Schedule::start(const Context& ctx, bool force, std::optional<std::set<std::string>> only, bool restOnly) {
   FetchState f;
   f.force = force;
   f.only = std::move(only);
+  f.restOnly = restOnly;
   f.now = ctx.now;
   f.zone = ctx.zone;
   // A week back: last week's matchday is what tells a leftover slot title
@@ -1181,13 +1259,92 @@ bool Schedule::start(const Context& ctx, bool force, std::optional<std::set<std:
   f.configured = ctx.prefs.configured;
   for (const SportsGame& g : saved_.games) f.byLeague[g.leagueShort].push_back(g);
   f.rosters = saved_.rosters;
+  // Today's part first: every league's requests for today and tomorrow (the
+  // month listing that has them, the first two days of day-by-day leagues,
+  // fight cards' and racing's current listings), then the rest of the window
+  // (last month's listing, the other days, next week, next Sunday's race).
+  // Only the rest when today's part is already saved.
+  f.runs.resize(f.active.size());
+  for (size_t i = 0; i < f.active.size(); ++i) {
+    std::vector<std::string> queries = queriesFor(f.active[i], ctx.now, ctx.zone);
+    for (size_t q = 0; q < queries.size(); ++q) {
+      bool rest = laterQuery(f.active[i], q, queries[q], ctx.now, ctx.zone);
+      if (restOnly && !rest) continue;
+      (rest ? f.rest : f.today).push_back({i, queries[q]});
+      f.runs[i].steps += 1;
+    }
+    if (restOnly) {
+      f.runs[i].partial = true;
+      for (const Step& s : f.rest)
+        if (s.league == i) f.runs[i].asked.push_back(coverOf(s.query, ctx.now, ctx.zone));
+    }
+  }
+  f.todayDone = f.today.empty();
   // School logos for college events, once a month.
   bool college = anyCollege(active) || anyCollege(f.active);
   bool stale = !saved_.schoolsFetchedAt || ctx.now - *saved_.schoolsFetchedAt > kSchoolsMaxAge;
-  f.needsSchools = college && (stale || !saved_.schools || saved_.schools->empty());
+  f.needsSchools = !restOnly && college && (stale || !saved_.schools || saved_.schools->empty());
+  // The other calendars, after today's part.
+  std::vector<const calendars::Calendar*> cals = activeCalendars(ctx);
+  if (calendars::Pass::due(saved_.calendars, cals, ctx.now, ctx.zone, force)) {
+    f.calendars.emplace(saved_.calendars, cals, ctx.now, ctx.zone, force);
+  }
   fetch_ = std::move(f);
   finished_.reset();
   return true;
+}
+
+std::optional<Schedule::Pending> Schedule::nextStep(bool today) {
+  FetchState& f = *fetch_;
+  std::vector<Step>& queue = today ? f.today : f.rest;
+  size_t& index = today ? f.todayIndex : f.restIndex;
+  while (index < queue.size()) {
+    const Step step = queue[index];
+    Run& run = f.runs[step.league];
+    const League& league = f.active[step.league];
+    if (!run.begun) {
+      run.begun = true;
+      // Before setup, leagues you can't watch are checked weekly.
+      if (!f.force && !f.configured && skip(league.shortName, f.now)) {
+        run.skipped = true;
+      } else {
+        f.leaguesAsked += 1;
+        // Remember which form works, so a league is asked once, not twice.
+        auto form = saved_.leagueForm.find(league.shortName);
+        run.plainForm = form != saved_.leagueForm.end() && form->second == "plain";
+      }
+    }
+    // A source that refused us waits until its time is up, even on Refresh.
+    auto refused = saved_.refusedUntil.find(refusals::sourceOf(league));
+    bool shut = refused != saved_.refusedUntil.end() && refused->second > f.now;
+    if (run.skipped || shut) {
+      stepDone(today);
+      continue;
+    }
+    Pending p;
+    p.kind = Pending::Kind::league;
+    p.league = league;
+    p.query = step.query;
+    p.from = f.from;
+    p.to = f.to;
+    p.today = today;
+    p.request = scoreboardRequest(league, p.query, f.retrying || run.plainForm);
+    p.waitMs = f.sent > 0 ? kRequestSpacingMs : 0;
+    f.sent += 1;
+    f.awaiting = true;
+    f.currentToday = today;
+    return p;
+  }
+  return std::nullopt;
+}
+
+void Schedule::stepDone(bool today) {
+  FetchState& f = *fetch_;
+  std::vector<Step>& queue = today ? f.today : f.rest;
+  size_t& index = today ? f.todayIndex : f.restIndex;
+  if (index >= queue.size()) return;
+  f.runs[queue[index].league].steps -= 1;
+  index += 1;
 }
 
 std::optional<Schedule::Pending> Schedule::nextRequest() {
@@ -1201,75 +1358,69 @@ std::optional<Schedule::Pending> Schedule::nextRequest() {
     }
     saved_.requestCount = saved_.requestCount.value_or(0) + 1;
   };
-  while (true) {
-    if (f.leagueIndex < f.active.size()) {
-      const League& league = f.active[f.leagueIndex];
-      if (!f.inLeague) {
-        // Before setup, leagues you can't watch are checked weekly.
-        if (!f.force && !f.configured && skip(league.shortName, f.now)) {
-          f.leagueIndex += 1;
-          continue;
-        }
-        // A source that refused us waits until its time is up, even on Refresh.
-        auto refused = saved_.refusedUntil.find(refusals::sourceOf(league));
-        if (refused != saved_.refusedUntil.end() && refused->second > f.now) {
-          f.leagueIndex += 1;
-          continue;
-        }
-        f.leaguesAsked += 1;
-        f.inLeague = true;
-        f.queries = queriesFor(league, f.now, f.zone);
-        f.queryIndex = 0;
-        f.retrying = false;
-        f.list.clear();
-        f.roster.clear();
-        f.ok = false;
-      }
-      if (f.queryIndex < f.queries.size()) {
-        Pending p;
-        p.kind = Pending::Kind::league;
-        p.league = league;
-        p.query = f.queries[f.queryIndex];
-        p.from = f.from;
-        p.to = f.to;
-        if (!f.retrying) {
-          // Remember which form works, so a league is asked once, not twice.
-          auto form = saved_.leagueForm.find(league.shortName);
-          f.plainForm = form != saved_.leagueForm.end() && form->second == "plain";
-        }
-        p.request = scoreboardRequest(league, p.query, f.retrying || f.plainForm);
-        p.waitMs = f.sent > 0 ? kRequestSpacingMs : 0;
-        f.sent += 1;
-        f.awaiting = true;
-        count();
-        return p;
-      }
-      finishLeague();
-      f.leagueIndex += 1;
-      f.inLeague = false;
-      continue;
-    }
-    if (f.needsSchools && !f.schoolsAsked) {
-      f.schoolsAsked = true;
-      Pending p;
-      p.kind = Pending::Kind::schools;
-      p.request = schoolsRequest();
-      p.waitMs = f.sent > 0 ? kRequestSpacingMs : 0;
-      f.sent += 1;
-      f.awaiting = true;
-      f.awaitingSchools = true;
+  if (!f.todayDone) {
+    if (auto p = nextStep(true)) {
       count();
       return p;
     }
-    finish();
-    return std::nullopt;
+    f.todayDone = true;
+    commitToday();
+    // Nothing came and the network is down: the rest waits for next time.
+    if (!f.committed && f.networkTrouble) {
+      for (size_t i = f.restIndex; i < f.rest.size(); ++i) f.runs[f.rest[i].league].steps -= 1;
+      f.restIndex = f.rest.size();
+      f.calendars.reset();
+      f.needsSchools = false;
+    }
   }
+  // The other days, with the calendars between them: one calendar request
+  // after every two of the scoreboard's, so the calendars' own requests are
+  // over two seconds apart (and the first right after today's part).
+  bool restLeft = f.restIndex < f.rest.size();
+  if (f.calendars && f.calendars->pending(saved_.calendars) && (f.sinceCalendar >= 2 || !restLeft)) {
+    if (auto ask = f.calendars->next(saved_.calendars)) {
+      Pending p;
+      p.kind = Pending::Kind::calendar;
+      p.ask = *ask;
+      p.request = ask->request;
+      int gap = calendars::kRequestSpacingMs - kRequestSpacingMs * f.sinceCalendar;
+      p.waitMs = f.sent == 0 ? 0 : std::max(kRequestSpacingMs, gap);
+      f.sinceCalendar = 0;
+      f.sent += 1;
+      f.awaiting = true;
+      f.awaitingCalendar = true;
+      dirty_ = true;  // the calendars' request count
+      return p;
+    }
+  }
+  if (auto p = nextStep(false)) {
+    f.sinceCalendar += 1;
+    count();
+    return p;
+  }
+  if (f.calendars && f.calendars->pending(saved_.calendars)) return nextRequest();
+  if (f.needsSchools && !f.schoolsAsked) {
+    f.schoolsAsked = true;
+    Pending p;
+    p.kind = Pending::Kind::schools;
+    p.request = schoolsRequest();
+    p.waitMs = f.sent > 0 ? kRequestSpacingMs : 0;
+    f.sent += 1;
+    f.awaiting = true;
+    f.awaitingSchools = true;
+    count();
+    return p;
+  }
+  finish();
+  return std::nullopt;
 }
 
 Schedule::Answer Schedule::parse(const Pending& pending, std::string_view body) {
   Answer answer;
   if (pending.kind == Pending::Kind::schools) {
     answer.schools = parseSchools(body);
+  } else if (pending.kind == Pending::Kind::calendar) {
+    if (const calendars::Calendar* c = calendars::byKey(pending.ask.key)) answer.calendar = calendars::parse(body, *c);
   } else {
     answer.league = parseLeague(body, pending.league, pending.from, pending.to);
   }
@@ -1278,12 +1429,19 @@ Schedule::Answer Schedule::parse(const Pending& pending, std::string_view body) 
 
 void Schedule::onResponse(int status, std::string_view body, int retryAfterSeconds) {
   if (!fetch_ || !fetch_->awaiting) return;
+  FetchState& f = *fetch_;
   Answer answer;
   if (status == 200) {
-    if (fetch_->awaitingSchools) {
+    if (f.awaitingSchools) {
       answer.schools = parseSchools(body);
-    } else if (fetch_->leagueIndex < fetch_->active.size()) {
-      answer.league = parseLeague(body, fetch_->active[fetch_->leagueIndex], fetch_->from, fetch_->to);
+    } else if (f.awaitingCalendar) {
+      const calendars::Ask* ask = f.calendars ? f.calendars->current() : nullptr;
+      const calendars::Calendar* c = ask ? calendars::byKey(ask->key) : nullptr;
+      if (c) answer.calendar = calendars::parse(body, *c);
+    } else {
+      const std::vector<Step>& queue = f.currentToday ? f.today : f.rest;
+      size_t index = f.currentToday ? f.todayIndex : f.restIndex;
+      if (index < queue.size()) answer.league = parseLeague(body, f.active[queue[index].league], f.from, f.to);
     }
   }
   onAnswer(status, std::move(answer), retryAfterSeconds);
@@ -1293,12 +1451,20 @@ void Schedule::onAnswer(int status, Answer answer, int retryAfterSeconds) {
   if (!fetch_ || !fetch_->awaiting) return;
   FetchState& f = *fetch_;
   f.awaiting = false;
+  if (f.awaitingCalendar) {
+    f.awaitingCalendar = false;
+    if (f.calendars) f.calendars->onAnswer(saved_.calendars, status, std::move(answer.calendar), retryAfterSeconds);
+    dirty_ = true;
+    return;
+  }
+  const std::vector<Step>& queue = f.currentToday ? f.today : f.rest;
+  size_t index = f.currentToday ? f.todayIndex : f.restIndex;
+  bool atStep = !f.awaitingSchools && index < queue.size();
   // Refused: that source is left alone for the rest of the day, its other
   // leagues skipped; not a failure (the backoff is for a source that's down).
   if (auto until = refusals::until(status, retryAfterSeconds, f.now, f.zone)) {
-    std::string source = f.awaitingSchools || f.leagueIndex >= f.active.size()
-                             ? refusals::sourceOf(schoolsRequest().url)
-                             : refusals::sourceOf(f.active[f.leagueIndex]);
+    std::string source = !atStep ? refusals::sourceOf(schoolsRequest().url)
+                                 : refusals::sourceOf(f.active[queue[index].league]);
     saved_.refusedUntil[source] = *until;
     dirty_ = true;
     f.networkTrouble = true;
@@ -1307,7 +1473,7 @@ void Schedule::onAnswer(int status, Answer answer, int retryAfterSeconds) {
       f.awaitingSchools = false;
     } else {
       f.retrying = false;
-      f.queryIndex = f.queries.size();
+      stepDone(f.currentToday);
     }
     return;
   }
@@ -1322,20 +1488,24 @@ void Schedule::onAnswer(int status, Answer answer, int retryAfterSeconds) {
     }
     return;
   }
-  if (f.leagueIndex >= f.active.size()) return;
-  const League& league = f.active[f.leagueIndex];
-  // Only the first request of a league says which query form works.
-  bool learnForm = f.queryIndex == 0;
+  if (!atStep) return;
+  const Step step = queue[index];
+  Run& run = f.runs[step.league];
+  const League& league = f.active[step.league];
+  // Only the first answer of a league says which query form works.
+  bool learnForm = !run.answered;
   if (!f.retrying) {
-    if (status == 200 && !f.plainForm && learnForm) saved_.leagueForm[league.shortName] = "limit";
-    if (status == 400 && !f.plainForm) {
+    if (status == 200 && !run.plainForm && learnForm) saved_.leagueForm[league.shortName] = "limit";
+    if (status == 400 && !run.plainForm) {
       f.retrying = true;  // the plain form next
       return;
     }
-  } else if (status == 200 && learnForm) {
-    saved_.leagueForm[league.shortName] = "plain";
+  } else if (status == 200) {
+    if (learnForm) saved_.leagueForm[league.shortName] = "plain";
+    run.plainForm = true;
   }
   f.retrying = false;
+  run.answered = true;
   // An NCAA page for a day without games is "not found".
   if (status == 404 && league.ncaaPage) {
     answer.league = LeagueResult();
@@ -1343,41 +1513,101 @@ void Schedule::onAnswer(int status, Answer answer, int retryAfterSeconds) {
   }
   if (status == 200 && answer.league) {
     LeagueResult& part = *answer.league;
-    for (SportsGame& g : part.games) f.list.push_back(std::move(g));
-    for (SportsTeam& t : part.teams) f.roster[t.id] = std::move(t);
-    f.ok = true;
-    // This week's answer says which week it is: ask for next week too.
-    if (league.mode == League::Mode::week && f.queryIndex == 0 && part.week) {
-      f.queries.push_back("week=" + std::to_string(*part.week + 1) +
-                          "&seasontype=" + std::to_string(part.seasonType.value_or(2)));
+    for (SportsGame& g : part.games) run.list.push_back(std::move(g));
+    for (SportsTeam& t : part.teams) run.roster[t.id] = std::move(t);
+    run.ok = true;
+    // This week's answer says which week it is: ask for next week too,
+    // with the rest of the week (first of it).
+    if (league.mode == League::Mode::week && step.query.empty() && part.week) {
+      size_t at = f.currentToday ? f.restIndex : f.restIndex + 1;
+      f.rest.insert(f.rest.begin() + static_cast<std::ptrdiff_t>(std::min(at, f.rest.size())),
+                    Step{step.league, "week=" + std::to_string(*part.week + 1) +
+                                          "&seasontype=" + std::to_string(part.seasonType.value_or(2))});
+      run.steps += 1;
     }
   }
-  f.queryIndex += 1;
+  stepDone(f.currentToday);
 }
 
-void Schedule::finishLeague() {
-  FetchState& f = *fetch_;
-  if (!f.ok) return;
-  const League& league = f.active[f.leagueIndex];
+namespace {
+
+// A league's games: the ones answered (each once), plus saved ones not in
+// them that started in the last day and a half (day-by-day leagues start
+// at today: kept, so leftover feeds still find them) or, when only part of
+// the window was asked for (`partial`), outside what was (`asked`).
+std::vector<SportsGame> merged(const std::vector<SportsGame>& answered, const std::vector<SportsGame>& old,
+                               Seconds now, bool partial, const std::vector<std::pair<Seconds, Seconds>>& asked) {
   std::unordered_set<std::string> seen;
   std::vector<SportsGame> kept;
-  for (SportsGame& g : f.list) {
-    if (seen.insert(g.id).second) kept.push_back(std::move(g));
+  for (const SportsGame& g : answered) {
+    if (seen.insert(g.id).second) kept.push_back(g);
   }
-  // Games of the last day and a half that this listing no longer has
-  // (day-by-day leagues start at today): kept, so leftover feeds still find them.
-  const Seconds recent = f.now - kFinishedShown;
-  for (const SportsGame& g : f.byLeague[league.shortName]) {
-    if (g.start > recent && g.start < f.now && !seen.count(g.id)) kept.push_back(g);
+  const Seconds recent = now - kFinishedShown;
+  for (const SportsGame& g : old) {
+    if (seen.count(g.id)) continue;
+    bool finishedLately = g.start > recent && g.start < now;
+    bool notAsked = partial && std::none_of(asked.begin(), asked.end(), [&](const std::pair<Seconds, Seconds>& r) {
+                      return g.start >= r.first && g.start < r.second;
+                    });
+    if (finishedLately || notAsked) kept.push_back(g);
   }
-  f.byLeague[league.shortName] = std::move(kept);
-  if (!f.roster.empty()) {
+  return kept;
+}
+
+}  // namespace
+
+void Schedule::commitToday() {
+  FetchState& f = *fetch_;
+  bool any = std::any_of(f.runs.begin(), f.runs.end(), [](const Run& r) { return r.ok; });
+  if (!any) return;
+  // The rest of the window still to come keeps its saved games meanwhile.
+  const Seconds today = text::startOfDay(f.now, f.zone);
+  const Seconds later = text::startOfDay(text::addDays(f.now, kTodayDays, f.zone), f.zone);
+  std::set<std::string> set;
+  if (saved_.leagueSet) set.insert(saved_.leagueSet->begin(), saved_.leagueSet->end());
+  for (size_t i = 0; i < f.runs.size(); ++i) {
+    Run& run = f.runs[i];
+    if (!run.ok) continue;
+    if (run.steps == 0) {
+      finishLeague(i);
+    } else {
+      std::vector<SportsGame>& old = f.byLeague[f.active[i].shortName];
+      old = merged(run.list, old, f.now, true, {{today, later}});
+    }
+    set.insert(f.active[i].shortName);
+  }
+  std::vector<SportsGame> all;
+  for (auto& [league, games] : f.byLeague) all.insert(all.end(), games.begin(), games.end());
+  saved_.games = keeping(all, f.now - kSavedFor);
+  saved_.rosters = f.rosters;
+  saved_.leagueSet = std::vector<std::string>(set.begin(), set.end());
+  if (!f.only) {
+    saved_.fetchedAt = f.now;
+    saved_.schema = kSchema;
+    saved_.restPending = f.restIndex < f.rest.size();
+  }
+  saved_.failedAt.reset();
+  saved_.failures = 0;
+  noteTags();
+  f.committed = true;
+  dirty_ = true;
+  batch_ = true;
+}
+
+void Schedule::finishLeague(size_t index) {
+  FetchState& f = *fetch_;
+  Run& run = f.runs[index];
+  if (run.finished || !run.ok) return;
+  run.finished = true;
+  const League& league = f.active[index];
+  f.byLeague[league.shortName] = merged(run.list, f.byLeague[league.shortName], f.now, run.partial, run.asked);
+  if (!run.roster.empty()) {
     // Added to, not replaced: teams on a bye week stay pickable.
     for (const SportsTeam& team : f.rosters[league.shortName]) {
-      if (!f.roster.count(team.id)) f.roster[team.id] = team;
+      if (!run.roster.count(team.id)) run.roster[team.id] = team;
     }
     std::vector<SportsTeam> list;
-    for (auto& [id, team] : f.roster) list.push_back(team);
+    for (auto& [id, team] : run.roster) list.push_back(team);
     f.rosters[league.shortName] = sortedByName(std::move(list));
   }
   saved_.leagueFetched[league.shortName] = f.now;
@@ -1386,17 +1616,25 @@ void Schedule::finishLeague() {
 }
 
 void Schedule::finish() {
+  for (size_t i = 0; i < fetch_->runs.size(); ++i) finishLeague(i);
   FetchState f = std::move(*fetch_);
   fetch_.reset();
   Finished done;
   done.note = "schedule: " + std::to_string(f.leaguesAsked) + " leagues, ok=" + (f.fetchedAny ? "true" : "false") +
               ", " + std::to_string(saved_.requestCount.value_or(0)) + " requests today";
-  if (!f.fetchedAny && f.leaguesAsked > 0) {
+  if (f.calendars) {
+    done.note += "; calendars: " + std::to_string(f.calendars->asked()) + " asked" +
+                 (f.calendars->stopped() ? " (stopped)" : "") + ", " +
+                 std::to_string(saved_.calendars.requestCount) + " today";
+    dirty_ = true;
+  }
+  if (!f.fetchedAny && f.leaguesAsked > 0 && !f.committed) {
     saved_.failedAt = f.now;
     if (!f.networkTrouble) {
       saved_.failures = saved_.failures.value_or(0) + 1;
       saved_.failureBuild = appBuild_;
     }
+    if (!f.only && f.restOnly) saved_.restPending = false;  // tried; tomorrow's fetch has every day
     dirty_ = true;
   } else {
     saved_.failedAt.reset();
@@ -1412,7 +1650,9 @@ void Schedule::finish() {
     if (!f.only) {
       saved_.fetchedAt = f.now;
       saved_.schema = kSchema;
+      saved_.restPending = false;
     }
+    noteTags();
     dirty_ = true;
     done.succeeded = true;
   }
@@ -1425,6 +1665,12 @@ std::optional<Schedule::Finished> Schedule::takeFinished() {
   std::optional<Finished> out = std::move(finished_);
   finished_.reset();
   return out;
+}
+
+bool Schedule::takeBatch() {
+  bool b = batch_;
+  batch_ = false;
+  return b;
 }
 
 bool Schedule::takeDirty() {

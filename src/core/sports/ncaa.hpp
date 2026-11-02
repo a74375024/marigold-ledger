@@ -23,15 +23,19 @@ std::string pageUrl(const League& league, std::string_view day);
 
 // A school's name written out: "Plymouth St." is "Plymouth State",
 // "Southern Me." "Southern Maine", "Mt. St. Joseph" "Mount Saint Joseph",
-// "Rhode Island Col." "Rhode Island College"; brackets kept ("Wheaton
-// (MA)").
+// "Rhode Island Col." "Rhode Island College", "Southern N.H." "Southern
+// New Hampshire", "American Int'l" "American International", "Wayne St.
+// (MI)" "Wayne State (MI)"; brackets kept ("Wheaton (MA)").
 std::string writtenOut(std::string_view name);
 // Other names a channel may use: without the brackets, without a last
 // "State" or "College", without the dots ("NC Wesleyan").
 std::vector<std::string> otherNames(std::string_view name);
 
 // The day's games (nullopt when the page has no games list), and their
-// statuses by game id ("D3WSO|6613180").
+// statuses by game id ("D3WSO|6613180"). A school's names include the ones
+// channels use that its short name doesn't lead to ("AIC", "Coast Guard
+// Academy", "Mass Liberal Arts" for MCLA); a game with no time set yet is
+// listed by its day (SportsGame::dayOnly).
 std::optional<std::vector<SportsGame>> parseGames(std::string_view body, const League& league);
 scores::Statuses statuses(std::string_view body, const League& league);
 

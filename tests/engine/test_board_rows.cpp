@@ -79,17 +79,19 @@ TEST_CASE("board rows: the three switches are off by default, for installs from 
     CHECK_FALSE(store.settings().boardMoreEvents);
     CHECK_FALSE(store.settings().boardUntimed);
     CHECK_FALSE(store.settings().boardEventChannels);
+    CHECK_FALSE(store.settings().boardUnscheduled);  // Build 125: Games without a schedule
     CHECK_FALSE(store.settings().showScores);  // the rest as saved
     CHECK(store.settings().clock24);
     // Switched on: saved, and on after a restart.
     Settings s = store.settings();
-    s.boardMoreEvents = s.boardEventChannels = true;
+    s.boardMoreEvents = s.boardEventChannels = s.boardUnscheduled = true;
     store.setSettings(s);
   }
   Store again(tv.host());
   CHECK(again.settings().boardMoreEvents);
   CHECK_FALSE(again.settings().boardUntimed);
   CHECK(again.settings().boardEventChannels);
+  CHECK(again.settings().boardUnscheduled);
   // Game schedule off: Event channels always show.
   Settings off;
   off.scheduleEnabled = false;

@@ -7,8 +7,10 @@
 // names) instead of comparing every title with every game.
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -107,6 +109,30 @@ struct RosterLeague {
 const std::set<std::string>& completeLeagues();
 const std::set<std::string>& supportedLeagues();
 
+// MARK: Slots seen (Build 125)
+
+// When each day-guessed slot title ("Canelo vs Mbilli UK 2:00pm": a clock
+// time, no date) was first and last seen, by local day: a slot no schedule
+// has that was already there on an earlier day is a leftover. Keyed by a
+// hash of the title, kept with the saved board; titles not seen for
+// kSlotsSeenFor are dropped, and at most kSlotsSeenMost are kept.
+struct SlotSeen {
+  Seconds first = 0;  // the start of the local day it was first seen
+  Seconds last = 0;
+  bool operator==(const SlotSeen& o) const { return first == o.first && last == o.last; }
+};
+using SlotsSeen = std::unordered_map<uint64_t, SlotSeen>;
+constexpr Seconds kSlotsSeenFor = 10 * 86'400;
+constexpr size_t kSlotsSeenMost = 2000;
+uint64_t slotKey(std::string_view title);
+// `before` with the day-guessed titles noted as seen today (`now`), the
+// ones not seen for kSlotsSeenFor dropped, and the least recently seen
+// beyond kSlotsSeenMost too.
+SlotsSeen noteSlotsSeen(const SlotsSeen& before, const std::vector<std::string>& guessedTitles, Seconds now,
+                        const time::Zone& zone);
+json::Value toJson(const SlotsSeen& seen);
+SlotsSeen slotsSeenFromJson(const json::Value& v);
+
 struct Stats {
   int events = 0;
   int filtered = 0;
@@ -135,6 +161,14 @@ struct Stats {
   // Fight feeds for a card the promotion's schedule doesn't have: a card
   // that's over, or a replay of one (hidden).
   int pastCards = 0;
+  // Build 125: day-guessed slots no schedule has that were there on an
+  // earlier day (hidden), and day-guessed slots given the one scheduled
+  // game of another sport than their label says at their clock time.
+  int seenBefore = 0;
+  int guessedAnySport = 0;
+  // Build 125: feeds no title matched that the rosters read as two teams,
+  // joined to those teams' scheduled game at about its time.
+  int byTeams = 0;
   // Marigold: why each provider feed no tile took was left out, by raw feed
   // id (the Live Events report; never in the log).
   std::map<std::string, std::string> hidden;
@@ -170,12 +204,20 @@ struct BuildInput {
   // cameras panel, not its tile). Cameras are a later milestone: unset
   // means no feed is a camera.
   std::function<bool(std::string_view)> isCameraName;
+  // Build 125: the day-guessed slots seen before (SlotsSeen); null: none.
+  std::shared_ptr<const SlotsSeen> seen;
 };
 
 struct BuildResult {
   std::vector<SportsEvent> events;
   Stats stats;
+  // The slots seen, with this build's day-guessed titles noted.
+  std::shared_ptr<const SlotsSeen> seen;
 };
+
+// Why a provider feed was left out as a day-guessed slot no schedule has
+// that was there on an earlier day (Stats::hidden; the Live Events report).
+constexpr const char* kLeftoverNotScheduled = "a leftover: not on the schedule";
 
 // Matches everything, then orders each event's sources best first (My
 // Lineup, other channels, provider feeds, team channels; Spanish after
@@ -302,6 +344,9 @@ class TeamIndex {
     // Its sport names women's sides "Australia Women" (cricket): a title
     // saying "Women" is never its first team's.
     bool womenSides = false;
+    // A school: "Academy" after its name is part of it ("Coast Guard
+    // Academy"), not a club's youth side.
+    bool school = false;
   };
 
   explicit TeamIndex(const std::vector<SportsGame>& games);
@@ -342,5 +387,12 @@ class TeamIndex {
   std::unordered_map<std::string, std::vector<Name>> byFirstWord_;
   std::vector<SportsTeam> teams_;
 };
+
+// The scheduled games (indices) whose two teams `title` names, of any
+// sport, among those `keep` allows (a time window). Build 125's own
+// stand-in for the schedule lookup ("is there a scheduled event for these
+// sides within N days") the schedule side will offer: through the team
+// index (names by their first word), never a scan of every game per feed.
+std::vector<int> scheduledFor(const TeamIndex& index, std::string_view title, const std::function<bool(int)>& keep);
 
 }  // namespace marigold::sports::matcher

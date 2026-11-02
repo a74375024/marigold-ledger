@@ -47,4 +47,12 @@ std::string inEnglish(std::string_view title);
 // or nullopt.
 std::optional<std::string> stageIn(std::string_view text);
 
+// The Grand Prix a title names, as its place's key ("2026 Formula 1:
+// Mexico City Grand Prix", "GP de la Ciudad de México" -> "mexico";
+// "Storbritanniens Grand Prix" -> "britain"); nullopt when it names none.
+std::optional<std::string> grandPrixPlace(std::string_view title);
+// The same key from a race weekend's name without the words "Grand Prix"
+// around it ("Mexico City GP" from the schedule).
+std::optional<std::string> racePlace(std::string_view text);
+
 }  // namespace marigold::sports::titles

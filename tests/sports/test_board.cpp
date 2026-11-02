@@ -6,6 +6,7 @@
 // with games in US Eastern time and viewers in other zones.
 #include <algorithm>
 
+#include "core/catalog/catalog.hpp"
 #include "core/sports/board.hpp"
 #include "core/sports/race_data.hpp"
 #include "core/util/strings.hpp"
@@ -118,6 +119,11 @@ TEST_CASE("row order without My Sports: live, the fixed sport order, then A-Z, u
   family.feeds = {"xt|1", "xt|2", "xt|3"};
   family.league = "Soccer";
   in.families = {family};
+  // Build 125: events no schedule has (rugby, golf) aren't tiles...
+  CHECK(rowIDs(build(in)) ==
+        std::vector<std::string>{"live", "sport|NFL", "sport|NBA", "sport|Soccer", "untimed", "families"});
+  // ...unless the board is the provider's events (Game schedule off).
+  in.settings.fromSchedule = false;
   Board b = build(in);
   CHECK(rowIDs(b) == std::vector<std::string>{"live", "sport|NFL", "sport|NBA", "sport|Soccer", "sport|Golf",
                                               "sport|Rugby", "untimed", "families"});
@@ -156,8 +162,9 @@ TEST_CASE("row order with My Sports: your teams, picked sports in order, everyth
   in.prefs.configured = true;
   in.prefs.leagues = {"NBA", "NFL"};
   in.prefs.teams = {teamKey("NFL", "h1")};
+  in.settings.showsUnscheduled = true;  // Games without a schedule: the golf feed
   Board b = build(in);
-  CHECK(rowIDs(b) == std::vector<std::string>{"teams", "live", "sport|NBA", "sport|NFL", "more"});
+  CHECK(rowIDs(b) == std::vector<std::string>{"teams", "live", "sport|NBA", "sport|NFL", "unscheduled", "more"});
   CHECK(row(b, "teams").title == "Your teams");
   CHECK(row(b, "teams").mixed);
   // Live now: picked sports only.
@@ -165,7 +172,10 @@ TEST_CASE("row order with My Sports: your teams, picked sports in order, everyth
   // More events: what you can watch of the rest (the NHL game no channel has is left out).
   const Row& more = row(b, "more");
   CHECK(more.title == "More events");
-  CHECK(more.eventIDs == std::vector<std::string>{"sev|NHL|3", "golf"});
+  CHECK(more.eventIDs == std::vector<std::string>{"sev|NHL|3"});
+  // The golf feed no schedule has: its own row.
+  CHECK(row(b, "unscheduled").title == "Games without a schedule");
+  CHECK(row(b, "unscheduled").eventIDs == std::vector<std::string>{"golf"});
   CHECK(more.live == 1);
   CHECK(tile(b, "sev|NFL|1").favorite);
   // A mixed row names each tile's league when it has no tag.
@@ -1044,4 +1054,57 @@ TEST_CASE("the board says why an event isn't a tile") {
   CHECK(b.left.at("over") == "over");
   CHECK(b.left.at("far") == "more than a week away");
   CHECK_FALSE(b.left.count("missing"));
+}
+
+TEST_CASE("Build 125: tiles from the schedule; events no schedule has only in More events, when switched on") {
+  SportsGame nfl = nflAt("1", kNow - 1800);
+  // No schedule has these: one on now, one later, one with no clear title,
+  // one with no time; high school and pro wrestling (picked) keep their rows.
+  SportsEvent onNow = plainEvent("now", "Harbor Sharks vs Coast Kings", "Rugby", kNow - 1800, {feed("xt|2")});
+  SportsEvent later = plainEvent("later", "Iron Hill Speedway Night", "Motorsport", kNow + 3600, {feed("xt|3")});
+  SportsEvent vague = plainEvent("vague", "Rugby", "Rugby", kNow + 3600, {feed("xt|4")});
+  SportsEvent untimed = plainEvent("untimed", "Bay Cup Final", "Soccer", std::nullopt, {feed("xt|5")});
+  SportsEvent hs = plainEvent("hs", "Harbor vs Valley", "Football", kNow - 1800, {feed("xt|6")});
+  hs.highSchool = true;
+  SportsEvent wrestling = plainEvent("wr", "Friday Night Slam", catalog::kProWrestling, kNow + 3600, {feed("xt|7")});
+  Input in = baseInput({eventOf(nfl, {feed("xt|1")}), onNow, later, vague, untimed, hs, wrestling});
+  in.prefs.configured = true;
+  in.prefs.leagues = {"NFL", kHighSchoolPick, kProWrestlingPick};
+  auto ids = [](const Board& b, std::string_view rowID) {
+    std::vector<std::string> out;
+    for (const Row& r : b.rows)
+      if (r.id == rowID)
+        for (const Group& g : r.groups)
+          for (const Tile& t : g.tiles) out.push_back(t.id);
+    return out;
+  };
+
+  // Off (the default): the schedule's game, and the rows My Sports picks.
+  Board b = build(in);
+  CHECK(rowIDs(b) == std::vector<std::string>{"live", "sport|NFL", "sport|High School", "sport|Pro Wrestling",
+                                              "untimed"});
+  CHECK(ids(b, "live") == std::vector<std::string>{"hs", "sev|NFL|1"});
+  CHECK(ids(b, "untimed") == std::vector<std::string>{"untimed"});
+  CHECK(b.left.at("now") == "not on the schedule (Games without a schedule is off)");
+  CHECK(b.left.at("later") == "not on the schedule (Games without a schedule is off)");
+  CHECK(b.heroID == std::string("sev|NFL|1"));
+
+  // On: a row of their own (never Live now or a sport's row), clear titles only.
+  in.settings.showsUnscheduled = true;
+  Board on = build(in);
+  CHECK(ids(on, "unscheduled") == std::vector<std::string>{"now", "later"});
+  CHECK(ids(on, "live") == std::vector<std::string>{"hs", "sev|NFL|1"});
+  for (const Row& r : on.rows) CHECK(r.id != "sport|Rugby");
+  CHECK(on.left.at("vague") == "not on the schedule, and no clear title");
+  CHECK(on.heroID == std::string("sev|NFL|1"));
+
+  // No schedule could be had or Game schedule off: the provider's events, as
+  // before (no My Sports: each its sport's row and Live now).
+  in.settings.showsUnscheduled = false;
+  in.prefs = MySportsPrefs{};
+  in.scheduleLoaded = false;
+  CHECK(ids(build(in), "sport|Rugby") == std::vector<std::string>{"now", "vague"});
+  in.scheduleLoaded.reset();
+  in.settings.fromSchedule = false;
+  CHECK(ids(build(in), "live") == std::vector<std::string>{"now", "sev|NFL|1"});
 }

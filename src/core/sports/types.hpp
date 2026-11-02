@@ -81,11 +81,15 @@ struct SportsGame {
   // several days, its last day.
   std::optional<std::string> matchFormat;
   std::optional<Seconds> end;
+  // Listed by its day only, no time set yet (a small college's game): the
+  // start is that day's midnight where the school is.
+  std::optional<bool> dayOnly;
 
   bool isRacing() const { return racing.value_or(false); }
   bool isTennis() const { return tennis.value_or(false); }
   bool isGolf() const { return golf.value_or(false); }
   bool isCricket() const { return league == "Cricket"; }
+  bool isDayOnly() const { return dayOnly.value_or(false); }
   std::string title() const;
   bool operator==(const SportsGame& o) const;
   bool operator!=(const SportsGame& o) const { return !(*this == o); }

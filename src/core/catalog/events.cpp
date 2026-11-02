@@ -1,7 +1,9 @@
 // Event titles: start times in the many formats IPTV providers write, the
 // deduplication key, and the league a title belongs to.
+#include <algorithm>
 #include <cstdlib>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "core/catalog/catalog.hpp"
 #include "core/catalog/text.hpp"
@@ -74,38 +76,248 @@ void removeRange(std::string& title, const Found& f) { title.erase(f.begin, f.en
 
 std::optional<int> num(const std::string& s) { return text::toInt(s); }
 
+// The country in a slot's service tag (":Viaplay DK  03", ":Tv4 Play SE  06",
+// ":MAX ES  01"; ":VG  01" is Norway's VG): the zone its times are written
+// in, AM/PM ones too.
+std::optional<Zone> serviceZone(std::string_view service) {
+  std::string_view s = str::trimUnicode(service);
+  size_t space = s.find_last_of(' ');
+  std::string_view last = space == std::string_view::npos ? s : s.substr(space + 1);
+  if (last.size() == 2 && last[0] >= 'A' && last[0] <= 'Z' && last[1] >= 'A' && last[1] <= 'Z') {
+    if (last == "US") return Zone::usEastern();
+    if (auto zone = eventZone(std::string(last))) return zone;
+  }
+  std::string lower = str::lowerAscii(s);
+  if (lower == "vg" || lower == "vgtv") return Zone::named("Europe/Oslo");
+  return std::nullopt;
+}
+
+bool asciiLetter(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
+
+// Words that make a side of "A - B" a stage, session or programme rather
+// than a team or player ("Paris Masters - Court Central", "Formula 1 -
+// Free Practice 1").
+bool stageSide(const std::string& lowerSide) {
+  static const std::unordered_set<std::string> kWords = {
+      "round",    "day",        "final",     "finals",     "semifinal",     "semi",       "quarter",
+      "session",  "qualifying", "practice",  "race",       "sprint",        "stage",      "heat",
+      "heats",    "highlights", "replay",    "preview",    "studio",        "show",       "court",
+      "group",    "night",      "game",      "match",      "week",          "leg",        "part",
+      "episode",  "season",     "championship", "championships", "tournament", "camp",    "draft",
+      "awards",   "ceremony",   "gala",      "weigh",      "press",         "conference", "magazine",
+      "news",     "talk",       "live",      "open",       "masters",       "grand",      "prix",
+      "gp",       "cup",        "trophy",    "rally",      "classic",       "series",     "tour",
+      "world",    "olympic",    "olympics",  "games",      "event",         "special",    "program",
+      "programme", "studie",    "timing",    "onboard",    "pitlane",       "kvalifikation", "debrief",
+      "analysis", "highlight",  "recap",     "review",     "interview",     "documentary", "film"};
+  for (std::string_view w : str::split(lowerSide, ' ')) {
+    if (kWords.count(std::string(w))) return true;
+  }
+  return false;
+}
+
+// Competitions written into the matchup ("LIGUE 2 REIMS - SOCHAUX",
+// "MJÄLLBY - KALMAR ALLSVENSKAN"), lower case without accents; a longer
+// name before one it starts with.
+const std::vector<std::string>& gluedCompetitions() {
+  static const std::vector<std::string> kNames = {
+      "uefa champions league", "uefa europa league", "uefa conference league", "champions league",
+      "europa league",         "conference league",  "dfb-pokal frauen",       "dfb pokal frauen",
+      "dfb-pokal",             "dfb pokal",          "2. bundesliga",          "bundesliga",
+      "ligue 1",               "ligue 2",            "serie a",                "serie b",
+      "laliga hypermotion",    "laliga",             "la liga",                "premier league",
+      "allsvenskan",           "superettan",         "eliteserien",            "veikkausliiga",
+      "superligaen",           "eredivisie",         "liga portugal",          "primeira liga",
+      "ekstraklasa",           "coppa italia",       "copa del rey",           "coupe de france",
+      "scottish premiership",  "liga mx",            "nations league"};
+  return kNames;
+}
+
+// "LIGUE 2 REIMS - SOCHAUX" -> "REIMS - SOCHAUX | LIGUE 2": a competition
+// glued to the start or end of the matchup goes after it, the way the
+// provider's other slots write it.
+std::string unglueCompetition(const std::string& segment) {
+  // Byte positions of the folded text must be the original's (ASCII).
+  if (std::any_of(segment.begin(), segment.end(), [](char c) { return static_cast<unsigned char>(c) >= 0x80; })) {
+    std::string folded = str::foldDiacritics(segment);
+    if (folded.size() != segment.size()) {
+      // Accents before the competition only shift its start: look at the end.
+      std::string lower = str::lower(folded);
+      for (const std::string& name : gluedCompetitions()) {
+        if (lower.size() > name.size() + 6 && lower.compare(lower.size() - name.size(), name.size(), name) == 0 &&
+            lower[lower.size() - name.size() - 1] == ' ') {
+          std::string rest(str::trimUnicode(std::string_view(segment).substr(0, segment.size() - name.size())));
+          return rest + " | " + segment.substr(segment.size() - name.size());
+        }
+      }
+      return segment;
+    }
+  }
+  std::string lower = str::lowerAscii(segment);
+  for (const std::string& name : gluedCompetitions()) {
+    if (lower.size() <= name.size() + 6) continue;
+    if (lower.compare(0, name.size(), name) == 0 && lower[name.size()] == ' ') {
+      std::string rest(str::trimUnicode(std::string_view(segment).substr(name.size())));
+      return rest + " | " + segment.substr(0, name.size());
+    }
+    if (lower.compare(lower.size() - name.size(), name.size(), name) == 0 &&
+        lower[lower.size() - name.size() - 1] == ' ') {
+      std::string rest(str::trimUnicode(std::string_view(segment).substr(0, segment.size() - name.size())));
+      return rest + " | " + segment.substr(segment.size() - name.size());
+    }
+  }
+  return segment;
+}
+
+// "Sinner, Jannik" -> "Jannik Sinner". A doubles pair ("Peric I,
+// Stojiljkovic P") or anything else stays as it is.
+std::string reversedName(const std::string& side) {
+  size_t comma = side.find(',');
+  if (comma == std::string::npos || side.find(',', comma + 1) != std::string::npos) return side;
+  std::string surname(str::trimUnicode(std::string_view(side).substr(0, comma)));
+  std::string first(str::trimUnicode(std::string_view(side).substr(comma + 1)));
+  auto namesOnly = [](const std::string& part, size_t most) {
+    // Particles of a surname ("Van De Zandschulp", "Da Silva").
+    static const std::unordered_set<std::string> kParticles = {"de", "da", "di", "du", "la", "le",
+                                                                "van", "von", "der", "den", "dos", "del"};
+    size_t words = 0;
+    for (std::string_view w : str::split(part, ' ')) {
+      if (w.empty()) continue;
+      ++words;
+      if (kParticles.count(str::lowerAscii(w))) continue;
+      // An initial ("I", "J.") makes it a short name, not a first name.
+      if (w.size() <= 2 || !(asciiLetter(w[0]) || static_cast<unsigned char>(w[0]) >= 0x80)) return false;
+    }
+    return words >= 1 && words <= most;
+  };
+  if (!namesOnly(surname, 4) || !namesOnly(first, 2)) return side;
+  return first + " " + surname;
+}
+
+// The matchup leading a slot's title as a plain "A vs B": "A - B" (how
+// several providers write a match: "MJÄLLBY - KALMAR", "SINNER - ALCARAZ")
+// and "Surname, First vs Surname, First"; a competition glued to it goes
+// after it.
+std::string tidyMatchup(const std::string& title) {
+  size_t pipe = title.find(" | ");
+  std::string segment = title.substr(0, pipe);
+  std::string rest = pipe == std::string::npos ? std::string() : title.substr(pipe);
+  // "Network: A - B" already reads as a game; "Serie A: Harbor-Valley" (a
+  // league's name, then two clubs joined by a hyphen) is made one.
+  if (segment.find(':') != std::string::npos) {
+    size_t colon = segment.find(": ");
+    if (colon == std::string::npos) return title;
+    std::string league = str::lowerAscii(segment.substr(0, colon));
+    std::string body = segment.substr(colon + 2);
+    size_t hyphen = body.find('-');
+    static const char* const kLeagueWords[] = {"liga", "league", "serie", "ligue", "bundesliga", "pokal",
+                                               "allsvenskan", "eliteserien", "eredivisie", "cup"};
+    bool leagueName = std::any_of(std::begin(kLeagueWords), std::end(kLeagueWords),
+                                  [&](const char* w) { return league.find(w) != std::string::npos; });
+    if (leagueName && hyphen != std::string::npos && hyphen >= 4 && body.size() - hyphen > 4 &&
+        body.find('-', hyphen + 1) == std::string::npos && body.find(" vs") == std::string::npos &&
+        body[hyphen - 1] != ' ' && body[hyphen + 1] != ' ' && body[hyphen + 1] >= 'A' && body[hyphen + 1] <= 'Z') {
+      return segment.substr(0, colon + 2) + body.substr(0, hyphen) + " vs " + body.substr(hyphen + 1) + rest;
+    }
+    return title;
+  }
+  bool dashed = segment.find(" - ") != std::string::npos || segment.find(" x ") != std::string::npos;
+  bool comma = segment.find(',') != std::string::npos;
+  if (!dashed && !comma && segment.find(" v") == std::string::npos) return title;
+  segment = unglueCompetition(segment);
+  size_t gluedPipe = segment.find(" | ");
+  if (gluedPipe != std::string::npos) {
+    rest = segment.substr(gluedPipe) + rest;
+    segment = segment.substr(0, gluedPipe);
+  }
+  std::string lower = " " + str::lower(segment) + " ";
+  bool hasVs = lower.find(" vs ") != std::string::npos || lower.find(" vs. ") != std::string::npos ||
+               lower.find(" v ") != std::string::npos || lower.find(" @ ") != std::string::npos;
+  // "Wolfsburg x Hoffenheim" (Portuguese) the same way.
+  const char* sepText = segment.find(" - ") != std::string::npos ? " - " : " x ";
+  size_t dash = segment.find(sepText);
+  if (dash != std::string::npos && !hasVs && segment.find(sepText, dash + 3) == std::string::npos) {
+    std::string left(str::trimUnicode(std::string_view(segment).substr(0, dash)));
+    std::string right(str::trimUnicode(std::string_view(segment).substr(dash + 3)));
+    auto sideOk = [](const std::string& side) {
+      // Not a date or a list ("MON, 11/2 - ESPN FC").
+      if (side.find(',') != std::string::npos || side.find('/') != std::string::npos) return false;
+      size_t words = 0;
+      bool letters = false;
+      for (std::string_view w : str::split(side, ' ')) {
+        if (w.empty()) continue;
+        ++words;
+        for (char c : w) letters = letters || asciiLetter(c) || static_cast<unsigned char>(c) >= 0x80;
+      }
+      return words >= 1 && words <= 5 && letters && !stageSide(str::lower(side));
+    };
+    if (sideOk(left) && sideOk(right)) segment = left + " vs " + right;
+  } else if (hasVs && comma) {
+    for (const char* sep : {" vs. ", " vs ", " v "}) {
+      size_t at = segment.find(sep);
+      if (at == std::string::npos) continue;
+      size_t len = std::char_traits<char>::length(sep);
+      segment = reversedName(segment.substr(0, at)) + sep + reversedName(segment.substr(at + len));
+      break;
+    }
+  }
+  return segment + rest;
+}
+
 }  // namespace
 
 std::optional<Zone> eventZone(const std::optional<std::string>& market) {
   if (!market) return std::nullopt;
-  std::string m = str::upper(*market);
-  const char* id = nullptr;
-  if (m == "AU")
-    id = "Australia/Sydney";
-  else if (m == "NZ")
-    id = "Pacific/Auckland";
-  else if (m == "UK" || m == "GB" || m == "IE")
-    id = "Europe/London";
-  else if (m == "MX")
-    id = "America/Mexico_City";
-  else if (m == "CA")
-    id = "America/Toronto";
-  else if (m == "ES")
-    id = "Europe/Madrid";
-  else if (m == "FR")
-    id = "Europe/Paris";
-  else if (m == "DE")
-    id = "Europe/Berlin";
-  else if (m == "IT")
-    id = "Europe/Rome";
-  else if (m == "NL")
-    id = "Europe/Amsterdam";
-  else if (m == "PT")
-    id = "Europe/Lisbon";
-  else if (m == "BR")
-    id = "America/Sao_Paulo";
-  if (!id) return std::nullopt;
-  return Zone::named(id);
+  // US markets stay out: their European-style listings are UK time.
+  static const std::unordered_map<std::string, const char*> kZones = {
+      {"AU", "Australia/Sydney"},    {"NZ", "Pacific/Auckland"},   {"UK", "Europe/London"},
+      {"GB", "Europe/London"},       {"IE", "Europe/London"},      {"MX", "America/Mexico_City"},
+      {"CA", "America/Toronto"},     {"ES", "Europe/Madrid"},      {"FR", "Europe/Paris"},
+      {"DE", "Europe/Berlin"},       {"IT", "Europe/Rome"},        {"NL", "Europe/Amsterdam"},
+      {"PT", "Europe/Lisbon"},       {"BR", "America/Sao_Paulo"},  {"DK", "Europe/Copenhagen"},
+      {"SE", "Europe/Stockholm"},    {"NO", "Europe/Oslo"},        {"FI", "Europe/Helsinki"},
+      {"IS", "Atlantic/Reykjavik"},  {"AT", "Europe/Vienna"},      {"CH", "Europe/Zurich"},
+      {"BE", "Europe/Brussels"},     {"PL", "Europe/Warsaw"},      {"CZ", "Europe/Prague"},
+      {"HU", "Europe/Budapest"},     {"GR", "Europe/Athens"},      {"AR", "America/Argentina/Buenos_Aires"},
+      {"PE", "America/Lima"},        {"CO", "America/Bogota"}};
+  auto it = kZones.find(str::upper(*market));
+  if (it == kZones.end()) return std::nullopt;
+  return Zone::named(it->second);
+}
+
+std::optional<std::string> familyMarket(std::string_view familyKey) {
+  // Fanatiz lists South American football in Lima / Bogota time (UTC-5),
+  // whatever group a copy is filed in.
+  if (str::icontains(familyKey, "fanatiz")) return std::string("PE");
+  // Vix's slots ("(MX) (VIX 04)") are on US Eastern time: its "Lo mejor de
+  // la jornada (... 15:00:00)" is the 14:00 CST of the same show elsewhere.
+  if (str::icontains(familyKey, "(vix")) return std::string("US");
+  // "au (stan #)", "(mx) (vix #)", "ca | cfl #": the family's own country,
+  // also for its copies filed in another country's group ("US| STAN PPV").
+  if (familyKey.size() < 5 || str::startsWith(familyKey, "grp:")) return std::nullopt;
+  size_t at = familyKey[0] == '(' ? 1 : 0;
+  auto letter = [](char c) { return c >= 'a' && c <= 'z'; };
+  if (!letter(familyKey[at]) || !letter(familyKey[at + 1])) return std::nullopt;
+  size_t after = at + 2;
+  if (at == 1) {
+    if (familyKey[after] != ')') return std::nullopt;
+    ++after;
+  }
+  size_t space = after;
+  while (after < familyKey.size() && familyKey[after] == ' ') ++after;
+  if (after == space || after >= familyKey.size() || (familyKey[after] != '(' && familyKey[after] != '|')) {
+    return std::nullopt;
+  }
+  std::string code = str::upper(familyKey.substr(at, 2));
+  if (code != "US" && !eventZone(code)) return std::nullopt;
+  return code;
+}
+
+std::optional<std::string> slotMarket(const ChannelTraits& traits) {
+  if (traits.familyKey) {
+    if (auto market = familyMarket(*traits.familyKey)) return market;
+  }
+  return traits.market;
 }
 
 std::pair<std::string, std::optional<Seconds>> parseEvent(
@@ -120,11 +332,6 @@ ParsedEvent parseEventDetailed(std::string_view input, Seconds now,
   std::optional<Seconds> start;
   bool guessed = false;
   const Zone usEastern = Zone::usEastern();
-  // Unmarked times follow the provider's country when it has one; otherwise
-  // US formats are Eastern and European formats UK time.
-  std::optional<Zone> providerZone = eventZone(market);
-  const Zone eastern = providerZone ? *providerZone : usEastern;
-  const Zone london = providerZone ? *providerZone : Zone::london();
   // Calendar(identifier: .gregorian) uses the device's zone for the year.
   const int calendarYear = Zone::device().toLocal(now).year;
 
@@ -145,10 +352,6 @@ ParsedEvent parseEventDetailed(std::string_view input, Seconds now,
     }
     return best;
   };
-  // AM/PM times are a US habit (a UK provider writes "Oct 22 08:15 PM" for
-  // an 8:15 PM ET kickoff), so they're US Eastern. Providers that differ are
-  // corrected by the offset learned from scheduled games.
-  const Zone& amPmZone = usEastern;
 
   // Provider decorations: "NEXT |" / "LIVE |" status, "| 8K EXCLUSIVE | US:
   // ESPN+ PPV 951" tail, "LIVE EVENT 01 -" / "NFL | 06" slot heads,
@@ -158,7 +361,24 @@ ParsedEvent parseEventDetailed(std::string_view input, Seconds now,
   title = rx::replace(title, "^\\s*live event\\s*\\d{1,3}\\s*-?\\s*", "", true);
   title = rx::replace(title, "^\\s*[A-Za-z+]{2,10}\\s+(?:event|board)\\s*\\d{1,3}\\s*:\\s+", "", true);  // "PDC event 01 : "
   title = rx::replace(title, "^\\s*[A-Za-z+]{2,10}\\s*\\|\\s*\\d{1,3}\\s*-?\\s*", "");
-  title = rx::replace(title, "\\s:\\s?[A-Za-z][\\w+ ]{0,24}?\\s+\\d{1,3}\\s*$", "");
+  // A service tail naming its country (":Viaplay DK  03", ":VG  01") says
+  // which clock the slot's time is on, AM/PM included.
+  std::optional<Zone> slotZone;
+  if (auto tail = rx::first("\\s:\\s?([A-Za-z][\\w+ ]{0,24}?)\\s+\\d{1,3}\\s*$", title)) {
+    slotZone = serviceZone(tail->group(1));
+    title.erase(tail->begin, tail->end - tail->begin);
+  }
+
+  // Unmarked times follow the slot's or the provider's country when it has
+  // one; otherwise US formats are Eastern and European formats UK time.
+  std::optional<Zone> providerZone = slotZone ? slotZone : eventZone(market);
+  const Zone eastern = providerZone ? *providerZone : usEastern;
+  const Zone london = providerZone ? *providerZone : Zone::london();
+  // AM/PM times are a US habit (a UK provider writes "Oct 22 08:15 PM" for
+  // an 8:15 PM ET kickoff), so they're US Eastern unless the slot names its
+  // country. Providers that differ are corrected by the offset learned from
+  // scheduled games.
+  const Zone amPmZone = slotZone ? *slotZone : usEastern;
 
   // "Home vs Away // UK Tue 27 Oct 7:45pm // ET Tue 27 Oct 3:45pm": both
   // times, UK first; the Eastern one is the one to read.
@@ -224,10 +444,19 @@ ParsedEvent parseEventDetailed(std::string_view input, Seconds now,
       removeRange(title, *f);
     }
   }
-  // (2026 10 21 19:30:55), (2026-10-22 15:00:25) or "start:2026 10 17 20:25:00 stop:..."
+  // "@ 2026-11-02T17:50:00.000Z": UTC.
+  if (!start && title.find("Z") != std::string::npos) {
+    if (auto f = groups("(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2})(?::\\d{2}(?:\\.\\d+)?)?Z", title)) {
+      auto y = num(f->p[0]), mo = num(f->p[1]), d = num(f->p[2]), h = num(f->p[3]), mi = num(f->p[4]);
+      if (y && mo && d && h && mi) start = date(*y, *mo, *d, *h, *mi, Zone::utc());
+      removeRange(title, *f);
+    }
+  }
+  // (2026 10 21 19:30:55), (2026-10-22 15:00:25), "start:2026 10 17
+  // 20:25:00 stop:..." or "@ 2026-11-02 18:15:00"
   if (!start) {
     if (auto f =
-            groups("(?:\\(|start:\\s*)(\\d{4})[ -](\\d{2})[ -](\\d{2})[ T](\\d{2}):(\\d{2})(?::"
+            groups("(?:\\(|start:\\s*|@\\s*)(\\d{4})[ -](\\d{2})[ -](\\d{2})[ T](\\d{2}):(\\d{2})(?::"
                    "\\d{2})?\\)?(?:\\s*stop:\\s*[\\d :-]+)?",
                    title)) {
       auto y = num(f->p[0]), mo = num(f->p[1]), d = num(f->p[2]), h = num(f->p[3]),
@@ -417,9 +646,36 @@ ParsedEvent parseEventDetailed(std::string_view input, Seconds now,
   title = rx::replace(title, "\\s+board\\s+\\d{1,2}\\b(?=[\\s|]*$)", "", true);
   title = rx::replace(title, "\\s+The\\s[^|]{6,}?\\s(continues|takes place|returns|heads)\\b[^|]*$", "");
 
+  // "Villarreal v Paris SaintGermain  UEFA Champions League Matchday 4
+  // 2026/2027": two spaces after the matchup, then its competition (the
+  // season goes when it's the current one).
+  static const char* const kTidy = "|-–:,";
+  title = std::string(str::trimUnicode(title, false, kTidy));
+  if (size_t gap = title.find("  "); gap != std::string::npos && title.find('|') == std::string::npos) {
+    std::string left = title.substr(0, gap);
+    std::string right(str::trimUnicode(std::string_view(title).substr(gap)));
+    std::string lowerLeft = " " + str::lowerAscii(left) + " ";
+    bool matchup = lowerLeft.find(" v ") != std::string::npos || lowerLeft.find(" vs ") != std::string::npos ||
+                   lowerLeft.find(" vs. ") != std::string::npos;
+    // Only a competition with its season ("... 2026/2027", "... Round 4
+    // 2026"): two spaces before a day or a country ("Sun", "UK") aren't one.
+    auto season = matchup && !right.empty() && asciiLetter(right[0])
+                      ? rx::first("\\s+(20\\d\\d)(?:/(?:20)?\\d\\d)?$", right)
+                      : std::nullopt;
+    if (season) {
+      int year = num(std::string(season->group(1))).value_or(0);
+      if (year == calendarYear || year == calendarYear - 1) right.erase(season->begin);
+      title = left + " | " + right;
+    }
+  }
+  // "Pumas (F) vs. Atlas (F)": women's sides, named so ("Pumas Women") they
+  // never meet the men's game of the same clubs.
+  if (title.find("(F)") != std::string::npos || title.find("(W)") != std::string::npos) {
+    title = rx::replace(title, "\\s\\((?:F|W)\\)(?=\\s+(?:vs\\.?|v|x|-)\\s|\\s*$|\\s*\\|)", " Women");
+  }
+
   // Tidy: drop a trailing "(X)" that repeats the title, leading "ESPN+:"
   // style tags, separators and doubled spaces.
-  static const char* const kTidy = "|-–:,";
   title = std::string(str::trimUnicode(rx::replace(title, "\\s{2,}", " "), false, kTidy));
   size_t open = title.rfind('(');
   if (open != std::string::npos && str::endsWith(title, ")")) {
@@ -431,10 +687,25 @@ ParsedEvent parseEventDetailed(std::string_view input, Seconds now,
   }
   title = rx::replace(title, "^(ESPN\\+|ESPN PLUS):\\s*", "", true);
   title = rx::replace(title, "\\s*@\\s*$", "");
+  // "Bellucci, Mattia vs Sonego, Lorenzo @ <time> - ATP Paris": the
+  // competition after the time.
+  if (size_t at = title.find(" @ - "); at != std::string::npos) title.replace(at, 5, " | ");
+  // "Bears vs. Seahawks | all | ...": "all" is no competition, and the
+  // slot's group ("SOCCER PPV") then says nothing about the sport.
+  bool noCompetition = false;
+  if (title.find('|') != std::string::npos && str::icontains(title, "all")) {
+    if (auto all = rx::first("\\s*\\|\\s*all\\s*(?=\\||$)", title, true)) {
+      title.erase(all->begin, all->end - all->begin);
+      noCompetition = true;
+    }
+  }
+  title = tidyMatchup(title);
   title = rx::replace(title, "\\s*\\|\\s*", " · ");
   title = rx::replace(title, "^[A-Za-z]{3}, \\d{1,2}/\\d{1,2}\\s+", "");
   title = std::string(str::trimUnicode(title, false, kTidy));
-  return {title, start, guessed};
+  ParsedEvent parsed{title, start, guessed};
+  parsed.noCompetition = noCompetition;
+  return parsed;
 }
 
 std::string eventKey(std::string_view title, const std::optional<Seconds>& start) {
@@ -465,11 +736,12 @@ std::string leagueFor(std::string_view family, std::string_view group, std::stri
       if (has("nfl")) return "NFL";
       return rx::test("\\b(ncaa|ncaaf|college|fbs|fcs)\\b", all) ? "College Football" : "Football";
     }
-    if (sport == "basketball") {
+    // "hoops:  Harbor vs Valley _ Men`s": basketball too.
+    if (sport == "basketball" || sport == "hoops") {
       if (has("wnba")) return "WNBA";
       if (rx::test("\\bnba\\b", all)) return "NBA";
       // "UCF vs. Kentucky (EXH)": college exhibitions say only that.
-      return rx::test("\\b(ncaa|ncaab|ncaam|ncaaw|college|men's|women's|exh|exhibition)\\b", all)
+      return rx::test("\\b(ncaa|ncaab|ncaam|ncaaw|college|men['`]s|women['`]s|exh|exhibition)\\b", all)
                  ? "College Basketball"
                  : "Basketball";
     }

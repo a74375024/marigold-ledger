@@ -51,8 +51,12 @@ struct PipeDriver {
 
 // "F1: DRIVER ALPHA | TEAM ALPHA | DRA" -> ("Driver Alpha", the team).
 std::optional<PipeDriver> pipeDriver(std::string_view name) {
-  if (!has(name, " | ")) return std::nullopt;
-  std::string value = trimmed(name);
+  // The slot's event title writes the bars as dots ("DRIVER ALPHA · TEAM
+  // ALPHA · DRA").
+  static const std::string kDot = " \xC2\xB7 ";
+  const bool dots = !has(name, " | ") && has(name, kDot);
+  if (!has(name, " | ") && !dots) return std::nullopt;
+  std::string value = trimmed(dots ? str::replaceAll(name, kDot, " | ") : std::string(name));
   if (str::startsWith(str::upper(value), "F1: ")) value = text::dropPrefix(value, 4);
   std::vector<std::string> parts = text::components(value, " | ");
   for (std::string& part : parts) part = trimmed(part);
@@ -320,7 +324,11 @@ std::optional<std::string> cameraRace(std::string_view title) {
 
 bool isF1CameraName(std::string_view name) {
   std::string lower = trimmed(str::lower(name));
-  if (lower == "f1 data" || lower == "f1 tracker" || lower == "f1: f1-data" || lower == "f1: f1-tracker") return true;
+  // "F1-DATA" / "F1-TRACKER": the same feeds by their slot titles.
+  if (lower == "f1 data" || lower == "f1 tracker" || lower == "f1: f1-data" || lower == "f1: f1-tracker" ||
+      lower == "f1-data" || lower == "f1-tracker") {
+    return true;
+  }
   return pipeDriver(name).has_value();
 }
 

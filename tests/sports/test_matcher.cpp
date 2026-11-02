@@ -80,6 +80,79 @@ TEST_CASE("pairKey and matchupKey: either team order, prefixes and brackets drop
   CHECK(pairKey("Team A") == std::nullopt);
   CHECK(pairKey("vs Team A") == std::nullopt);
   CHECK(matchupKey("The Big Show") == " the big show ");
+  // The competition after " · " and a club's initials and year aren't the side.
+  CHECK(pairKey("Harbor vs Valley \xc2\xb7 Cup Women") == "harbor|valley");
+  CHECK(pairKey("VfL Harbor v TSG 1899 Valley") == "harbor|valley");
+  CHECK(pairKey("FC vs Valley") == "fc|valley");  // nothing left: as written
+}
+
+TEST_CASE("team variants: a name without its bracketed place") {
+  SportsTeam club = team("9", "Central Harbor (North Bay)");
+  std::vector<std::string> variants = teamVariants(club, false);
+  CHECK(std::find(variants.begin(), variants.end(), "central harbor") != variants.end());
+  // Not for colleges, nor a short or generic word.
+  SportsTeam school = team("10", "St. Harbor (IL) Gulls");
+  std::vector<std::string> schoolVariants = teamVariants(school, true);
+  CHECK(std::find(schoolVariants.begin(), schoolVariants.end(), "st harbor") == schoolVariants.end());
+  std::vector<std::string> generic = teamVariants(team("11", "City (East)"), false);
+  CHECK(std::find(generic.begin(), generic.end(), "city") == generic.end());
+}
+
+TEST_CASE("a club's women's side never meets its men's game") {
+  SportsGame men = game("SOC", "Soccer", "m1", team("h1", "Harbor Rovers"), team("v1", "Valley United FC"),
+                        utc(2026, 11, 6, 23, 0));
+  SportsGame women = game("SOCW", "Soccer", "w1", team("h2", "Harbor Rovers Women"), team("v2", "Valley Women"),
+                          utc(2026, 11, 6, 20, 0));
+  TeamIndex index({men, women});
+  auto any = [](int) { return true; };
+  CHECK(index.matches("Harbor Rovers vs Valley United FC", any) == std::vector<int>{0});
+  CHECK(index.matches("Harbor Rovers Women vs. Valley Women", any) == std::vector<int>{1});
+  // Without the women's game, the women's feed matches nothing.
+  TeamIndex menOnly({men});
+  CHECK(menOnly.matches("Harbor Rovers Women vs. Valley United FC Women", any).empty());
+}
+
+TEST_CASE("race weekend talk and analysis are shows; a session isn't") {
+  CHECK(isStudioShow("C\xc3\xb3" "digo F1 \xc2\xb7 GP de Harbor \xc2\xb7 F1"));
+  CHECK(isStudioShow("An\xc3\xa1lise ao GP de Harbor \xc2\xb7 DAZN F1 Debrief"));
+  CHECK(isStudioShow("GP de Harbor - Previo Carrera"));
+  CHECK(isStudioShow("Harbor GP Analysis"));
+  CHECK_FALSE(isStudioShow("GP de Harbor - Carrera"));
+  CHECK_FALSE(isStudioShow("Formula 1: Harbor: Race"));
+}
+
+TEST_CASE("a Grand Prix whose race has run, or that isn't this weekend's, is a replay") {
+  Seconds now = utc(2026, 11, 2, 17, 0);
+  SportsGame race = game("F1", "Motorsport", "800|5", team("r800", "Mexico City GP"), team("r800", "Mexico City GP"),
+                         utc(2026, 11, 1, 20, 0));
+  race.racing = true;
+  race.cardKey = "f1|800|race";
+  race.completed = true;
+  BuildInput in;
+  in.games = {race};
+  in.now = now;
+  in.zone = time::Zone::usEastern();
+  in.events = {
+      provider("m1", "2026 Formula 1: Mexico City Grand Prix", "Motorsport", utc(2026, 11, 3, 0, 30), {"f|1"}),
+      provider("m2", "Live \xc2\xb7 Storbritanniens Grand Prix \xc2\xb7 Formel 1 Kvalifikation 2026", "Other",
+               std::nullopt, {"f|2"}),
+      provider("m3", "Formula 1: Las Vegas Grand Prix Preview", "Motorsport", utc(2026, 11, 19, 20, 0), {"f|3"}),
+      provider("m4", "MotoGP: Grand Prix of Harbor", "Motorsport", utc(2026, 11, 2, 18, 0), {"f|4"}),
+  };
+  auto out = build(in);
+  REQUIRE(out);
+  CHECK_FALSE(find(out->events, "m1"));
+  REQUIRE(out->stats.hidden.count("f|1"));
+  CHECK(out->stats.hidden.at("f|1") == "a replay: the race already ran");
+  CHECK_FALSE(find(out->events, "m2"));
+  CHECK(find(out->events, "m3"));  // dated well ahead: not a replay
+  CHECK(find(out->events, "m4"));  // not F1
+  // Before the race, the weekend's own feeds stay.
+  in.now = utc(2026, 10, 31, 12, 0);
+  in.events = {provider("m5", "2026 Formula 1: Mexico City Grand Prix", "Motorsport", utc(2026, 10, 31, 18, 0), {"f|5"})};
+  out = build(in);
+  REQUIRE(out);
+  CHECK(find(out->events, "m5"));
 }
 
 TEST_CASE("team variants: full name, alternates, nickname; places only for colleges") {
@@ -911,4 +984,179 @@ TEST_CASE("a high-school feed named only by a school is left out") {
   CHECK(out->stats.hidden.at("hs|1") == "a school's name alone: no sport or opponent");
   CHECK(find(out->events, "hs2"));
   CHECK(find(out->events, "hs3"));
+}
+
+// MARK: Build 125: tiles from the schedule
+
+TEST_CASE("one tile per scheduled game, every feed that names it a source") {
+  Fixture f;
+  BuildInput in = f.input();
+  const Seconds kickoff = f.nflGame.start;
+  in.events = {
+      provider("a", "NFL 12: Team Alpha @ Harbor City Gulls", "NFL", kickoff, {"xt|1"}),
+      provider("b", "TMA vs HCG", "NFL", kickoff + 1800, {"xt|2"}, "other"),
+      provider("c", "Harbor City Gulls v Team Alpha", "", kickoff + 3600, {"xt|3"}, "third"),
+      // Only "1:00 PM" given: the day a guess.
+      provider("d", "Team Alpha at Harbor City Gulls 1:00 PM", "NFL", kickoff, {"xt|4"}, "slots", false, true),
+  };
+  auto out = build(in);
+  REQUIRE(out);
+  int tiles = 0;
+  for (const SportsEvent& e : out->events)
+    if (!e.game) ++tiles;
+  CHECK(tiles == 0);  // no feed-only copies
+  const SportsEvent* tile = findGame(out->events, "NFL|1");
+  REQUIRE(tile);
+  std::vector<std::string> sources = ids(tile->sources);
+  std::sort(sources.begin(), sources.end());
+  CHECK(sources == std::vector<std::string>{"xt|1", "xt|2", "xt|3", "xt|4"});
+  CHECK(out->stats.matchedEvents == 4);
+}
+
+TEST_CASE("a day-guessed slot takes its scheduled game's day and time, under any sport's label") {
+  Fixture f;
+  // Monday night's game, 8:15 PM Eastern; the slot was posted on Sunday,
+  // so its day is guessed as Sunday.
+  SportsGame monday = game("NFL", "NFL", "9", team("9", "Lake Pikes", std::string("LKP")),
+                           team("10", "Mountain Goats", std::string("MTG")), utc(2026, 10, 27, 1, 15));
+  const Seconds sundayGuess = utc(2026, 10, 26, 1, 15);
+  for (const char* league : {"NFL", "Soccer"}) {
+    INFO(league);
+    BuildInput in = f.input();
+    in.games.push_back(monday);
+    in.events = {provider("m", "MNF Mountain Goats at Lake Pikes", league, sundayGuess, {"xt|m"}, "nfl slots",
+                          false, true)};
+    auto out = build(in);
+    REQUIRE(out);
+    const SportsEvent* tile = findGame(out->events, "NFL|9");
+    REQUIRE(tile);
+    CHECK(tile->start == monday.start);
+    CHECK(ids(tile->sources) == std::vector<std::string>{"xt|m"});
+    CHECK(tile->id == "m");  // the game's tile, under the slot's id: no copy of its own
+    CHECK(out->stats.guessedAnySport == (std::string(league) == "Soccer" ? 1 : 0));
+  }
+  // Two games of other sports at that clock time: neither is picked.
+  BuildInput in = f.input();
+  in.games.push_back(monday);
+  SportsGame other = monday;
+  other.id = "NHL|9";
+  other.league = other.leagueShort = "NHL";
+  other.start = monday.start + 86'400;
+  in.games.push_back(other);
+  in.events = {provider("m", "MNF Mountain Goats at Lake Pikes", "Soccer", sundayGuess, {"xt|m"}, "nfl slots",
+                        false, true)};
+  auto out = build(in);
+  REQUIRE(out);
+  CHECK(out->stats.guessedAnySport == 0);
+  const SportsEvent* unpicked = findGame(out->events, "NFL|9");
+  REQUIRE(unpicked);
+  CHECK(unpicked->sources.empty());
+}
+
+TEST_CASE("a day-guessed slot no schedule has that was there on an earlier day is a leftover") {
+  Fixture f;
+  BuildInput in = f.input();
+  const Seconds today = utc(2026, 10, 25, 4, 0);  // midnight Eastern
+  const Seconds yesterday = today - 86'400;
+  const Seconds tonight = utc(2026, 10, 25, 23, 0);
+  auto seen = std::make_shared<SlotsSeen>();
+  (*seen)[slotKey("STONE vs RIVER UK")] = {yesterday - 3 * 86'400, yesterday};
+  (*seen)[slotKey("Lark vs Finch")] = {today, today};
+  (*seen)[slotKey("Harbor Prep vs Valley Prep")] = {yesterday, yesterday};
+  (*seen)[slotKey("Gone vs Forgotten")] = {today - 12 * 86'400, today - 11 * 86'400};
+  in.seen = seen;
+  ProviderEvent school = provider("hs", "Harbor Prep vs Valley Prep", "Football", tonight, {"hs|1"}, "nfhs", false,
+                                  true);
+  school.highSchool = true;
+  in.events = {
+      // The same text as days ago, no game: a leftover.
+      provider("old", "Stone vs River UK", "Fighting", tonight, {"b|1"}, "boxing", false, true),
+      // First seen today, or never: stays (a tile only with the switch on).
+      provider("new", "Lark vs Finch", "Fighting", tonight, {"b|2"}, "boxing", false, true),
+      provider("fresh", "Pine vs Cedar", "Fighting", tonight, {"b|3"}, "boxing", false, true),
+      // Dated: not a day-guessed slot.
+      provider("dated", "Oak vs Ash", "Fighting", tonight, {"b|4"}, "boxing"),
+      // High school: no schedule has it; shown only when picked.
+      school,
+  };
+  auto out = build(in);
+  REQUIRE(out);
+  CHECK_FALSE(find(out->events, "old"));
+  CHECK(out->stats.hidden.at("b|1") == kLeftoverNotScheduled);
+  CHECK(out->stats.seenBefore == 1);
+  for (const char* id : {"new", "fresh", "dated", "hs"}) {
+    INFO(id);
+    CHECK(find(out->events, id));
+  }
+  // Noted for the days after: first seen kept, last seen today; the
+  // dated title isn't noted, and one unseen for 10 days is dropped.
+  REQUIRE(static_cast<bool>(out->seen));
+  const SlotsSeen& noted = *out->seen;
+  CHECK(noted.at(slotKey("Stone vs River UK")).first == yesterday - 3 * 86'400);
+  CHECK(noted.at(slotKey("Stone vs River UK")).last == today);
+  CHECK(noted.at(slotKey("Pine vs Cedar")).first == today);
+  CHECK_FALSE(noted.count(slotKey("Oak vs Ash")));
+  CHECK_FALSE(noted.count(slotKey("Gone vs Forgotten")));
+  // Nothing seen before: nothing hidden this way.
+  in.seen.reset();
+  out = build(in);
+  REQUIRE(out);
+  CHECK(find(out->events, "old"));
+  CHECK(out->stats.seenBefore == 0);
+}
+
+TEST_CASE("slots seen: kept to the most recent, written and read back") {
+  const time::Zone zone = time::Zone::usEastern();
+  const Seconds now = utc(2026, 10, 25, 15, 0);
+  SlotsSeen before;
+  for (uint64_t i = 0; i < kSlotsSeenMost; ++i)
+    before[i + 1] = {now - 9 * 86'400, now - 9 * 86'400 + static_cast<Seconds>(i)};
+  SlotsSeen after = noteSlotsSeen(before, {"Harbor vs Valley", "Harbor  vs  VALLEY"}, now, zone);
+  CHECK(after.size() == kSlotsSeenMost);
+  CHECK(after.count(slotKey("Harbor vs Valley")));
+  CHECK_FALSE(after.count(1));  // the least recently seen went
+  CHECK(after.count(kSlotsSeenMost));
+  // The same slots on the same day: the same record.
+  CHECK(noteSlotsSeen(after, {"Harbor vs Valley"}, now + 3600, zone) == after);
+  SlotsSeen back = slotsSeenFromJson(toJson(after));
+  CHECK(back == after);
+  CHECK(slotsSeenFromJson(json::Value()).empty());
+}
+
+TEST_CASE("a feed the rosters read as two teams joins their scheduled game at about its time") {
+  Fixture f;
+  SportsTeam coruna = team("s1", "Harbor Coruna Club");
+  SportsTeam rovers = team("s2", "Riverside Rovers");
+  SportsGame match = game("ESP", "Soccer", "7", coruna, rovers, utc(2026, 10, 25, 20, 0), {}, std::nullopt, true);
+  BuildInput in = f.input();
+  in.games.push_back(match);
+  // The league's roster knows the club by another name too.
+  SportsTeam known = coruna;
+  known.alternates = {"Coruna Deportivo"};
+  SportsTeam knownRovers = rovers;
+  knownRovers.alternates = {"Riverside RFC"};
+  in.rosters = {RosterLeague{"ESP", "Soccer", false, {known, knownRovers}}};
+  in.events = {
+      provider("x1", "CORUNA DEPORTIVO vs RIVERSIDE ROVERS", "", match.start - 600, {"xt|1"}, "dazn"),
+      provider("x2", "Riverside Rovers vs Harbor Coruna Club", "Soccer", match.start, {"xt|2"}, "soccer"),
+      // The same two a day later: a replay, not this game's source.
+      provider("x3", "Coruna Deportivo vs Riverside Rovers", "", match.start + 30 * 3600, {"xt|3"}, "replays"),
+      // ...written another way by another group: the same tile as x3.
+      provider("x4", "Riverside RFC v Coruna Deportivo", "", match.start + 30 * 3600 + 1200, {"xt|4"},
+               "cups"),
+  };
+  auto out = build(in);
+  REQUIRE(out);
+  const SportsEvent* tile = findGame(out->events, "ESP|7");
+  REQUIRE(tile);
+  std::vector<std::string> sources = ids(tile->sources);
+  std::sort(sources.begin(), sources.end());
+  CHECK(sources == std::vector<std::string>{"xt|1", "xt|2"});
+  CHECK(out->stats.byTeams == 1);
+  CHECK_FALSE(find(out->events, "x1"));
+  const SportsEvent* replay = find(out->events, "x3");
+  REQUIRE(replay);
+  CHECK_FALSE(replay->game.has_value());
+  CHECK(ids(replay->sources) == std::vector<std::string>{"xt|3", "xt|4"});
+  CHECK_FALSE(find(out->events, "x4"));
 }

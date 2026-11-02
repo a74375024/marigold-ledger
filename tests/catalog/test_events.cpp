@@ -1,5 +1,7 @@
 // Event titles: every start-time format, provider zones, decorations,
 // deduplication keys and league detection.
+#include <map>
+
 #include "catalog/helpers.hpp"
 #include "core/catalog/catalog.hpp"
 #include "core/catalog/text.hpp"
@@ -211,6 +213,9 @@ TEST_CASE("leagueFor: a sport named first, then words, fights before soccer") {
   CHECK(leagueFor("x", "", "Basketball: Team A vs Team B") == "Basketball");
   CHECK(leagueFor("x", "WNBA", "Basketball: Team A vs Team B") == "WNBA");
   CHECK(leagueFor("x", "", "Basketball: Men's Team A vs Team B") == "College Basketball");
+  // A small-college provider's "hoops:" slots, its side written "Men`s".
+  CHECK(leagueFor("x", "", "hoops:  Team A vs Team B _ Men`s (A vs B)") == "College Basketball");
+  CHECK(leagueFor("x", "", "hoops:  Team A vs Team B") == "Basketball");
   CHECK(leagueFor("x", "NHL", "Hockey: Team A vs Team B") == "NHL");
   CHECK(leagueFor("x", "", "Field Hockey: Team A vs Team B") == "Field Hockey");
   CHECK(leagueFor("x", "", "Volleyball:  Team A vs Team B") == "Volleyball");
@@ -296,4 +301,126 @@ TEST_CASE("a darts event's boards and its UK listing are one event") {
   CHECK(darts[0]->title == "Players Championship 32 \xc2\xb7 Maasport");
   CHECK(darts[0]->start == utc(2026, 10, 29, 12, 0));
   CHECK(darts[0]->feeds.size() == 6);
+}
+
+// MARK: Build 125: slot reading
+
+TEST_CASE("a service tail naming its country sets the slot's clock, AM/PM too") {
+  // 21 October: Denmark and Norway on CEST (+2), Finland on EEST (+3).
+  auto dk = parse("Team A vs Team B @ Oct 21 5:55 PM :Viaplay DK  03");
+  CHECK(dk.title == "Team A vs Team B");
+  CHECK(dk.start == utc(2026, 10, 21, 15, 55));
+  CHECK(parse("Team A vs Team B @ Oct 22 02:05 :Telia FI  13").start == utc(2026, 10, 21, 23, 5));
+  CHECK(parse("Football: Team A vs Team B @ Oct 21 20:40 :Tv2Play NO  11").start == utc(2026, 10, 21, 18, 40));
+  CHECK(parse("Team A vs Team B @ Oct 21 6:45 PM :Tv4 Play SE  06").start == utc(2026, 10, 21, 16, 45));
+  CHECK(parse("Team A vs Team B @ Oct 22 01:00 AM :MAX ES  01").start == utc(2026, 10, 21, 23, 0));
+  CHECK(parse("Team A vs Team B @ Oct 21 7:00 PM :MAX US 01").start == utc(2026, 10, 21, 23, 0));
+  // VG is Norway's, with no country code; "18:15 PM" is 18:15.
+  auto vg = parse("Team A - Team B @ Oct 21 18:15 PM :VG  01");
+  CHECK(vg.start == utc(2026, 10, 21, 16, 15));
+  CHECK(vg.title == "Team A vs Team B");
+  // No country in the tail: AM/PM stays Eastern.
+  CHECK(parse("NCAAM: Team A vs Team B @ Oct 21 5:00 PM :NCAAB  07").start == utc(2026, 10, 21, 21, 0));
+  // A date-time after the "@", in the tail's country; an ISO time in UTC.
+  CHECK(parse("Serie A: Team A-Team B @ 2026-10-21 18:15:00 :Tv2Play DK  01").start == utc(2026, 10, 21, 16, 15));
+  auto iso = parse("Basket: Team A vs Team B @ 2026-10-21T17:50:00.000Z :Expressen  01");
+  CHECK(iso.start == utc(2026, 10, 21, 17, 50));
+  CHECK(iso.title == "Basket: Team A vs Team B");
+}
+
+TEST_CASE("Nordic and other European markets read their own clock") {
+  CHECK(parse("Team A v Team B Oct 22 20:45", std::string("DK")).start == utc(2026, 10, 22, 18, 45));
+  CHECK(parse("Team A v Team B Oct 22 20:45", std::string("FI")).start == utc(2026, 10, 22, 17, 45));
+  CHECK(parse("Team A vs Team B (2026-10-21 17:30:00)", std::string("PE")).start == utc(2026, 10, 21, 22, 30));
+  // US markets keep European-style listings on UK time.
+  CHECK(parse("Team A v Team B Oct 22 20:45", std::string("US")).start == utc(2026, 10, 22, 19, 45));
+}
+
+TEST_CASE("a family's own country, whatever group a copy is in") {
+  CHECK(familyMarket("au (stan #)") == std::optional<std::string>("AU"));
+  CHECK(familyMarket("ca | cfl #") == std::optional<std::string>("CA"));
+  CHECK(familyMarket("us (espn+ #)") == std::optional<std::string>("US"));
+  CHECK(familyMarket("(fanatiz #)") == std::optional<std::string>("PE"));   // UTC-5
+  CHECK(familyMarket("(mx) (vix #)") == std::optional<std::string>("US"));  // Eastern, not Mexico City
+  CHECK(familyMarket("(mx) (dazn #)") == std::optional<std::string>("MX"));
+  CHECK(familyMarket("grp:dk| viaplay ppv") == std::nullopt);
+  CHECK(familyMarket("ppv event #") == std::nullopt);
+  CHECK(familyMarket("ab (stan #)") == std::nullopt);  // no such market
+  ChannelTraits copy;
+  copy.familyKey = std::string("au (stan #)");
+  copy.market = std::string("US");
+  CHECK(slotMarket(copy) == std::optional<std::string>("AU"));
+  ChannelTraits plain;
+  plain.familyKey = std::string("grp:dk| viaplay ppv");
+  plain.market = std::string("DK");
+  CHECK(slotMarket(plain) == std::optional<std::string>("DK"));
+  // Both copies of a Sydney listing read the same; the competition after
+  // two spaces goes after the matchup, without this season.
+  auto sydney = parse("Team A v Team B  Harbor Cup Matchday 4 2026/2027 (2026-10-22 06:55:50)", slotMarket(copy));
+  CHECK(sydney.start == utc(2026, 10, 21, 19, 55));
+  CHECK(sydney.title == "Team A v Team B \xc2\xb7 Harbor Cup Matchday 4");
+}
+
+TEST_CASE("\"all\" is no competition and says nothing about the sport") {
+  auto all = parse("Next | Team Bears vs. Team Hawks | all | 21-10-2026 | 23:57 (GMT) | 8K EXCLUSIVE | BR: SOCCER PPV 14");
+  CHECK(all.title == "Team Bears vs. Team Hawks");
+  CHECK(all.noCompetition);
+  CHECK(all.start == utc(2026, 10, 21, 23, 57));
+  auto named = parse("Next | Team A - Team B | Ligue 2 | 2026-10-21 | 19:45 (GMT) | 8K EXCLUSIVE | CH: DAZN PPV 15");
+  CHECK(named.title == "Team A vs Team B \xc2\xb7 Ligue 2");
+  CHECK_FALSE(named.noCompetition);
+  // In a soccer group, an "all" slot is read by its own title.
+  std::string group = "BR| SOCCER PPV";
+  std::vector<Channel> list = {
+      testdata::channel("1", "Next | Team Bears vs. Team Hawks | all | 21-10-2026 | 23:57 (GMT) | 8K EXCLUSIVE | BR: SOCCER PPV 1",
+                        group),
+      testdata::channel("2", "Next | Harbor FC vs. Valley FC | Serie A | 21-10-2026 | 18:00 (GMT) | 8K EXCLUSIVE | BR: SOCCER PPV 2",
+                        group),
+      testdata::channel("3", "Next | Alpha Player vs. Bravo Player | all | 21-10-2026 | 15:00 (GMT) | 8K EXCLUSIVE | BR: SOCCER PPV 3",
+                        group),
+  };
+  CatalogResult r = build(list, wednesdayNoon());
+  std::map<std::string, std::string> leagues;
+  for (const LiveEvent& e : r.events) leagues[e.title] = e.league;
+  CHECK(leagues["Team Bears vs. Team Hawks"] == "Other");
+  CHECK(leagues["Alpha Player vs. Bravo Player"] == "Other");
+  CHECK(leagues["Harbor FC vs. Valley FC \xc2\xb7 Serie A"] == "Soccer");
+}
+
+TEST_CASE("a dash or an x between two sides is a match; stages and dates aren't sides") {
+  CHECK(parse("LIVE | ALPHA PLAYER - BRAVO PLAYER | Wed 21 Oct 15:58 CEST (FR) | 8K EXCLUSIVE | FR: MAX PPV 25").title ==
+        "ALPHA PLAYER vs BRAVO PLAYER");
+  CHECK(parse("NEXT | HARBOR - VALLEY FF | Wed 21 Oct 18:50 CEST (NO) | 8K EXCLUSIVE | NO: VGTV PPV 3").title ==
+        "HARBOR vs VALLEY FF");
+  CHECK(parse("Next | Harbor x Valley | Serie A | 2026-10-21 | 17:00 (GMT)").title == "Harbor vs Valley \xc2\xb7 Serie A");
+  CHECK(parse("Paris Masters - Court Central").title == "Paris Masters - Court Central");
+  CHECK(parse("Harbor Open - Round 2").title == "Harbor Open - Round 2");
+  CHECK(parse("Golf: The Masters - Round 2").title == "Golf: The Masters - Round 2");
+  CHECK(parse("NEXT | MON, 10/21 - HARBOR FC | Wed 21 Oct 17:00 EDT (US)").title.find("vs") == std::string::npos);
+  CHECK(parse("Harbor vs Valley 4:45am Sun").title == "Harbor vs Valley Sun");
+  // A league's name, then two clubs joined by a hyphen.
+  CHECK(parse("3F Superliga: Harbor-F.C. Valley @ 2026-10-21 18:30:00 :Tv2Play DK  02").title ==
+        "3F Superliga: Harbor vs F.C. Valley");
+  CHECK(parse("Tennis: Paris-Bercy").title == "Tennis: Paris-Bercy");
+}
+
+TEST_CASE("Surname, First is a player; a doubles pair stays as written") {
+  auto singles = parse("Alpha, Anna vs Van De Bravo, Bea @ Oct 21 3:40 PM - WTA Harbor :Tennis  06");
+  CHECK(singles.title == "Anna Alpha vs Bea Van De Bravo \xc2\xb7 WTA Harbor");
+  CHECK(parse("Alpha A, Bravo B vs Charlie C, Delta D").title == "Alpha A, Bravo B vs Charlie C, Delta D");
+}
+
+TEST_CASE("a competition glued to the matchup goes after it") {
+  auto lead = parse("NEXT | LIGUE 2 HARBOR - VALLEY | Wed 21 Oct 20:40 CEST (DK) | 8K EXCLUSIVE | DK: VIAPLAY PPV 9");
+  CHECK(lead.title == "HARBOR vs VALLEY \xc2\xb7 LIGUE 2");
+  CHECK(lead.start == utc(2026, 10, 21, 18, 40));
+  CHECK(parse("NEXT | H\xc3\x84RBOR - VALLEY ALLSVENSKAN | Wed 21 Oct 18:45 CEST (SE)").title ==
+        "H\xc3\x84RBOR vs VALLEY \xc2\xb7 ALLSVENSKAN");
+  CHECK(parse("NEXT | DFB-POKAL FRAUEN HARBOR - VALLEY | Wed 21 Oct 17:55 CEST (NL)").title ==
+        "HARBOR vs VALLEY \xc2\xb7 DFB-POKAL FRAUEN");
+  // A women's side marked "(F)" says so in words.
+  CHECK(parse("Harbor (F) vs. Valley (F) (2026-10-21 17:40:00)").title == "Harbor Women vs. Valley Women");
+  CHECK(parse("Harbor (W) - Valley (W) | Cup").title == "Harbor Women vs Valley Women \xc2\xb7 Cup");
+  // Two spaces before a country and a time: no competition.
+  CHECK(parse("Team A vs Team B  UK 2:00pm").title.find("\xc2\xb7") == std::string::npos);
 }

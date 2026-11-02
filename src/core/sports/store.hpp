@@ -166,6 +166,9 @@ struct RebuildInput {
   std::function<bool(std::string_view)> isCameraName;
   // A raw provider channel still exists (renamed slots still exist).
   std::function<bool(const std::string&)> channelExists;
+  // Build 125: the day-guessed slots seen before (matcher::SlotsSeen, kept
+  // with the saved result); null: none yet.
+  std::shared_ptr<const matcher::SlotsSeen> slotsSeen;
 };
 struct RebuildResult {
   std::vector<SportsEvent> events;
@@ -174,6 +177,9 @@ struct RebuildResult {
   // Leagues with a game on your channels (Schedule::noteWatchable).
   std::set<std::string> watchableLeagues;
   int endedByFeeds = 0;
+  // The slots seen with this rebuild's noted (the same pointer when none
+  // is new).
+  std::shared_ptr<const matcher::SlotsSeen> slotsSeen;
 };
 // nullopt when shouldStop stopped it (keep the last result; retry in 5 min).
 std::optional<RebuildResult> rebuild(const RebuildInput& input);
@@ -306,17 +312,22 @@ struct SavedResult {
   // The guide's game listings, so the next launch's first rebuild still
   // finds games on local stations.
   std::optional<std::vector<matcher::GuideListing>> listings;
+  // Build 125: the day-guessed slots seen (matcher::SlotsSeen); null when
+  // none was saved (older builds).
+  std::shared_ptr<const matcher::SlotsSeen> slotsSeen;
 };
 std::string toJson(const SavedResult& saved);
 std::optional<SavedResult> savedResultFromJson(std::string_view text);
 
-// What to save after a rebuild: watchable games only. Never an empty or
-// listing-less (weaker) result over a good one, and not the same one twice
-// (`lastFingerprint` is updated). nullopt: nothing to write.
+// What to save after a rebuild: watchable games only, and the slots seen.
+// Never an empty or listing-less (weaker) result over a good one, and not
+// the same one twice (`lastFingerprint` is updated). nullopt: nothing to
+// write.
 std::optional<SavedResult> resultToSave(const std::vector<SportsEvent>& events,
                                         const std::vector<catalog::LiveEvent>& rawEvents,
                                         const std::vector<matcher::GuideListing>& listings, bool listingsReady,
-                                        Seconds now, std::string& lastFingerprint);
+                                        Seconds now, std::string& lastFingerprint,
+                                        std::shared_ptr<const matcher::SlotsSeen> slotsSeen = nullptr);
 
 struct Restored {
   std::vector<SportsEvent> events;

@@ -85,14 +85,21 @@ std::optional<Zone> Zone::named(std::string_view n) {
   if (n == "Europe/Madrid" || n == "Europe/Paris" || n == "Europe/Berlin" || n == "Europe/Rome" ||
       n == "Europe/Amsterdam" || n == "Europe/Brussels" || n == "Europe/Vienna" ||
       n == "Europe/Zurich" || n == "Europe/Stockholm" || n == "Europe/Oslo" ||
-      n == "Europe/Copenhagen" || n == "Europe/Warsaw" || n == "Europe/Prague") {
+      n == "Europe/Copenhagen" || n == "Europe/Warsaw" || n == "Europe/Prague" || n == "Europe/Budapest" ||
+      n == "Europe/Belgrade" || n == "Europe/Zagreb") {
     return Zone(Rule::EU, 1 * kHour);
   }
+  if (n == "Europe/Helsinki" || n == "Europe/Athens" || n == "Europe/Bucharest" || n == "Europe/Sofia") {
+    return Zone(Rule::EU, 2 * kHour);
+  }
+  if (n == "Atlantic/Reykjavik") return utc();
   if (n == "Australia/Sydney" || n == "Australia/Melbourne") return Zone(Rule::Sydney, 10 * kHour);
   if (n == "Pacific/Auckland") return Zone(Rule::Auckland, 12 * kHour);
   // No daylight time since October 2022 and February 2019.
   if (n == "America/Mexico_City") return fixed(-6 * kHour);
   if (n == "America/Sao_Paulo") return fixed(-3 * kHour);
+  if (n == "America/Argentina/Buenos_Aires") return fixed(-3 * kHour);
+  if (n == "America/Lima" || n == "America/Bogota") return fixed(-5 * kHour);
   return std::nullopt;
 }
 

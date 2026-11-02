@@ -146,6 +146,10 @@ struct Settings {
   bool boardMoreEvents = false;     // More events
   bool boardUntimed = false;        // Time not listed
   bool boardEventChannels = false;  // Event channels
+  // Build 125: "Games without a schedule": events only the provider's event
+  // channels list (no schedule has them) as tiles in More events. Off: the
+  // board leaves them out (sports::board::Settings::showsUnscheduled).
+  bool boardUnscheduled = false;
   bool showScores = true;
   bool allChannelsTab = false;
   bool preferTS = true;         // Xtream: MPEG-TS rather than HLS
@@ -188,7 +192,7 @@ struct Settings {
 // The rows the board screen draws besides the sports: Event channels
 // always while Game schedule is off (the board is the provider's events).
 inline BoardShows boardShows(const Settings& s) {
-  return {s.boardMoreEvents, s.boardUntimed, s.boardEventChannels || !s.scheduleEnabled};
+  return {s.boardMoreEvents, s.boardUntimed, s.boardEventChannels || !s.scheduleEnabled, s.boardUnscheduled};
 }
 
 // The subtitles choice for a channel's language: on/off and the language
@@ -547,9 +551,13 @@ class Store {
   // Placeholders in place of the board (Live Events opened on old games).
   void showPlaceholders();
   void noteEventsTiming(uint32_t ms, std::chrono::steady_clock::time_point start);
-  void pumpSchedule(uint32_t ms);
+  void pumpSchedule(uint32_t ms, bool background = false);
+  // Live Events closed: the day's schedule fetched in the background once
+  // the channels are in, while nothing else needs the TV (Build 125).
+  void scheduleInBackground(uint32_t ms);
   void pumpScores(uint32_t ms);
   void saveEvents();
+  void saveSchedule();
   sports::schedule::Context scheduleContext() const;
   void loadRace();
   void pumpRace(uint32_t ms);

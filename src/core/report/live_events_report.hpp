@@ -8,6 +8,10 @@
 //     (matcher::Stats::hidden);
 //   - the board: high school or pro wrestling off, a studio show, over, not
 //     in your sports (board::Board::left).
+// Build 125: a last column, "schedule", says whether the slot went to a
+// scheduled game ("on the schedule"), was left out as a leftover
+// ("leftover"), or no schedule has it ("no schedule"); empty for a slot
+// not read as an event.
 // For checking why something odd is (or isn't) on the board.
 //
 // No stream links, logins or server addresses: slot names and titles only,

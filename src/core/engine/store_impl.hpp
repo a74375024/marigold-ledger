@@ -64,6 +64,9 @@ struct EventsState {
   int listingsRevision = 0;
   int scheduleRevision = 0;
   std::string lastFingerprint, lastSaved;
+  // Build 125: the day-guessed slots seen (read with the saved list, noted
+  // by each rebuild and saved with its result on the worker).
+  std::shared_ptr<const sports::matcher::SlotsSeen> slotsSeen;
   bool rebuilding = false;
   uint32_t nextCheckMs = 0;
   bool restoredTried = false, restoring = false;  // the saved list is read on a worker
@@ -84,6 +87,10 @@ struct EventsState {
   bool scheduleBusy = false;
   uint32_t scheduleAt = 0;   // send the pending schedule request at
   std::optional<sports::schedule::Schedule::Pending> schedulePending;
+  // The day's schedule in the background (Build 125): looked at from this
+  // time on (0: the channels aren't in yet), and next at.
+  uint32_t scheduleBackgroundFrom = 0;
+  uint32_t scheduleBackgroundCheck = 0;
   bool scoresBusy = false;
   bool scoresRound = false;
   uint32_t scoresAt = 0;     // next request or round at

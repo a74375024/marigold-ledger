@@ -438,9 +438,24 @@ TEST_CASE("the saved result: watchable games, checked against today's feeds") {
   CHECK(saved->feedKeys.at("xt|3") == "river town otters|valley hawks");
   // Not the same one twice.
   CHECK_FALSE(resultToSave(events, raw, {listing}, true, now, last));
+  CHECK_FALSE(static_cast<bool>(saved->slotsSeen));
+  // Build 125: with the day-guessed slots seen, saved again when they change.
+  auto seen = std::make_shared<matcher::SlotsSeen>();
+  (*seen)[matcher::slotKey("Stone vs River UK")] = {now - 86'400, now};
+  auto withSeen = resultToSave(events, raw, {listing}, true, now, last, seen);
+  REQUIRE(withSeen);
+  CHECK_FALSE(resultToSave(events, raw, {listing}, true, now, last, seen));
+  auto seenMore = std::make_shared<matcher::SlotsSeen>(*seen);
+  (*seenMore)[matcher::slotKey("Lark vs Finch")] = {now, now};
+  CHECK(resultToSave(events, raw, {listing}, true, now, last, seenMore));
+  auto seenBack = savedResultFromJson(toJson(*withSeen));
+  REQUIRE(seenBack);
+  REQUIRE(static_cast<bool>(seenBack->slotsSeen));
+  CHECK(*seenBack->slotsSeen == *seen);
 
   auto back = savedResultFromJson(toJson(*saved));
   REQUIRE(back);
+  CHECK_FALSE(static_cast<bool>(back->slotsSeen));
   CHECK(back->events == saved->events);
   CHECK(back->feedKeys == saved->feedKeys);
   REQUIRE(back->listings);

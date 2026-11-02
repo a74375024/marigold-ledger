@@ -1,6 +1,7 @@
 // Reading provider event titles that no schedule game matched.
 #include <doctest.h>
 
+#include <optional>
 #include <string>
 
 #include "core/sports/titles.hpp"
@@ -217,4 +218,17 @@ TEST_CASE("titles: another country's round words in English") {
   // Nothing to change.
   CHECK(titles::inEnglish("Harbor vs Valley") == "Harbor vs Valley");
   CHECK(titles::inEnglish("Tag Team Turmoil") == "Tag Team Turmoil");
+}
+
+TEST_CASE("titles: the Grand Prix a title names, in any language") {
+  CHECK(titles::grandPrixPlace("2026 Formula 1: Mexico City Grand Prix") == std::optional<std::string>("mexico"));
+  CHECK(titles::grandPrixPlace("GP de la Ciudad de M\xc3\xa9xico") == std::optional<std::string>("mexico"));
+  CHECK(titles::grandPrixPlace("An\xc3\xa1lise ao GP da Cidade do M\xc3\xa9xico") == std::optional<std::string>("mexico"));
+  CHECK(titles::grandPrixPlace("Storbritanniens Grand Prix \xc2\xb7 Formel 1 Kvalifikation 2026") ==
+        std::optional<std::string>("britain"));
+  CHECK(titles::grandPrixPlace("Formula 1: Las Vegas Grand Prix") == std::optional<std::string>("las vegas"));
+  CHECK(titles::grandPrixPlace("Mexico vs Brazil") == std::nullopt);  // no Grand Prix
+  CHECK(titles::grandPrixPlace("Grand Prix of Harbor") == std::nullopt);
+  CHECK(titles::racePlace("Mexico City GP") == std::optional<std::string>("mexico"));
+  CHECK(titles::racePlace("British GP") == std::optional<std::string>("britain"));
 }

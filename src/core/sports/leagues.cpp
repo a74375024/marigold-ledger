@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <set>
 
+#include "core/sports/calendars.hpp"
 #include "core/sports/matcher.hpp"
 #include "core/sports/my_sports.hpp"
 #include "core/util/rx.hpp"
@@ -51,14 +52,14 @@ const std::vector<League>& leagues() {
                       "Men's College", "Basketball", false);
     mcb.extra = "&groups=50";
     mcb.mode = League::Mode::days;
-    mcb.days = 3;
+    mcb.days = 5;
     mcb.everyGame = true;
     v.push_back(mcb);
     League wcb = make("basketball/womens-college-basketball", "College Basketball", "NCAAW",
                       "Women's College", "Basketball", false);
     wcb.extra = "&groups=50";
     wcb.mode = League::Mode::days;
-    wcb.days = 3;
+    wcb.days = 5;
     wcb.keywords = {"women", "womens"};
     wcb.everyGame = true;
     v.push_back(wcb);
@@ -186,9 +187,16 @@ const std::vector<SportList>& sportLists() {
                   rugby("272073", "ECH", "Challenge Cup", {"challenge cup"}),
                   rugby("242041", "SRP", "Super Rugby Pacific", {"super rugby"}),
                   rugby("289262", "MLR", "Major League Rugby", {"major league rugby", "mlr"})}});
+    // Volleyball and basketball: Thursday's and Friday's games are known
+    // from Monday, so five days rather than three.
+    auto volleyball = [](const char* path, const char* shortName, const char* name) {
+      League l = college(path, "Volleyball", shortName, name);
+      l.days = 5;
+      return l;
+    };
     v.push_back({"S:Volleyball",
-                 {college("volleyball/womens-college-volleyball", "Volleyball", "NCAAWV", "Women's College"),
-                  college("volleyball/mens-college-volleyball", "Volleyball", "NCAAMV", "Men's College")}});
+                 {volleyball("volleyball/womens-college-volleyball", "NCAAWV", "Women's College"),
+                  volleyball("volleyball/mens-college-volleyball", "NCAAMV", "Men's College")}});
     League pll = make("lacrosse/pll", "Lacrosse", "PLL", "Premier Lacrosse League", "Lacrosse", false);
     pll.keywords = {"pll", "premier lacrosse"};
     v.push_back({"S:Lacrosse",
@@ -252,7 +260,8 @@ const League& soccerAllLeague() {
   static const League kAll = [] {
     League l = make("soccer/all", "Soccer", kSoccerAll, "Soccer", "Soccer", true);
     l.mode = League::Mode::days;
-    l.days = 5;
+    // Eight days: providers list next weekend's matches from Monday.
+    l.days = 8;
     return l;
   }();
   return kAll;
@@ -268,20 +277,26 @@ const std::vector<League>& smallCollegeLeagues() {
       l.everyGame = true;
       return l;
     };
-    auto basketball = [&](const char* path, const char* shortName, const char* name) {
-      League l = page(path, "College Basketball", shortName, name, false);
-      l.days = 3;
+    // Six days for the busiest pages (volleyball, soccer, field hockey,
+    // basketball): the week's Thursday and Friday games are on them from
+    // Monday.
+    auto week = [&](const char* path, const char* group, const char* shortName, const char* name, bool soccer) {
+      League l = page(path, group, shortName, name, soccer);
+      l.days = 6;
       return l;
     };
+    auto basketball = [&](const char* path, const char* shortName, const char* name) {
+      return week(path, "College Basketball", shortName, name, false);
+    };
     return std::vector<League>{
-        page("soccer-women/d2", "Soccer", "D2WSO", "Women's Division II", true),
-        page("soccer-women/d3", "Soccer", "D3WSO", "Women's Division III", true),
-        page("soccer-men/d2", "Soccer", "D2MSO", "Men's Division II", true),
-        page("soccer-men/d3", "Soccer", "D3MSO", "Men's Division III", true),
-        page("fieldhockey/d2", "Field Hockey", "D2FH", "Division II", false),
-        page("fieldhockey/d3", "Field Hockey", "D3FH", "Division III", false),
-        page("volleyball-women/d2", "Volleyball", "D2WVB", "Women's Division II", false),
-        page("volleyball-women/d3", "Volleyball", "D3WVB", "Women's Division III", false),
+        week("soccer-women/d2", "Soccer", "D2WSO", "Women's Division II", true),
+        week("soccer-women/d3", "Soccer", "D3WSO", "Women's Division III", true),
+        week("soccer-men/d2", "Soccer", "D2MSO", "Men's Division II", true),
+        week("soccer-men/d3", "Soccer", "D3MSO", "Men's Division III", true),
+        week("fieldhockey/d2", "Field Hockey", "D2FH", "Division II", false),
+        week("fieldhockey/d3", "Field Hockey", "D3FH", "Division III", false),
+        week("volleyball-women/d2", "Volleyball", "D2WVB", "Women's Division II", false),
+        week("volleyball-women/d3", "Volleyball", "D3WVB", "Women's Division III", false),
         page("icehockey-men/d3", "Hockey", "D3MHK", "Men's Division III", false),
         page("icehockey-women/d3", "Hockey", "D3WHK", "Women's Division III", false),
         basketball("basketball-men/d2", "D2MBB", "Men's Division II"),
@@ -343,6 +358,11 @@ json::Value toJson(const SportFeedsSeen& seen) {
     for (const auto& [group, at] : *list) m.set(group, static_cast<int64_t>(at));
     v.set(list == &seen.groups ? "groups" : "colleges", m);
   }
+  if (!seen.calendars.empty()) {
+    json::Value m = json::Value::object();
+    for (const auto& [key, at] : seen.calendars) m.set(key, static_cast<int64_t>(at));
+    v.set("calendars", m);
+  }
   return v;
 }
 
@@ -358,6 +378,9 @@ SportFeedsSeen sportFeedsSeenFromJson(const json::Value& v) {
     for (const auto& [group, at] : m.fields()) {
       if (at.isNumber()) (*list)[group] = at.asInt();
     }
+  }
+  for (const auto& [key, at] : v["calendars"].fields()) {
+    if (at.isNumber()) seen.calendars[key] = at.asInt();
   }
   return seen;
 }
@@ -506,6 +529,11 @@ bool noteSportFeeds(SportFeedsSeen& seen, std::optional<time::Seconds>& checkedA
   for (const std::string& g : colleges) {
     changed = changed || !seen.collegeSeen(g, now);
     seen.colleges[g] = now;
+  }
+  // The other calendars' competitions named in feed titles.
+  for (const std::string& key : calendars::namedIn(events)) {
+    changed = changed || !seen.calendarSeen(key, now);
+    seen.calendars[key] = now;
   }
   return changed;
 }

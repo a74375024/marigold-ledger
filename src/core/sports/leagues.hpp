@@ -101,6 +101,9 @@ struct SportFeedsSeen {
   // those naming a college ("Harbor College vs Valley").
   std::map<std::string, time::Seconds> groups;
   std::map<std::string, time::Seconds> colleges;
+  // Competitions of the other event calendars (calendars.hpp) named in
+  // event feeds ("Superettan", "Metal Ligaen", "Snooker"), by its key.
+  std::map<std::string, time::Seconds> calendars;
 
   static constexpr time::Seconds kWindow = 14 * 86'400;
   bool racingSeen(time::Seconds now) const { return racing && now - *racing < kWindow; }
@@ -110,6 +113,7 @@ struct SportFeedsSeen {
   bool cricketSeen(time::Seconds now) const { return cricket && now - *cricket < kWindow; }
   bool groupSeen(const std::string& group, time::Seconds now) const { return within(groups, group, now); }
   bool collegeSeen(const std::string& group, time::Seconds now) const { return within(colleges, group, now); }
+  bool calendarSeen(const std::string& key, time::Seconds now) const { return within(calendars, key, now); }
   static bool within(const std::map<std::string, time::Seconds>& m, const std::string& key, time::Seconds now) {
     auto it = m.find(key);
     return it != m.end() && now - it->second < kWindow;
@@ -117,7 +121,7 @@ struct SportFeedsSeen {
 
   bool operator==(const SportFeedsSeen& o) const {
     return racing == o.racing && tennis == o.tennis && nascar == o.nascar && golf == o.golf && cricket == o.cricket &&
-           groups == o.groups && colleges == o.colleges;
+           groups == o.groups && colleges == o.colleges && calendars == o.calendars;
   }
 };
 json::Value toJson(const SportFeedsSeen& seen);
@@ -129,7 +133,8 @@ std::vector<League> activeLeagues(const MySportsPrefs& prefs, const SportFeedsSe
                                   time::Seconds now);
 
 // Live Events opened: look for F1, NASCAR and tennis feeds among the event
-// titles, at most every 6 hours (`checkedAt` is that throttle, kept in
+// titles (and the other calendars' competitions, calendars.hpp), at most
+// every 6 hours (`checkedAt` is that throttle, kept in
 // memory by the caller). True when a sport is newly seen, so the caller
 // calls Schedule::leaguesChanged.
 bool noteSportFeeds(SportFeedsSeen& seen, std::optional<time::Seconds>& checkedAt,

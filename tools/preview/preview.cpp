@@ -8,6 +8,12 @@
 // board has settled it is written as one HTML page and opened. Nothing but
 // schedule and score requests leaves the computer: the report stays where it
 // is, and no stream is ever opened (the report has no stream links).
+//
+// For checking a change (not needed to use it):
+//   MARIGOLD_PREVIEW_REPORT=le.csv  also writes the Live Events report
+//   MARIGOLD_PREVIEW_LOG=1          the engine's Live Events log on stderr
+//                                   (rebuild and board timings)
+//   MARIGOLD_PREVIEW_UNSCHEDULED=1  "Games without a schedule" on
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -19,6 +25,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -27,6 +34,7 @@
 
 #include "core/engine/store.hpp"
 #include "core/net/http.hpp"
+#include "core/util/log.hpp"
 #include "core/util/json.hpp"
 #include "core/util/time.hpp"
 #include "preview_icons.hpp"
@@ -121,7 +129,8 @@ std::string shellQuoted(const std::string& s) {
 }
 
 // Requests one at a time on this thread, through the system's curl. Only
-// the playlist (answered here) and schedule / score sites are let through;
+// the playlist (answered here) and schedule / score / event calendar sites
+// are let through;
 // everything else (provider guides, logo files, station lists) is offline.
 class Requests final : public http::Pool {
  public:
@@ -157,7 +166,8 @@ class Requests final : public http::Pool {
   static bool allowed(const std::string& url) {
     return url.rfind("https://", 0) == 0 &&
            (url.find(".espn.com/") != std::string::npos || url.find(".espncdn.com/") != std::string::npos ||
-            url.rfind("https://www.ncaa.com/scoreboard/", 0) == 0);
+            url.rfind("https://www.ncaa.com/scoreboard/", 0) == 0 ||
+            url.rfind("https://www.thesportsdb.com/api/", 0) == 0);
   }
   http::Response run(http::Request& req) {
     http::Response r;
@@ -394,6 +404,11 @@ int main(int argc, char** argv) {
     if (cell(row, "in_my_lineup") == "yes" && !cell(row, "entry").empty()) lineupNames.insert(cell(row, "entry"));
   }
   std::fprintf(stderr, "%d channels in %s\n", channels, csvPath.c_str());
+  if (std::getenv("MARIGOLD_PREVIEW_LOG")) {
+    log::setMirror([](log::Level, const std::string& line) {
+      if (line.find("[events]") != std::string::npos) std::fprintf(stderr, "%s\n", line.c_str());
+    });
+  }
   auto began = std::chrono::steady_clock::now();
   auto elapsed = [&] {
     return static_cast<int>(
@@ -441,11 +456,19 @@ int main(int argc, char** argv) {
     if (!ids.empty()) store.addToLineup(ids);
   }
   std::fprintf(stderr, "Loading schedules and scores\xe2\x80\xa6 (%d s)\n", elapsed());
+  if (std::getenv("MARIGOLD_PREVIEW_UNSCHEDULED")) {
+    engine::Settings s = store.settings();
+    s.boardMoreEvents = s.boardUnscheduled = true;
+    store.setSettings(s);
+  }
   store.eventsOpen(true);
   // Until the requests stop (the schedules, then a round of scores), a
-  // minute and a half of the engine's time at least.
+  // minute and a half of the engine's time at least. The rest of the week's
+  // schedule (the small colleges' pages, about two hundred requests) takes
+  // some eight minutes of it here: up to 25 minutes, so the report has every
+  // day's games.
   int lastSent = -1, quiet = 0;
-  for (int round = 0; round < 400 && !(round >= 90 && quiet >= 30); ++round) {
+  for (int round = 0; round < 1500 && !(round >= 90 && quiet >= 30); ++round) {
     settle(1);
     auto now = store.events();
     quiet = requests.sent == lastSent && now && !now->loading ? quiet + 1 : 0;
@@ -487,6 +510,18 @@ int main(int argc, char** argv) {
     rowsOut.push(r);
   }
   data.set("rows", rowsOut);
+  if (const char* reportPath = std::getenv("MARIGOLD_PREVIEW_REPORT")) {
+    std::shared_ptr<std::string> csv;
+    bool done = false;
+    store.buildLiveEventsReport([&](std::shared_ptr<std::string> made) {
+      csv = std::move(made);
+      done = true;
+    });
+    for (int i = 0; i < 30 && !done; ++i) requests.drain();
+    std::ofstream f(reportPath, std::ios::binary | std::ios::trunc);
+    if (csv) f << *csv;
+    if (!csv || !f) std::fprintf(stderr, "Can't write %s\n", reportPath);
+  }
 
   std::string out = argc > 2 ? argv[2]
                              : (std::filesystem::path(csvPath).parent_path() / "marigold-live-events.html").string();

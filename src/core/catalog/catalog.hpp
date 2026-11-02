@@ -180,16 +180,27 @@ std::optional<int> virtualNumber(std::string_view name);
 
 // The zone a provider writes unmarked times in, from its country tag.
 std::optional<time::Zone> eventZone(const std::optional<std::string>& market);
+// The country an event family writes its times for, whichever group a copy
+// is filed in: its key's own country ("au (stan #)" -> "AU", "(mx) (vix #)"
+// -> "MX"), or a provider known to use one zone (Fanatiz: UTC-5, "PE").
+std::optional<std::string> familyMarket(std::string_view familyKey);
+// The market to read a slot's times by: its family's, else its own.
+std::optional<std::string> slotMarket(const ChannelTraits& traits);
 
 struct ParsedEvent {
   std::string title;
   std::optional<time::Seconds> start;
   // The title gave only a clock time, so the day is a guess (today).
   bool guessed = false;
+  // The slot named "all" as its competition ("Bears vs. Seahawks | all |
+  // ..."): its group's sport ("SOCCER PPV") says nothing about it.
+  bool noCompetition = false;
 };
 // Title and start time from an event name. Times without a zone are US
 // Eastern unless written European-style ("22 October 2026 17:45", taken as
-// UK time); a provider's country tag sets the zone for unmarked times.
+// UK time); a provider's country tag sets the zone for unmarked times, and
+// a slot's service tag naming a country (":Viaplay DK  03", ":VG  01") sets
+// it for all of its times, AM/PM ones too.
 ParsedEvent parseEventDetailed(std::string_view text, time::Seconds now,
                                const std::optional<std::string>& market = std::nullopt);
 std::pair<std::string, std::optional<time::Seconds>> parseEvent(

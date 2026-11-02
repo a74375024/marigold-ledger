@@ -858,6 +858,8 @@ EventsResult buildEvents(const std::vector<Channel>& channels,
         break;
       }
     }
+    // A family that writes its own country's times, whatever group holds a copy.
+    const std::optional<std::string> ownMarket = familyMarket(family);
     int named = 0;
     std::string headGroup = sorted.empty() || !sorted.front()->group ? "" : *sorted.front()->group;
     std::string league = leagueFor(family, headGroup, "");
@@ -870,12 +872,15 @@ EventsResult buildEvents(const std::vector<Channel>& channels,
       }
       named += 1;
       // A feed's own country says how to read its times; else its family's.
-      ParsedEvent parsed = parseEventDetailed(*t->eventText, now, t->market ? t->market : market);
+      ParsedEvent parsed =
+          parseEventDetailed(*t->eventText, now, ownMarket ? ownMarket : t->market ? t->market : market);
       if (parsed.title.empty()) continue;
       if (parsed.start && now - *parsed.start > 8 * 3600) continue;       // long over
       if (parsed.start && *parsed.start - now > 6 * 24 * 3600) continue;  // stale or far off
-      std::string eventLeague =
-          leagueFor(family, channel->group ? *channel->group : "", parsed.title);
+      // "all" for a competition: the group's sport isn't the slot's.
+      std::string eventLeague = parsed.noCompetition
+                                    ? leagueFor("", "", parsed.title)
+                                    : leagueFor(family, channel->group ? *channel->group : "", parsed.title);
       std::string key = eventKey(parsed.title, parsed.start);
       auto existing = eventsByKey.find(key);
       if (existing != eventsByKey.end()) {

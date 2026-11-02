@@ -350,8 +350,10 @@ TEST_CASE("queries: a month or two, day by day, or this week") {
   CHECK(queriesFor(*leagueByShort("UFC"), utc(2026, 10, 10, 16, 0), et) ==
         std::vector<std::string>{"dates=202610", ""});
   // Day by day in the viewer's zone: 02:00 UTC is still the 25th in New York.
+  // Build 125: five days (Thursday's and Friday's games from Monday).
   CHECK(queriesFor(*leagueByShort("NCAAM"), utc(2026, 10, 26, 2, 0), et) ==
-        std::vector<std::string>{"dates=20261025", "dates=20261026", "dates=20261027"});
+        std::vector<std::string>{"dates=20261025", "dates=20261026", "dates=20261027", "dates=20261028",
+                                 "dates=20261029"});
   CHECK(queriesFor(*leagueByShort("NCAAF"), now, et) == std::vector<std::string>{""});
 }
 

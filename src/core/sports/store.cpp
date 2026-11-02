@@ -231,7 +231,7 @@ std::vector<matcher::ProviderEvent> pastEvents(
     if (!t.familyKey || !t.eventText || used.count(id)) continue;
     const std::string& text = *t.eventText;
     if (std::none_of(text.begin(), text.end(), [](char c) { return c >= '0' && c <= '9'; })) continue;
-    catalog::ParsedEvent parsed = catalog::parseEventDetailed(text, now, t.market);
+    catalog::ParsedEvent parsed = catalog::parseEventDetailed(text, now, catalog::slotMarket(t));
     if (!parsed.start || parsed.guessed || parsed.title.empty()) continue;
     if (*parsed.start > now - 8 * 3600 || *parsed.start < now - 14 * 86400) continue;
     matcher::ProviderEvent p;
@@ -307,9 +307,11 @@ std::optional<RebuildResult> rebuild(const RebuildInput& in) {
   b.rosters = in.rosters;
   b.shouldStop = in.shouldStop;
   b.isCameraName = in.isCameraName;
+  b.seen = in.slotsSeen;
   auto built = matcher::build(b);
   if (!built) return std::nullopt;
   RebuildResult out;
+  out.slotsSeen = std::move(built->seen);
   out.events = markEndedByFeeds(built->events, in.previous, !in.events.empty(), in.now, in.channelExists,
                                 &out.endedByFeeds);
   out.stats = std::move(built->stats);
@@ -622,6 +624,7 @@ std::string toJson(const SavedResult& saved) {
     for (const matcher::GuideListing& l : *saved.listings) listings.push(matcher::toJson(l));
     v.set("listings", listings);
   }
+  if (saved.slotsSeen) v.set("slotsSeen", matcher::toJson(*saved.slotsSeen));
   return json::write(v);
 }
 
@@ -650,13 +653,16 @@ std::optional<SavedResult> savedResultFromJson(std::string_view textBody) {
     }
     saved.listings = std::move(listings);
   }
+  if (v["slotsSeen"].isObject())
+    saved.slotsSeen = std::make_shared<const matcher::SlotsSeen>(matcher::slotsSeenFromJson(v["slotsSeen"]));
   return saved;
 }
 
 std::optional<SavedResult> resultToSave(const std::vector<SportsEvent>& events,
                                         const std::vector<catalog::LiveEvent>& rawEvents,
                                         const std::vector<matcher::GuideListing>& listings, bool listingsReady,
-                                        Seconds now, std::string& lastFingerprint) {
+                                        Seconds now, std::string& lastFingerprint,
+                                        std::shared_ptr<const matcher::SlotsSeen> slotsSeen) {
   std::vector<SportsEvent> games;
   for (const SportsEvent& e : events) {
     if (e.game && !e.sources.empty()) games.push_back(e);
@@ -669,6 +675,13 @@ std::optional<SavedResult> resultToSave(const std::vector<SportsEvent>& events,
     parts.push_back(e.id + ":" + str::join(ids, "+"));
   }
   std::string print = str::join(parts, ",");
+  // A slot seen for the first time, or on a new day, is saved too.
+  if (slotsSeen) {
+    uint64_t seenPrint = slotsSeen->size();
+    for (const auto& [key, seen] : *slotsSeen)
+      seenPrint += key ^ (static_cast<uint64_t>(seen.first) * 31 + static_cast<uint64_t>(seen.last));
+    print += "|" + str::hex64(seenPrint);
+  }
   if (print == lastFingerprint) return std::nullopt;
   lastFingerprint = print;
   std::unordered_map<std::string, std::string> titleOfFeed;
@@ -685,6 +698,7 @@ std::optional<SavedResult> resultToSave(const std::vector<SportsEvent>& events,
   }
   saved.events = std::move(games);
   saved.listings = listings;
+  saved.slotsSeen = std::move(slotsSeen);
   return saved;
 }
 

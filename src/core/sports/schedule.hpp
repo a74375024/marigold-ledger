@@ -2,11 +2,18 @@
 // leagues (teams, logos, colors, start times, venue, week, notes, TV
 // networks) from a public scoreboard. No scores are used here.
 //
-// Kept to a minimum: one request per league for the next week, only when
-// Live Events is opened and the saved schedule is from an earlier day (or
+// Kept to a minimum: one request per league for the next week, once a day
+// (when Live Events is opened, or in the background shortly after launch
+// once it has been used) when the saved schedule is from an earlier day (or
 // on Refresh). Only picked leagues are asked for. Leagues none of your
 // channels showed are skipped and looked at again after a week. Nothing
 // about the viewer is sent.
+//
+// Today first (Build 125): every league's requests for today and tomorrow
+// go first (a month listing covers both; day-by-day leagues their first
+// two days), and the games they give are saved at once, so the board is
+// made from them while the rest of the week comes in. Then the other days,
+// with the other event calendars (calendars.hpp) between them.
 //
 // No I/O: requests are values (sources::Request), bodies are parsed from
 // string views with the streaming reader, and the cache is a JSON string
@@ -21,6 +28,7 @@
 #include <vector>
 
 #include "core/sources/common.hpp"
+#include "core/sports/calendars.hpp"
 #include "core/sports/leagues.hpp"
 #include "core/sports/my_sports.hpp"
 #include "core/sports/types.hpp"
@@ -56,6 +64,10 @@ constexpr Seconds kSkipFor = 7 * 86'400;
 constexpr Seconds kWatchableNoteGap = 6 * 3600;
 // After a failed fetch: 1 h, 1 h, 6 h, 24 h, then weekly.
 constexpr Seconds kBackoff[] = {3600, 3600, 6 * 3600, 24 * 3600, 7 * 86'400};
+// Day-by-day leagues: this many days (today, tomorrow) go in today's part.
+constexpr int kTodayDays = 2;
+// The background fetch only for a TV that used Live Events this lately.
+constexpr Seconds kUsedLatelyFor = 14 * 86'400;
 // Settings defaults ("Game schedule" and "Show games not in my channels").
 constexpr bool kEnabledByDefault = true;
 constexpr bool kShowsUnwatchableByDefault = true;
@@ -172,6 +184,11 @@ struct Saved {
   // Sources that refused us ("espn.com") -> when they're asked again.
   std::map<std::string, Seconds> refusedUntil;
   std::optional<int> schema;
+  // Today's part is saved, the days after tomorrow aren't yet (the app was
+  // closed before they came): they're asked for on their own.
+  bool restPending = false;
+  // The other event calendars (calendars.hpp), with their own schema.
+  calendars::Saved calendars;
 };
 std::string toJson(const Saved& saved);
 // nullopt when the text isn't a saved schedule (start empty).
@@ -188,7 +205,8 @@ struct Context {
 };
 
 struct Published {
-  // Games of the active leagues, finished ones for a day and a half, by start.
+  // Games of the active leagues, finished ones for a day and a half, by
+  // start; the other calendars' games of the competitions looked up too.
   std::vector<SportsGame> games;
   std::optional<Seconds> updatedAt;
   std::map<std::string, std::vector<SportsTeam>> rosters;
@@ -203,10 +221,11 @@ class Schedule {
  public:
   explicit Schedule(Saved saved = Saved(), std::string appBuild = "?");
 
-  // Live Events opened: begins a fetch when the saved schedule is from an
-  // earlier day, older than 20 h or of an older schema (or a league added
-  // since is missing), and not while backing off after failures. True when
-  // a fetch began.
+  // Live Events opened (or the background check after launch): begins a
+  // fetch when the saved schedule is from an earlier day, older than 20 h
+  // or of an older schema (or a league added since is missing, the days
+  // after tomorrow didn't come, or a calendar wasn't looked at today), and
+  // not while backing off after failures. True when a fetch began.
   bool refreshIfNeeded(const Context& ctx);
   // Settings › Live Events › Refresh schedule: every league, now.
   bool refreshNow(const Context& ctx);
@@ -217,32 +236,46 @@ class Schedule {
   bool requestRosters(const std::set<std::string>& shorts, const Context& ctx);
   // After matching: which leagues had a game on your channels.
   void noteWatchable(const std::set<std::string>& leagues, Seconds now);
+  // Live Events was used lately (a schedule fetched in the last two weeks):
+  // the day's fetch may start in the background.
+  bool usedLately(Seconds now) const;
 
   Published publish(const Context& ctx) const;
   // publish()'s games alone (a live scores round needs no rosters).
   std::vector<SportsGame> games(const Context& ctx) const;
   // Teams to pick from: the schedule's, plus every school for college leagues.
   std::vector<SportsTeam> teams(const League& league) const;
+  // The other calendars looked up for these picks.
+  std::vector<const calendars::Calendar*> activeCalendars(const Context& ctx) const;
 
   // MARK: The fetch in progress
 
   struct Pending {
-    enum class Kind { league, schools };
+    enum class Kind { league, schools, calendar };
     Kind kind = Kind::league;
     League league;
     std::string query;
     Seconds from = 0, to = 0;
+    // A calendar's request (Kind::calendar).
+    calendars::Ask ask;
     sources::Request request;
-    // Wait this long before sending (kRequestSpacingMs after the first).
+    // Wait this long before sending (kRequestSpacingMs after the first;
+    // calendars::kRequestSpacingMs between two of the calendars').
     int waitMs = 0;
+    // Part of today's games (the board waits for these).
+    bool today = false;
   };
   // Parsed on any thread: only `pending` and the body are read.
   struct Answer {
     std::optional<LeagueResult> league;
     std::optional<std::vector<SportsTeam>> schools;
+    std::optional<calendars::Parsed> calendar;
   };
 
-  bool fetching() const { return fetch_.has_value(); }
+  // Today's games (and tomorrow's) still coming: what Live Events waits for.
+  bool fetching() const { return fetch_.has_value() && !fetch_->todayDone; }
+  // Any fetch under way (the rest of the week, the other calendars).
+  bool busy() const { return fetch_.has_value(); }
   // The next request to send; nullopt when none is due (waiting for an
   // answer, or the fetch is over).
   std::optional<Pending> nextRequest();
@@ -263,27 +296,63 @@ class Schedule {
   };
   // Set once when a fetch ends (then cleared).
   std::optional<Finished> takeFinished();
+  // Today's part was just saved (once per fetch): a new schedule to match,
+  // while the rest of the week still comes.
+  bool takeBatch();
 
   const Saved& saved() const { return saved_; }
   // The saved schedule changed since the last call: write toJson(saved()).
   bool takeDirty();
 
  private:
-  bool start(const Context& ctx, bool force, std::optional<std::set<std::string>> only);
-  std::vector<SportsGame> gamesOf(const std::vector<League>& active, Seconds now) const;
+  bool start(const Context& ctx, bool force, std::optional<std::set<std::string>> only, bool restOnly = false);
+  std::vector<SportsGame> gamesOf(const std::vector<League>& active, const Context& ctx) const;
   bool skip(const std::string& league, Seconds now) const;
-  void finishLeague();
+  bool calendarsDue(const Context& ctx, bool force) const;
+  // Calendars whose games the scoreboard has too ("Ekstraklasa" among the
+  // all-soccer listing's competitions): not asked for, not shown.
+  std::set<std::string> coveredCalendars(const std::vector<League>& active) const;
+  void noteTags();
+  struct Step;
+  std::optional<Pending> nextStep(bool today);
+  void stepDone(bool today);
+  void commitToday();
+  void finishLeague(size_t index);
   void finish();
 
   Saved saved_;
   std::string appBuild_;
   bool dirty_ = false;
+  bool batch_ = false;
   bool recheckPending_ = false;
   std::set<std::string> wantedRosters_;
   std::optional<Finished> finished_;
+  // The all-soccer listing's competitions (lower case), for coveredCalendars.
+  std::set<std::string> soccerTags_;
+  struct Step {
+    size_t league = 0;  // into FetchState::active
+    std::string query;
+  };
+  // One league within a fetch.
+  struct Run {
+    int steps = 0;          // requests left to answer
+    bool begun = false;     // looked at (asked, or skipped)
+    bool skipped = false;
+    bool answered = false;  // an answer came (the first says which form works)
+    bool plainForm = false;
+    bool ok = false;
+    bool finished = false;
+    std::vector<SportsGame> list;
+    std::map<std::string, SportsTeam> roster;
+    // Only part of the window is asked for (the rest on its own): the saved
+    // games outside `asked` (each [from, to)) are kept.
+    bool partial = false;
+    std::vector<std::pair<Seconds, Seconds>> asked;
+  };
   struct FetchState {
     bool force = false;
     std::optional<std::set<std::string>> only;
+    bool restOnly = false;
     Seconds now = 0, from = 0, to = 0;
     time::Zone zone = time::Zone::utc();
     std::vector<League> active;
@@ -296,18 +365,21 @@ class Schedule {
     int leaguesAsked = 0;
     int sent = 0;
     bool networkTrouble = false;
-    size_t leagueIndex = 0;
-    bool inLeague = false;
-    std::vector<std::string> queries;
-    size_t queryIndex = 0;
+    std::vector<Run> runs;
+    // Today's part, then the other days.
+    std::vector<Step> today, rest;
+    size_t todayIndex = 0, restIndex = 0;
+    bool todayDone = false;
+    bool committed = false;  // today's part saved
+    bool currentToday = false;
     bool retrying = false;
-    bool plainForm = false;
-    std::vector<SportsGame> list;
-    std::map<std::string, SportsTeam> roster;
-    bool ok = false;
     bool schoolsAsked = false;
     bool awaiting = false;
     bool awaitingSchools = false;
+    // The other calendars, between the other days' requests.
+    std::optional<calendars::Pass> calendars;
+    bool awaitingCalendar = false;
+    int sinceCalendar = 2;  // scoreboard requests since the last calendar one
   };
   std::optional<FetchState> fetch_;
 };

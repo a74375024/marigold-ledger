@@ -794,10 +794,22 @@ void showOnBoardRows(App& app, ui::ListPanel& p, bool about) {
   dim(*row("Games not on my channels", "Dimmed at the end of each row", &Settings::showUnwatchable,
            "Games none of your channels show, so you know they're on. Off leaves them out."),
       schedule, "Turn on Game schedule");
-  row("More events", "Other sports, and games in other languages", &Settings::boardMoreEvents,
-      "A row at the end of the board for sports you don't follow in My Sports, and for events shown only on "
-      "channels from other countries, in other languages.\nOff: they aren't on the board, but Search still finds "
-      "them and they play from there.");
+  row("More events", "Sports you don't follow", &Settings::boardMoreEvents,
+      "A row at the end of the board for sports you don't follow in My Sports.\nOff: they aren't on the board, "
+      "but Search still finds them and they play from there.");
+  // Build 125: tiles come from the schedule; the rest only in a row of their
+  // own, with this one switch.
+  ui::PanelItem* unscheduled =
+      row("Games without a schedule", "A row of events no schedule lists", &Settings::boardUnscheduled,
+          "Events your provider's event channels carry that aren't on any game schedule, such as smaller leagues "
+          "and youth games. They get a row of their own at the end of the board, never a sport's row or Live "
+          "now. Replays, shows and old slots are still left out.\nOff: the board has scheduled games only. "
+          "Search still finds the rest.");
+  if (!schedule) {
+    // Game schedule off: the board is the provider's events.
+    unscheduled->on = true;
+    dim(*unscheduled, false, "Always shown while Game schedule is off");
+  }
   row("Time not listed", "Events with no start time", &Settings::boardUntimed,
       "Events your channels carry without a start time, so the board can't place them by the clock. They play "
       "when you pick them, if they're on.\nOff: they aren't on the board, but Search still finds them.");

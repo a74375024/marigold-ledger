@@ -25,7 +25,7 @@ std::string slotProblem(const catalog::ChannelTraits& t, time::Seconds now) {
   if (catalog::isPlaceholder(text) || t.kind == catalog::ChannelKind::placeholder ||
       rx::test("^\\W*(ended|end)\\b", text, true))
     return "a placeholder or ended slot";
-  catalog::ParsedEvent parsed = catalog::parseEventDetailed(text, now, t.market);
+  catalog::ParsedEvent parsed = catalog::parseEventDetailed(text, now, catalog::slotMarket(t));
   if (parsed.title.empty()) return "no event title in the slot's name";
   if (parsed.start && now - *parsed.start > 8 * 3600) return "long over (by its time)";
   if (parsed.start && *parsed.start - now > 6 * 24 * 3600) return "more than 6 days away";
@@ -36,7 +36,7 @@ std::string slotProblem(const catalog::ChannelTraits& t, time::Seconds now) {
 
 std::string liveEventsCsv(const LiveEventsReportInput& in) {
   static const char* const kColumns[] = {"group",  "feed",   "slot", "read_as", "sport",       "starts",
-                                         "result", "reason", "tile", "rows",    "group_starts"};
+                                         "result", "reason", "tile", "rows",    "group_starts", "schedule"};
   std::string out;
   for (size_t i = 0; i < std::size(kColumns); ++i) out += (i ? "," : "") + std::string(kColumns[i]);
   out += "\n";
@@ -92,7 +92,7 @@ std::string liveEventsCsv(const LiveEventsReportInput& in) {
   for (const Slot& slot : slots) {
     const catalog::ChannelTraits& t = *slot.traits;
     std::string group = familyName.count(slot.family) ? familyName[slot.family] : slot.family;
-    std::string readAs, sport, starts, result, reason, tile, rows;
+    std::string readAs, sport, starts, result, reason, tile, rows, schedule;
     auto ev = eventOf.find(slot.id);
     if (ev == eventOf.end()) {
       result = "not an event";
@@ -137,10 +137,16 @@ std::string liveEventsCsv(const LiveEventsReportInput& in) {
       } else {
         reason = "no tile took it (no sport or matchup recognised)";
       }
+      // Build 125: whether it went to a scheduled game (tiles come from the
+      // schedule), was left out as a leftover, or has no schedule.
+      if (built != tileOf.end() && built->second->game) schedule = "on the schedule";
+      else if (hiddenWhy && hiddenWhy->find("leftover") != std::string::npos) schedule = "leftover";
+      else schedule = "no schedule";
     }
     std::string starts2 = in.groupStarts ? in.groupStarts(slot.family) : std::string();
     std::vector<std::string> cells = {group,  slot.number ? std::to_string(slot.number) : std::string(),
-                                      *t.eventText, readAs, sport, starts, result, reason, tile, rows, starts2};
+                                      *t.eventText, readAs, sport, starts, result, reason, tile, rows, starts2,
+                                      schedule};
     for (size_t i = 0; i < cells.size(); ++i) {
       if (i) out += ",";
       out += csvCell(redact(cells[i]));
