@@ -1104,3 +1104,27 @@ Live Events looks further ahead and has today's games sooner. The week's schedul
 | UFC | UFC/PFL & boxing picked | UFC cards come from the scoreboard as before, never twice |
 | Budget | Send a log after a day of use | "calendars: N asked …, M today" with M at most 40; the schedule line's requests as before (about 135 a day for the owner's picks, 15 for NFL, NBA and MLB only) |
 | Refused | (Developer) make the calendar host answer 429 | The calendar is left alone until the next day; the scoreboard's leagues still come |
+
+## Build 126 — Guide top
+
+The guide's top gives the picture more room. The preview is 640×360 at the top right (was 400×225), rounded with a faint outline as before and with no live mark on it; the clock sits left of it, at the end of the programme column. The column beside it (1024 wide) has the neighbourhood and the header's status line; the channel's logo, number, name, ★, feeds, EAST/WEST and "Also on … at 9:00 PM"; the title at 50 px; the status row: the time range in white, "· episode" and NEW, with no LIVE word or red mark anywhere in the top (the progress bar and "N min left" beside it say the show is on now); a later show keeps LATER and "Starts in 18 min" ("Starts in 1 h 20 min" an hour or more ahead; a show already over says "Ended"); the description in three lines at 22 px (was two at 20); and "NEXT 9:00 PM · Title · Episode", the show after the focused one on that channel. The preview always plays the channel's show on now, so while a later show is focused it says what it plays on a dark band at its bottom: "NOW · <title> · N min left" (no red dot). The ruler moves down to y 424 and the rows start at 476: five rows and a part (was six and a part). Live Events and Search keep their corner where it was, with its LIVE chip, so the Live Events "Same places" row above now holds for its own corner only. The in-player guide is unchanged. The top's words are made when focus moves to another show, the lists change or the minute turns, never per frame; the preview's rest and gap are as before. The picture's place snaps, never animates: back in the guide with a game still previewing in Live Events' corner, the picture moves into the large preview and the channel's card shows there until the TV has placed it (about 0.3 s).
+
+| Area | How to check | Pass |
+|---|---|---|
+| Layout | Open the guide | The preview at the top right, its top level with the clock; the column at the left with nothing running under the preview; the ruler under the preview; five full rows and part of a sixth above the key bar |
+| On now | Rest on a show on now | The time range in white, then the episode and NEW; no LIVE word or red mark in the top or on the picture; the progress bar with "18 min left" beside it |
+| Later show | Right to a later show on the same row | LATER, "Tonight · 9:00 – 10:00 PM", "Starts in 1 h 20 min"; the picture keeps playing, with "NOW · <the show on now> · 18 min left" on a dark band at its bottom, readable over a bright picture |
+| Another row | Down onto a channel, then Right to its later show | The band shows only once that channel plays in the preview (after the usual rest), never over the previous channel's picture |
+| Next | Rest on a show on now, then on a later one, then on the last listed show | "NEXT 9:00 PM · Title · Episode" under the description for the show after the focused one; none after the last |
+| Description | A show with a long description | Three lines at most, the last ending in "…", clear of the NEXT line |
+| Channel line | A favourite East/West channel with feeds | Logo, number, name, ★, the feeds chip, EAST/WEST and "Also on … West at 11:00 PM" on one line, the "Also on" cut before the column's end |
+| Chips | Tonight ▼ › Tomorrow Night, then Filter › Sports on now | "BACK returns to Now" and the filter chip on the top line, left of the clock, never under it |
+| Grid | Scroll through a long lineup; CH+ / CH-; open the neighbourhood column; point at rows and cells (LG) | The focused row stays in view with one below; the column's header sits in the ruler row and its list starts with the rows; every row and cell is a click target where it is drawn |
+| Digits | Type 2 0 6 | The number box under the preview's right edge |
+| Player | OK on a show on now, then Back | Full screen on the same stream, no re-tune; back, it shrinks into the large preview |
+| Live Events | Open Live Events from the guide | Its clock, corner (400×225 with the LIVE chip) and buttons where they were; the guide's preview doesn't carry into it, as before |
+| Back from Live Events | Rest on a live game until it plays in Live Events' corner, then Back to the guide | The game moves into the large preview: the card (logo, spinner) for a moment, then the picture; never a cut-off picture or one framed in black; no animation |
+| Search | Search, rest on a live channel until it plays muted, Back to the guide | Search's corner as before; back in the guide the picture moves into the large preview the same way |
+| Previews off | Settings › Guide › Preview channels off | The large card with the channel's logo; no NOW band |
+| In-player guide | Left in the player | As in Build 116 |
+| Redraws | Leave the guide resting on a show on now and send a log | While idle nothing redraws except once a minute (the clock, the bar and "N min left"); the "loop" line as in Build 120; the preview starts after the same rest as before |

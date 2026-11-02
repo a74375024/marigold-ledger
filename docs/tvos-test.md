@@ -56,6 +56,7 @@ These rows are what is new on Apple TV.
 |---|---|---|
 | Full screen | OK a live channel | The picture full screen, the right shape (letterboxed if it isn't 16:9), sound |
 | Corner | The guide's corner preview | The picture in the corner, the guide drawn around it |
+| Guide top (Build 126) | The guide's top on a show on now and on a later one; then Live Events and back | As docs/m4-test.md › Build 126 — Guide top: the 640×360 preview at the top right with no live mark, "NOW · … · N min left" on it for a later show, five rows and a part; Live Events' corner where it was; the picture snaps between them, never cut off |
 | TS | A plain .ts channel (Xtream) | Plays |
 | HLS | A channel that is HLS (.m3u8) | Plays |
 | MPEG-2 | A broadcast channel in MPEG-2 or with MP2 sound, if you have one | Plays, with sound |

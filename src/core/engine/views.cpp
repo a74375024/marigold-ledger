@@ -220,6 +220,41 @@ NowNext nowAndNext(const Listings& li, const std::string& entryId, time::Seconds
   return out;
 }
 
+GuideTop guideTop(const std::vector<Listing>& v, int focused, time::Seconds now) {
+  GuideTop out;
+  if (focused < 0 || static_cast<size_t>(focused) >= v.size()) return out;
+  const Listing& l = v[static_cast<size_t>(focused)];
+  out.when = l.isOn(now) ? GuideTop::When::On : l.start > now ? GuideTop::When::Later : GuideTop::When::Ended;
+  if (static_cast<size_t>(focused) + 1 < v.size()) out.next = &v[static_cast<size_t>(focused) + 1];
+  if (out.when != GuideTop::When::On) {
+    auto it = std::upper_bound(v.begin(), v.end(), now, [](time::Seconds x, const Listing& s) { return x < s.end; });
+    if (it != v.end() && it->isOn(now)) out.playing = &*it;
+  }
+  return out;
+}
+
+std::string minutesLeft(const Listing& l, time::Seconds now) {
+  if (!l.isOn(now)) return {};
+  return std::to_string(static_cast<long>((l.end - now + 59) / 60)) + " min left";
+}
+
+std::string startsIn(const Listing& l, time::Seconds now) {
+  if (l.start <= now) return {};
+  long m = static_cast<long>((l.start - now + 59) / 60);
+  if (m < 60) return "Starts in " + std::to_string(m) + " min";
+  std::string out = "Starts in " + std::to_string(m / 60) + " h";
+  return m % 60 ? out + " " + std::to_string(m % 60) + " min" : out;
+}
+
+std::string titleAndEpisode(const Listing& l) {
+  return l.episode.empty() ? l.title : l.title + " \xc2\xb7 " + l.episode;
+}
+
+std::string nowPlaying(const Listing& playing, time::Seconds now) {
+  std::string left = minutesLeft(playing, now);
+  return left.empty() ? playing.title : playing.title + " \xc2\xb7 " + left;
+}
+
 std::string folded(const std::string& s) { return str::lowerAscii(str::foldDiacritics(s)); }
 
 std::vector<std::string> searchChannels(const Channels& ch, const std::string& query, size_t max) {

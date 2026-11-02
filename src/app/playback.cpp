@@ -231,6 +231,7 @@ void Playback::scheduleReapply() {
 void Playback::setFull() {
   bool changed = !full();
   setShowingFull(true);
+  placing_ = false;
   if (muted_) {
     // Sound comes with full screen.
     muted_ = false;
@@ -242,6 +243,7 @@ void Playback::setFull() {
 
 void Playback::setCorner(gfx::Rect r, bool muted) {
   bool changed = full() || r.x != corner_.x || r.y != corner_.y || r.w != corner_.w || r.h != corner_.h;
+  bool moved = !full() && changed && corner_.w > 0;
   setShowingFull(false);
   if (muted != muted_) {
     muted_ = muted;
@@ -250,8 +252,18 @@ void Playback::setCorner(gfx::Rect r, bool muted) {
   corner_ = r;
   if (changed) {
     app_.video().setWindow(r);
-    if (active()) scheduleReapply();
+    if (active()) {
+      scheduleReapply();
+      // Corner to corner: the card shows until the first re-apply.
+      if (moved) placing_ = true;
+    }
   }
+}
+
+void Playback::keepCorner(gfx::Rect r) {
+  if (!active() || full()) return;
+  if (r.x == corner_.x && r.y == corner_.y && r.w == corner_.w && r.h == corner_.h) return;
+  setCorner(r, muted_);
 }
 
 bool Playback::tick(uint32_t ms) {
@@ -261,6 +273,10 @@ bool Playback::tick(uint32_t ms) {
     if (at && ms >= at) {
       at = 0;
       app_.video().reapplyWindow(window());
+      if (placing_) {
+        placing_ = false;
+        app_.invalidate();  // the picture shows in its new place
+      }
     }
   }
   bool reapplying = reapplyAt_[0] || reapplyAt_[1] || reapplyAt_[2];

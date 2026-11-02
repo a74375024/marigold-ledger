@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -114,6 +115,27 @@ struct NowNext {
   const Listing* next = nullptr;
 };
 NowNext nowAndNext(const Listings& li, const std::string& entryId, time::Seconds now);
+
+// The guide's top for the focused show (Build 126), worked out when focus
+// moves or the minute turns, never per frame. `focused` indexes `v` (-1:
+// none). The preview always plays the channel's show on now, so while a
+// later (or earlier) show is focused it names what it plays.
+struct GuideTop {
+  enum class When : uint8_t { None, On, Later, Ended };
+  When when = When::None;
+  const Listing* next = nullptr;     // the show after the focused one ("NEXT 9:00 PM · …")
+  const Listing* playing = nullptr;  // on now when the focused show isn't (the preview's "NOW" label)
+};
+GuideTop guideTop(const std::vector<Listing>& v, int focused, time::Seconds now);
+// "18 min left" for a show on now (whole minutes, rounded up); "" otherwise.
+std::string minutesLeft(const Listing& l, time::Seconds now);
+// "Starts in 18 min", "Starts in 1 h 20 min", "Starts in 2 h"; "" once it
+// has started.
+std::string startsIn(const Listing& l, time::Seconds now);
+// "Title · Episode", or the title alone.
+std::string titleAndEpisode(const Listing& l);
+// After the preview's "NOW": "Title · 18 min left".
+std::string nowPlaying(const Listing& playing, time::Seconds now);
 
 // Channels whose name, number, local station or neighborhood matches,
 // best first: exact name, number, name start, station start, word start,

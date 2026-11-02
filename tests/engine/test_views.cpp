@@ -169,6 +169,58 @@ TEST_CASE("views: on now and next") {
   CHECK(views::nowAndNext(li, "nothing", 1500).now == nullptr);
 }
 
+TEST_CASE("views: the guide's top names the next show and what the preview plays") {
+  using When = views::GuideTop::When;
+  std::vector<Listing> v = {show("A", 1000, 2000), show("B", 2000, 3000), show("C", 5000, 6000)};
+  v[1].episode = "Pilot";
+  // On now: the next show, no NOW label (the preview plays this one).
+  views::GuideTop t = views::guideTop(v, 0, 1500);
+  CHECK(t.when == When::On);
+  REQUIRE(t.next != nullptr);
+  CHECK(t.next->title == "B");
+  CHECK(t.playing == nullptr);
+  // A later show focused: the preview's label names the one on now.
+  t = views::guideTop(v, 1, 1500);
+  CHECK(t.when == When::Later);
+  REQUIRE(t.playing != nullptr);
+  CHECK(t.playing->title == "A");
+  REQUIRE(t.next != nullptr);
+  CHECK(t.next->title == "C");
+  // Nothing on now (a gap): no label; the last show has no next.
+  t = views::guideTop(v, 2, 4000);
+  CHECK(t.when == When::Later);
+  CHECK(t.playing == nullptr);
+  CHECK(t.next == nullptr);
+  // A show already over (the window's first half hour).
+  t = views::guideTop(v, 0, 2500);
+  CHECK(t.when == When::Ended);
+  REQUIRE(t.playing != nullptr);
+  CHECK(t.playing->title == "B");
+  // No show focused.
+  CHECK(views::guideTop(v, -1, 1500).when == When::None);
+  CHECK(views::guideTop(v, 3, 1500).when == When::None);
+  CHECK(views::guideTop({}, 0, 1500).next == nullptr);
+}
+
+TEST_CASE("views: the guide's top time words") {
+  Listing l = show("News", 6000, 9600);
+  CHECK(views::minutesLeft(l, 6000) == "60 min left");
+  CHECK(views::minutesLeft(l, 9500) == "2 min left");   // rounded up
+  CHECK(views::minutesLeft(l, 9599) == "1 min left");
+  CHECK(views::minutesLeft(l, 9600).empty());           // over
+  CHECK(views::minutesLeft(l, 5000).empty());           // not yet
+  CHECK(views::startsIn(l, 6000 - 18 * 60) == "Starts in 18 min");
+  CHECK(views::startsIn(l, 6000 - 30) == "Starts in 1 min");
+  CHECK(views::startsIn(l, 6000 - 80 * 60) == "Starts in 1 h 20 min");
+  CHECK(views::startsIn(l, 6000 - 120 * 60) == "Starts in 2 h");
+  CHECK(views::startsIn(l, 6000).empty());
+  CHECK(views::titleAndEpisode(l) == "News");
+  l.episode = "Late Edition";
+  CHECK(views::titleAndEpisode(l) == "News \xc2\xb7 Late Edition");
+  CHECK(views::nowPlaying(l, 9600 - 18 * 60) == "News \xc2\xb7 18 min left");
+  CHECK(views::nowPlaying(l, 1000) == "News");
+}
+
 TEST_CASE("views: channel search ranks names, numbers and stations") {
   Channels ch;
   auto add = [&](GuideChannel g) {

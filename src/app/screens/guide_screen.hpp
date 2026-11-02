@@ -1,7 +1,8 @@
-// The guide (LiveTVGuideView): hero with the focused show and the preview
-// corner, the time ruler, the channel grid with neighborhood headers and the
-// colour-key bar, right of the left rail (Build 112): the strip of sections,
-// the neighborhood column that pushes the grid, and the menu.
+// The guide (LiveTVGuideView): the focused show's column beside a large
+// preview (Build 126), the time ruler, the channel grid with neighborhood
+// headers and the colour-key bar, right of the left rail (Build 112): the
+// strip of sections, the neighborhood column that pushes the grid, and the
+// menu.
 #pragma once
 
 #include <memory>
@@ -117,6 +118,25 @@ class GuideScreen : public Screen {
   void digit(int d);
   void requestVisibleListings();
 
+  // The top's words for the focused show (Build 126), made again only when
+  // focus moves to another show, the lists change or the minute turns:
+  // never per frame.
+  struct Top {
+    std::string id;  // the channel
+    time::Seconds start = -1, minute = -1;
+    uint64_t ch = ~0ull, li = ~0ull;
+    bool clock24 = false;
+    engine::views::GuideTop::When when = engine::views::GuideTop::When::None;
+    std::string also;                      // "Also on ... at 9:00 PM"
+    std::string time;                      // "Tonight · 9:00 – 10:00 PM"
+    std::string count;                     // "18 min left" / "Starts in 18 min" / "Ended"
+    double progress = 0;                   // on now: how far in
+    std::vector<std::string> description;  // wrapped, three lines at most
+    std::string nextTime, nextText;        // "9:00 PM", "· Title · Episode"
+    std::string playing;                   // after the preview's "NOW" ("" none)
+  };
+  const Top& top(ui::Ctx& c, const GuideChannel& g, const Listing* l);
+
   void drawHero(ui::Ctx& c);
   void drawPreview(ui::Ctx& c);
   // The filter and "BACK returns to Now" chips, right-aligned on the hero's
@@ -183,6 +203,8 @@ class GuideScreen : public Screen {
   float left_ = left_rail::kRestLeft;  // the timeline and grid's left edge
   bool narrow_ = false;               // the two-hour window (column open)
   int pointer_ = 0;  // what the pointer is on (a hit id) while it shows
+
+  Top top_;
 
   std::string digits_;
   uint32_t digitsAt_ = 0;

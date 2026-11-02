@@ -24,10 +24,17 @@ using ui::Weight;
 namespace theme = ui::theme;
 
 // Geometry from LiveTVGuideView (points = layout units), right of the left
-// rail: the hero stays at kHeroX; the timeline and grid start there at rest
-// and are pushed right while the neighborhood column is open. With no tab
-// row, the timeline sits right under the hero.
+// rail: the programme column stays at kHeroX; the timeline and grid start
+// there at rest and are pushed right while the neighborhood column is open.
+// With no tab row, the timeline sits right under the top (Build 126: the
+// large preview at the right and the column beside it, five rows and a
+// part below).
 constexpr float kHeroX = left_rail::kRestLeft;
+constexpr Rect kPreview = top_bar::kGuidePreview;
+constexpr float kHeroW = 1024;  // the column, up to the preview's gap (1160)
+constexpr float kHeroRight = kHeroX + kHeroW;
+constexpr float kDescW = 1000;
+constexpr float kDescStep = 31;  // the description's 22 px lines
 constexpr float kRight = gfx::kLayoutWidth - 80;  // the grid's right edge
 constexpr float kChannelW = 182;
 constexpr float kChannelCol = 190;  // the channel cell and its gap
@@ -36,12 +43,13 @@ constexpr int kRestMinutes = 180;
 constexpr int kColumnMinutes = 120;  // a minute stays about 10 px wide
 constexpr float kRowH = 84;
 constexpr float kHeaderH = 22;
-constexpr float kRulerY = 340;
-constexpr float kGridTop = 392;
+constexpr float kRulerY = 424;
+constexpr float kGridTop = 476;
 constexpr float kGridBottom = 996;
 constexpr float kMinCell = 40;   // narrower segments render as gaps
 constexpr float kTextCell = 110;  // text only from this width
-constexpr Rect kPreview = top_bar::kPreview;
+static_assert(kHeroRight + 40 == kPreview.x, "the column ends 40 short of the preview");
+static_assert(kPreview.y + kPreview.h + 24 == kRulerY, "the ruler sits under the preview");
 
 constexpr time::Seconds kShift = 90 * 60;       // Right/Left past the edge
 constexpr time::Seconds kMaxAhead = 48 * 3600;  // how far later the grid goes
@@ -85,14 +93,6 @@ engine::views::Tab tabOf(rail::Item i) {
 
 bool inRange(int id, int base) { return id >= base && id < base + 100; }
 
-std::string durationText(time::Seconds s) {
-  long m = static_cast<long>((s + 59) / 60);
-  char buf[48];
-  if (m >= 60) std::snprintf(buf, sizeof buf, "Starts in %ld h %ld m", m / 60, m % 60);
-  else std::snprintf(buf, sizeof buf, "Starts in %ld m", m);
-  return buf;
-}
-
 std::string upper(const std::string& s) {
   std::string out = s;
   for (char& ch : out) ch = static_cast<char>(ch >= 'a' && ch <= 'z' ? ch - 32 : ch);
@@ -133,6 +133,11 @@ void GuideScreen::shown() {
     if (app_.store().settings().previewChannels) p.setCorner(kPreview);
     else p.stop();
     if (!p.entry().empty()) focusChannel(p.entry());
+  } else {
+    // Back from Live Events or Search with their corner still playing: the
+    // picture moves into the guide's larger preview (the card shows there
+    // until the TV has placed it).
+    p.keepCorner(kPreview);
   }
 }
 
@@ -1196,105 +1201,184 @@ void GuideScreen::drawHeaderLine(ui::Ctx& c, float x, float y, float right) {
   ui::label(c, line, x, y + 3, Weight::Regular, 18, theme::white(0.45f * alpha), right - x);
 }
 
-void GuideScreen::drawHero(ui::Ctx& c) {
-  const GuideChannel* g = focusedChannel();
-  float x = kHeroX, y = 48;
-  float w = 1240;
-  float right = x + w;
-  float chipsLeft = drawChips(c, right);
-  if (g) {
-    ui::label(c, g->section, x, y, Weight::Bold, 22, theme::white(0.6f));
-  } else if (focusLine_ >= 0 && lines_[static_cast<size_t>(focusLine_)].kind == Line::Kind::Prompt) {
-    ui::label(c, "My Lineup", x, y, Weight::Bold, 22, theme::white(0.6f));
-  }
-  float sx = x + (g ? ui::textWidth(c, g->section, Weight::Bold, 22) + 24 : 0);
-  drawHeaderLine(c, sx, y, chipsLeft - 16);
-  y += 40;
-  if (!g) {
-    if (focusLine_ >= 0 && lines_[static_cast<size_t>(focusLine_)].kind == Line::Kind::Prompt) {
-      ui::label(c, "Make Live TV yours", x, y + 10, Weight::Bold, 44, theme::white());
-      ui::paragraph(c,
-                    "Set up My Lineup: your local stations and the channels you watch, in one short "
-                    "guide instead of every channel your provider has.",
-                    x, y + 80, 1200, Weight::Regular, 22, theme::white(0.7f), 2);
-    }
-    return;
-  }
-  // Logo, name, star, feeds chip.
-  ui::logo(c, g->logoUrl, "", {x, y, 90, 34});
-  float nx = x + (g->logoUrl.empty() ? 0 : 104);
-  nx += ui::label(c, g->name, nx, y + 1, Weight::Medium, 26, theme::white(), 600) + 14;
-  if (g->favorite) nx += ui::label(c, "\xe2\x98\x85", nx, y + 2, Weight::Bold, 24, theme::hex(theme::kStar)) + 12;
-  if (g->feeds > 1)
-    nx += ui::chip(c, std::to_string(g->feeds) + " feeds", nx, y + 4, 18, theme::white(0.5f), theme::white(0.85f), true) +
-          12;
-  const Listing* l = focusedListing();
+const GuideScreen::Top& GuideScreen::top(ui::Ctx& c, const GuideChannel& g, const Listing* l) {
+  namespace views = engine::views;
+  using When = views::GuideTop::When;
   time::Seconds now = c.now;
-  if (!g->partner.empty()) {
-    // East/West: which version, and when this show is on the other one.
-    nx += ui::coastChip(c, g->west, nx, y + 4, 16) + 14;
-    const GuideChannel* other = ch_->find(g->partner);
+  time::Seconds start = l ? l->start : -1;
+  if (top_.id == g.id && top_.start == start && top_.minute == now / 60 && top_.ch == chVersion_ &&
+      top_.li == liVersion_ && top_.clock24 == c.clock24)
+    return top_;
+  Top t;
+  t.id = g.id;
+  t.start = start;
+  t.minute = now / 60;
+  t.ch = chVersion_;
+  t.li = liVersion_;
+  t.clock24 = c.clock24;
+  const std::vector<Listing>* v = li_ ? li_->forChannel(g.id) : nullptr;
+  if (l && v) {
+    views::GuideTop gt = views::guideTop(*v, programIndex(*v, focusTime_), now);
+    t.when = gt.when;
+    // The day only for a show that isn't on now ("Tonight · 9:00 – 10:00 PM").
+    std::string day = gt.when == When::On ? std::string() : ui::dayWord(c, l->start);
+    t.time = (day.empty() ? "" : day + " \xc2\xb7 ") + ui::range(c, l->start, l->end, true);
+    if (gt.when == When::On) t.count = views::minutesLeft(*l, now);
+    else if (gt.when == When::Later) t.count = views::startsIn(*l, now);
+    else if (gt.when == When::Ended) t.count = "Ended";
+    if (!l->overview.empty()) t.description = c.t.wrap(l->overview.string(), Weight::Regular, 22, kDescW, 3);
+    if (gt.next) {
+      t.nextTime = ui::clock(c, gt.next->start);
+      t.nextText = "\xc2\xb7 " + views::titleAndEpisode(*gt.next);
+    }
+    if (gt.playing) t.playing = views::nowPlaying(*gt.playing, now);
+  }
+  if (l && !g.partner.empty()) {
+    // East/West: when this show is on the other version.
+    const GuideChannel* other = ch_->find(g.partner);
     const std::vector<Listing>* ov = li_ && other ? li_->forChannel(other->id) : nullptr;
-    if (l && ov) {
+    if (ov) {
       for (const Listing& o : *ov) {
         if (o.title != l->title || o.end <= now || o.start == l->start) continue;
         std::string when = o.isOn(now) ? "now" : "at " + ui::clock(c, o.start);
         std::string day = o.isOn(now) ? "" : ui::dayWord(c, o.start);
-        ui::label(c, "Also on " + other->name + " " + (day.empty() ? when : day + " " + when), nx, y + 2,
-                  Weight::Medium, 22, theme::white(0.7f), x + w - nx);
+        t.also = "Also on " + other->name + " " + (day.empty() ? when : day + " " + when);
         break;
       }
     }
   }
-  y += 46;
+  top_ = std::move(t);
+  return top_;
+}
 
-  ui::label(c, l ? l->title : g->name, x, y, Weight::Bold, 44, theme::white(), w);
-  y += 62;
-  float bx = x;
-  if (l) {
-    bool on = l->isOn(now);
-    if (on) bx += ui::chip(c, "LIVE", bx, y + 2, 18, theme::hex(theme::kLive), theme::white()) + 12;
-    else bx += ui::chip(c, "LATER", bx, y + 2, 18, theme::white(0.6f), theme::white(0.85f), true) + 12;
-    if (l->premiere) bx += ui::chip(c, "NEW", bx, y + 2, 18, theme::hex(theme::kNew), theme::white()) + 12;
-    if (!on && app_.store().hasShowReminder(g->id, l->start))
-      bx += ui::chip(c, "REMINDER SET", bx, y + 2, 18, theme::white(0.6f), theme::white(0.85f), true) + 12;
-    std::string day = ui::dayWord(c, l->start);
-    std::string when = (day.empty() ? "" : day + " \xc2\xb7 ") + ui::range(c, l->start, l->end, true);
-    bx += ui::label(c, when, bx, y, Weight::Medium, 24, theme::white()) + 10;
-    if (l->outside) bx += ui::chip(c, "OUTSIDE LISTING", bx, y + 4, 15, theme::white(0.45f), theme::white(0.7f), true) + 10;
-    if (!l->episode.empty())
-      ui::label(c, "\xc2\xb7 " + l->episode, bx, y + 2, Weight::Regular, 22, theme::white(0.65f), x + w - bx);
-    y += 44;
-    if (on) {
-      double frac = static_cast<double>(now - l->start) / static_cast<double>(std::max<time::Seconds>(1, l->end - l->start));
-      ui::progress(c, {x, y + 4, 420, 6}, frac);
-    } else {
-      ui::label(c, durationText(l->start - now), x, y - 4, Weight::Medium, 20, theme::white(0.7f));
+void GuideScreen::drawHero(ui::Ctx& c) {
+  using When = engine::views::GuideTop::When;
+  const GuideChannel* g = focusedChannel();
+  float x = kHeroX, y = 48;
+  float right = kHeroRight;
+  // The clock at the column's top right, beside the preview; the filter and
+  // "BACK returns to Now" chips left of it.
+  std::string clock = ui::clock(c, c.now);
+  float clockW = ui::textWidth(c, clock, Weight::Medium, 26);
+  ui::label(c, clock, right - clockW, 44, Weight::Medium, 26, theme::white(0.7f));
+  float chipsLeft = drawChips(c, right - clockW - 24);
+  bool prompt = focusLine_ >= 0 && lines_[static_cast<size_t>(focusLine_)].kind == Line::Kind::Prompt;
+  if (g) ui::label(c, g->section, x, y, Weight::Bold, 22, theme::white(0.6f));
+  else if (prompt) ui::label(c, "My Lineup", x, y, Weight::Bold, 22, theme::white(0.6f));
+  float sx = x + (g ? ui::textWidth(c, g->section, Weight::Bold, 22) + 24 : 0);
+  drawHeaderLine(c, sx, y, chipsLeft - 16);
+  if (!g) {
+    if (prompt) {
+      ui::label(c, "Make Live TV yours", x, 140, Weight::Bold, 50, theme::white(), kHeroW);
+      ui::paragraph(c,
+                    "Set up My Lineup: your local stations and the channels you watch, in one short "
+                    "guide instead of every channel your provider has.",
+                    x, 214, kDescW, Weight::Regular, 22, theme::white(0.72f), 3, kDescStep / 22.0f);
     }
-    y += 22;
-    if (!l->overview.empty())
-      ui::paragraph(c, l->overview.string(), x, y, 1200, Weight::Regular, 20, theme::white(0.7f), 2, 1.4f);
-  } else {
+    return;
+  }
+  // The channel line: logo, number and name, star, feeds, East/West and
+  // when the show is on the other version.
+  y = 92;
+  ui::logo(c, g->logoUrl, "", {x, y, 96, 36});
+  float nx = x + (g->logoUrl.empty() ? 0 : 112);
+  if (g->number) nx += ui::label(c, std::to_string(*g->number), nx, y + 2, Weight::Medium, 26, theme::white(0.55f)) + 14;
+  nx += ui::label(c, g->name, nx, y + 2, Weight::Medium, 26, theme::white(), 520) + 14;
+  if (g->favorite) nx += ui::label(c, "\xe2\x98\x85", nx, y + 3, Weight::Bold, 24, theme::hex(theme::kStar)) + 12;
+  if (g->feeds > 1)
+    nx += ui::chip(c, std::to_string(g->feeds) + " feeds", nx, y + 4, 18, theme::white(0.5f), theme::white(0.85f), true) +
+          12;
+  const Listing* l = focusedListing();
+  const Top& t = top(c, *g, l);
+  if (!g->partner.empty()) {
+    nx += ui::coastChip(c, g->west, nx, y + 6, 16) + 14;
+    if (!t.also.empty() && right - nx > 60)
+      ui::label(c, t.also, nx, y + 4, Weight::Medium, 22, theme::white(0.7f), right - nx);
+  }
+
+  ui::label(c, l ? l->title : g->name, x, 140, Weight::Bold, 50, theme::white(), kHeroW);
+  // The status row: no live mark (the progress and time left say it's on);
+  // a later show is LATER with when it starts under it.
+  y = 210;
+  float bx = x;
+  if (!l) {
     const std::vector<Listing>* v = li_ ? li_->forChannel(g->id) : nullptr;
     bool askedEmpty = li_ && li_->empty.count(g->id);
-    ui::chip(c, "LIVE", bx, y + 2, 18, theme::hex(theme::kLive), theme::white());
     if (v || askedEmpty) {
-      ui::label(c, "No guide info", bx + 80, y, Weight::Medium, 24, theme::white(0.7f));
+      ui::label(c, "No guide info", bx, y + 1, Weight::Medium, 25, theme::white(0.7f));
     } else {
       // Still loading: placeholders where the show and its times go.
       skeletonShown_ = true;
       ui::Color block = ui::skeleton(c);
-      c.g.fill({bx + 80, y + 4, 420, 24}, block, 12);
-      c.g.fill({bx + 80, y + 44, 260, 16}, block, 8);
+      c.g.fill({bx, y + 4, 420, 24}, block, 12);
+      c.g.fill({bx, y + 48, 260, 16}, block, 8);
     }
+    return;
+  }
+  bool reminder = t.when == When::Later && app_.store().hasShowReminder(g->id, l->start);
+  if (t.when == When::Later)
+    bx += ui::chip(c, "LATER", bx, y + 2, 18, theme::white(0.6f), theme::white(0.85f), true) + 14;
+  bx += ui::label(c, t.time, bx, y + 1, Weight::Medium, 25, theme::white()) + 14;
+  if (l->outside) bx += ui::chip(c, "OUTSIDE LISTING", bx, y + 4, 15, theme::white(0.45f), theme::white(0.7f), true) + 14;
+  // The episode gives way to the chips after it.
+  float chips = (l->premiere ? ui::chipWidth(c, "NEW", 17) + 14 : 0) +
+                (reminder ? ui::chipWidth(c, "REMINDER SET", 17) + 14 : 0);
+  if (!l->episode.empty() && right - chips - bx > 60)
+    bx += ui::label(c, "\xc2\xb7 " + l->episode, bx, y + 2, Weight::Regular, 23, theme::white(0.65f),
+                    right - chips - bx) +
+          14;
+  if (l->premiere) bx += ui::chip(c, "NEW", bx, y + 3, 17, theme::hex(theme::kNew), theme::white()) + 14;
+  if (reminder) ui::chip(c, "REMINDER SET", bx, y + 3, 17, theme::white(0.6f), theme::white(0.85f), true);
+
+  if (t.when == When::On) {
+    double frac = static_cast<double>(c.now - l->start) / static_cast<double>(std::max<time::Seconds>(1, l->end - l->start));
+    ui::progress(c, {x, 260, 420, 6}, frac);
+    ui::label(c, t.count, x + 436, 250, Weight::Medium, 21, theme::white(0.75f));
+  } else {
+    ui::label(c, t.count, x, 250, Weight::Medium, 21, theme::white(0.75f));
+  }
+  // Three lines of description (wrapped when focus came here).
+  for (size_t i = 0; i < t.description.size(); ++i)
+    ui::label(c, t.description[i], x, 286 + kDescStep * static_cast<float>(i), Weight::Regular, 22, theme::white(0.72f),
+              kDescW);
+  // What comes after it on this channel.
+  if (!t.nextTime.empty()) {
+    y = 388;
+    float ux = x + ui::label(c, "NEXT", x, y + 3, Weight::Bold, 17, theme::white(0.5f)) + 10;
+    ux += ui::label(c, t.nextTime, ux, y, Weight::Medium, 20, theme::white()) + 10;
+    if (right - ux > 60) ui::label(c, t.nextText, ux, y, Weight::Regular, 20, theme::white(0.75f), right - ux);
   }
 }
 
 void GuideScreen::drawPreview(ui::Ctx& c) {
-  top_bar::clock(c);
-  if (!ch_ || ch_->all.empty()) return;
+  if (!ch_ || ch_->all.empty()) {
+    top_bar::clock(c);
+    return;
+  }
   const GuideChannel* g = focusedChannel();
-  top_bar::preview(c, app_.playback(), g ? g->logoUrl : std::string(), g ? g->name : std::string());
+  Playback& p = app_.playback();
+  // No live mark on the picture: it is always the channel's show on now.
+  bool showing = top_bar::preview(c, p, g ? g->logoUrl : std::string(), g ? g->name : std::string(), kPreview, 18,
+                                  false);
+  if (!showing || !g || p.entry() != g->id) return;
+  const Listing* l = focusedListing();
+  if (!l) return;
+  // A later show focused: the picture is still the one on now, and says so
+  // on a dark band rising from its bottom (stepped: the renderer has fills
+  // only).
+  const Top& t = top(c, *g, l);
+  if (t.playing.empty()) return;
+  static const float kShade[] = {0.1f, 0.25f, 0.42f, 0.6f, 0.75f};
+  float band = 16;
+  float by = kPreview.y + kPreview.h - 1 - band * 5;  // inside the outline
+  for (float a : kShade) {
+    c.g.fill({kPreview.x + 1, by, kPreview.w - 2, band}, theme::black(a));
+    by += band;
+  }
+  float ty = kPreview.y + kPreview.h - 40;
+  float lx = kPreview.x + 16;
+  lx += ui::label(c, "NOW", lx, ty + 1, Weight::Bold, 17, theme::white()) + 10;
+  ui::label(c, "\xc2\xb7 " + t.playing, lx, ty, Weight::Medium, 18, theme::white(0.88f), kPreview.x + kPreview.w - 16 - lx);
 }
 
 float GuideScreen::drawChips(ui::Ctx& c, float right) {
@@ -1527,7 +1611,8 @@ void GuideScreen::drawColumn(ui::Ctx& c, float alpha) {
 
 void GuideScreen::drawDigits(ui::Ctx& c) {
   if (digits_.empty()) return;
-  Rect r{gfx::kLayoutWidth - 80 - 220, 330, 220, 90};
+  // Under the preview, at its right edge.
+  Rect r{kPreview.x + kPreview.w - 220, kPreview.y + kPreview.h + 10, 220, 90};
   c.g.fill(r, theme::hex(0x1C1F25, 0.96f), 20);
   ui::labelIn(c, digits_, r, Weight::Bold, 54, theme::white(), Align::Center);
 }

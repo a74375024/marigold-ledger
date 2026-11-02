@@ -15,7 +15,10 @@ class Playback;
 
 namespace marigold::app::top_bar {
 
+// Live Events' and Search's corner. The guide's is larger (kGuidePreview,
+// Build 126), with the programme column at its left.
 constexpr ui::Rect kPreview{1440, 80, 400, 225};
+constexpr ui::Rect kGuidePreview{1200, 40, 640, 360};
 // Focus rests this long before the preview tunes, and previews start at
 // most this often (scrolling past tiles or rows doesn't tune them):
 // core/input/preview_pace.hpp.
@@ -26,8 +29,11 @@ constexpr float kTabsY = 318;
 // The clock, right-aligned over the preview corner.
 void clock(ui::Ctx& c);
 // The corner: the picture while it plays, else `logoUrl` / `name` with a
-// spinner while it tunes.
-void preview(ui::Ctx& c, const Playback& p, const std::string& logoUrl, const std::string& name);
+// spinner while it tunes (and while the picture is being moved there:
+// Playback::placing()). Returns true while the picture shows. The guide's
+// (`r` = kGuidePreview) has no LIVE chip.
+bool preview(ui::Ctx& c, const Playback& p, const std::string& logoUrl, const std::string& name,
+             ui::Rect r = kPreview, float radius = 16, bool liveChip = true);
 // Search (0), filter (1) and options (2); `focused` is -1 for none. Each
 // button's hit id is `hitBase` + its index. A red dot on the filter while
 // one is set.

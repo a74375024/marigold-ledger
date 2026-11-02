@@ -30,6 +30,15 @@ class Playback : public engine::Session {
   void setFull();
   void setCorner(gfx::Rect r, bool muted = false);
   bool muted() const { return muted_; }
+  // A corner left playing by another screen (Live Events' or Search's,
+  // back in the guide, whose preview is larger) moves into `r`, its sound as
+  // it is. Nothing while full screen or stopped.
+  void keepCorner(gfx::Rect r);
+  // The corner just moved from one place to another and the TV may still
+  // be placing the picture (LG takes up to a few hundred ms): screens show
+  // the channel's card there until the first re-apply, so the old place's
+  // picture never shows cut or framed in black. Snapped, never animated.
+  bool placing() const { return placing_; }
 
   // UI thread, every loop: the session's rules, then the window re-applies.
   // True while something is pending.
@@ -96,6 +105,7 @@ class Playback : public engine::Session {
   bool muted_ = false;
   uint32_t reapplyAt_[3] = {0, 0, 0};
   bool reapplyOnReady_ = false;
+  bool placing_ = false;
   engine::views::Tab pickedTab_ = engine::views::Tab::Lineup;
   std::vector<std::string> pickedFlip_;
 };

@@ -1,5 +1,7 @@
 #include "app/screens/top_bar.hpp"
 
+#include <cmath>
+
 #include "app/playback.hpp"
 #include "platform/icons.hpp"
 
@@ -40,18 +42,22 @@ void clock(ui::Ctx& c) {
             ui::Align::Right);
 }
 
-void preview(ui::Ctx& c, const Playback& p, const std::string& logoUrl, const std::string& name) {
-  bool showing = p.active() && !p.full() && p.ready();
+bool preview(ui::Ctx& c, const Playback& p, const std::string& logoUrl, const std::string& name, ui::Rect r,
+             float radius, bool liveChip) {
+  bool showing = p.active() && !p.full() && p.ready() && !p.placing();
   if (showing) {
-    c.g.hole(kPreview);
-    ui::chip(c, "LIVE", kPreview.x + 12, kPreview.y + 12, 16, theme::hex(theme::kLive), theme::white());
+    c.g.hole(r);
+    if (liveChip) ui::chip(c, "LIVE", r.x + 12, r.y + 12, 16, theme::hex(theme::kLive), theme::white());
   } else {
-    c.g.fill(kPreview, theme::white(0.05f), 16);
-    if (!logoUrl.empty() || !name.empty()) ui::logo(c, logoUrl, name, {kPreview.x + 100, kPreview.y + 77, 200, 70});
-    if (p.active() && !p.full() && !p.failed())
-      ui::spinner(c, kPreview.x + kPreview.w - 30, kPreview.y + kPreview.h - 30, 10);
+    c.g.fill(r, theme::white(0.05f), radius);
+    // The logo half the corner's width, centred (200 x 70 in the small one).
+    float lw = r.w * 0.5f, lh = lw * 0.35f;
+    if (!logoUrl.empty() || !name.empty())
+      ui::logo(c, logoUrl, name, {r.x + (r.w - lw) * 0.5f, std::floor(r.y + (r.h - lh) * 0.5f), lw, lh});
+    if (p.active() && !p.full() && !p.failed()) ui::spinner(c, r.x + r.w - 30, r.y + r.h - 30, 10);
   }
-  c.g.stroke(kPreview, theme::white(0.15f), 16, 1);
+  c.g.stroke(r, theme::white(0.15f), radius, 1);
+  return showing;
 }
 
 void buttons(ui::Ctx& c, int focused, bool filtered, int hitBase) {
