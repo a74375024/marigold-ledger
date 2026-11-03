@@ -93,7 +93,9 @@ const Calendar* byShort(std::string_view shortName);
 bool isCalendarGame(const SportsGame& game);
 
 // The calendars looked up: relevant to the picks (or any, before My Sports
-// is set up), seen in feeds lately, and not `covered` (keys).
+// is set up), seen in feeds lately, and not `covered` (keys). Build 127:
+// never one whose games are hidden (its own id, or a soccer calendar's
+// "S:SoccerAll").
 std::vector<const Calendar*> active(const MySportsPrefs& prefs, const SportFeedsSeen& seen, time::Seconds now,
                                     const std::set<std::string>& covered);
 // Keys of the calendars the scoreboard already has: one standing in for a

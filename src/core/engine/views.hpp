@@ -201,8 +201,10 @@ BoardFocus boardFocusShown(const std::vector<ShownRow>& rows, const std::string&
 // Show on the board (Build 119): the board's rows as the board screen, its
 // SPORTS column and the games rail show them. More events, Time not listed
 // and Event channels only when switched on; a row holding `keep` (the game
-// on screen) stays. The board itself keeps every row (Search, Where to
-// Watch and Up/Down read it). boardHides() says whether any row is left
+// on screen) stays, and so does one the board always shows
+// (EventRow::alwaysShown, Build 127: More events when My Sports has no
+// picks). The board itself keeps every row (Search, Where to Watch and
+// Up/Down read it). boardHides() says whether any row is left
 // out; boardHidden() names the rows left out, in board order, for the
 // empty board's line. The screens take boardShownRows(): the rows shown as
 // indices into the board's (boardShown() is the same rows as copies).

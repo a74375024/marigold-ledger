@@ -256,6 +256,18 @@ std::optional<SportsGame> parseGame(const json::Value& event, const League& leag
       if (game.note && text::count(tag + " \xC2\xB7 " + *game.note) <= 26) tag += " \xC2\xB7 " + *game.note;
       game.note = tag;
     }
+    // Build 127: the soccer pick it's under, by the listing's own league id
+    // (the event's uid "s:600~l:700~e:401..."), else the competition's name;
+    // national teams in any competition.
+    std::string uid = text::text(event["uid"]).value_or("");
+    std::string leagueID;
+    size_t at = uid.find("~l:");
+    if (at != std::string::npos) {
+      for (size_t i = at + 3; i < uid.size() && uid[i] >= '0' && uid[i] <= '9'; ++i) leagueID += uid[i];
+    }
+    std::string pick = soccerPickOfCompetition(leagueID, named);
+    game.competition = pick.empty() ? std::string(kSoccerAllPick) : pick;
+    game.competition = soccerCompetition(game);
   }
   return game;
 }
@@ -958,6 +970,11 @@ std::string toJson(const Saved& s) {
   if (s.schema) v.set("schema", *s.schema);
   if (s.restPending) v.set("restPending", true);
   v.set("calendars", calendars::toJson(s.calendars));
+  if (!s.conferences.empty()) {
+    json::Value conferences = json::Value::object();
+    for (const auto& [team, key] : s.conferences) conferences.set(team, key);
+    v.set("conferences", conferences);
+  }
   return json::write(v);
 }
 
@@ -994,6 +1011,9 @@ std::optional<Saved> savedFromJson(std::string_view textBody) {
   if (v["schema"].isNumber()) s.schema = static_cast<int>(v["schema"].asInt());
   s.restPending = v["restPending"].asBool();
   s.calendars = calendars::savedFromJson(v["calendars"]);
+  for (const auto& [team, key] : v["conferences"].fields()) {
+    if (key.isString() && s.conferences.size() < kConferencesKept) s.conferences[team] = key.asString();
+  }
   return s;
 }
 
@@ -1063,6 +1083,52 @@ void Schedule::noteTags() {
   for (const SportsGame& g : saved_.games) {
     if (g.leagueShort == kSoccerAll && g.tournament) soccerTags_.insert(str::lower(*g.tournament));
   }
+  learnConferences(saved_);
+}
+
+void learnConferences(Saved& saved) {
+  // Basketball's first (its conferences are the other sports'), then
+  // football's under basketball's key where basketball didn't say.
+  auto learn = [&saved](bool football) {
+    for (const SportsGame& g : saved.games) {
+      std::string key = collegeKey(g.leagueShort);
+      bool basketball = key == "NCAAM" || key == "NCAAW";
+      if (football ? key != "NCAAF" : !basketball) continue;
+      for (const SportsTeam* side : {&g.home, &g.away}) {
+        if (!side->conference || str::startsWith(side->id, "ncaa:")) continue;
+        std::optional<std::string> conference = side->conference;
+        if (football) {
+          if (saved.conferences.count(side->id)) continue;
+          conference = basketballConferenceKey(*conference);
+          if (!conference) continue;
+        } else if (*conference == "47") {
+          conference = std::string("49");  // the Summit League: women's id as the men's
+        }
+        auto it = saved.conferences.find(side->id);
+        if (it != saved.conferences.end()) {
+          it->second = *conference;  // a school that changed conference
+        } else if (saved.conferences.size() < kConferencesKept) {
+          saved.conferences.emplace(side->id, *conference);
+        }
+      }
+    }
+  };
+  learn(false);
+  learn(true);
+}
+
+void fillConferences(std::vector<SportsGame>& games, const std::map<std::string, std::string>& conferences) {
+  if (conferences.empty()) return;
+  for (SportsGame& g : games) {
+    // Sports whose schedule names no conference (volleyball, hockey,
+    // lacrosse...); football's keys are its own.
+    if (!isCollegeLeague(g.leagueShort) || collegeKey(g.leagueShort) == "NCAAF") continue;
+    for (SportsTeam* side : {&g.home, &g.away}) {
+      if (side->conference) continue;
+      auto it = conferences.find(side->id);
+      if (it != conferences.end()) side->conference = it->second;
+    }
+  }
 }
 
 std::set<std::string> Schedule::coveredCalendars(const std::vector<League>& active) const {
@@ -1071,7 +1137,7 @@ std::set<std::string> Schedule::coveredCalendars(const std::vector<League>& acti
 
 std::vector<const calendars::Calendar*> Schedule::activeCalendars(const Context& ctx) const {
   if (!ctx.enabled) return {};
-  std::vector<League> active = activeLeagues(ctx.prefs, ctx.seen, ctx.now);
+  std::vector<League> active = activeLeagues(ctx.prefs, ctx.seen, ctx.now, ctx.countries);
   return calendars::active(ctx.prefs, ctx.seen, ctx.now, coveredCalendars(active));
 }
 
@@ -1092,7 +1158,7 @@ bool Schedule::refreshIfNeeded(const Context& ctx) {
     std::set<std::string> known;
     if (saved_.leagueSet) known.insert(saved_.leagueSet->begin(), saved_.leagueSet->end());
     std::set<std::string> missing;
-    for (const League& l : activeLeagues(ctx.prefs, ctx.seen, now)) {
+    for (const League& l : activeLeagues(ctx.prefs, ctx.seen, now, ctx.countries)) {
       if (!known.count(l.shortName)) missing.insert(l.shortName);
     }
     if (saved_.failedAt) return false;
@@ -1122,7 +1188,7 @@ bool Schedule::leaguesChanged(const Context& ctx) {
   if (!ctx.enabled) return false;
   std::set<std::string> fetched;
   if (saved_.leagueSet) fetched.insert(saved_.leagueSet->begin(), saved_.leagueSet->end());
-  std::vector<League> active = activeLeagues(ctx.prefs, ctx.seen, ctx.now);
+  std::vector<League> active = activeLeagues(ctx.prefs, ctx.seen, ctx.now, ctx.countries);
   std::set<std::string> missing;
   for (const League& l : active) {
     if (!fetched.count(l.shortName)) missing.insert(l.shortName);
@@ -1169,7 +1235,7 @@ void Schedule::noteWatchable(const std::set<std::string>& leagueShorts, Seconds 
 Published Schedule::publish(const Context& ctx) const {
   Published out;
   if (!ctx.enabled) return out;
-  std::vector<League> active = activeLeagues(ctx.prefs, ctx.seen, ctx.now);
+  std::vector<League> active = activeLeagues(ctx.prefs, ctx.seen, ctx.now, ctx.countries);
   out.games = gamesOf(active, ctx);
   out.updatedAt = saved_.fetchedAt;
   out.rosters = saved_.rosters;
@@ -1179,7 +1245,7 @@ Published Schedule::publish(const Context& ctx) const {
 
 std::vector<SportsGame> Schedule::games(const Context& ctx) const {
   if (!ctx.enabled) return {};
-  return gamesOf(activeLeagues(ctx.prefs, ctx.seen, ctx.now), ctx);
+  return gamesOf(activeLeagues(ctx.prefs, ctx.seen, ctx.now, ctx.countries), ctx);
 }
 
 std::vector<SportsGame> Schedule::gamesOf(const std::vector<League>& active, const Context& ctx) const {
@@ -1210,6 +1276,7 @@ std::vector<SportsGame> Schedule::gamesOf(const std::vector<League>& active, con
     for (SportsGame& g : calendars::games(saved_.calendars, cals, now)) out.push_back(std::move(g));
   }
   std::stable_sort(out.begin(), out.end(), [](const SportsGame& a, const SportsGame& b) { return a.start < b.start; });
+  fillConferences(out, saved_.conferences);
   return out;
 }
 
@@ -1247,7 +1314,7 @@ bool Schedule::start(const Context& ctx, bool force, std::optional<std::set<std:
   // recent finals.
   f.from = text::addDays(ctx.now, -7, ctx.zone);
   f.to = text::addDays(ctx.now, 8, ctx.zone);
-  std::vector<League> active = activeLeagues(ctx.prefs, ctx.seen, ctx.now);
+  std::vector<League> active = activeLeagues(ctx.prefs, ctx.seen, ctx.now, ctx.countries);
   // A given list may include leagues Setup is showing but hasn't saved.
   if (f.only) {
     for (const League& l : allLeagues()) {

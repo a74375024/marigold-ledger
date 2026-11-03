@@ -1,10 +1,11 @@
 // The leagues the schedule covers (SportsData.League and its tables in
 // SportsData.swift), and which of them are looked up: My Sports' picks only,
-// or the standard set until My Sports is set up.
+// or until My Sports is set up the defaults' (Build 127: defaultPicks()).
 #pragma once
 
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -32,7 +33,7 @@ struct League {
   std::string extra;       // extra query ("&groups=80")
   Mode mode = Mode::month;
   int days = 0;            // Mode::days
-  bool standard = false;   // fetched before My Sports is set up
+  bool standard = false;   // before My Sports is set up, a default looked up even unseen in your channels
   // Words in provider event titles that mean this league (for suggestions);
   // empty means the row group decides.
   std::vector<std::string> keywords;
@@ -71,8 +72,9 @@ const std::vector<League>& golfLeagues();
 // Cricket: one listing of every series under way (cricket.hpp).
 const League& cricketLeague();
 // Every soccer game ESPN lists on a day, whatever the league (women's
-// leagues and cups, college, other countries): looked up with soccer, its
-// games kept only when no league above has them. Not a My Sports pick.
+// leagues and cups, college, other countries): looked up with the national
+// teams or every other competition (Build 127), its games kept only when no
+// league above has them. Not a My Sports pick.
 constexpr const char* kSoccerAll = "SOC";
 const League& soccerAllLeague();
 // Divisions II and III soccer (women's and men's), field hockey, women's
@@ -127,10 +129,14 @@ struct SportFeedsSeen {
 json::Value toJson(const SportFeedsSeen& seen);
 SportFeedsSeen sportFeedsSeenFromJson(const json::Value& v);
 
-// The leagues looked up: My Sports' picks, or the standard set (plus
-// racing, and tennis when seen) until it's set up.
+// The leagues looked up: My Sports' picks (Build 127: the ticked soccer
+// competitions, the all-soccer listing for USA, Mexico or every other
+// competition; never a hidden id), or until it's set up the defaults for
+// the lineup's `countries` (defaultPicks()), their leagues that aren't
+// standard ones only while your channels show their games. Racing, tennis,
+// golf and cricket also while their feeds were seen lately.
 std::vector<League> activeLeagues(const MySportsPrefs& prefs, const SportFeedsSeen& seen,
-                                  time::Seconds now);
+                                  time::Seconds now, const std::set<std::string>& countries);
 
 // Live Events opened: look for F1, NASCAR and tennis feeds among the event
 // titles (and the other calendars' competitions, calendars.hpp), at most

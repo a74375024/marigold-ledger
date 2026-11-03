@@ -340,10 +340,14 @@ const std::vector<League>& allLeagues() {
 }
 
 const League* leagueByShort(std::string_view shortName) {
-  for (const League& l : allLeagues()) {
-    if (l.shortName == shortName) return &l;
-  }
-  return nullptr;
+  // Asked for every game of a board: an index made once (read-only after).
+  static const std::map<std::string, const League*, std::less<>> kIndex = [] {
+    std::map<std::string, const League*, std::less<>> index;
+    for (const League& l : allLeagues()) index.emplace(l.shortName, &l);  // the first one wins
+    return index;
+  }();
+  auto it = kIndex.find(shortName);
+  return it == kIndex.end() ? nullptr : it->second;
 }
 
 json::Value toJson(const SportFeedsSeen& seen) {
@@ -408,69 +412,70 @@ bool feedsOf(const SportFeedsSeen& seen, const League& l, time::Seconds now, boo
 }  // namespace
 
 std::vector<League> activeLeagues(const MySportsPrefs& prefs, const SportFeedsSeen& seen,
-                                  time::Seconds now) {
+                                  time::Seconds now, const std::set<std::string>& countries) {
   std::vector<League> out;
-  bool tennisSeen = seen.tennisSeen(now);
-  if (!prefs.configured) {
-    for (const League& l : leagues()) {
-      if (l.standard) out.push_back(l);
-    }
-    out.insert(out.end(), racingLeagues().begin(), racingLeagues().end());
-    // Fight cards too: the next ones show, and an old card is told apart.
-    out.insert(out.end(), fightLeagues().begin(), fightLeagues().end());
-    if (tennisSeen) out.insert(out.end(), tennisLeagues().begin(), tennisLeagues().end());
-    if (seen.golfSeen(now)) out.insert(out.end(), golfLeagues().begin(), golfLeagues().end());
-    if (seen.cricketSeen(now)) out.push_back(cricketLeague());
-    out.push_back(soccerAllLeague());
-    // Sports your channels show games of: their leagues too.
-    for (const League& l : leagues()) {
-      if (!l.standard && !l.soccer && feedsOf(seen, l, now, false)) out.push_back(l);
-    }
-    for (const League& l : teamSportLeagues()) {
-      if (feedsOf(seen, l, now, false)) out.push_back(l);
-    }
-    for (const auto* list : {&collegeExtraLeagues(), &smallCollegeLeagues()}) {
-      for (const League& l : *list) {
-        if (feedsOf(seen, l, now, true)) out.push_back(l);
-      }
-    }
-    return out;
+  // Build 127: the picks, or until My Sports is set up the defaults for the
+  // lineup's countries (defaultPicks()). Hidden ids are never looked up.
+  const MySportsPrefs picks = effectivePicks(prefs, countries);
+  const bool unconfigured = !prefs.configured;
+  std::set<std::string> picked;
+  for (const std::string& id : picks.leagues) {
+    if (!isHidden(picks, id)) picked.insert(id);
   }
-  std::set<std::string> picked(prefs.leagues.begin(), prefs.leagues.end());
-  // Any soccer picked: the European club competitions too (their clubs are
-  // the picked leagues'; unpicked, their games fold into More events).
-  bool soccer = std::any_of(leagues().begin(), leagues().end(),
-                            [&](const League& l) { return l.soccer && picked.count(l.shortName); });
+  auto hidden = [&](const League& l) { return isHidden(picks, l.shortName); };
+  auto add = [&](const League& l) {
+    if (!hidden(l)) out.push_back(l);
+  };
+  // Every soccer game of a day: for the national teams and every other
+  // competition (a ticked league's games come with its own schedule).
+  bool soccerAll = picked.count(kUSAPick) || picked.count(kMexicoPick) || picked.count(kSoccerAllPick);
   for (const League& l : leagues()) {
-    bool european = l.shortName == "UCL" || l.shortName == "UEL" || l.shortName == "UECL";
-    if (picked.count(l.shortName) || (soccer && european)) out.push_back(l);
+    if (!picked.count(l.shortName)) continue;
+    // Unconfigured, as before Build 127: a league that isn't a standard one
+    // only while your channels show its games (the defaults never ask for
+    // more than that), and the other soccer leagues come with the
+    // all-soccer listing.
+    if (unconfigured && !l.standard && (l.soccer ? soccerAll : !feedsOf(seen, l, now, false))) continue;
+    add(l);
   }
-  if (soccer) out.push_back(soccerAllLeague());
-  if (picked.count("S:Fighting")) out.insert(out.end(), fightLeagues().begin(), fightLeagues().end());
+  if (soccerAll) add(soccerAllLeague());
+  if (picked.count("S:Fighting")) {
+    for (const League& l : fightLeagues()) add(l);
+  }
+  bool motorsportHidden = isHidden(picks, "S:Motorsport");
   for (const League& l : racingLeagues()) {
     // F1 and NASCAR also when their feeds were seen lately; IndyCar when picked.
     bool seenIt = l.shortName == "F1" ? seen.racingSeen(now) : l.shortName == "NASCAR" && seen.nascarSeen(now);
-    if (picked.count("S:Motorsport") || seenIt) out.push_back(l);
+    if ((picked.count("S:Motorsport") || seenIt) && !motorsportHidden) add(l);
   }
-  if (picked.count("S:Tennis") || tennisSeen) {
-    out.insert(out.end(), tennisLeagues().begin(), tennisLeagues().end());
+  auto sportOn = [&](const char* id, bool seenIt) {
+    // Picked (once set up), or its feeds seen lately; never while hidden.
+    return !isHidden(picks, id) && ((picked.count(id) && !unconfigured) || seenIt);
+  };
+  if (sportOn("S:Tennis", seen.tennisSeen(now))) {
+    for (const League& l : tennisLeagues()) add(l);
   }
-  if (picked.count("S:Golf") || seen.golfSeen(now)) out.insert(out.end(), golfLeagues().begin(), golfLeagues().end());
-  if (picked.count("S:Cricket") || seen.cricketSeen(now)) out.push_back(cricketLeague());
+  if (sportOn("S:Golf", seen.golfSeen(now))) {
+    for (const League& l : golfLeagues()) add(l);
+  }
+  if (sportOn("S:Cricket", seen.cricketSeen(now)) && !hidden(cricketLeague())) out.push_back(cricketLeague());
   for (const SportList& list : sportLists()) {
-    if (picked.count(list.id)) out.insert(out.end(), list.leagues.begin(), list.leagues.end());
+    if (!picked.count(list.id)) continue;
+    for (const League& l : list.leagues) {
+      if (!unconfigured || feedsOf(seen, l, now, false)) add(l);
+    }
   }
   // The other college schedules with their sport, while your channels have
-  // those games.
+  // those games. College soccer is every other competition's.
   for (const auto* list : {&collegeExtraLeagues(), &smallCollegeLeagues()}) {
     for (const League& l : *list) {
-      bool sport = l.group == "Soccer"             ? soccer
+      bool sport = l.group == "Soccer"             ? picked.count(kSoccerAllPick) > 0
                    : l.group == "Field Hockey"     ? picked.count("S:FieldHockey") > 0
                    : l.group == "Volleyball"       ? picked.count("S:Volleyball") > 0
                    : l.group == "Hockey"           ? picked.count("NHL") > 0
                    : l.group == "College Football" ? picked.count("NCAAF") > 0
                                                    : picked.count("NCAAM") > 0 || picked.count("NCAAW") > 0;
-      if (sport && feedsOf(seen, l, now, true)) out.push_back(l);
+      if (sport && feedsOf(seen, l, now, true)) add(l);
     }
   }
   return out;

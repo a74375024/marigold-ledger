@@ -33,10 +33,10 @@ const char* kScoreboard = R"JSON({
          {"homeAway": "home", "curatedRank": {"current": 99},
           "team": {"id": "1", "displayName": "Harbor City Gulls", "shortDisplayName": "Gulls", "name": "Gulls",
                    "abbreviation": "HCG", "location": "Harbor City", "color": "#00274c", "alternateColor": "ffcb05",
-                   "logos": [{"href": "https://example.invalid/hcg.png"}]}},
+                   "logos": [{"href": "https://example.invalid/hcg.png"}], "conferenceId": "5"}},
          {"homeAway": "away", "curatedRank": {"current": "5"},
           "team": {"id": 2, "displayName": "Team A", "abbreviation": "TMA", "logo": "https://example.invalid/a.png",
-                   "color": "not-a-color"}}
+                   "color": "not-a-color", "conferenceId": 8}}
        ],
        "venue": {"fullName": "Gull Field", "address": {"city": "Harbor City"}},
        "broadcasts": [{"market": "away", "names": ["KTVA"]}, {"market": "national", "names": ["FOX", "fox"]}],
@@ -78,6 +78,11 @@ TEST_CASE("scoreboard games: teams, colors, ranks, venue, week and networks") {
   CHECK(g.home.shortName == "HCG");
   CHECK(g.home.alternates == std::vector<std::string>{"Gulls"});
   CHECK(g.home.badge == "https://example.invalid/hcg.png");
+  // Build 127: a college team's conference (its group id, as text).
+  CHECK(g.home.conference == std::string("5"));
+  CHECK(g.away.conference == std::string("8"));
+  CHECK(doc->games[1].home.conference == std::nullopt);
+  CHECK(teamFromJson(toJson(g.away)) == std::optional<SportsTeam>(g.away));
   CHECK(g.home.color == "00274C");
   CHECK(g.home.altColor == "FFCB05");
   CHECK_FALSE(g.home.rank);  // 99 = unranked
@@ -357,33 +362,49 @@ TEST_CASE("queries: a month or two, day by day, or this week") {
   CHECK(queriesFor(*leagueByShort("NCAAF"), now, et) == std::vector<std::string>{""});
 }
 
-TEST_CASE("active leagues: the standard set until My Sports is set up, then picks only") {
+TEST_CASE("active leagues: the defaults until My Sports is set up, then picks only") {
   MySportsPrefs prefs;
   SportFeedsSeen seen;
   Seconds now = sportsdata::saturday();
   std::set<std::string> shorts;
-  for (const League& l : activeLeagues(prefs, seen, now)) shorts.insert(l.shortName);
+  for (const League& l : activeLeagues(prefs, seen, now, {})) shorts.insert(l.shortName);
   CHECK(shorts.count("NFL"));
   CHECK(shorts.count("EPL"));
-  CHECK(shorts.count("F1"));
+  CHECK(shorts.count("UCL"));
+  // Build 127: only the default picks; the European leagues, fight cards
+  // and racing aren't among them (racing while its feeds are seen).
+  CHECK_FALSE(shorts.count("LIGA"));
+  CHECK_FALSE(shorts.count("UEL"));
+  CHECK_FALSE(shorts.count("UFC"));
+  CHECK_FALSE(shorts.count("F1"));
+  // Defaults that aren't standard leagues only while your channels show
+  // their games, so the defaults never ask for more than before.
   CHECK_FALSE(shorts.count("WNBA"));
+  CHECK_FALSE(shorts.count("NCAAWV"));
   CHECK_FALSE(shorts.count("ATP"));
+  seen.groups["WNBA"] = now;
+  seen.racing = now;
+  shorts.clear();
+  for (const League& l : activeLeagues(prefs, seen, now, {})) shorts.insert(l.shortName);
+  CHECK(shorts.count("WNBA"));
+  CHECK(shorts.count("F1"));
+  seen = SportFeedsSeen();
   prefs.configured = true;
   prefs.leagues = {"NBA", "S:Fighting"};
   shorts.clear();
-  for (const League& l : activeLeagues(prefs, seen, now)) shorts.insert(l.shortName);
+  for (const League& l : activeLeagues(prefs, seen, now, {})) shorts.insert(l.shortName);
   CHECK(shorts == std::set<std::string>{"NBA", "UFC", "PFL"});
   // NASCAR feeds seen in the last two weeks: its schedule too.
   seen.nascar = now - 86'400;
   shorts.clear();
-  for (const League& l : activeLeagues(prefs, seen, now)) shorts.insert(l.shortName);
+  for (const League& l : activeLeagues(prefs, seen, now, {})) shorts.insert(l.shortName);
   CHECK(shorts == std::set<std::string>{"NBA", "UFC", "PFL", "NASCAR"});
   seen.nascar = now - 15 * 86'400;
-  CHECK(activeLeagues(prefs, seen, now).size() == 3);
+  CHECK(activeLeagues(prefs, seen, now, {}).size() == 3);
   // A sport picked as a whole: its leagues. IndyCar only with Motorsport.
   prefs.leagues = {"S:Rugby", "S:Volleyball", "S:Motorsport"};
   shorts.clear();
-  for (const League& l : activeLeagues(prefs, seen, now)) shorts.insert(l.shortName);
+  for (const League& l : activeLeagues(prefs, seen, now, {})) shorts.insert(l.shortName);
   CHECK(shorts.count("6N"));
   CHECK(shorts.count("URC"));
   CHECK(shorts.count("NCAAWV"));
@@ -392,26 +413,70 @@ TEST_CASE("active leagues: the standard set until My Sports is set up, then pick
   CHECK_FALSE(shorts.count("PLL"));
   prefs.leagues = {"NBA"};
   shorts.clear();
-  for (const League& l : activeLeagues(prefs, seen, now)) shorts.insert(l.shortName);
+  for (const League& l : activeLeagues(prefs, seen, now, {})) shorts.insert(l.shortName);
   CHECK_FALSE(shorts.count("IRL"));
   CHECK(leagueByShort("NCAASB"));
   CHECK(leagueByShort("NCAASB")->path == "baseball/college-softball");
   CHECK(sportLeagues("S:Lacrosse").size() == 3);
   CHECK(sportLeagues("S:Nothing").empty());
-  // The all-soccer listing comes with any soccer league.
+  // Build 127: the all-soccer listing comes with the national teams or
+  // every other competition (the defaults have USA), not with a league;
+  // a league no longer brings the European competitions.
   prefs.configured = false;
   shorts.clear();
-  for (const League& l : activeLeagues(prefs, seen, now)) shorts.insert(l.shortName);
+  for (const League& l : activeLeagues(prefs, seen, now, {})) shorts.insert(l.shortName);
   CHECK(shorts.count(kSoccerAll));
   prefs.configured = true;
   prefs.leagues = {"EPL"};
   shorts.clear();
-  for (const League& l : activeLeagues(prefs, seen, now)) shorts.insert(l.shortName);
-  CHECK(shorts.count(kSoccerAll));
+  for (const League& l : activeLeagues(prefs, seen, now, {})) shorts.insert(l.shortName);
+  CHECK(shorts == std::set<std::string>{"EPL"});
+  for (const char* pick : {kUSAPick, kMexicoPick, kSoccerAllPick}) {
+    prefs.leagues = {"EPL", pick};
+    shorts.clear();
+    for (const League& l : activeLeagues(prefs, seen, now, {})) shorts.insert(l.shortName);
+    CHECK(shorts == std::set<std::string>{"EPL", kSoccerAll});
+  }
   prefs.leagues = {"NBA"};
   shorts.clear();
-  for (const League& l : activeLeagues(prefs, seen, now)) shorts.insert(l.shortName);
+  for (const League& l : activeLeagues(prefs, seen, now, {})) shorts.insert(l.shortName);
   CHECK_FALSE(shorts.count(kSoccerAll));
+  // Hidden ids are never looked up, picked or seen.
+  prefs.leagues = {"NBA", "EPL", "S:Golf"};
+  prefs.hidden = {"EPL", "S:Golf"};
+  seen.golf = now;
+  shorts.clear();
+  for (const League& l : activeLeagues(prefs, seen, now, {})) shorts.insert(l.shortName);
+  CHECK(shorts == std::set<std::string>{"NBA"});
+}
+
+TEST_CASE("active leagues unconfigured: the defaults for the lineup's countries") {
+  MySportsPrefs prefs;
+  SportFeedsSeen seen;
+  Seconds now = sportsdata::saturday();
+  auto shortsFor = [&](const std::set<std::string>& countries) {
+    std::set<std::string> shorts;
+    for (const League& l : activeLeagues(prefs, seen, now, countries)) shorts.insert(l.shortName);
+    return shorts;
+  };
+  std::set<std::string> english = shortsFor({"US"});
+  CHECK(english == std::set<std::string>{"NFL", "NCAAF", "NBA", "MLB", "NHL", "MLS", "EPL", "UCL", kSoccerAll});
+  // Liga MX and Mexico come with the all-soccer listing; cricket while its
+  // feeds are seen.
+  CHECK(shortsFor({"US", "US-ES"}) == english);
+  seen.cricket = now;
+  CHECK(shortsFor({"US", "IN"}).count("CRIC"));
+  // The same leagues a set-up viewer with the defaults gets, minus those
+  // your channels haven't shown.
+  MySportsPrefs set = defaultPicks({"US"});
+  set.configured = true;
+  std::set<std::string> picked;
+  for (const League& l : activeLeagues(set, seen, now, {})) picked.insert(l.shortName);
+  for (const std::string& s : english) CHECK(picked.count(s));
+  CHECK(picked.count("WNBA"));
+  CHECK(picked.count("NCAAM"));
+  CHECK(picked.count("NWSL"));
+  CHECK(picked.count("NCAAWV"));
 }
 
 TEST_CASE("sport feeds seen: F1, NASCAR and tennis, at most every 6 hours") {
@@ -443,7 +508,7 @@ TEST_CASE("sport feeds seen: F1, NASCAR and tennis, at most every 6 hours") {
   CHECK(other.golfSeen(now));
   MySportsPrefs open;
   std::set<std::string> tours;
-  for (const League& l : activeLeagues(open, other, now)) tours.insert(l.shortName);
+  for (const League& l : activeLeagues(open, other, now, {})) tours.insert(l.shortName);
   CHECK(tours.count("PGA"));
   CHECK(tours.count("LPGA"));
 }
@@ -746,8 +811,65 @@ TEST_CASE("all-soccer listing: the competition as the tag, a league's own game k
   saved.games = {g("EPL", "10"), g(kSoccerAll, "10"), g(kSoccerAll, "11")};
   Schedule schedule(saved);
   Context ctx = nflOnly(now);
-  ctx.prefs.leagues = {"EPL"};
+  // Build 127: the all-soccer listing with every other competition picked.
+  ctx.prefs.leagues = {"EPL", kSoccerAllPick};
   std::vector<std::string> ids;
   for (const SportsGame& each : schedule.publish(ctx).games) ids.push_back(each.id);
   CHECK(ids == std::vector<std::string>{"EPL|10", std::string(kSoccerAll) + "|11"});
+  // A league alone: its own games only.
+  ctx.prefs.leagues = {"EPL"};
+  ids.clear();
+  for (const SportsGame& each : schedule.publish(ctx).games) ids.push_back(each.id);
+  CHECK(ids == std::vector<std::string>{"EPL|10"});
+}
+
+TEST_CASE("all-soccer listing: each game's soccer pick, by the listing's league id, its name or a national team") {
+  auto parsed = [](const std::string& uid, const std::string& note, const std::string& home,
+                   const std::string& away) {
+    std::optional<json::Value> event = json::parse(R"JSON({"id":"77","uid":")JSON" + uid +
+                                                   R"JSON(","date":"2026-10-28T17:45Z","competitions":[{"altGameNote":")JSON" +
+                                                   note + R"JSON(","competitors":[
+      {"homeAway":"home","team":{"id":"1","displayName":")JSON" + home + R"JSON("}},
+      {"homeAway":"away","team":{"id":"2","displayName":")JSON" + away + R"JSON("}}]}]})JSON");
+    REQUIRE(event);
+    auto game = parseGame(*event, soccerAllLeague());
+    REQUIRE(game);
+    return game->competition.value_or("");
+  };
+  CHECK(parsed("s:600~l:700~e:1", "English Premier League", "Harbor", "Valley") == "EPL");
+  CHECK(parsed("s:600~l:775~e:2", "UEFA Champions League, League Phase", "Harbor", "Valley") == "UCL");
+  CHECK(parsed("s:600~l:760~e:3", "Liga MX", "Harbor", "Valley") == "LMX");
+  CHECK(parsed("s:600~l:8301~e:4", "NWSL", "Harbor", "Valley") == "NWSL");
+  // No id: the competition's name ("Serie A", not "Brazil Serie A").
+  CHECK(parsed("", "Serie A", "Harbor", "Valley") == "SA");
+  CHECK(parsed("", "Brazil Serie A", "Harbor", "Valley") == kSoccerAllPick);
+  // Any other competition, college soccer too.
+  CHECK(parsed("s:600~l:3932~e:5", "Liga de Expansi\xC3\xB3n MX", "Harbor", "Valley") == kSoccerAllPick);
+  CHECK(parsed("s:600~l:5499~e:6", "NCAAW Soccer", "Harbor", "Valley") == kSoccerAllPick);
+  // National teams, men's or women's, in any competition and either side.
+  CHECK(parsed("s:600~l:4000~e:7", "Concacaf Gold Cup, Group A", "United States", "Panama") == kUSAPick);
+  CHECK(parsed("s:600~l:3923~e:8", "Women's International Friendly", "Brazil", "United States Women") == kUSAPick);
+  CHECK(parsed("s:600~l:4000~e:9", "Concacaf Nations League", "M\xC3\xA9xico", "Jamaica") == kMexicoPick);
+  CHECK(parsed("s:600~l:4001~e:10", "FIFA World Cup", "Mexico", "United States") == kUSAPick);
+  // Youth sides aren't the team.
+  CHECK(parsed("s:600~l:20865~e:11", "FIFA U-17 Women's World Cup", "Mexico U17", "Japan U17") == kSoccerAllPick);
+
+  // A saved game from before Build 127 (no competition): by its tournament.
+  SportsGame old = sportsdata::game(kSoccerAll, "Soccer", "12", sportsdata::team("1", "Harbor"),
+                                    sportsdata::team("2", "Valley"), utc(2026, 10, 28, 17, 0));
+  old.tournament = std::string("UEFA Europa League");
+  CHECK(soccerCompetition(old) == "UEL");
+  old.tournament = std::string("Copa del Rey");
+  CHECK(soccerCompetition(old) == kSoccerAllPick);
+  // A league's own game; the small-college pages are any other competition.
+  SportsGame epl = old;
+  epl.leagueShort = "EPL";
+  CHECK(soccerCompetition(epl) == "EPL");
+  SportsGame d3 = old;
+  d3.leagueShort = "D3WSO";
+  CHECK(soccerCompetition(d3) == kSoccerAllPick);
+  // The competition is saved with the game.
+  SportsGame withComp = old;
+  withComp.competition = std::string("LMX");
+  CHECK(gameFromJson(toJson(withComp)) == std::optional<SportsGame>(withComp));
 }

@@ -40,6 +40,7 @@ struct Account;
 }
 namespace sports {
 struct MySportsPrefs;
+struct Conference;
 namespace cameras {
 struct CameraPanel;
 }
@@ -359,6 +360,37 @@ class Store {
   // My Sports.
   const sports::MySportsPrefs& mySports() const;
   void setMySports(const sports::MySportsPrefs& prefs);
+  // Build 127 (choosing your sports v2). Every change goes through
+  // setMySports() (the board made again; the schedule asked again only
+  // when what is looked up changed).
+  // The picks a new viewer starts with: sports::defaultPicks() for the
+  // lineup's countries (not configured; the setup saves it so).
+  sports::MySportsPrefs defaultMySports() const;
+  // Why the defaults tick `id` for the lineup's countries ("For Español"; "").
+  std::string pickReason(const std::string& id) const;
+  // The conferences of a college league seen in the schedules already
+  // fetched (no requests), name A-Z; the leagues that follow its settings
+  // (sports::collegeKey()) count: "NCAAM" lists the small-college pages'
+  // conferences too. Conferences with no known name are left out.
+  std::vector<sports::Conference> collegeConferences(const std::string& leagueShort) const;
+  // The schools seen in one of them: (team id, school name) A-Z.
+  std::vector<std::pair<std::string, std::string>> conferenceSchools(const std::string& leagueShort,
+                                                                     const std::string& conferenceKey) const;
+  // Hide from the board (out of the picks, into hidden) and show again
+  // (out of hidden, into the picks): the game card and Settings › Live
+  // Events › Hidden. Unconfigured picks become the defaults, set up, first.
+  void hideFromBoard(const std::string& id);
+  void showOnBoard(const std::string& id);
+  struct HiddenItem {
+    std::string id, name;
+    std::string why;  // "Hidden from a game card" / "Hidden unless you turn it on"
+  };
+  // Hidden ids, then pro wrestling and high school when not picked.
+  std::vector<HiddenItem> hiddenFromBoard() const;
+  // "LEAGUE|id" into (true) or out of My Sports' teams (EventTile::follow).
+  void followTeam(const std::string& teamKey, bool follow);
+  // The board's one-time note read: updateNoted = true.
+  void dismissBoardNote();
   std::vector<sports::SportsTeam> teamsOf(const std::string& leagueShort) const;
   void requestRosters(const std::set<std::string>& leagueShorts);
   // Bumped when a league's team list arrives (My Sports reloads its grid).

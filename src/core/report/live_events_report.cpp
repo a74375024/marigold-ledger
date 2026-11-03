@@ -125,6 +125,12 @@ std::string liveEventsCsv(const LiveEventsReportInput& in) {
           result = "on the board";
           rows = str::join(on->second, " | ");
           if (in.groupFails && in.groupFails(slot.family)) reason = "its group keeps failing to start: shown last";
+          // Build 127: in More events rather than its sport's row, and why
+          // ("not in your soccer competitions").
+          if (in.board && reason.empty()) {
+            auto more = in.board->moreWhy.find(id);
+            if (more != in.board->moreWhy.end()) reason = "More events: " + more->second;
+          }
         } else if (leftWhy) {
           reason = *leftWhy;
         } else if (s.league == catalog::kProWrestling && !in.proWrestlingOn) {

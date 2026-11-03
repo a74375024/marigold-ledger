@@ -98,7 +98,7 @@ LiveStatus status(LivePhase phase, const std::string& detail) {
 
 }  // namespace
 
-TEST_CASE("row order without My Sports: live, the fixed sport order, then A-Z, untimed, event channels") {
+TEST_CASE("row order without My Sports: live, the defaults' rows in the fixed order, More events, untimed, event channels") {
   SportsGame nfl = nflAt("1", kNow + 2 * 3600);
   SportsGame nba = game("NBA", "NBA", "2", team("3", "River Town Otters"), team("4", "Valley Hawks"), kNow - 1800);
   SportsGame epl = game("EPL", "Soccer", "3", team("5", "Harbor United"), team("6", "Riverside Rovers"),
@@ -123,10 +123,14 @@ TEST_CASE("row order without My Sports: live, the fixed sport order, then A-Z, u
   CHECK(rowIDs(build(in)) ==
         std::vector<std::string>{"live", "sport|NFL", "sport|NBA", "sport|Soccer", "untimed", "families"});
   // ...unless the board is the provider's events (Game schedule off).
+  // Build 127: unconfigured, the rows are the default picks' (golf and
+  // rugby aren't among them: More events).
   in.settings.fromSchedule = false;
   Board b = build(in);
-  CHECK(rowIDs(b) == std::vector<std::string>{"live", "sport|NFL", "sport|NBA", "sport|Soccer", "sport|Golf",
-                                              "sport|Rugby", "untimed", "families"});
+  CHECK(rowIDs(b) == std::vector<std::string>{"live", "sport|NFL", "sport|NBA", "sport|Soccer", "more", "untimed",
+                                              "families"});
+  CHECK(row(b, "more").eventIDs == std::vector<std::string>{"golf", "rugby"});
+  CHECK_FALSE(row(b, "more").alwaysShown);
   CHECK(row(b, "live").title == "Live now");
   CHECK(row(b, "untimed").title == "Time not listed");
   const Row& fam = row(b, "families");
@@ -961,6 +965,8 @@ TEST_CASE("cricket on the board: a match at stumps isn't live, a break is") {
   t20.end.reset();
   t20.start = kNow - 3600;
   Input in = baseInput({eventOf(test, {lineup("e|1")}), eventOf(t20, {lineup("e|2")})});
+  // Build 127: cricket has a row by default for a lineup in Hindi.
+  in.countries = {"US", "IN"};
   LiveStatus stumps = status(LivePhase::live, "Stumps \xC2\xB7 Day 3");
   stumps.pause = std::string("Stumps");
   stumps.dayOver = true;
@@ -1003,6 +1009,8 @@ TEST_CASE("high school: only when picked, then a row of its own and in Live now;
                                  {feed("xt|2"), feed("xt|3"), feed("xt|4"), feed("xt|5"), feed("xt|6")});
   darts.boards = 5;
   Input in = baseInput({hs, darts});
+  in.prefs.configured = true;
+  in.prefs.leagues = {"S:Darts"};
   Board b = build(in);
   const Row& live = row(b, "live");
   std::vector<std::string> ids;
@@ -1014,7 +1022,6 @@ TEST_CASE("high school: only when picked, then a row of its own and in Live now;
   CHECK(tile(b, "darts").detail == "5 boards");
   // Picked in My Sports: its row and Live now.
   in.prefs.leagues = {kHighSchoolPick};
-  in.prefs.configured = true;
   Board picked = build(in);
   ids.clear();
   for (const Group& g : row(picked, "live").groups)
@@ -1029,6 +1036,9 @@ TEST_CASE("an event only on other countries' feeds goes to More events, and fail
   SportsEvent home = plainEvent("usl", "Harbor FC vs Valley FC", "Soccer", kNow - 1800, {feed("xt|us1")});
   SportsEvent dead = plainEvent("dead", "Coast FC vs Bay FC", "Soccer", kNow - 1800, {feed("xt|dead")});
   Input in = baseInput({abroad, home, dead});
+  // Build 127: soccer no schedule has is every other competition's.
+  in.prefs.configured = true;
+  in.prefs.leagues = {kSoccerAllPick};
   in.feedAbroad = [](const std::string& id) { return id == "xt|de1"; };
   in.feedFails = [](const std::string& id) { return id == "xt|dead"; };
   Board b = build(in);
@@ -1099,9 +1109,11 @@ TEST_CASE("Build 125: tiles from the schedule; events no schedule has only in Mo
   CHECK(on.heroID == std::string("sev|NFL|1"));
 
   // No schedule could be had or Game schedule off: the provider's events, as
-  // before (no My Sports: each its sport's row and Live now).
+  // before (each picked sport's row and Live now).
   in.settings.showsUnscheduled = false;
   in.prefs = MySportsPrefs{};
+  in.prefs.configured = true;
+  in.prefs.leagues = {"NFL", "S:Rugby"};
   in.scheduleLoaded = false;
   CHECK(ids(build(in), "sport|Rugby") == std::vector<std::string>{"now", "vague"});
   in.scheduleLoaded.reset();

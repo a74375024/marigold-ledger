@@ -805,13 +805,20 @@ std::optional<int> leader(const std::optional<std::string>& top, const std::opti
   return *a > *b ? 0 : 1;
 }
 
-// A listing of hundreds of games a day (college sports) that you didn't
-// pick in My Sports yourself.
-bool listsEveryGame(const SportsGame& game, const MySportsPrefs& prefs) {
+// A listing of hundreds of games a day (college sports) that isn't among
+// the picks (Build 127: the defaults' until My Sports is set up).
+bool listsEveryGame(const SportsGame& game, const MySportsPrefs& picks) {
   const League* league = leagueByShort(game.leagueShort);
   if (!league || !league->everyGame) return false;
-  return !prefs.configured ||
-         std::find(prefs.leagues.begin(), prefs.leagues.end(), game.leagueShort) == prefs.leagues.end();
+  return std::find(picks.leagues.begin(), picks.leagues.end(), game.leagueShort) == picks.leagues.end();
+}
+
+// A game between two teams you can follow (not a race, a tournament, a
+// tennis match or a fight card).
+bool teamGame(const SportsGame& game) {
+  if (game.isRacing() || game.isGolf() || game.isTennis() || game.cardKey) return false;
+  const League* league = leagueByShort(game.leagueShort);
+  return !(league && (league->fights || league->racing || league->golf || league->tennis));
 }
 
 std::string lastName(const SportsTeam& fighter) {
@@ -1155,6 +1162,19 @@ Board build(const Input& in) {
   Board board;
   const Seconds now = in.now;
   board.now = now;
+  // Build 127: the picks the rows follow (the defaults until set up).
+  const MySportsPrefs picks = effectivePicks(in.prefs, in.countries);
+  std::set<std::string> pickedIDs;
+  for (const std::string& id : picks.leagues) {
+    if (!isHidden(picks, id)) pickedIDs.insert(id);
+  }
+  // Set up with no picks ("I don't watch sports"): no sport rows, every
+  // game in More events, which the board then always shows.
+  const bool noPicks = in.prefs.configured && pickedIDs.empty();
+  if (!in.prefs.updateNoted) {
+    board.noteTitle = "Your rows now show what you follow";
+    board.noteLine = "College shows the Top 25 and your schools. Other games are in More events and Search.";
+  }
   // Driver-cam feeds belong to their race (its cameras panel), not the rows.
   std::set<std::string> cameras = hiddenCameras(in.events, now, in);
   // Placeholder slots ("No Match Scheduled") aren't events.
@@ -1166,8 +1186,13 @@ Board build(const Input& in) {
     }
     // High-school games only when picked in My Sports: their feeds often
     // don't start, and their titles are often a school's name alone.
-    if (e.highSchool && !highSchoolOn(in.prefs)) {
+    if (e.highSchool && !highSchoolOn(picks)) {
       board.left[e.id] = "high school (off in My Sports)";
+      continue;
+    }
+    // Hidden from a game card (or in Settings): on no row at all.
+    if (eventHidden(picks, e)) {
+      board.left[e.id] = "hidden in Settings \xE2\x80\xBA Live Events \xE2\x80\xBA Hidden";
       continue;
     }
     SportsEvent copy = e;
@@ -1232,8 +1257,14 @@ Board build(const Input& in) {
     if (e.game && e.game->isCricket()) return !e.sources.empty();
     // And the listings of every game of a day (all soccer, a college division).
     // And the other calendars (a gap source: games your provider carries).
-    if (e.game && (e.game->leagueShort == kSoccerAll || listsEveryGame(*e.game, in.prefs) ||
-                   calendars::isCalendarGame(*e.game)))
+    // Build 127: an all-soccer game of a competition ticked on its own (the
+    // national teams) is like a league's.
+    bool allSoccer = e.game && e.game->leagueShort == kSoccerAll;
+    if (allSoccer) {
+      std::string comp = soccerCompetition(*e.game);
+      allSoccer = comp == kSoccerAllPick || !pickedIDs.count(comp);
+    }
+    if (e.game && (allSoccer || listsEveryGame(*e.game, picks) || calendars::isCalendarGame(*e.game)))
       return !e.sources.empty();
     return !e.sources.empty() || in.settings.showsUnwatchable;
   };
@@ -1333,22 +1364,46 @@ Board build(const Input& in) {
     bool mixed = false;
   };
   std::vector<RowDraft> drafts;
-  std::optional<std::set<std::string>> picked;
-  std::vector<std::string> pickedOrder;
-  if (in.prefs.configured) {
-    pickedOrder = pickedGroups(in.prefs);
-    picked = std::set<std::string>(pickedOrder.begin(), pickedOrder.end());
+  // The picks' rows (Build 127: the defaults' until My Sports is set up).
+  MySportsPrefs rowPicks = picks;
+  rowPicks.leagues.clear();
+  for (const std::string& id : picks.leagues) {
+    if (pickedIDs.count(id)) rowPicks.leagues.push_back(id);
   }
+  std::vector<std::string> pickedOrder = pickedGroups(rowPicks);
+  const std::set<std::string> picked(pickedOrder.begin(), pickedOrder.end());
   auto liveWatchable = [&](const std::vector<SportsEvent>& list) {
     return static_cast<int>(std::count_if(list.begin(), list.end(),
                                           [&](const SportsEvent& e) { return isLive(e) && !e.sources.empty(); }));
   };
+  // Build 127: why a game of a picked sport isn't in its row ("" it is):
+  // Soccer holds the ticked competitions (everything with every other
+  // competition ticked), a college row what CollegePick takes.
+  std::map<std::string, std::string> filteredWhy;
+  auto rowFilter = [&](const SportsEvent& e) -> std::string {
+    if (e.highSchool || str::startsWith(e.id, "whip|")) return "";
+    if (e.league == "Soccer" && !pickedIDs.count(kSoccerAllPick)) {
+      std::string comp = competitionOf(e);
+      // USA against Mexico is either's.
+      bool national = false;
+      if (e.game) {
+        for (const SportsTeam* side : {&e.game->home, &e.game->away}) {
+          auto team = nationalTeam(*side);
+          national = national || (team && pickedIDs.count(*team));
+        }
+      }
+      if (!pickedIDs.count(comp) && !national) return "not in your soccer competitions";
+    }
+    if (e.game && isCollegeLeague(e.game->leagueShort) && !inCollegeRow(picks, *e.game))
+      return "college game without a ranked team or one you follow";
+    return "";
+  };
 
   // My Sports: your teams first.
-  if (picked) {
+  if (in.prefs.configured) {
     std::vector<SportsEvent> mine;
     for (const SportsEvent& e : all) {
-      if (e.game && isFavorite(in.prefs, *e.game) && shown(e)) mine.push_back(e);
+      if (e.game && isFavorite(picks, *e.game) && shown(e)) mine.push_back(e);
     }
     if (!mine.empty()) {
       Grouped g = grouped(mine);
@@ -1358,7 +1413,8 @@ Board build(const Input& in) {
   std::vector<SportsEvent> live;
   for (const SportsEvent& e : all) {
     if (abroad(e) || unscheduled(e)) continue;
-    if (isLive(e) && !e.sources.empty() && (!picked || picked->count(e.league) || e.highSchool)) live.push_back(e);
+    if (isLive(e) && !e.sources.empty() && (picked.count(e.league) || e.highSchool) && rowFilter(e).empty())
+      live.push_back(e);
   }
   std::stable_sort(live.begin(), live.end(), [&](const SportsEvent& a, const SportsEvent& b) {
     bool wa = str::startsWith(a.id, "whip|"), wb = str::startsWith(b.id, "whip|");
@@ -1373,6 +1429,7 @@ Board build(const Input& in) {
   }
   std::map<std::string, std::vector<SportsEvent>> bySport;
   std::vector<SportsEvent> more, unlisted;
+  std::map<std::string, std::set<std::string>> collegeKeysSeen;
   for (const SportsEvent& e : all) {
     if (!shown(e)) continue;
     if (unscheduled(e)) {
@@ -1386,22 +1443,31 @@ Board build(const Input& in) {
       more.push_back(e);
       continue;
     }
-    if (picked && !picked->count(group) && group != kHighSchoolRow) {
-      // Other sports fold into "More events" (only what you can watch).
-      if (!e.sources.empty()) more.push_back(e);
+    // The college settings a row's games follow (its subtitle).
+    if (e.game && isCollegeLeague(e.game->leagueShort)) collegeKeysSeen[group].insert(collegeKey(e.game->leagueShort));
+    std::string why = !picked.count(group) && group != kHighSchoolRow ? std::string("not in your sports (My Sports)")
+                                                                        : rowFilter(e);
+    if (!why.empty()) {
+      // Other sports, and the games a sport's row doesn't take, fold into
+      // "More events" (only what you can watch).
+      if (!e.sources.empty()) {
+        more.push_back(e);
+        board.moreWhy[e.id] = why;
+      } else {
+        filteredWhy[e.id] = why;
+      }
       continue;
     }
     bySport[group].push_back(e);
   }
   std::vector<std::string> sports;
-  if (picked) {
-    for (const std::string& g : pickedOrder) {
-      if (bySport.count(g)) sports.push_back(g);
-    }
-    if (bySport.count(kHighSchoolRow) && std::find(sports.begin(), sports.end(), kHighSchoolRow) == sports.end())
-      sports.push_back(kHighSchoolRow);
-  } else {
-    for (const auto& [g, list] : bySport) sports.push_back(g);
+  for (const std::string& g : pickedOrder) {
+    if (bySport.count(g)) sports.push_back(g);
+  }
+  if (bySport.count(kHighSchoolRow) && std::find(sports.begin(), sports.end(), kHighSchoolRow) == sports.end())
+    sports.push_back(kHighSchoolRow);
+  if (!in.prefs.configured) {
+    // The defaults' rows in the usual order.
     std::stable_sort(sports.begin(), sports.end(), [](const std::string& a, const std::string& b) {
       int ia = sportRank(a), ib = sportRank(b);
       return ia != ib ? ia < ib : a < b;
@@ -1452,17 +1518,59 @@ Board build(const Input& in) {
   for (const SportsEvent& e : all) {
     if (board.events.count(e.id) || board.left.count(e.id)) continue;
     State state = stateOf(e);
-    const char* why = "not in your sports (My Sports)";
+    auto filtered = filteredWhy.find(e.id);
+    const char* why = filtered != filteredWhy.end() ? filtered->second.c_str() : "not in your sports (My Sports)";
     if (board.studio.count(e.id)) why = "a studio show";
     else if (state == State::finished || (state == State::live && e.dayOver)) why = "over";
     else if (unscheduled(e) && e.start && !in.settings.showsUnscheduled)
       why = "not on the schedule (Games without a schedule is off)";
     else if (unscheduled(e) && e.start && !clearTitle(e)) why = "not on the schedule, and no clear title";
+    else if (filtered != filteredWhy.end()) why = filtered->second.c_str();  // its row doesn't take it
     else if (e.sources.empty()) why = "not on your channels";
     else if (!e.start) why = "no time listed";
     else if (*e.start >= horizon) why = "more than a week away";
     board.left[e.id] = why;
   }
+  // Build 127: what a sport's row says it holds and lets you choose.
+  auto describeRow = [&](Row& row, const std::string& group) {
+    if (group == "Soccer") {
+      row.choose = "competitions";
+      return;
+    }
+    // The college leagues picked for the row (men's and women's basketball
+    // share one; volleyball's men and women; lacrosse's college leagues
+    // beside the pros), by the settings they follow (collegeKey()).
+    std::vector<std::string> keys;
+    auto addKey = [&](const std::string& league) {
+      if (!isCollegeLeague(league)) return;
+      std::string key = collegeKey(league);
+      if (std::find(keys.begin(), keys.end(), key) == keys.end()) keys.push_back(key);
+    };
+    for (const std::string& id : rowPicks.leagues) {
+      if (pickGroup(id) != group) continue;
+      addKey(id);
+      for (const League& l : sportLeagues(id)) {
+        if (l.group == group) addKey(l.shortName);
+      }
+    }
+    if (keys.empty()) return;
+    // Those with games on the board now (women's volleyball in the fall)
+    // say what the row holds: their settings' subtitle when they agree,
+    // else the default's.
+    std::vector<std::string> current;
+    auto seen = collegeKeysSeen.find(group);
+    for (const std::string& key : keys) {
+      if (seen != collegeKeysSeen.end() && seen->second.count(key)) current.push_back(key);
+    }
+    if (current.empty()) current = keys;
+    std::string subtitle = collegeSubtitle(collegePick(picks, current.front()));
+    for (const std::string& key : current) {
+      if (collegeSubtitle(collegePick(picks, key)) != subtitle) subtitle = collegeSubtitle(CollegePick());
+    }
+    row.subtitle = subtitle;
+    row.choose = "schools";
+    row.chooseLeague = current.front();
+  };
   for (RowDraft& draft : drafts) {
     Row row;
     row.id = draft.id;
@@ -1471,6 +1579,8 @@ Board build(const Input& in) {
     row.mixed = draft.mixed;
     row.grouped = !draft.buckets.empty();
     row.count = static_cast<int>(draft.events.size());
+    if (str::startsWith(row.id, "sport|")) describeRow(row, row.id.substr(6));
+    if (row.id == "more" && noPicks) row.alwaysShown = true;
     std::optional<int> lastOrder;
     for (size_t i = 0; i < draft.events.size(); ++i) {
       const SportsEvent& e = draft.events[i];
@@ -1483,6 +1593,21 @@ Board build(const Input& in) {
         lastOrder = order;
       }
       Tile tile = makeTile(e, places.at(e.id), row.id, row.mixed, stateOf(e), ctx);
+      // Build 127: what the game card can hide, and the teams it can follow.
+      if (!str::startsWith(e.id, "whip|")) {
+        tile.competitionId = competitionOf(e);
+        if (!tile.competitionId.empty()) tile.competitionName = competitionName(tile.competitionId);
+      }
+      if (e.game && teamGame(*e.game) && tile.layout == Tile::Layout::sides && tile.sides.size() == 2) {
+        for (const SideLine& side : tile.sides) {
+          if (side.teamID.empty()) continue;
+          Tile::FollowSide f;
+          f.key = teamKey(e.game->leagueShort, side.teamID);
+          f.name = side.name;
+          f.followed = std::find(picks.teams.begin(), picks.teams.end(), f.key) != picks.teams.end();
+          tile.follow.push_back(std::move(f));
+        }
+      }
       // Select: a card plays the part that's on now.
       State state = tile.state;
       if (state == State::live || state == State::mayHaveEnded || state == State::unknownTime) {

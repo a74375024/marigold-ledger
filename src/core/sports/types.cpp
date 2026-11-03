@@ -49,7 +49,7 @@ std::string SportsTeam::abbreviation() const {
 bool SportsTeam::operator==(const SportsTeam& o) const {
   return id == o.id && name == o.name && shortName == o.shortName && alternates == o.alternates &&
          badge == o.badge && location == o.location && color == o.color && altColor == o.altColor &&
-         rank == o.rank && country == o.country && flags == o.flags;
+         rank == o.rank && country == o.country && flags == o.flags && conference == o.conference;
 }
 
 // MARK: SportsGame
@@ -66,7 +66,7 @@ bool SportsGame::operator==(const SportsGame& o) const {
          completed == o.completed && customTitle == o.customTitle && cardKey == o.cardKey &&
          tournament == o.tournament &&
          note == o.note && racing == o.racing && tennis == o.tennis && golf == o.golf &&
-         matchFormat == o.matchFormat && end == o.end && dayOnly == o.dayOnly;
+         matchFormat == o.matchFormat && end == o.end && dayOnly == o.dayOnly && competition == o.competition;
 }
 
 // MARK: LivePhase / LiveStatus
@@ -342,6 +342,7 @@ json::Value toJson(const SportsTeam& t) {
   setOpt(v, "rank", t.rank);
   setOpt(v, "country", t.country);
   if (!t.flags.empty()) v.set("flags", stringArray(t.flags));
+  setOpt(v, "conference", t.conference);
   return v;
 }
 
@@ -359,6 +360,7 @@ std::optional<SportsTeam> teamFromJson(const json::Value& v) {
   t.rank = optInt(v["rank"]);
   t.country = optString(v["country"]);
   t.flags = strings(v["flags"]);
+  t.conference = optString(v["conference"]);
   return t;
 }
 
@@ -386,6 +388,7 @@ json::Value toJson(const SportsGame& g) {
   setOpt(v, "format", g.matchFormat);
   if (g.end) v.set("end", static_cast<int64_t>(*g.end));
   setOpt(v, "dayOnly", g.dayOnly);
+  setOpt(v, "competition", g.competition);
   return v;
 }
 
@@ -419,6 +422,7 @@ std::optional<SportsGame> gameFromJson(const json::Value& v) {
   g.matchFormat = optString(v["format"]);
   if (v["end"].isNumber()) g.end = v["end"].asInt();
   g.dayOnly = optBool(v["dayOnly"]);
+  g.competition = optString(v["competition"]);
   return g;
 }
 

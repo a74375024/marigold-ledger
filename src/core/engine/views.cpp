@@ -399,7 +399,8 @@ BoardFocus boardFocusShown(const std::vector<ShownRow>& rows, const std::string&
 }
 
 bool boardRowShown(const EventRow& row, const BoardShows& shows, const std::string& keep) {
-  bool on = row.families               ? shows.families
+  bool on = row.alwaysShown            ? true
+            : row.families             ? shows.families
             : row.id == "more"          ? shows.more
             : row.id == "untimed"       ? shows.untimed
             : row.id == "unscheduled"   ? shows.unscheduled

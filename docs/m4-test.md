@@ -208,7 +208,7 @@ Start with no providers (a fresh install, or remove them all in Settings › Pro
 | Wrong password | Send a wrong password | The phone marks the user name and password fields and says why; the TV says the same; send again from the phone |
 | Remote way | Back to Welcome, "Use the remote" | Today's form with "STEP 1 OF 7"; signing in moves on to Area |
 | Area, Languages, Channels | Continue through them | One screen each; the busiest area is picked; LG CH ▲▼ / Fire TV ⏪ ⏩ jump a letter in the A to Z list; Back goes to the step before |
-| Sports, Teams | Continue | The busiest leagues are picked; teams in a rail by league with the reminder switch; letter keys jump in the team grid |
+| Sports, Teams | Continue | Sixteen tiles, the big US leagues, soccer's core and the college sports ticked for everyone (Build 127); teams in a rail by league with the reminder switch; letter keys jump in the team grid |
 | Done | Continue | My Lineup ready (never a channel count), today's games, your teams; "Start watching" opens the guide, "Go to Live Events" the board; My Sports doesn't pop up later |
 | Skip | Skip any step after the provider | It moves on and keeps that step's defaults |
 | From Settings | Settings › Providers › Add from your phone | The same scan screen; it closes with "Provider added" once the channels are in |
@@ -1128,3 +1128,28 @@ The guide's top gives the picture more room. The preview is 640×360 at the top 
 | Previews off | Settings › Guide › Preview channels off | The large card with the channel's logo; no NOW band |
 | In-player guide | Left in the player | As in Build 116 |
 | Redraws | Leave the guide resting on a show on now and send a log | While idle nothing redraws except once a minute (the clock, the bar and "N min left"); the "loop" line as in Build 120; the preview starts after the same rest as before |
+
+## Build 127 — Choosing your sports (screens)
+
+My Sports' first step is one grid of sixteen tiles in a fixed order: NFL, College football, NBA, WNBA, College basketball (men's and women's together), MLB, NHL, Soccer, College volleyball, Tennis, Golf, Motorsport, Boxing and UFC, Cricket, Rugby and "More sports ›". Each tile says what it covers ("Pro football", "Top 25 and your schools"; Soccer lists its ticked competitions); no tile shows how many events. Until My Sports is set up it starts from the defaults for your languages, and a pick ticked for a language has a green line saying so ("For Español", "+ Liga MX and Mexico, for Español"). OK ticks; holding OK (☰ on Fire TV, click and hold on Apple TV) on Soccer opens "Which competitions?" (groups on the left, competitions in a grid, Back saves), and on a college tile opens "College sports": per sport, Top 25 and Every Division I game switches, "Your conferences ›" (a side panel to tick) and "Your schools ›" (conferences on the left; the first tile "All of the <conference>" follows all of it). "More sports ›" lists lacrosse, field hockey, softball, darts, pro wrestling, high school and any other sport. "I don't watch sports" saves no leagues: the board then has no sport rows and shows More events whatever Settings says. On the board, a row's title has no counts, only how it is filtered in gray ("College football · Top 25 and your schools"), a ranked school has its rank as a small gray number before its name, and Soccer and college rows end with "Choose competitions" / "Choose schools". A one-time note after the update stands where the game's hero is. The game card and OK held on a game offer "Follow <team>" for each team and "Hide <competition>"; hiding leaves "<name> hidden" with Undo at the bottom. Settings › Live Events › Hidden lists everything hidden (pro wrestling and high school too) with Show again.
+
+| Area | How to check | Pass |
+|---|---|---|
+| First run, English | Set up with US English only | The sixteen tiles in order; NFL, College football, NBA, WNBA, College basketball, MLB, NHL, Soccer ("Premier League, Champions League, MLS, NWSL, USA") and College volleyball ticked; no green lines; no numbers on tiles |
+| First run, Español and Hindi | Set up with US Spanish and an Indian language | Soccer's green line "+ Liga MX and Mexico, for Español"; Cricket ticked with "For Hindi"; the lead mentions the languages |
+| Tick | OK on Tennis, OK on College basketball | Tennis ticked (green ring and check); College basketball ticks or unticks both basketballs |
+| Soccer | OK on Soccer twice | Unticked, then the same competitions ticked again |
+| Competitions | Hold OK on Soccer | "MY SPORTS · SOCCER", "Which competitions?", groups on the left (Popular first), a three-column grid; OK ticks; ◀ from the first column to the groups; Back returns with the tile's line changed; nothing saved until the last step |
+| College | Hold OK on College football | "College sports" with Football, Men's basketball, Women's basketball, Volleyball on the left (lacrosse, softball and field hockey only when picked); Top 25 on, Your conferences, Your schools, Every Division I game off |
+| Schools | Your schools › | "MY SPORTS · COLLEGE FOOTBALL · SCHOOLS", the conferences on the left (once the week's games are in), "All of the <conference>" first; ticking a school shows it on "Your schools" after Back |
+| More sports | OK on More sports › | Lacrosse, Field hockey, Softball, Darts, Pro wrestling, High school; Back or Done returns to the grid on More sports |
+| No sports | "I don't watch sports" | Setup moves on; the board has no sport rows and every game is in More events, even with More events off in Settings |
+| Row titles | Open the board | No numbers after any row title; college rows say "· Top 25 and your schools" in gray |
+| Rank | A college row with ranked teams | "4 Oregon": the rank small and gray before the name |
+| Choose | Right to the end of Soccer and College football | "Choose competitions" / "Choose schools" tiles take the focus (the hero says what they change); OK opens the page; Back saves and the row changes |
+| Note | A setup from before the update | The note in the hero's place with OK focused; OK closes it for good; Change opens My Sports; Up from the first row's filter returns to it |
+| Follow | A game's card (an upcoming game), Down to the second row | "Follow <team>" for each team; OK follows ("Following <team>") and the pill turns to "Unfollow" |
+| Hide | On the card, "Hide Liga MX" | "Its matches leave your Soccer row. Bring it back in Settings, Hidden." under the row; OK closes the card, the row loses its Liga MX games and "Liga MX hidden  Undo" shows at the bottom for a few seconds; OK there brings them back; any other key closes the note |
+| Hold OK | Hold OK on a game | The panel names the game and its competition: Where to Watch, Remind Me, Follow each team, Hide (with the same line) |
+| Hidden | Settings › Live Events › Hidden | "Hidden from Live Events" with Liga MX ("Hidden from a game card"), Pro wrestling and High school ("Hidden unless you turn it on"), each with Show again; Show again puts it back on the board |
+| Pointer | Point and click (LG) on tiles, groups, options, the Choose tile, the card's pills, the note's buttons and Undo | Each takes the focus under the pointer and acts on click |

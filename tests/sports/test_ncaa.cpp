@@ -33,6 +33,22 @@ std::string contest(const char* id, const char* state, const char* display, cons
 
 }  // namespace
 
+TEST_CASE("ncaa: a school's poll rank and conference (Build 127)") {
+  std::string games =
+      R"({"contestId":9,"gameState":"P","statusCodeDisplay":"pre","startTimeEpoch":1793203200,"teams":[)"
+      R"({"isHome":true,"seoname":"harbor","nameShort":"Harbor","teamRank":7,"conferenceSeo":"little-east"},)"
+      R"({"isHome":false,"seoname":"valley","nameShort":"Valley","teamRank":null,"conferenceSeo":"sunyac"}]})";
+  auto parsed = ncaa::parseGames(page(games), *leagueByShort("D3MBB"));
+  REQUIRE(parsed);
+  REQUIRE(parsed->size() == 1);
+  const SportsGame& g = parsed->front();
+  CHECK(g.home.rank == std::optional<int>(7));
+  CHECK_FALSE(g.away.rank);
+  CHECK(g.home.conference == std::string("ncaa:little-east"));
+  CHECK(g.away.conference == std::string("ncaa:sunyac"));
+  CHECK(conferenceName("D3MBB", *g.away.conference) == std::string("SUNYAC"));
+}
+
 TEST_CASE("ncaa: the page for a sport, division and day") {
   CHECK(ncaa::pageUrl(d3Women(), "20261028") == "https://www.ncaa.com/scoreboard/soccer-women/d3/2026/10/28/all-conf");
   CHECK(ncaa::pageUrl(d3Women(), "").empty());
@@ -139,7 +155,7 @@ TEST_CASE("leagues of the sports your channels show games of, colleges by sport"
   SportFeedsSeen seen;
   Seconds now = 1793203200;
   auto has = [&](const char* shortName) {
-    for (const League& l : activeLeagues(prefs, seen, now)) {
+    for (const League& l : activeLeagues(prefs, seen, now, {})) {
       if (l.shortName == shortName) return true;
     }
     return false;
@@ -157,10 +173,12 @@ TEST_CASE("leagues of the sports your channels show games of, colleges by sport"
                                             feed("Harbor vs Valley", "Rugby"), feed("Cove at Ridge", "Hockey"),
                                             feed("Bay vs Point", "Football"), feed("Harbor Show", "WNBA")};
   CHECK(noteSportFeeds(seen, checked, events, now));
-  CHECK(has("D3WSO"));    // a college soccer game: Divisions II and III soccer
+  // Build 127: unconfigured is the default picks: college soccer is every
+  // other competition's, and rugby isn't a default.
+  CHECK_FALSE(has("D3WSO"));
   CHECK_FALSE(has("D2FH"));  // no college field hockey on your channels
-  CHECK(has("URC"));      // rugby games: the rugby competitions
-  CHECK(has("NCAAMH"));   // hockey games: college hockey
+  CHECK_FALSE(has("URC"));
+  CHECK(has("NCAAMH"));   // hockey games: college hockey (the NHL is a default)
   CHECK_FALSE(has("D3MHK"));  // but no college named: not Division III hockey
   CHECK(has("FCS"));      // football games: FCS
   CHECK_FALSE(has("D2/D3"));
@@ -174,7 +192,15 @@ TEST_CASE("leagues of the sports your channels show games of, colleges by sport"
   CHECK(has("NCAAMH"));
   CHECK_FALSE(has("D3WSO"));
   CHECK_FALSE(has("URC"));
+  prefs.leagues = {"S:Rugby"};
+  CHECK(has("URC"));  // rugby games: the rugby competitions
+  // College soccer comes with every other soccer competition, not a league.
   prefs.leagues = {"EPL"};
-  CHECK(has("D3WSO"));
+  CHECK_FALSE(has("D3WSO"));
+  prefs.leagues = {kSoccerAllPick};
+  CHECK(has("D3WSO"));    // a college soccer game: Divisions II and III soccer
   CHECK_FALSE(has("NCAAMH"));
+  // Hidden: never looked up.
+  prefs.hidden = {"D3WSO"};
+  CHECK_FALSE(has("D3WSO"));
 }

@@ -9,6 +9,10 @@ namespace marigold::sports::banner {
 enum class Chip : uint8_t;
 }
 
+namespace marigold::app {
+class App;
+}
+
 namespace marigold::app::events_ui {
 
 constexpr float kTileW = 360;
@@ -53,5 +57,14 @@ void tile(ui::Ctx& c, const EventTile& t, ui::Rect r, bool focused, bool mixed);
 // The focused game's two badges, big and faded, over a blue glow (top
 // right). Only the glow when `badges` is off (the corner preview is there).
 void backdrop(ui::Ctx& c, const EventTile& t, bool badges = true);
+// The tile that ends a row the viewer can change (Build 127): "Choose" and
+// `what` ("schools", "competitions") on an outlined tile; focused, the
+// calm focus.
+void chooseTile(ui::Ctx& c, const std::string& what, ui::Rect r, bool focused);
+// Hide on a game card (Build 127): what hiding `t`'s competition does
+// ("Its matches leave your Soccer row. Bring it back in Settings, Hidden.").
+std::string hideLine(App& app, const EventTile& t);
+// Hides a competition from the board and leaves a note to undo it.
+void hide(App& app, const std::string& id, const std::string& name);
 
 }  // namespace marigold::app::events_ui

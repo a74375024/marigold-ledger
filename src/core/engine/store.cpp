@@ -1001,6 +1001,13 @@ void Store::setPrefs(const catalog::LineupPrefs& p) {
   bool freeChanged = freeOn(p) != freeOn(impl_->prefs);
   impl_->prefs = p;
   host_.files.write(kLineupFile, catalog::toJson(p));
+  if (countriesChanged && !impl_->ev.mySports.configured) {
+    // Build 127: until My Sports is set up, Live Events follows the
+    // defaults for the lineup's countries (Español adds Liga MX...).
+    impl_->ev.schedule.leaguesChanged(scheduleContext());
+    impl_->ev.lastFingerprint.clear();
+    impl_->ev.boardDirty = true;
+  }
   if ((countriesChanged || freeChanged) && impl_->admissionCut) {
     // Which groups are kept depends on the countries and on whether free
     // channels are on: read the channel lists again, and sort them even if

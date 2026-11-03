@@ -121,6 +121,17 @@ struct EventTile {
   // (tileTopLine()), and " · in 25 m" after the start.
   std::string topLine, topLineMixed, extraLine;
   bool textMade = false;
+  // Build 127: what "Hide" on the game card hides ("EPL", "LMX", "NBA",
+  // "S:Golf"; "" none: Store::hideFromBoard), and its name ("Liga MX").
+  std::string competitionId;
+  std::string competitionName;
+  // The game's two teams ("LEAGUE|id": Store::followTeam), in the order of
+  // `sides`; empty for an event that isn't between two teams.
+  struct FollowSide {
+    std::string key, name;
+    bool followed = false;
+  };
+  std::vector<FollowSide> follow;
 };
 
 // The tile's top line: a sport icon's name ("CRICKET"; empty for "other",
@@ -160,6 +171,17 @@ struct EventRow {
   int live = 0, count = 0;
   std::vector<EventGroup> groups;
   bool families = false;  // the "Event channels" row (feed families)
+  // Build 127: a college row's filter ("Top 25 and your schools", "Every
+  // Division I game"; "" none). `choose`: the row ends with a "Choose
+  // competitions" ("competitions", Soccer) or "Choose schools" ("schools",
+  // a college row) tile; "" none. `chooseLeague`: the college league the
+  // schools tile opens ("NCAAF").
+  std::string subtitle;
+  std::string choose;
+  std::string chooseLeague;
+  // Shown whatever Show on the board says (views::boardRowShown()): More
+  // events when My Sports is set up with no picks.
+  bool alwaysShown = false;
 };
 
 // Settings › Live Events › Show on the board (Build 119): which of the
@@ -193,6 +215,10 @@ struct EventsBoard {
   bool more = false;
   Stage stage = Stage::None;
   bool scoresOn = true;
+  // Build 127: the one-time note after the update ("" none: My Sports'
+  // updateNoted; Store::dismissBoardNote()): its title and line.
+  std::string noteTitle;  // "Your rows now show what you follow"
+  std::string noteLine;   // "College shows the Top 25 and your schools. Other games are in More events and Search."
   // Where each tile is, by id: the first one in the rows (index()).
   struct Place {
     uint32_t row = 0, group = 0, tile = 0;

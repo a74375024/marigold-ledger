@@ -6,6 +6,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "app/app.hpp"
+#include "app/screens/screens.hpp"
 #include "core/logos/tune.hpp"
 #include "core/sports/game_banner.hpp"
 #include "platform/icons.hpp"
@@ -152,7 +154,8 @@ void sideLine(ui::Ctx& c, const EventSide& s, Rect r, const Look& look, float al
     badge(c, s, x, r.y + 3, 28, look.faded);
     x += 38;
   }
-  if (!s.rank.empty()) x += ui::label(c, s.rank, x, r.y + 8, Weight::Bold, 15, ink.withAlpha(ink.a * 0.55f)) + 6;
+  // A ranked school: its rank this week, small and gray, before the name.
+  if (!s.rank.empty()) x += ui::label(c, s.rank, x, r.y + 8, Weight::Bold, 17, ink.withAlpha(ink.a * 0.5f)) + 6;
   float right = r.x + r.w;
   float scoreLeft = right;
   if (!s.score.empty()) {
@@ -560,6 +563,48 @@ void backdrop(ui::Ctx& c, const EventTile& t, bool badges) {
   badge(c, a, x, y, size, false, 0.4f);  // decorative: faded, not dimmed
   ui::label(c, "VS", x + size + 18, y + size * 0.5f - 28, Weight::Bold, 44, theme::white(0.3f));
   badge(c, b, x + size + 120, y, size, false, 0.4f);
+}
+
+void chooseTile(ui::Ctx& c, const std::string& what, Rect r, bool focused) {
+  Color ink = theme::white(0.72f);
+  if (focused) {
+    float dw = r.w * 0.02f, dh = r.h * 0.02f;
+    r = {r.x - dw, r.y - dh, r.w + 2 * dw, r.h + 2 * dh};
+    ui::calmFill(c, r, 16);
+    ink = theme::white();
+  } else {
+    c.g.stroke(r, theme::white(0.25f), 16, 2.5f);
+  }
+  float y = r.y + r.h * 0.5f - 30;
+  ui::label(c, "Choose", r.x, y, Weight::Bold, 23, ink, r.w, Align::Center);
+  ui::label(c, what, r.x, y + 32, Weight::Bold, 23, ink, r.w, Align::Center);
+}
+
+std::string hideLine(App& app, const EventTile& t) {
+  // The sport's own row, else the first row it is in.
+  std::shared_ptr<const EventsBoard> board = app.store().events();
+  std::string row;
+  for (const EventRow& r : board->rows) {
+    bool in = false;
+    for (const EventGroup& g : r.groups)
+      for (const EventTile& x : g.tiles)
+        if (x.id == t.id) in = true;
+    if (!in) continue;
+    if (r.id.rfind("sport|", 0) == 0) {
+      row = r.title;
+      break;
+    }
+    if (row.empty() && !r.families) row = r.title;
+  }
+  bool matches = t.icon == "soccer" || t.icon == "rugby" || t.icon == "cricket" || t.icon == "tennis";
+  std::string what = matches ? "Its matches" : "Its games";
+  std::string where = row.empty() ? std::string("leave Live Events") : "leave your " + row + " row";
+  return what + " " + where + ". Bring it back in Settings, Hidden.";
+}
+
+void hide(App& app, const std::string& id, const std::string& name) {
+  app.store().hideFromBoard(id);
+  app.nav().push(makeUndoNote(app, name + " hidden", [&app, id] { app.store().showOnBoard(id); }));
 }
 
 }  // namespace marigold::app::events_ui

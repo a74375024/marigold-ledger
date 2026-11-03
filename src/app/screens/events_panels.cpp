@@ -1,5 +1,8 @@
 // The game detail card (LiveEventDetailCard) and Where to Watch
-// (LiveEventWherePanel) for Live Events.
+// (LiveEventWherePanel) for Live Events. Build 127: under the card's
+// actions, Follow (or Unfollow) each team and Hide its competition, with
+// what hiding does under it while it has the focus; hiding leaves a note
+// at the bottom to undo it.
 #include "app/app.hpp"
 #include "app/playback.hpp"
 #include "app/screens/events_ui.hpp"
@@ -28,6 +31,8 @@ bool watchEvent(App& app, const std::string& id, const std::string& entryOrChann
   return true;
 }
 
+constexpr int kHitAction = 1, kHitMore = 101;  // + the pill's index
+
 class EventDetail : public Screen {
  public:
   EventDetail(App& app, std::string id) : Screen(app), id_(std::move(id)) {}
@@ -35,9 +40,22 @@ class EventDetail : public Screen {
 
   bool opaque() const override { return false; }
 
+  void hover(int id) override {
+    const EventTile* t = app_.store().eventTile(id_);
+    if (id >= kHitMore && id - kHitMore < static_cast<int>(more(t).size())) {
+      row_ = 1;
+      focus_ = id - kHitMore;
+    } else if (id >= kHitAction && id - kHitAction < buttons(t)) {
+      row_ = 0;
+      focus_ = id - kHitAction;
+    }
+  }
+
   bool key(const KeyEvent& e) override {
     const EventTile* t = app_.store().eventTile(id_);
-    int n = buttons(t);
+    std::vector<More> extra = more(t);
+    if (row_ == 1 && extra.empty()) row_ = 0;
+    int n = row_ == 0 ? buttons(t) : static_cast<int>(extra.size());
     switch (e.key) {
       case Key::Left:
         focus_ = std::max(0, focus_ - 1);
@@ -45,8 +63,24 @@ class EventDetail : public Screen {
       case Key::Right:
         focus_ = std::min(n - 1, focus_ + 1);
         return true;
+      case Key::Down:
+        if (row_ == 0 && !extra.empty()) {
+          row_ = 1;
+          focus_ = std::min(focus_, static_cast<int>(extra.size()) - 1);
+        }
+        return true;
+      case Key::Up:
+        if (row_ == 1) {
+          row_ = 0;
+          focus_ = std::min(focus_, buttons(t) - 1);
+        }
+        return true;
       case Key::Ok: {
         if (!t) return true;
+        if (row_ == 1) {
+          if (focus_ >= 0 && focus_ < static_cast<int>(extra.size())) act(extra[static_cast<size_t>(focus_)]);
+          return true;
+        }
         std::string action = buttonTitle(t, focus_);
         std::string id = id_;
         App& app = app_;
@@ -70,7 +104,10 @@ class EventDetail : public Screen {
   void draw(ui::Ctx& c) override {
     ui::scrim(c, 0.6f);
     const EventTile* t = app_.store().eventTile(id_);
-    Rect card{(gfx::kLayoutWidth - 1150) * 0.5f, 200, 1150, 680};
+    std::vector<More> extra = more(t);
+    // Taller with a row of Follow and Hide under the actions.
+    float h = extra.empty() ? 680 : 800;
+    Rect card{(gfx::kLayoutWidth - 1150) * 0.5f, (gfx::kLayoutHeight - h) * 0.5f, 1150, h};
     c.g.fill(card, theme::hex(0x1C1F25, 0.98f), 34);
     if (!t) {
       ui::labelIn(c, "This game is no longer listed.", card, Weight::Medium, 26, theme::white(0.7f), Align::Center);
@@ -108,18 +145,71 @@ class EventDetail : public Screen {
     // Pills.
     float px = x;
     int n = buttons(t);
+    float py = card.y + card.h - (extra.empty() ? 120 : 280);
     for (int i = 0; i < n; ++i) {
       std::string title = buttonTitle(t, i);
       float pw = ui::chipWidth(c, title, 24) + 40;
-      Rect pill{px, card.y + card.h - 120, pw, 70};
-      bool f = i == focus_;
+      Rect pill{px, py, pw, 70};
+      c.hit(pill, kHitAction + i);
+      bool f = row_ == 0 && i == focus_;
       c.g.fill(pill, f ? theme::white() : theme::white(0.12f), 35);
       ui::labelIn(c, title, pill, Weight::Bold, 24, f ? theme::black() : theme::white(), Align::Center);
       px += pw + 20;
     }
+    if (extra.empty()) return;
+    // Follow each team, Hide the competition: smaller, under the actions.
+    px = x;
+    py += 96;
+    for (size_t i = 0; i < extra.size(); ++i) {
+      float pw = ui::chipWidth(c, extra[i].title, 22) + 36;
+      if (px + pw > card.x + card.w - 60) break;
+      Rect pill{px, py, pw, 60};
+      c.hit(pill, kHitMore + static_cast<int>(i));
+      bool f = row_ == 1 && static_cast<int>(i) == focus_;
+      c.g.fill(pill, f ? theme::white() : theme::white(0.08f), 30);
+      if (!f) c.g.stroke(pill, theme::white(0.18f), 30, 1.5f);
+      ui::labelIn(c, extra[i].title, pill, Weight::Bold, 22, f ? theme::black() : theme::white(), Align::Center);
+      px += pw + 16;
+    }
+    // What the focused one does.
+    if (row_ == 1 && focus_ >= 0 && focus_ < static_cast<int>(extra.size()))
+      ui::label(c, extra[static_cast<size_t>(focus_)].line, x, py + 76, Weight::Regular, 21, theme::white(0.6f), w);
   }
 
  private:
+  // The second row: Follow / Unfollow each team, then Hide.
+  struct More {
+    enum class Kind { Follow, Hide } kind;
+    std::string title, line;
+    std::string key, name;  // the team's key and name, or the competition's id and name
+  };
+  std::vector<More> more(const EventTile* t) const {
+    std::vector<More> out;
+    if (!t) return out;
+    for (const EventTile::FollowSide& s : t->follow) {
+      if (s.key.empty()) continue;
+      bool on = app_.store().followsTeam(s.key);
+      out.push_back({More::Kind::Follow, (on ? "Unfollow " : "Follow ") + s.name,
+                     on ? "Their games stop leading Live Events." : "Their games lead Live Events.", s.key, s.name});
+    }
+    if (!t->competitionId.empty())
+      out.push_back({More::Kind::Hide, "Hide " + t->competitionName, events_ui::hideLine(app_, *t), t->competitionId,
+                     t->competitionName});
+    return out;
+  }
+  void act(const More& m) {
+    App& app = app_;
+    if (m.kind == More::Kind::Follow) {
+      bool now = !app.store().followsTeam(m.key);
+      app.store().followTeam(m.key, now);
+      app.toast(now ? "Following " + m.name : "Stopped following " + m.name);
+      return;
+    }
+    std::string id = m.key, name = m.name;
+    app.nav().pop();
+    events_ui::hide(app, id, name);
+  }
+
   int buttons(const EventTile* t) const {
     if (!t) return 0;
     int n = 1;                    // Where to Watch
@@ -137,6 +227,7 @@ class EventDetail : public Screen {
   }
 
   std::string id_;
+  int row_ = 0;  // 0 the actions, 1 Follow and Hide
   int focus_ = 0;
 };
 

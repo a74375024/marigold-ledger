@@ -189,7 +189,19 @@ struct Saved {
   bool restPending = false;
   // The other event calendars (calendars.hpp), with their own schema.
   calendars::Saved calendars;
+  // Build 127: college schools' conferences (team id -> basketball's
+  // conference key), learned from the basketball and football schedules
+  // (football's keys put as basketball's), for the sports whose schedule
+  // has none (volleyball, hockey...): the same school has the same team id
+  // in every sport. At most kConferencesKept.
+  std::map<std::string, std::string> conferences;
 };
+constexpr size_t kConferencesKept = 2000;
+// Learns Saved::conferences from its games (done whenever they change).
+void learnConferences(Saved& saved);
+// Gives college teams with no conference the one learned (not football's,
+// whose keys are its own).
+void fillConferences(std::vector<SportsGame>& games, const std::map<std::string, std::string>& conferences);
 std::string toJson(const Saved& saved);
 // nullopt when the text isn't a saved schedule (start empty).
 std::optional<Saved> savedFromJson(std::string_view text);
@@ -198,6 +210,9 @@ std::optional<Saved> savedFromJson(std::string_view text);
 // "Game schedule" switch, the time and the viewer's zone.
 struct Context {
   MySportsPrefs prefs;
+  // Build 127: the lineup's countries (catalog::LineupPrefs::countries):
+  // until My Sports is set up, the leagues looked up are their defaults.
+  std::set<std::string> countries;
   SportFeedsSeen seen;
   bool enabled = kEnabledByDefault;
   Seconds now = 0;

@@ -17,6 +17,10 @@ struct Ctx;
 struct PanelItem;
 }  // namespace marigold::ui
 
+namespace marigold::sports {
+struct MySportsPrefs;
+}
+
 namespace marigold::app {
 
 // Full screen playback of whatever Playback holds.
@@ -108,6 +112,28 @@ std::unique_ptr<Screen> makeCameraPanel(App& app);
 // first-run setup's Sports and Teams steps, which end on the summary.
 // `teams` starts on the teams (Settings › Live Events › My teams).
 std::unique_ptr<Screen> makeMySports(App& app, bool onboarding = false, bool teams = false);
+// My Sports' pages (Build 127, sports_picks.cpp). They edit a copy of
+// `prefs`; Back hands it to `done` (My Sports keeps it in its draft, the
+// board saves it). Soccer: which competitions, a rail of groups and a grid.
+// College: each college sport's Top 25, conferences, schools and "Every
+// Division I game", opened on `league` ("NCAAF").
+using PicksDone = std::function<void(const sports::MySportsPrefs&)>;
+std::unique_ptr<Screen> makeSoccerPicks(App& app, const sports::MySportsPrefs& prefs, PicksDone done);
+std::unique_ptr<Screen> makeCollegePicks(App& app, const sports::MySportsPrefs& prefs, const std::string& league,
+                                         PicksDone done);
+// The picks the board goes by: the saved ones, or until My Sports is set
+// up, the defaults for your languages (with anything already saved).
+sports::MySportsPrefs boardPicks(App& app);
+// The same pages from Live Events' "Choose competitions" / "Choose schools"
+// tiles: they start from boardPicks() and save on Back when changed.
+void openSoccerPicks(App& app);
+void openCollegePicks(App& app, const std::string& league);
+// A pick's name for lists ("Premier League", "USA men and women", "Golf").
+std::string pickName(const std::string& id);
+// A short note at the bottom of the screen with an Undo button, which has
+// the focus: OK undoes, Back or any other key closes it, and it closes by
+// itself after a few seconds (Hide on a game card: "Liga MX hidden").
+std::unique_ptr<Screen> makeUndoNote(App& app, std::string text, std::function<void()> undo);
 // Settings › Help & info › Send a report to your phone: share a file with a
 // phone on the home network.
 enum class ExportKind { ChannelReport, PlaybackLog, LiveEvents };

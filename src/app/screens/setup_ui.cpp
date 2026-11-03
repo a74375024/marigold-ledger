@@ -1,5 +1,6 @@
 #include "app/screens/setup_ui.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 
@@ -112,6 +113,82 @@ void qr(ui::Ctx& c, Rect r, const report::QrMatrix& m) {
       }
     }
   }
+}
+
+void pickTile(ui::Ctx& c, Rect r, const PickTile& t, bool focused) {
+  c.g.fill(r, focused ? theme::white() : theme::white(t.strong ? 0.13f : 0.08f), 18);
+  if (t.on && !t.chevron) c.g.stroke(r, theme::hex(theme::kToggleOn), 18, 3);
+  ui::Color ink = focused ? theme::black() : theme::white();
+  float textW = r.w - kPickPad - 64;
+  float y = r.y + 18;
+  ui::label(c, t.title, r.x + kPickPad, y, Weight::Bold, 25, ink, textW);
+  y += 36;
+  if (!t.detail.empty())
+    y += ui::paragraph(c, t.detail, r.x + kPickPad, y, textW, Weight::Medium, 18, ink.withAlpha(0.6f), 2, 1.25f) + 4;
+  // Why it was ticked for you: green (darker on the white focus).
+  if (!t.why.empty())
+    ui::label(c, t.why, r.x + kPickPad, y, Weight::Bold, 17, theme::hex(focused ? 0x1E7A34 : 0x8FD19E), textW);
+  if (t.chevron) {
+    ui::label(c, "\xe2\x80\xba", r.x + r.w - 44, r.y + r.h - 50, Weight::Bold, 34, ink.withAlpha(0.5f));
+    return;
+  }
+  Rect check{r.x + r.w - 52, r.y + 18, 32, 32};
+  if (t.on) {
+    c.g.fill(check, theme::hex(theme::kToggleOn), 16);
+    ui::labelIn(c, "\xe2\x9c\x93", check, Weight::Bold, 20, theme::white(), Align::Center);
+  } else {
+    c.g.stroke(check, ink.withAlpha(0.4f), 16, 2);
+  }
+}
+
+void railList(ui::Ctx& c, float x, float y, float w, float bottom, const std::vector<std::string>& rows, int selected,
+              bool focused, float& scroll, int hitBase) {
+  float visible = bottom - y;
+  if (selected >= 0) scroll = keepRowInView(scroll, selected, kRailRowH, kRailRowStep - kRailRowH, visible);
+  c.g.pushClip({x - 10, y - 4, w + 20, visible + 8});
+  for (size_t i = 0; i < rows.size(); ++i) {
+    Rect r{x, y + static_cast<float>(i) * kRailRowStep - scroll, w, kRailRowH};
+    if (r.y + r.h < y - 4 || r.y > bottom) continue;
+    c.hit(r, hitBase + static_cast<int>(i));
+    bool sel = static_cast<int>(i) == selected;
+    bool f = sel && focused;
+    if (f) c.g.fill(r, theme::white(), 16);
+    else if (sel) c.g.fill(r, theme::white(0.16f), 16);
+    ui::labelIn(c, rows[i], {r.x + 22, r.y, r.w - 44, r.h}, Weight::Bold, 23,
+                f ? theme::black() : sel ? theme::white() : theme::white(0.72f));
+  }
+  c.g.popClip();
+}
+
+void optionRow(ui::Ctx& c, Rect r, const std::string& title, const std::string& detail, bool toggle, bool on,
+               bool focused) {
+  c.g.fill(r, focused ? theme::white() : theme::white(0.08f), theme::kRowRadius);
+  ui::Color ink = focused ? theme::black() : theme::white();
+  float textW = r.w - 2 * 28 - 100;
+  ui::label(c, title, r.x + 28, r.y + 20, Weight::Bold, 26, ink, textW);
+  if (!detail.empty()) ui::label(c, detail, r.x + 28, r.y + 58, Weight::Regular, 20, ink.withAlpha(0.65f), textW);
+  if (toggle) {
+    Rect knob{r.x + r.w - 94, r.y + (r.h - 38) * 0.5f, 66, 38};
+    c.g.fill(knob, on ? theme::hex(theme::kToggleOn) : (focused ? theme::black(0.2f) : theme::white(0.25f)), 19);
+    c.g.fill({on ? knob.x + knob.w - 34 : knob.x + 4, knob.y + 4, 30, 30}, theme::white(), 15);
+  } else {
+    ui::labelIn(c, "\xe2\x80\xba", {r.x + r.w - 60, r.y, 32, r.h}, Weight::Bold, 34, ink.withAlpha(0.5f),
+                Align::Center);
+  }
+}
+
+float keepRowInView(float scroll, int focusRow, float rowH, float gap, float visible) {
+  float fy = static_cast<float>(focusRow) * (rowH + gap);
+  if (fy < scroll) scroll = fy;
+  if (fy + rowH > scroll + visible) scroll = fy + rowH - visible;
+  return std::max(0.0f, scroll);
+}
+
+hints::Hint keyHint(const std::string& cap, const std::string& label) {
+  hints::Hint h;
+  h.cap = cap;
+  h.label = label;
+  return h;
 }
 
 int letterStep(Key k) {

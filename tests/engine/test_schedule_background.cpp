@@ -46,7 +46,7 @@ void savedYesterday(fake::Tv& tv) {
 // Every scoreboard request of the standard leagues today answers, empty.
 void answerScoreboards(fake::Tv& tv) {
   mtime::Seconds now = mtime::now();
-  for (const sports::League& l : sports::activeLeagues(sports::MySportsPrefs(), sports::SportFeedsSeen(), now)) {
+  for (const sports::League& l : sports::activeLeagues(sports::MySportsPrefs(), sports::SportFeedsSeen(), now, {})) {
     for (const std::string& q : schedule::queriesFor(l, now, tv.zone)) {
       tv.pool.answer(schedule::scoreboardRequest(l, q, false).url, R"({"events":[]})");
     }

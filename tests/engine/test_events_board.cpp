@@ -293,6 +293,14 @@ TEST_CASE("engine: Live Events shows placeholders until its board is made from t
   Store store(tv.host());
   REQUIRE(fake::addPlaylist(store, tv).empty());
   CHECK_FALSE(store.events()->loading);  // closed: nothing loading
+  // Many leagues picked, so the schedule (never answered here) is still
+  // being asked for after one settle (Build 127: the defaults ask for few).
+  marigold::sports::MySportsPrefs picks;
+  picks.configured = true;
+  picks.leagues = {"NFL", "NCAAF", "NBA",  "MLB", "NHL", "MLS", "EPL",        "UCL",          "LIGA",
+                   "SA",  "BUN",   "L1",   "UEL", "UECL", "S:Fighting", "S:Motorsport", "S:SoccerAll"};
+  store.setMySports(picks);
+  fake::settle(store, tv);
   // The board made while closed is older than the games worked out since:
   // placeholders, no tiles, until a board is made from them.
   store.eventsOpen(true);

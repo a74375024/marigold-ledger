@@ -42,6 +42,40 @@ void keys(ui::Ctx& c, const RemoteKeys& remote, bool letters);
 // A QR code (dark modules on white, the quiet zone included) in `r`.
 void qr(ui::Ctx& c, ui::Rect r, const report::QrMatrix& m);
 
+// My Sports' pages (Build 127) ------------------------------------------
+
+// A pick's tile: its name, a gray line under it, a green line saying why it
+// was ticked for you, and a check circle (or a chevron for a tile that
+// opens a page). Ticked: a green ring. Focused: white, dark text.
+struct PickTile {
+  std::string title, detail, why;
+  bool on = false;
+  bool chevron = false;  // "More sports ›": opens a page, no check
+  bool strong = false;   // "All of the Big Ten": a slightly lighter tile
+};
+constexpr float kPickPad = 22;
+void pickTile(ui::Ctx& c, ui::Rect r, const PickTile& t, bool focused);
+
+// A list down the left of a rail-and-grid page (Soccer's groups, the
+// college sports, a sport's conferences): `selected` is the one the grid
+// shows, focused when `focused`. Rows scroll to keep the selected one in
+// view (`scroll` keeps the offset). Hit ids are hitBase + index.
+constexpr float kRailRowH = 56, kRailRowStep = 64;
+void railList(ui::Ctx& c, float x, float y, float w, float bottom, const std::vector<std::string>& rows,
+              int selected, bool focused, float& scroll, int hitBase);
+
+// An options row (the college page's): a title, a gray line, and at the
+// right a switch (`toggle`, on or off) or a chevron.
+void optionRow(ui::Ctx& c, ui::Rect r, const std::string& title, const std::string& detail, bool toggle, bool on,
+               bool focused);
+
+// A grid's vertical scroll that keeps row `focusRow` (of `rowH` + `gap`)
+// inside `visible`.
+float keepRowInView(float scroll, int focusRow, float rowH, float gap, float visible);
+
+// Bottom bars for these pages, built from plain hints.
+hints::Hint keyHint(const std::string& cap, const std::string& label);
+
 // The keys that jump a letter in an A-to-Z list: +1 for the next letter,
 // -1 for the previous one, 0 for any other key.
 int letterStep(Key k);

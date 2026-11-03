@@ -294,6 +294,22 @@ TEST_CASE("calendars: looked up for the picked sports, when seen, unless the sco
   CHECK_FALSE(keys(active(prefs, seen, now, covered)).count("4443"));
   // A competition the all-soccer listing has.
   CHECK(coveredBy({}, {"polish ekstraklasa", "spanish laliga"}) == std::set<std::string>{"4422"});
+  // Build 127: any soccer pick brings the soccer ones (every other
+  // competition alone too); hidden, their games would be on no row, so
+  // they aren't asked for.
+  prefs.leagues = {kSoccerAllPick};
+  CHECK(keys(active(prefs, seen, now, {})).count("4403"));
+  prefs.leagues = {kUSAPick};
+  CHECK(keys(active(prefs, seen, now, {})).count("4403"));
+  prefs.leagues = {"EPL"};
+  prefs.hidden = {kSoccerAllPick};
+  CHECK_FALSE(keys(active(prefs, seen, now, {})).count("4403"));
+  prefs.leagues = {"NFL"};
+  prefs.hidden = {"CFL"};
+  CHECK_FALSE(keys(active(prefs, seen, now, {})).count("4405"));
+  prefs.hidden = {"NFL"};
+  prefs.leagues = {"NFL"};  // a hidden pick isn't one
+  CHECK_FALSE(keys(active(prefs, seen, now, {})).count("4405"));
 }
 
 TEST_CASE("calendars: the day's pass asks the next event, the round when it changed, and the next round") {

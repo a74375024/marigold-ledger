@@ -38,6 +38,11 @@ struct SportsTeam {
   std::vector<std::string> flags;
   // A fighter's or player's country code ("AUS").
   std::optional<std::string> country;
+  // Build 127: a college team's conference, as a CollegePick conference
+  // key: the schedule's group id as text ("8"), or "ncaa:<seo>" from the
+  // NCAA's pages ("ncaa:little-east"). A sport whose schedule has none
+  // (volleyball) gets the school's from the other college schedules.
+  std::optional<std::string> conference;
 
   // "LAR", or initials when there's no abbreviation.
   std::string abbreviation() const;
@@ -84,6 +89,10 @@ struct SportsGame {
   // Listed by its day only, no time set yet (a small college's game): the
   // start is that day's midnight where the school is.
   std::optional<bool> dayOnly;
+  // Build 127: a game of the all-soccer listing: the soccer pick it belongs
+  // to ("EPL", "USA", "MEX", "S:SoccerAll"), read from the listing's own
+  // competition (my_sports.hpp soccerCompetition()).
+  std::optional<std::string> competition;
 
   bool isRacing() const { return racing.value_or(false); }
   bool isTennis() const { return tennis.value_or(false); }

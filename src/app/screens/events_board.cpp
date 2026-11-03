@@ -19,6 +19,14 @@
 // shown whole, after its rows; under the title, a spinner and what the load
 // waits for now (Build 124, the board's stage). Within half an hour of the start, OK plays a
 // game whose best source is a channel (views::okPlays()).
+//
+// Build 127: a row's title has no counts, only how it is filtered after it
+// in gray ("College football · Top 25 and your schools"); a row that can be
+// changed ends with a "Choose competitions" / "Choose schools" tile (OK
+// opens Soccer's or the college page). After the update a one-time note
+// stands where the hero is, with OK and Change (My Sports). With "I don't
+// watch sports" saved, More events shows whatever Show on the board says.
+// Holding OK on a game offers Follow and Hide beside Where to Watch.
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -37,6 +45,7 @@
 #include "core/input/preview_pace.hpp"
 #include "core/sports/my_sports.hpp"
 #include "core/util/log.hpp"
+#include "core/util/strings.hpp"
 
 namespace marigold::app {
 namespace {
@@ -60,6 +69,7 @@ constexpr float kGroupGap = 32;
 constexpr int kHitTile = 100000;  // + row * 1000 + tile
 constexpr int kHitFilter = 51;    // the rail's ids are left_rail::kHit*, 1-499
 constexpr int kHitShowHidden = 52;  // the empty board's "Show them in Settings"
+constexpr int kHitNote = 53;        // + 0 OK, + 1 Change: the one-time note's buttons
 constexpr uint32_t kPulseStepMs = 250;       // placeholders drawn again this often (the pulse is 1.2 s)
 // Then the board as it is, not endless placeholders.
 constexpr uint32_t kLoadingAtMostMs = engine::kPlaceholdersAtMostMs;
@@ -155,7 +165,7 @@ class EventsBoardScreen : public Screen {
     if (k != Key::Ok) pointer_ = 0;
     rail::Mode mode = nav_.mode();
     if (e.longPress) {
-      if (mode == rail::Mode::Content && !filterFocus_ && !inRange(pointer_, left_rail::kHitStrip)) {
+      if (mode == rail::Mode::Content && !filterFocus_ && !noteFocus_ && !inRange(pointer_, left_rail::kHitStrip)) {
         if (const EventTile* t = focused()) openMenu(*t);
       }
       return true;
@@ -179,9 +189,26 @@ class EventsBoardScreen : public Screen {
       apply(nav_.key(k), true);
       return true;
     }
+    if (noteFocus_ && noteShown()) {
+      switch (k) {
+        case Key::Left: noteButton_ = 0; return true;
+        case Key::Right: noteButton_ = 1; return true;
+        case Key::Down: noteFocus_ = false; return true;
+        case Key::Ok: noteDone(noteButton_ == 1); return true;
+        case Key::Back: noteDone(false); return true;
+        default: return true;
+      }
+    }
+    noteFocus_ = false;
     if (filterFocus_) {
-      if (k == Key::Ok) openFilter();
-      else if (k == Key::Down || k == Key::Back) filterFocus_ = false;
+      if (k == Key::Ok) {
+        openFilter();
+      } else if (k == Key::Down || k == Key::Back) {
+        filterFocus_ = false;
+      } else if (k == Key::Up && noteShown()) {
+        filterFocus_ = false;
+        noteFocus_ = true;
+      }
       return true;
     }
     switch (k) {
@@ -203,10 +230,11 @@ class EventsBoardScreen : public Screen {
         }
         return true;
       case Key::Right:
-        if (tile_ + 1 < static_cast<int>(flat(row_).size())) ++tile_;
+        if (tile_ + 1 < count(row_)) ++tile_;
         return true;
       case Key::Ok:
-        if (const EventTile* t = focused()) select(*t);
+        if (chooseFocused()) openChoose(*rows()[static_cast<size_t>(row_)].row);
+        else if (const EventTile* t = focused()) select(*t);
         else if (showHiddenButton()) showHidden();
         return true;
       case Key::Red:
@@ -245,11 +273,18 @@ class EventsBoardScreen : public Screen {
         row_ = r;
         tile_ = t;
         filterFocus_ = false;
+        noteFocus_ = false;
       }
     } else if (id == kHitFilter) {
       filterFocus_ = true;
+      noteFocus_ = false;
     } else if (id == kHitShowHidden) {
       filterFocus_ = false;
+      noteFocus_ = false;
+    } else if (id == kHitNote || id == kHitNote + 1) {
+      filterFocus_ = false;
+      noteFocus_ = true;
+      noteButton_ = id - kHitNote;
     }
   }
 
@@ -257,7 +292,9 @@ class EventsBoardScreen : public Screen {
     Clock::time_point start = Clock::now();
     // Show on the board switched (in Quick settings over the board): the
     // rows again, so the row appears behind the panel.
-    if (showsChanged()) refresh();
+    // A new board while something is over this screen (the undo note
+    // after Hide): its rows as they are now.
+    if (showsChanged() || app_.store().events()->version != version_) refresh();
     drawBoard(c);
     stats_.frameMax = std::max(stats_.frameMax, msSince(start));
     ++stats_.frames;
@@ -272,8 +309,9 @@ class EventsBoardScreen : public Screen {
     const EventTile* f = focused();
     bool corner = f && previewable(*f);
     // The corner takes the place of the big faded badges.
-    if (f) events_ui::backdrop(c, *f, !corner);
-    drawHero(c, f);
+    if (f && !noteShown()) events_ui::backdrop(c, *f, !corner);
+    if (noteShown()) drawNote(c);
+    else drawHero(c, f);
     top_bar::clock(c);
     if (corner) top_bar::preview(c, app_.playback(), f->channelLogo, f->channelName);
     drawTop(c);
@@ -434,6 +472,7 @@ class EventsBoardScreen : public Screen {
   void refresh() {
     Clock::time_point start = Clock::now();
     bool wasLoading = board_ && board_->loading;
+    bool onChoose = board_ && chooseFocused();
     board_ = app_.store().events();
     version_ = board_->version;
     // A load's placeholders count from when they first showed, or showed
@@ -446,6 +485,20 @@ class EventsBoardScreen : public Screen {
     engine::views::BoardFocus f = engine::views::boardFocusShown(rows(), focusRow_, focusId_, row_, tile_);
     row_ = f.row;
     tile_ = f.tile;
+    // On a row's "Choose" tile: still on it.
+    if (onChoose) {
+      for (size_t r = 0; r < rows().size(); ++r)
+        if (rows()[r].row->id == focusRow_ && layout_[r].choose) {
+          row_ = static_cast<int>(r);
+          tile_ = static_cast<int>(rows()[r].tiles.size());
+        }
+    }
+    // The one-time note: it has the focus when it first shows.
+    if (noteShown() && !noteOffered_) {
+      noteOffered_ = true;
+      noteFocus_ = true;
+      noteButton_ = 0;
+    }
     stats_.refreshMax = std::max(stats_.refreshMax, msSince(start));
     ++stats_.refreshes;
   }
@@ -465,12 +518,20 @@ class EventsBoardScreen : public Screen {
   // Time not listed and Event channels unless switched on (their indices).
   // The board itself keeps them.
   void showRows() {
-    shows_ = boardShows(app_.store().settings());
+    shows_ = shows();
     shown_ = engine::views::boardShownRows(board_->rows, shows_);
     hides_ = shown_.size() != board_->rows.size();
   }
+  // Show on the board's switches; with "I don't watch sports" saved, More
+  // events is where every game is, so it shows whatever the switch says.
+  BoardShows shows() const {
+    BoardShows s = boardShows(app_.store().settings());
+    const sports::MySportsPrefs& my = app_.store().mySports();
+    if (my.configured && my.leagues.empty()) s.more = true;
+    return s;
+  }
   bool showsChanged() const {
-    BoardShows now = boardShows(app_.store().settings());
+    BoardShows now = shows();
     return now.more != shows_.more || now.untimed != shows_.untimed || now.families != shows_.families;
   }
   // The empty board's button: rows left out have something in them.
@@ -500,11 +561,15 @@ class EventsBoardScreen : public Screen {
           x += events_ui::kTileW + kTileGap;
         }
       }
-      l.end = x;
+      l.end = x;  // and the "Choose" tile's place
       l.height = kRowHeader + (l.labels ? kGroupLabel : 0) + events_ui::kTileH + kRowGap;
       l.mixed = mixed(row);
-      l.summary = "\xc2\xb7 " + std::to_string(row.count);
-      if (row.live > 0) l.live = "\xc2\xb7 " + std::to_string(row.live) + " live";
+      // Never a count: how the row is filtered, after its title.
+      if (!row.row->subtitle.empty()) l.subtitle = "\xc2\xb7 " + row.row->subtitle;
+      // A row that can be changed ends with a way to change it (not under
+      // a Live now or My teams filter).
+      l.choose = !row.row->choose.empty() && !row.tiles.empty() && (show_ == Show::All || show_ == Show::Sport);
+      if (l.choose) l.chooseWhat = row.row->choose;
       tiles_ += row.tiles.size();
     }
   }
@@ -515,10 +580,27 @@ class EventsBoardScreen : public Screen {
     return rows_[static_cast<size_t>(row)].tiles;
   }
 
+  // Tiles in a row, its "Choose" tile included.
+  int count(int row) const {
+    int n = static_cast<int>(flat(row).size());
+    if (n > 0 && row >= 0 && row < static_cast<int>(layout_.size()) && layout_[static_cast<size_t>(row)].choose) ++n;
+    return n;
+  }
+  bool chooseFocused() const {
+    if (row_ < 0 || row_ >= static_cast<int>(layout_.size()) || !layout_[static_cast<size_t>(row_)].choose) return false;
+    return tile_ == static_cast<int>(flat(row_).size());
+  }
+
+  // The focused game (none on a row's "Choose" tile).
   const EventTile* focused() {
     const std::vector<const EventTile*>& tiles = flat(row_);
     if (tiles.empty()) return nullptr;
-    tile_ = std::clamp(tile_, 0, static_cast<int>(tiles.size()) - 1);
+    tile_ = std::clamp(tile_, 0, count(row_) - 1);
+    if (chooseFocused()) {
+      focusId_.clear();
+      focusRow_ = rows()[static_cast<size_t>(row_)].row->id;
+      return nullptr;
+    }
     focusId_ = tiles[static_cast<size_t>(tile_)]->id;
     focusRow_ = rows()[static_cast<size_t>(row_)].row->id;
     return tiles[static_cast<size_t>(tile_)];
@@ -528,7 +610,7 @@ class EventsBoardScreen : public Screen {
     // Keep roughly the same column when moving between rows.
     float x = tileX(row_, tile_);
     row_ = r;
-    size_t n = flat(row_).size();
+    size_t n = static_cast<size_t>(count(row_));
     int best = 0;
     float bestDist = 1e9f;
     for (size_t i = 0; i < n; ++i) {
@@ -592,13 +674,22 @@ class EventsBoardScreen : public Screen {
     app_.nav().push(makePlayer(app_));
   }
 
+  // OK held on a game: Where to Watch, Remind Me, and (Build 127) Follow
+  // each team and Hide its competition.
   void openMenu(const EventTile& t) {
     std::string id = t.id;
     bool upcoming = t.upcoming;
+    std::string kicker = str::upper(engine::matchup(t));
+    std::string title = t.competitionName.empty() ? std::string("Game") : t.competitionName;
+    std::vector<EventTile::FollowSide> follow = t.follow;
+    std::string hideId = t.competitionId, hideName = t.competitionName;
+    std::string hideLine = hideId.empty() ? std::string() : events_ui::hideLine(app_, t);
     App& app = app_;
     app_.nav().push(std::make_unique<PanelScreen>(app_, PanelScreen::Side::Trailing, 640.0f,
-                                                  [&app, id, upcoming](ui::ListPanel& p) {
-      p.title = "Game";
+                                                  [&app, id, upcoming, kicker, title, follow, hideId, hideName,
+                                                   hideLine](ui::ListPanel& p) {
+      p.subtitle = kicker;
+      p.title = title;
       ui::PanelItem where{ui::PanelItem::Kind::Chevron, "Where to Watch"};
       where.select = [&app, id] {
         app.nav().pop();
@@ -613,6 +704,27 @@ class EventsBoardScreen : public Screen {
           app.toast(on ? "We'll show a card when it starts" : "Reminder removed");
         };
         p.items.push_back(remind);
+      }
+      for (const EventTile::FollowSide& side : follow) {
+        if (side.key.empty()) continue;
+        bool on = app.store().followsTeam(side.key);
+        ui::PanelItem it{ui::PanelItem::Kind::Action, (on ? "Unfollow " : "Follow ") + side.name};
+        std::string key = side.key, name = side.name;
+        it.select = [&app, key, name] {
+          bool now = !app.store().followsTeam(key);
+          app.store().followTeam(key, now);
+          app.toast(now ? "Following " + name : "Stopped following " + name);
+        };
+        p.items.push_back(it);
+      }
+      if (!hideId.empty()) {
+        ui::PanelItem hide{ui::PanelItem::Kind::Action, "Hide " + hideName};
+        hide.detail = hideLine;
+        hide.select = [&app, hideId, hideName] {
+          app.nav().pop();
+          events_ui::hide(app, hideId, hideName);
+        };
+        p.items.push_back(hide);
       }
     }));
   }
@@ -745,7 +857,7 @@ class EventsBoardScreen : public Screen {
   // the tabs or the sports column leaves it playing.
   void previewTick(uint32_t ms) {
     Playback& p = app_.playback();
-    if (app_.nav().top() != this || filterFocus_ || nav_.mode() != rail::Mode::Content) return;
+    if (app_.nav().top() != this || filterFocus_ || noteFocus_ || nav_.mode() != rail::Mode::Content) return;
     const EventTile* t = focused();
     if (!t || !previewable(*t)) {
       if (p.active() && !p.full()) p.stop();
@@ -770,8 +882,57 @@ class EventsBoardScreen : public Screen {
 
   // ---------------------------------------------------------------- drawing
 
+  // Not while the board loads (its loading line stays where the hero is).
+  bool noteShown() const { return !noteGone_ && board_ && !board_->noteTitle.empty() && !placeholders(); }
+
+  // OK: the note goes. Change: and My Sports opens.
+  void noteDone(bool change) {
+    noteGone_ = true;
+    noteFocus_ = false;
+    app_.store().dismissBoardNote();
+    if (change) app_.nav().push(makeMySports(app_));
+  }
+
+  // The note in the hero's place: what changed, and its two buttons.
+  void drawNote(ui::Ctx& c) {
+    Rect card{kHeroX, 60, top_bar::kPreview.x - 40 - kHeroX, 220};
+    c.g.fill(card, theme::hex(0x20232A), 22);
+    ui::label(c, board_->noteTitle, card.x + 36, card.y + 30, Weight::Bold, 32, theme::white(), card.w - 72);
+    ui::paragraph(c, board_->noteLine, card.x + 36, card.y + 78, card.w - 72, Weight::Regular, 22, theme::white(0.72f),
+                  2);
+    float bx = card.x + 36, by = card.y + card.h - 76;
+    const char* titles[] = {"OK", "Change"};
+    bool focusedRow = noteFocus_ && nav_.mode() == rail::Mode::Content;
+    for (int i = 0; i < 2; ++i) {
+      float w = std::max(150.0f, ui::chipWidth(c, titles[i], 24) + 56);
+      Rect b{bx, by, w, 56};
+      c.hit(b, kHitNote + i);
+      bool f = focusedRow && noteButton_ == i;
+      c.g.fill(b, f ? theme::white() : theme::white(0.12f), 28);
+      ui::labelIn(c, titles[i], b, Weight::Bold, 24, f ? theme::black() : theme::white(), Align::Center);
+      bx += w + 16;
+    }
+  }
+
+  // "Choose competitions" / "Choose schools": the page that changes the row.
+  void openChoose(const EventRow& row) {
+    if (row.choose == "schools") openCollegePicks(app_, row.chooseLeague);
+    else openSoccerPicks(app_);
+  }
+
   void drawHero(ui::Ctx& c, const EventTile* t) {
     float x = kHeroX, y = 44;
+    if (!t && chooseFocused()) {
+      // On a row's "Choose" tile: what it changes.
+      const EventRow& row = *rows()[static_cast<size_t>(row_)].row;
+      bool schools = row.choose == "schools";
+      ui::label(c, schools ? "Choose schools" : "Choose competitions", x, y + 40, Weight::Bold, 44, theme::white());
+      ui::label(c,
+                schools ? "Pick the schools and conferences in your " + row.title + " row."
+                        : "Pick the competitions in your " + row.title + " row.",
+                x, y + 110, Weight::Regular, 26, theme::white(0.7f), 1240);
+      return;
+    }
     if (!t) {
       ui::label(c, "Live Events", x, y + 40, Weight::Bold, 44, theme::white());
       if (placeholders()) {
@@ -906,14 +1067,8 @@ class EventsBoardScreen : public Screen {
     const RowLayout& l = layout_[static_cast<size_t>(r)];
     float hx = left_;
     hx += ui::label(c, row.row->title, hx, y, Weight::Bold, 25, theme::white()) + 10;
-    if (row.row->families) {
-      // Event channels: never how many (they are channels).
-    } else if (row.live > 0) {
-      hx += ui::label(c, l.summary, hx, y + 3, Weight::Medium, 22, theme::white(0.6f)) + 10;
-      ui::label(c, l.live, hx, y + 3, Weight::Medium, 22, theme::hex(0xF4B4AE));
-    } else {
-      ui::label(c, l.summary, hx, y + 3, Weight::Medium, 22, theme::white(0.6f));
-    }
+    // No counts: only how the row is filtered, in gray.
+    if (!l.subtitle.empty()) ui::label(c, l.subtitle, hx, y + 4, Weight::Medium, 21, theme::white(0.5f), kRight - hx);
     float tileY = y + kRowHeader + (l.labels ? kGroupLabel : 0);
     // Horizontal scroll: the focused tile stays in view.
     float scrollX = 0;
@@ -935,11 +1090,21 @@ class EventsBoardScreen : public Screen {
         float tx = left_ + l.x[i] - scrollX;
         if (tx + events_ui::kTileW > 0 && tx < gfx::kLayoutWidth) {
           int index = static_cast<int>(i);
-          bool f = !filterFocus_ && nav_.mode() == rail::Mode::Content && r == row_ && index == tile_;
+          bool f = !filterFocus_ && !noteFocus_ && nav_.mode() == rail::Mode::Content && r == row_ && index == tile_;
           Rect rect{tx, tileY, events_ui::kTileW, events_ui::kTileH};
           c.hit(rect, kHitTile + r * 1000 + std::min(index, 999));
           events_ui::tile(c, *row.tiles[i], rect, f, l.mixed);
         }
+      }
+    }
+    if (l.choose) {
+      float tx = left_ + l.end - scrollX;
+      int index = static_cast<int>(row.tiles.size());
+      if (tx + events_ui::kTileW > 0 && tx < gfx::kLayoutWidth) {
+        bool f = !filterFocus_ && !noteFocus_ && nav_.mode() == rail::Mode::Content && r == row_ && index == tile_;
+        Rect rect{tx, tileY, events_ui::kTileW, events_ui::kTileH};
+        c.hit(rect, kHitTile + r * 1000 + std::min(index, 999));
+        events_ui::chooseTile(c, l.chooseWhat, rect, f);
       }
     }
   }
@@ -978,7 +1143,9 @@ class EventsBoardScreen : public Screen {
     float height = 0;
     bool labels = false;  // group titles above the tiles
     bool mixed = false;   // tiles name their sport (mixed())
-    std::string summary, live;  // "· 12", "· 3 live"
+    std::string subtitle;  // "· Top 25 and your schools" (never a count)
+    bool choose = false;   // ends with a "Choose" tile, at `end`
+    std::string chooseWhat;  // "competitions", "schools"
   };
   struct Stats {
     int frames = 0, refreshes = 0;
@@ -1013,6 +1180,13 @@ class EventsBoardScreen : public Screen {
   int row_ = 0, tile_ = 0;
   std::string focusId_, focusRow_;  // the focused game and its row (ids)
   bool filterFocus_ = false;  // on the filter button
+  // The one-time note after the update (the board's noteTitle): shown in
+  // place of the hero until OK or Change; it has the focus when it first
+  // shows.
+  bool noteFocus_ = false;
+  bool noteOffered_ = false;
+  bool noteGone_ = false;  // dismissed here (the next board has none)
+  int noteButton_ = 0;     // 0 OK, 1 Change
   float rowScroll_ = 0;
   preview::Pace pace_{true};  // the corner: after a rest, each game once
 };

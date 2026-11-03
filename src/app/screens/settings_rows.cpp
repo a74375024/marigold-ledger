@@ -144,7 +144,7 @@ AutoCoast autoCoast(const Store& s) {
 
 std::vector<std::string> leagueNames(const sports::MySportsPrefs& my) {
   std::vector<std::string> names;
-  for (const std::string& id : my.leagues) names.push_back(sports::nameOf(id).value_or(id));
+  for (const std::string& id : my.leagues) names.push_back(pickName(id));
   return names;
 }
 
@@ -605,6 +605,30 @@ void lineupRows(App& app, ui::ListPanel& p) {
   p.items.push_back(again);
 }
 
+// Settings › Live Events › Hidden (Build 127): what the board leaves out,
+// each with why and Show again (back in its row on the board).
+std::unique_ptr<Screen> hiddenPage(App& app) {
+  return page(app, [&app](ui::ListPanel& p) {
+    p.subtitle = "LIVE EVENTS";
+    p.title = "Hidden from Live Events";
+    p.items.push_back(ui::PanelItem::note("Shown again means back in its row on the board."));
+    std::vector<Store::HiddenItem> items = app.store().hiddenFromBoard();
+    if (items.empty()) p.items.push_back(ui::PanelItem::note("Nothing is hidden."));
+    for (const Store::HiddenItem& h : items) {
+      ui::PanelItem it{ui::PanelItem::Kind::Action, h.name};
+      it.detail = h.why;
+      it.value = "Show again";
+      std::string id = h.id, name = h.name;
+      it.select = [&app, id, name] {
+        app.store().showOnBoard(id);
+        app.toast(name + " is back on the board");
+      };
+      p.items.push_back(it);
+    }
+    p.hint = "Hide a league from any game card.";
+  });
+}
+
 void eventsRows(App& app, ui::ListPanel& p) {
   Store& s = app.store();
   const Settings& set = s.settings();
@@ -620,11 +644,20 @@ void eventsRows(App& app, ui::ListPanel& p) {
   p.items.push_back(scores);
   p.items.push_back(ui::PanelItem::header(kShowOnBoard));
   showOnBoardRows(app, p, true);
+  // Build 127: everything hidden from the board, in one list.
+  std::vector<std::string> hidden;
+  for (const Store::HiddenItem& h : s.hiddenFromBoard()) hidden.push_back(h.name);
+  ui::PanelItem hide = chevron("Hidden", "Leagues and sports left off the board",
+                               hidden.empty() ? "None" : firstFew(hidden, 2), [&app] { app.nav().push(hiddenPage(app)); });
+  hide.about = "Leagues hidden from a game card, and sports that stay off the board unless you turn them on. "
+               "Show again puts one back in its row.";
+  p.items.push_back(hide);
   p.items.push_back(ui::PanelItem::header(""));
   std::vector<std::string> leagues = leagueNames(my);
   ui::PanelItem mine = chevron("My leagues", "", leagues.empty() ? "Not set" : firstFew(leagues, 3),
                                [&app] { app.nav().push(makeMySports(app)); });
-  mine.about = "Each pick gets its own row in Live Events, and the schedule is only looked up for these.";
+  mine.about = "Each pick gets its own row in Live Events, and the schedule is only looked up for these. "
+               "Soccer's competitions and the college sports are chosen from their tiles.";
   p.items.push_back(mine);
   ui::PanelItem teams = chevron("My teams", "", teamsSummary(app, my),
                                 [&app] { app.nav().push(makeMySports(app, false, true)); });

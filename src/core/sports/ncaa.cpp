@@ -4,6 +4,7 @@
 #include <map>
 #include <set>
 
+#include "core/sports/parse.hpp"
 #include "core/sports/profiles.hpp"
 #include "core/sports/text.hpp"
 #include "core/util/json.hpp"
@@ -202,6 +203,10 @@ std::optional<std::vector<SportsGame>> parseGames(std::string_view body, const L
       if (auto more = knownAs().find(*seo); more != knownAs().end()) {
         team.alternates.insert(team.alternates.end(), more->second.begin(), more->second.end());
       }
+      // Build 127: this week's poll rank (1-25) and the conference, for the
+      // college rows' Top 25 and conferences.
+      team.rank = parse::pollRank(text::text(t["teamRank"]));
+      if (auto conference = text::text(t["conferenceSeo"])) team.conference = "ncaa:" + *conference;
       if (text::flag(t["isHome"])) home = std::move(team);
       else away = std::move(team);
     }

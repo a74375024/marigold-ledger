@@ -127,7 +127,14 @@ struct Input {
   // Build 125: a schedule is in (some event is a scheduled game), told by
   // the caller from before it left any out; unset: from `events`.
   std::optional<bool> scheduleLoaded;
+  // Build 127: the rows follow the picks (effectivePicks(prefs, countries):
+  // until My Sports is set up, the defaults for the lineup's countries). A
+  // sport's row holds the games of its picks only: Soccer the ticked
+  // competitions, a college row the games CollegePick takes; the rest of
+  // what you can watch goes to More events. Hidden ids' games are on no
+  // row. Set up with no picks: no sport rows, More events always shown.
   MySportsPrefs prefs;
+  std::set<std::string> countries;
   scores::Statuses statuses;
   std::map<std::string, Seconds> finalSeen;  // LiveScores::finalSeen (0: when unknown)
   std::vector<WhipChannel> whips;
@@ -269,6 +276,18 @@ struct Tile {
   std::string playID;
   bool canWhereToWatch = false;
   bool canRemind = false;  // upcoming (the store finds the target)
+
+  // Build 127: what "Hide" on the game card hides ("EPL", "LMX", "NBA",
+  // "S:Golf"; "" none), and its name ("Liga MX").
+  std::string competitionId;
+  std::string competitionName;
+  // The game's two teams to follow ("LEAGUE|id"), in the tile's order;
+  // empty for an event that isn't between two teams.
+  struct FollowSide {
+    std::string key, name;
+    bool followed = false;
+  };
+  std::vector<FollowSide> follow;
 };
 
 struct Group {
@@ -296,6 +315,16 @@ struct Row {
   std::vector<Group> groups;
   std::vector<FamilyTile> families;
   std::vector<std::string> eventIDs;  // in order
+  // Build 127: a college row's filter ("Top 25 and your schools", "Every
+  // Division I game"; "" none); what the row's last tile chooses
+  // ("competitions" for Soccer, "schools" for a college row, "" none) and,
+  // for schools, the college league it opens ("NCAAF").
+  std::string subtitle;
+  std::string choose;
+  std::string chooseLeague;
+  // Shown whatever Settings › Show on the board says (More events when the
+  // picks are set up empty: it's where every game is).
+  bool alwaysShown = false;
 };
 
 enum class HeroChip { none, live, delayed, later, ended, postponed, mayHaveEnded };
@@ -332,6 +361,13 @@ struct Board {
   // Marigold: why each event that isn't a tile was left off, by event id
   // (the Live Events report).
   std::map<std::string, std::string> left;
+  // Build 127: why a tile is in More events instead of its sport's row
+  // ("not in your soccer competitions"), by event id (the report).
+  std::map<std::string, std::string> moreWhy;
+  // The one-time note after the update (MySportsPrefs::updateNoted false):
+  // its title and line ("" none).
+  std::string noteTitle;
+  std::string noteLine;
   // Race weekends you can watch (race_data::refreshForBoard).
   std::vector<std::string> watchableRaceWeekends;
   Seconds now = 0;

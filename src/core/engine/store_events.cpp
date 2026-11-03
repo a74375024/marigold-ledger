@@ -283,6 +283,9 @@ EventTile toTile(const sb::Tile& t, const sports::SportsEvent* event, const time
   }
   (void)zone;
   tileText(o);
+  o.competitionId = t.competitionId;
+  o.competitionName = t.competitionName;
+  for (const sb::Tile::FollowSide& f : t.follow) o.follow.push_back({f.key, f.name, f.followed});
   return o;
 }
 
@@ -299,8 +302,17 @@ void Store::loadEvents() {
   if (auto text = st.read(kScheduleFile))
     if (auto s = sports::schedule::savedFromJson(*text)) saved = std::move(*s);
   e.schedule = sports::schedule::Schedule(std::move(saved), host_.build);
-  if (auto text = st.read(kMySportsFile))
-    if (auto p = sports::mySportsFromJson(*text)) e.mySports = *p;
+  if (auto text = st.read(kMySportsFile)) {
+    if (auto p = sports::mySportsFromJson(*text)) {
+      e.mySports = *p;
+      // Build 127: a file from before is migrated once (picks kept, college
+      // to the Top 25 and your schools, the board's one-time note).
+      if (e.mySports.version < sports::kMySportsVersion) {
+        sports::migrate(e.mySports);
+        st.write(kMySportsFile, sports::toJson(e.mySports));
+      }
+    }
+  }
   if (auto text = st.read(kRemindersFile))
     if (auto r = sports::Reminders::fromJson(*text)) e.reminders = sports::Reminders(std::move(*r), now);
   if (auto text = st.read(kMemoryFile)) e.memory = ss::SourceMemory(ss::SourceMemory::fromJson(*text));
@@ -340,6 +352,7 @@ void Store::saveSchedule() {
 sports::schedule::Context Store::scheduleContext() const {
   sports::schedule::Context ctx;
   ctx.prefs = impl_->ev.mySports;
+  ctx.countries = impl_->prefs.countries;
   ctx.seen = impl_->ev.seen;
   ctx.enabled = settings_.scheduleEnabled;
   ctx.now = time::now();
@@ -652,7 +665,7 @@ void Store::rebuildEvents() {
   time::Seconds now = time::now();
   sports::schedule::Context ctx = scheduleContext();
   sports::schedule::Published pub = e.schedule.publish(ctx);
-  std::vector<sports::League> active = sports::activeLeagues(e.mySports, e.seen, now);
+  std::vector<sports::League> active = sports::activeLeagues(e.mySports, e.seen, now, m.prefs.countries);
   std::vector<sports::matcher::RosterLeague> rosters = ss::rosterLeagues(active, pub.rosters);
   sports::StationMarkets markets = sports::stationMarkets(m.prefs);
   // The guide's game listings are read again when due (on the worker): a
@@ -846,6 +859,7 @@ BoardMade board(const BoardInput& in) {
   made.hold = in.hold;
   made.oldLive = in.oldLive;
   b.prefs = in.prefs;
+  b.countries = in.lineupPrefs.countries;
   b.statuses = in.statuses;
   b.finalSeen = in.finalSeen;
   b.whips = in.whips;
@@ -916,6 +930,8 @@ BoardMade board(const BoardInput& in) {
   };
   auto out = std::make_shared<EventsBoard>();
   out->scoresOn = in.settings.showsScores;
+  out->noteTitle = board.noteTitle;
+  out->noteLine = board.noteLine;
   for (const sb::Row& r : board.rows) {
     EventRow row;
     row.id = r.id;
@@ -923,6 +939,10 @@ BoardMade board(const BoardInput& in) {
     row.live = r.live;
     row.count = r.count;
     row.families = r.id == "families";
+    row.subtitle = r.subtitle;
+    row.choose = r.choose;
+    row.chooseLeague = r.chooseLeague;
+    row.alwaysShown = r.alwaysShown;
     for (const sb::Group& g : r.groups) {
       EventGroup group;
       group.title = g.label;
@@ -1679,6 +1699,93 @@ void Store::setMySports(const sports::MySportsPrefs& prefs) {
   e.lastFingerprint.clear();
   e.nextCheckMs = 0;
   e.boardDirty = true;
+}
+
+// ------------------------------------------------------------ My Sports v2 (Build 127)
+
+sports::MySportsPrefs Store::defaultMySports() const { return sports::defaultPicks(impl_->prefs.countries); }
+
+std::string Store::pickReason(const std::string& id) const { return sports::pickReason(id, impl_->prefs.countries); }
+
+namespace {
+
+// The schedule's games of the leagues that follow a college league's
+// settings, their schools' conferences filled in as the board has them.
+std::vector<sports::SportsGame> collegeGames(const sports::schedule::Saved& saved, const std::string& leagueShort) {
+  std::string key = sports::collegeKey(leagueShort);
+  std::vector<sports::SportsGame> games;
+  for (const sports::SportsGame& g : saved.games) {
+    if (sports::collegeKey(g.leagueShort) == key && sports::isCollegeLeague(g.leagueShort)) games.push_back(g);
+  }
+  sports::schedule::fillConferences(games, saved.conferences);
+  return games;
+}
+
+}  // namespace
+
+std::vector<sports::Conference> Store::collegeConferences(const std::string& leagueShort) const {
+  std::map<std::string, std::string> byKey;
+  for (const sports::SportsGame& g : collegeGames(impl_->ev.schedule.saved(), leagueShort)) {
+    for (const sports::SportsTeam* side : {&g.home, &g.away}) {
+      if (!side->conference || byKey.count(*side->conference)) continue;
+      if (auto name = sports::conferenceName(g.leagueShort, *side->conference)) byKey[*side->conference] = *name;
+    }
+  }
+  std::vector<sports::Conference> out;
+  for (auto& [key, name] : byKey) out.push_back({key, name});
+  std::sort(out.begin(), out.end(), [](const sports::Conference& a, const sports::Conference& b) {
+    return a.name != b.name ? a.name < b.name : a.key < b.key;
+  });
+  return out;
+}
+
+std::vector<std::pair<std::string, std::string>> Store::conferenceSchools(const std::string& leagueShort,
+                                                                          const std::string& conferenceKey) const {
+  std::map<std::string, std::string> byId;
+  for (const sports::SportsGame& g : collegeGames(impl_->ev.schedule.saved(), leagueShort)) {
+    for (const sports::SportsTeam* side : {&g.home, &g.away}) {
+      if (side->conference != conferenceKey || byId.count(side->id)) continue;
+      // The school ("Michigan"), not the team ("Michigan Wolverines").
+      byId[side->id] = side->location && !side->location->empty() ? *side->location : side->name;
+    }
+  }
+  std::vector<std::pair<std::string, std::string>> out(byId.begin(), byId.end());
+  std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) {
+    return a.second != b.second ? a.second < b.second : a.first < b.first;
+  });
+  return out;
+}
+
+void Store::hideFromBoard(const std::string& id) {
+  sports::MySportsPrefs p = impl_->ev.mySports;
+  sports::hidePick(p, id, impl_->prefs.countries);
+  setMySports(p);
+}
+
+void Store::showOnBoard(const std::string& id) {
+  sports::MySportsPrefs p = impl_->ev.mySports;
+  sports::showPick(p, id, impl_->prefs.countries);
+  setMySports(p);
+}
+
+std::vector<Store::HiddenItem> Store::hiddenFromBoard() const {
+  std::vector<HiddenItem> out;
+  for (sports::HiddenPick& h : sports::hiddenPicks(impl_->ev.mySports))
+    out.push_back({std::move(h.id), std::move(h.name), std::move(h.why)});
+  return out;
+}
+
+void Store::followTeam(const std::string& teamKey, bool follow) {
+  sports::MySportsPrefs p = impl_->ev.mySports;
+  sports::followTeam(p, teamKey, follow, impl_->prefs.countries);
+  if (p != impl_->ev.mySports) setMySports(p);
+}
+
+void Store::dismissBoardNote() {
+  if (impl_->ev.mySports.updateNoted) return;
+  sports::MySportsPrefs p = impl_->ev.mySports;
+  p.updateNoted = true;
+  setMySports(p);
 }
 
 std::vector<sports::SportsTeam> Store::teamsOf(const std::string& leagueShort) const {

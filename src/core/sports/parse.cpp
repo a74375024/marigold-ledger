@@ -110,6 +110,8 @@ std::optional<SportsTeam> team(const json::Value& item) {
   t.location = text::text(item["location"]);
   t.color = hexColor(text::text(item["color"]));
   t.altColor = hexColor(text::text(item["alternateColor"]));
+  // College teams: the conference's group id ("8").
+  t.conference = text::text(item["conferenceId"]);
   return t;
 }
 

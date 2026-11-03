@@ -127,12 +127,22 @@ bool isCalendarGame(const SportsGame& game) { return byShort(game.leagueShort) !
 
 std::vector<const Calendar*> active(const MySportsPrefs& prefs, const SportFeedsSeen& seen, Seconds now,
                                     const std::set<std::string>& covered) {
-  std::set<std::string> picked(prefs.leagues.begin(), prefs.leagues.end());
-  bool soccer = std::any_of(leagues().begin(), leagues().end(),
-                            [&](const League& l) { return l.soccer && picked.count(l.shortName); });
+  std::set<std::string> picked;
+  for (const std::string& id : prefs.leagues) {
+    if (!isHidden(prefs, id)) picked.insert(id);
+  }
+  // Build 127: any soccer pick (a league, the national teams, every other
+  // competition).
+  bool soccer = std::any_of(picked.begin(), picked.end(), [](const std::string& id) {
+    const League* l = leagueByShort(id);
+    return (l && l->soccer) || isSoccerPick(id);
+  });
   std::vector<const Calendar*> out;
   for (const Calendar& c : calendars()) {
     if (!seen.calendarSeen(c.key, now) || covered.count(c.key)) continue;
+    // Hidden: their games would be on no row. A soccer calendar's games
+    // are every other competition's (my_sports.hpp soccerCompetition()).
+    if (isHidden(prefs, c.shortName) || (c.group == "Soccer" && isHidden(prefs, kSoccerAllPick))) continue;
     bool relevant = !prefs.configured || c.pick.empty();
     for (std::string_view p : str::split(c.pick, '|')) {
       if (relevant) break;
