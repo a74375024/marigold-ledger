@@ -239,17 +239,43 @@ std::unique_ptr<Screen> makeEventDetail(App& app, const std::string& eventId) {
 
 std::unique_ptr<Screen> makeWhereToWatch(App& app, const std::string& eventId) {
   std::string id = eventId;
-  return std::make_unique<PanelScreen>(app, PanelScreen::Side::Trailing, 800.0f, [&app, id](ui::ListPanel& p) {
+  auto panel = std::make_unique<PanelScreen>(app, PanelScreen::Side::Trailing, 800.0f, [&app, id](ui::ListPanel& p) {
     WhereToWatch w = app.store().whereToWatch(id);
     p.subtitle = "WHERE TO WATCH";
     p.title = w.title;
+    // While the game plays (the player's Sources), the rows are checks like
+    // a channel's Sources panel: the one playing is ticked and says so, and
+    // picking another switches in place.
+    Playback& pb = app.playback();
+    bool watching = pb.entry() == id;
+    std::string playing = watching ? pb.playingChannel() : std::string();
+    bool found = false;
+    auto isPlaying = [&](const WatchSource& s) {
+      if (found || playing.empty()) return false;
+      if (s.entryId.empty()) return s.channelId == playing;
+      for (const Feed& f : app.store().feeds(s.entryId))
+        if (f.channelId == playing) return true;
+      return false;
+    };
     for (const auto& [section, sources] : w.sections) {
       p.items.push_back(ui::PanelItem::header(section));
       for (const WatchSource& s : sources) {
-        ui::PanelItem it{ui::PanelItem::Kind::Chevron, s.title};
+        ui::PanelItem it{watching ? ui::PanelItem::Kind::Check : ui::PanelItem::Kind::Chevron, s.title};
         it.detail = s.detail;
+        if (isPlaying(s)) {
+          found = true;
+          it.on = true;
+          std::string now = pb.ready() ? "Playing now" : "Opening\xe2\x80\xa6";
+          it.detail = s.detail.empty() ? now : now + " \xc2\xb7 " + s.detail;
+        }
         std::string via = s.entryId.empty() ? s.channelId : s.entryId;
         it.select = [&app, id, via] {
+          Playback& play = app.playback();
+          if (play.entry() == id) {
+            if (!play.tuneEventVia(id, via, app.store().eventFlipList(id)))
+              app.toast("That source has no working feed right now");
+            return;
+          }
           app.nav().pop();
           watchEvent(app, id, via);
         };
@@ -258,8 +284,11 @@ std::unique_ptr<Screen> makeWhereToWatch(App& app, const std::string& eventId) {
     }
     if (!w.note.empty()) p.items.push_back(ui::PanelItem::note(w.note));
     if (w.sections.empty()) p.items.push_back(ui::PanelItem::note("Not on any of your channels."));
-    p.hint = "Whichever you pick, the others stay as automatic backups.";
+    p.hint = watching ? "OK switches at once; the others stay as automatic backups. Back closes."
+                      : "Whichever you pick, the others stay as automatic backups.";
   });
+  panel->liveRows = true;  // the tick follows a switch ("Opening…", then "Playing now")
+  return panel;
 }
 
 }  // namespace marigold::app

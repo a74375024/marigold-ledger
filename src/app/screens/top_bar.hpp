@@ -15,7 +15,7 @@ class Playback;
 
 namespace marigold::app::top_bar {
 
-// Live Events' and Search's corner. The guide's is larger (kGuidePreview,
+// Search's corner. The guide's and Live Events' are larger (kGuidePreview,
 // Build 126), with the programme column at its left.
 constexpr ui::Rect kPreview{1440, 80, 400, 225};
 constexpr ui::Rect kGuidePreview{1200, 40, 640, 360};

@@ -59,7 +59,12 @@ namespace theme = ui::theme;
 
 constexpr float kHeroX = left_rail::kRestLeft;  // the hero never moves
 constexpr float kRight = gfx::kLayoutWidth - 80;  // the rows' right edge
-constexpr float kBoardTop = 330;
+// The guide's top (Build 126, Build 128 here): the 640 x 360 preview at the
+// top right, the game's column at its left, the rows under the preview.
+constexpr Rect kPreview = top_bar::kGuidePreview;
+constexpr float kHeroRight = kPreview.x - 40;
+constexpr float kHeroW = kHeroRight - kHeroX;
+constexpr float kBoardTop = kPreview.y + kPreview.h + 24;
 constexpr float kBoardBottom = 1010;
 constexpr float kRowHeader = 44;
 constexpr float kGroupLabel = 30;
@@ -118,8 +123,12 @@ class EventsBoardScreen : public Screen {
     // Back from the player: the game shrinks into the corner, as in the guide.
     Playback& p = app_.playback();
     if (p.active() && p.full()) {
-      if (app_.store().settings().previewChannels) p.setCorner(top_bar::kPreview);
+      if (app_.store().settings().previewChannels) p.setCorner(kPreview);
       else p.stop();
+    } else {
+      // Back from Search with its corner still playing: the picture moves
+      // into the larger preview.
+      p.keepCorner(kPreview);
     }
   }
   bool keepsPreview() const override { return true; }
@@ -312,8 +321,9 @@ class EventsBoardScreen : public Screen {
     if (f && !noteShown()) events_ui::backdrop(c, *f, !corner);
     if (noteShown()) drawNote(c);
     else drawHero(c, f);
-    top_bar::clock(c);
-    if (corner) top_bar::preview(c, app_.playback(), f->channelLogo, f->channelName);
+    drawClock(c);
+    // No live mark on the picture, as in the guide: live is the status's red.
+    if (corner) top_bar::preview(c, app_.playback(), f->channelLogo, f->channelName, kPreview, 18, false);
     drawTop(c);
     drawRows(c);
     float column = push_.at(c.ms);
@@ -871,7 +881,7 @@ class EventsBoardScreen : public Screen {
         return;
       case preview::Pace::Step::Tune: break;
     }
-    p.setCorner(top_bar::kPreview);
+    p.setCorner(kPreview);
     if (!p.tune(t->id, app_.store().eventFlipList(t->id))) p.stop();
   }
 
@@ -895,7 +905,7 @@ class EventsBoardScreen : public Screen {
 
   // The note in the hero's place: what changed, and its two buttons.
   void drawNote(ui::Ctx& c) {
-    Rect card{kHeroX, 60, top_bar::kPreview.x - 40 - kHeroX, 220};
+    Rect card{kHeroX, 92, kHeroW, 260};
     c.g.fill(card, theme::hex(0x20232A), 22);
     ui::label(c, board_->noteTitle, card.x + 36, card.y + 30, Weight::Bold, 32, theme::white(), card.w - 72);
     ui::paragraph(c, board_->noteLine, card.x + 36, card.y + 78, card.w - 72, Weight::Regular, 22, theme::white(0.72f),
@@ -920,62 +930,85 @@ class EventsBoardScreen : public Screen {
     else openSoccerPicks(app_);
   }
 
+  // The clock at the column's top right, beside the preview (as in the guide).
+  void drawClock(ui::Ctx& c) {
+    std::string clock = ui::clock(c, c.now);
+    float w = ui::textWidth(c, clock, Weight::Medium, 26);
+    ui::label(c, clock, kHeroRight - w, 44, Weight::Medium, 26, theme::white(0.7f));
+  }
+
+  // The column at the preview's left, laid out as the guide's: the
+  // competition, the channel, the matchup, its status and progress, where to
+  // watch it and where it's played.
   void drawHero(ui::Ctx& c, const EventTile* t) {
-    float x = kHeroX, y = 44;
+    const float x = kHeroX;
     if (!t && chooseFocused()) {
       // On a row's "Choose" tile: what it changes.
       const EventRow& row = *rows()[static_cast<size_t>(row_)].row;
       bool schools = row.choose == "schools";
-      ui::label(c, schools ? "Choose schools" : "Choose competitions", x, y + 40, Weight::Bold, 44, theme::white());
-      ui::label(c,
-                schools ? "Pick the schools and conferences in your " + row.title + " row."
-                        : "Pick the competitions in your " + row.title + " row.",
-                x, y + 110, Weight::Regular, 26, theme::white(0.7f), 1240);
+      ui::label(c, row.title, x, 48, Weight::Bold, 22, theme::white(0.6f), kHeroW - 200);
+      ui::label(c, schools ? "Choose schools" : "Choose competitions", x, 140, Weight::Bold, 50, theme::white(), kHeroW);
+      ui::paragraph(c,
+                    schools ? "Pick the schools and conferences in your " + row.title + " row."
+                            : "Pick the competitions in your " + row.title + " row.",
+                    x, 214, kHeroW, Weight::Regular, 22, theme::white(0.72f), 3);
       return;
     }
     if (!t) {
-      ui::label(c, "Live Events", x, y + 40, Weight::Bold, 44, theme::white());
+      ui::label(c, "Live Events", x, 140, Weight::Bold, 50, theme::white(), kHeroW);
       if (placeholders()) {
         // Still loading (Build 124): a spinner and what the load waits for
         // now, by the store; after a while, that the first load of the day
         // is the slow one.
         skeletonShown_ = spinnerShown_ = true;
-        ui::spinner(c, x + 16, y + 127, 14, theme::white(0.85f));
+        ui::spinner(c, x + 16, 231, 14, theme::white(0.85f));
         if (const char* line = stageLine(board_->stage))
-          ui::label(c, line, x + 46, y + 110, Weight::Medium, 26, theme::white(0.85f), 1200);
+          ui::label(c, line, x + 46, 214, Weight::Medium, 25, theme::white(0.85f), kHeroW - 46);
         if (c.ms - loadingSince_ >= kSlowLoadMs)
-          ui::label(c, "Almost there. The first load of the day takes longest.", x + 46, y + 154, Weight::Regular, 22,
-                    theme::white(0.55f), 1200);
+          ui::label(c, "Almost there. The first load of the day takes longest.", x + 46, 258, Weight::Regular, 22,
+                    theme::white(0.55f), kHeroW - 46);
         return;
       }
-      ui::label(c, "This week's games, and where you can watch them.", x, y + 110, Weight::Regular, 26, theme::white(0.7f));
+      ui::label(c, "This week's games, and where you can watch them.", x, 214, Weight::Regular, 22, theme::white(0.72f),
+                kHeroW);
       return;
     }
-    if (!t->leagueChip.empty()) ui::chip(c, t->leagueChip, x, y, 20, theme::white(0.14f), theme::white());
-    y += 52;
+    // The competition, where the guide has the channel's section.
+    if (!t->leagueChip.empty()) ui::label(c, t->leagueChip, x, 48, Weight::Bold, 22, theme::white(0.6f), kHeroW - 200);
+    // The channel line: logo and name.
+    float y = 92;
+    if (!t->channelLogo.empty() || !t->channelName.empty()) {
+      float nx = x;
+      if (!t->channelLogo.empty()) {
+        ui::logo(c, t->channelLogo, "", {x, y, 96, 36});
+        nx += 112;
+      }
+      ui::label(c, t->channelName, nx, y + 2, Weight::Medium, 26, theme::white(), kHeroRight - nx);
+    } else if (!t->pill2.empty()) {
+      ui::label(c, t->pill2, x, y + 2, Weight::Medium, 26, theme::white(0.7f), kHeroW);
+    }
+    // The matchup, with its two badges.
     float tx = x;
     if (t->sides.size() == 2) {
-      events_ui::badge(c, t->sides[0], tx, y, 52, false);
-      events_ui::badge(c, t->sides[1], tx + 64, y, 52, false);
-      tx += 140;
+      events_ui::badge(c, t->sides[0], tx, 138, 56, false);
+      events_ui::badge(c, t->sides[1], tx + 68, 138, 56, false);
+      tx += 148;
     }
-    ui::label(c, t->heroTitle.empty() ? t->title : t->heroTitle, tx, y + 4, Weight::Bold, 40, theme::white(), x + 1240 - tx);
-    y += 72;
+    ui::label(c, t->heroTitle.empty() ? t->title : t->heroTitle, tx, 140, Weight::Bold, 50, theme::white(),
+              kHeroRight - tx);
     // The state and status, as on the tile: live is red text alone (its
     // clock, or "LIVE" without one), never a pill.
-    events_ui::status(c, *t, t->heroStatus.empty() ? t->status : t->heroStatus, x, y, Weight::Medium, 24, theme::white(),
-                      1240, 4, 12);
-    y += 44;
-    if (t->progress >= 0) {
-      ui::progress(c, {x, y, 420, 6}, t->progress);
-      y += 22;
+    events_ui::status(c, *t, t->heroStatus.empty() ? t->status : t->heroStatus, x, 210, Weight::Medium, 25,
+                      theme::white(), kHeroW, 4, 12);
+    if (t->progress >= 0) ui::progress(c, {x, 260, 420, 6}, t->progress);
+    // Where to watch it, and where it's played.
+    y = t->progress >= 0 ? 286 : 256;
+    if (!t->whereLine.empty()) {
+      y += ui::paragraph(c, t->whereLine, x, y, kHeroW, Weight::Regular, 22, theme::white(0.72f), 2) + 8;
     }
-    float wx = x;
-    if (!t->channelLogo.empty() || !t->channelName.empty()) {
-      ui::logo(c, t->channelLogo, t->channelName, {wx, y, 80, 32});
-      wx += 96;
-    }
-    ui::label(c, t->whereLine, wx, y + 2, Weight::Regular, 22, theme::white(0.8f), x + 1240 - wx);
+    std::string place = t->venue;
+    if (!t->detail.empty() && t->detail != place) place = place.empty() ? t->detail : place + " \xc2\xb7 " + t->detail;
+    if (!place.empty() && y < 380) ui::label(c, place, x, y, Weight::Regular, 20, theme::white(0.55f), kHeroW);
   }
 
   // The filter button at the end of the first row's header line, and its

@@ -1153,3 +1153,19 @@ My Sports' first step is one grid of sixteen tiles in a fixed order: NFL, Colleg
 | Hold OK | Hold OK on a game | The panel names the game and its competition: Where to Watch, Remind Me, Follow each team, Hide (with the same line) |
 | Hidden | Settings › Live Events › Hidden | "Hidden from Live Events" with Liga MX ("Hidden from a game card"), Pro wrestling and High school ("Hidden unless you turn it on"), each with Show again; Show again puts it back on the board |
 | Pointer | Point and click (LG) on tiles, groups, options, the Choose tile, the card's pills, the note's buttons and Undo | Each takes the focus under the pointer and acts on click |
+
+## Build 128 — Live Events top like the guide's; a game's sources ticked
+
+Live Events' top takes the guide's layout (Build 126): the 640×360 preview at the top right with no live mark on it, the clock at the end of the column beside it, and the column at the left (1024 wide): the competition ("NFL · Week 9 · Sunday Night") where the guide has its neighbourhood; the channel's logo and name; the two badges and the matchup at 50 px; the status at 25 px (live is its red text, as on the tile); the progress bar; the where line in two lines; the venue and the tile's detail. The rows start under the preview (y 424, was 330). The one-time note and the "Choose" tile's words sit in the same column. Search keeps its 400×225 corner.
+
+While a game plays, its Sources (the player's Sources pill, or Menu) is Where to Watch with checks like a channel's Sources: the source playing is ticked and says "Playing now" ("Opening…" while it opens); OK on another switches in place, the panel stays open and the tick moves. From the board or a game's card, Where to Watch is as before (OK starts the game).
+
+| Area | How to check | Pass |
+|---|---|---|
+| Layout | Open Live Events | The preview at the top right, its top level with the clock; the column at the left with nothing under the preview; the first row's title and the filter button under the preview |
+| Live game | Rest on a live game until it plays | The picture in the large preview with no LIVE chip; the clock in red text in the column; the progress bar |
+| Upcoming game | Rest on a later game | No preview; the faded badges at the top right; the start time in the status |
+| Guide and back | From the guide with a channel previewing, open Live Events; rest on a live game; Back | The picture stays in the same large preview, never a cut-off picture or one framed in black |
+| Player | OK on a live game, then Back | Full screen on the same stream; back, it shrinks into the large preview |
+| Sources ticked | Watch a game with two or more sources, open Sources | The source playing ticked with "Playing now"; the others with an empty check |
+| Switch | OK on another source | "Opening…", then "Playing now" with the tick on it; the panel stays open; Back closes it to the same player (one Back to the board, not two) |
