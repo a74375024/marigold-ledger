@@ -1179,3 +1179,20 @@ With many leagues picked (Build 127's defaults pick about a dozen), the teams st
 | Down to Continue | First-run setup with the default sports, teams step: Down from the first league to the end | Each league in turn is highlighted, the list moving up as needed; then "Remind me before my teams play", then Continue; focus is always visible |
 | Up again | Up from Continue to the first league | The same in reverse, ▲ gone at the top |
 | Pointer | Point at and click leagues after scrolling (LG) | The league under the pointer opens |
+
+## Build 130 — First run waits for the guide
+
+On a first run there is no saved guide, so after setup the guide showed grey placeholders for minutes. Setup now has an eighth step after Teams, "Getting your guide ready" ("STEP 7 OF 8 · YOUR GUIDE"): your channels, My Lineup and TV listings each tick in turn, the listings with a bar while they download when the provider says how big the file is (just the spinner otherwise), and it moves on to "You're all set" by itself. Only the provider's listings are waited for. A provider with no guide file (Emby, an M3U without a guide link) ticks the listings at once. If the download fails, or is still going 5 minutes after the step opened, the step turns amber, says so, and Continue appears; the listings keep loading either way. In the guide, rows still waiting say "Listings on the way" (the top too, with a small spinner) instead of pulsing grey, and "No guide info" once nothing more is coming; the top line says "Loading the guide for the first time…", "Updating the provider's guide…" or "Filling in missing listings…" with a spinner, and "Missing listings wait until you stop watching" while you watch full screen. Later launches are unchanged.
+
+| Area | How to check | Pass |
+|---|---|---|
+| New step | First-run setup with an Xtream provider, through Teams | "Getting your guide ready" with "This happens once. Next time the guide opens straight away."; eight steps along the bottom, Your guide highlighted; no button |
+| Ticks | Watch the step | Your channels and My Lineup ticked green; TV listings with a spinner; then all three ticked and, a moment later, "You're all set" with "My Lineup and your guide are ready" in its first box |
+| Bar | A provider whose guide file gives its size | A bar under "Your provider's listings" that fills and never goes back; no time left or numbers anywhere |
+| No guide file | First-run setup with Emby / Jellyfin, or an M3U without a guide link | TV listings ticks as soon as My Lineup does; setup moves on by itself |
+| Failure | Setup with the TV's network cut just before the Teams step's Continue | TV listings turns amber with "Your provider's listings couldn't be loaded right now" and "They keep loading in the background. Channels play now; shows fill in as they arrive."; Continue focused; OK opens "You're all set" |
+| Slow | A very slow provider guide (over 5 minutes) | The same amber step with "Your provider's listings are taking longer than usual" and Continue; if it finishes first, setup moves on by itself |
+| Back | Back on the step, then Continue on Teams | Back to the teams; forward again, the step waits on where it was (the download never restarted) |
+| Rows on the way | Start watching right after setup | Rows without listings yet say "Listings on the way" on a faint cell; the top says "Listings on the way" with a small spinner where the times go; the top line "Filling in missing listings…" with a spinner |
+| Waiting | Watch full screen while the missing listings load, then Back to the guide | The top line says "Missing listings wait until you stop watching"; once they're done, rows with none say "Live · No guide info" |
+| Later launch | Quit and open the app again | The saved guide shows at once; no setup step; the top line says "Updating the provider's guide…" with a spinner when it updates |

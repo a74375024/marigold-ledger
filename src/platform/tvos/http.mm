@@ -194,7 +194,7 @@ unsigned since(std::chrono::steady_clock::time_point start) {
 void prepare() { session(); }
 
 Result fetch(const Request& q, Handle*, size_t wireCap, const std::function<bool(std::string_view)>& receive,
-             const std::function<bool()>& stop) {
+             const std::function<bool()>& stop, const std::function<void(std::string_view)>& onHead) {
   Result out;
   auto start = std::chrono::steady_clock::now();
   size_t cap = wireCap ? wireCap : receive ? kStreamedMax : kBufferedDefault;
@@ -245,6 +245,8 @@ Result fetch(const Request& q, Handle*, size_t wireCap, const std::function<bool
       out.mime = call->mime;
       out.headers = call->headers;
       out.retryAfterS = call->retryAfter;
+      // Before the body's first piece (handed over only on a 2xx response).
+      if (receive && onHead && out.status >= 200 && out.status < 300) onHead(out.headers);
     }
     bool give = true;
     while (!call->pieces.empty() && give) {

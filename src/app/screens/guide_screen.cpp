@@ -219,6 +219,11 @@ void GuideScreen::rebuildLines(bool samePlace) {
   focusLine_ = found;
   if (const GuideChannel* g = focusedChannel()) focusId_ = g->id;
   ensureVisible();
+  // The rows on screen now (the guide opening, a new channel list or
+  // lineup, a tab or filter): their listings asked for. Only when the
+  // lines change, never per frame; the store skips what it has or is
+  // already fetching.
+  requestVisibleListings();
 }
 
 int GuideScreen::lineOf(const std::string& id) const {
@@ -441,7 +446,6 @@ void GuideScreen::showSection(Tab t) {
   // Recent opens newest first; the others keep the channel when it's there.
   if (t == Tab::Recent) focusId_.clear();
   rebuildLines();
-  requestVisibleListings();
 }
 
 // What Live Events' strip or menu picked for the guide.
@@ -1040,7 +1044,7 @@ bool GuideScreen::tick(uint32_t ms) {
   const StoreStatus& status = s.status();
   if (status.phase == StoreStatus::Phase::Loading || (!shownLine_.empty() && status.line.empty())) {
     animating = true;
-  } else if (status.mark == StoreStatus::Mark::Busy) {
+  } else if (status.mark == StoreStatus::Mark::Busy || waySpinnerShown_) {
     if (spinner_.moved(ms)) animating = true;
     wake_.at(spinner_.next(ms));
   }
@@ -1075,6 +1079,7 @@ bool GuideScreen::tick(uint32_t ms) {
 
 void GuideScreen::draw(ui::Ctx& c) {
   skeletonShown_ = false;
+  waySpinnerShown_ = false;
   if (!launchOff_) {
     // Opening the app: the flower covers loading until the guide can show,
     // then blooms out as the guide comes in behind it.
@@ -1302,16 +1307,30 @@ void GuideScreen::drawHero(ui::Ctx& c) {
   y = 210;
   float bx = x;
   if (!l) {
+    using engine::views::EmptyRow;
     const std::vector<Listing>* v = li_ ? li_->forChannel(g->id) : nullptr;
     bool askedEmpty = li_ && li_->empty.count(g->id);
-    if (v || askedEmpty) {
-      ui::label(c, "No guide info", bx, y + 1, Weight::Medium, 25, theme::white(0.7f));
-    } else {
-      // Still loading: placeholders where the show and its times go.
-      skeletonShown_ = true;
-      ui::Color block = ui::skeleton(c);
-      c.g.fill({bx, y + 4, 420, 24}, block, 12);
-      c.g.fill({bx, y + 48, 260, 16}, block, 8);
+    Store& s = app_.store();
+    switch (engine::views::emptyRow(false, v != nullptr, askedEmpty, s.listingsOnTheWay(g->id), s.savedListingsReading())) {
+      case EmptyRow::Placeholders: {
+        // The saved guide is being read: placeholders where the show and
+        // its times go.
+        skeletonShown_ = true;
+        ui::Color block = ui::skeleton(c);
+        c.g.fill({bx, y + 4, 420, 24}, block, 12);
+        c.g.fill({bx, y + 48, 260, 16}, block, 8);
+        break;
+      }
+      case EmptyRow::OnTheWay:
+        // A small spinner where the show's times go (Build 130).
+        waySpinnerShown_ = true;
+        ui::spinner(c, bx + 11, y + 17, 10, theme::white(0.75f));
+        ui::label(c, engine::views::kListingsOnTheWay, bx + 34, y + 1, Weight::Medium, 25, theme::white(0.75f));
+        break;
+      case EmptyRow::NoGuideInfo:
+      case EmptyRow::NoneForThisTime:
+        ui::label(c, "No guide info", bx, y + 1, Weight::Medium, 25, theme::white(0.7f));
+        break;
     }
     return;
   }
@@ -1527,11 +1546,23 @@ void GuideScreen::drawRow(ui::Ctx& c, int lineIndex, float y) {
     Rect r{progX(), y, kRight - progX() - kGap, kRowH};
     bool focused = rowFocused;
     c.hit(r, kHitProgram + lineIndex * 64);
-    c.g.fill(r, focused ? theme::white() : theme::white(0.07f), 12);
     bool askedEmpty = li_ && li_->empty.count(g.id);
-    if (!later() && !v && !askedEmpty) {
-      // Still loading: cell-shaped placeholders (a title and a time bar
-      // each) in a slow pulse; "No guide info" only when there's none.
+    using engine::views::EmptyRow;
+    Store& s = app_.store();
+    EmptyRow says = engine::views::emptyRow(later(), v != nullptr, askedEmpty, !later() && s.listingsOnTheWay(g.id),
+                                            s.savedListingsReading());
+    if (says == EmptyRow::OnTheWay) {
+      // Build 130: some are still coming (a guide build, or this row's own
+      // request): said on a faint cell instead of placeholders.
+      c.g.fill(r, focused ? theme::white() : theme::white(0.05f), 12);
+      ui::labelIn(c, engine::views::kListingsOnTheWay, {r.x + 20, r.y, r.w - 40, r.h}, Weight::Medium, 20,
+                  focused ? theme::black(0.6f) : theme::white(0.55f));
+      return;
+    }
+    c.g.fill(r, focused ? theme::white() : theme::white(0.07f), 12);
+    if (says == EmptyRow::Placeholders) {
+      // The saved guide is being read (a relaunch): cell-shaped
+      // placeholders (a title and a time bar each) in a slow pulse.
       skeletonShown_ = true;
       ui::Color block = ui::skeleton(c);
       if (focused) block = theme::black(block.a * 1.6f);

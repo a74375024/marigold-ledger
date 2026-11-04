@@ -42,10 +42,21 @@ const char* errorName(RedeErro e) {
 struct Calls {
   const std::function<bool(std::string_view)>* receive = nullptr;
   const std::function<bool()>* stop = nullptr;
+  // The header block, before the first piece: rede keeps the response's
+  // headers in `response` as they arrive, and hands a body over only on a
+  // 2xx response, after its headers.
+  const std::function<void(std::string_view)>* onHead = nullptr;
+  const RedeResposta* response = nullptr;
+  bool headed = false;
 };
 
 int receiveBody(const void* data, size_t n, void* user) {
-  const Calls* c = static_cast<const Calls*>(user);
+  Calls* c = static_cast<Calls*>(user);
+  if (!c->headed) {
+    c->headed = true;
+    if (c->onHead && *c->onHead && c->response->cabecalhos)
+      (*c->onHead)(std::string_view(c->response->cabecalhos, c->response->n_cabecalhos));
+  }
   return (*c->receive)(std::string_view(static_cast<const char*>(data), n)) ? 1 : 0;
 }
 
@@ -70,12 +81,18 @@ void releaseHandle(Handle* h) {
 }
 
 Result fetch(const Request& q, Handle* h, size_t wireCap, const std::function<bool(std::string_view)>& receive,
-             const std::function<bool()>& stop) {
+             const std::function<bool()>& stop, const std::function<void(std::string_view)>& onHead) {
   std::vector<const char*> headers;
   headers.reserve(q.headers.size() + 1);
   for (const std::string& line : q.headers) headers.push_back(line.c_str());
   headers.push_back(nullptr);
-  Calls calls{&receive, &stop};
+  RedeResposta r;
+  std::memset(&r, 0, sizeof r);
+  Calls calls;
+  calls.receive = &receive;
+  calls.stop = &stop;
+  calls.onHead = &onHead;
+  calls.response = &r;
 
   RedePedido p;
   std::memset(&p, 0, sizeof p);
@@ -96,8 +113,6 @@ Result fetch(const Request& q, Handle* h, size_t wireCap, const std::function<bo
     p.corpo_usuario = &calls;
   }
 
-  RedeResposta r;
-  std::memset(&r, 0, sizeof r);
   rede_pedir(&p, &r);
 
   Result out;

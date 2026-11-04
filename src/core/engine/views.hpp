@@ -137,6 +137,20 @@ std::string titleAndEpisode(const Listing& l);
 // After the preview's "NOW": "Title · 18 min left".
 std::string nowPlaying(const Listing& playing, time::Seconds now);
 
+// What a guide row (or the top for its channel) says when it has no show
+// to draw in the window (Build 130). `later`: a window after now.
+// `listed`: the row has listings, just none here. `askedEmpty`: its own
+// request came back with none. `onTheWay`: Store::listingsOnTheWay.
+// `savedReading`: Store::savedListingsReading (a relaunch).
+enum class EmptyRow : uint8_t {
+  NoneForThisTime,  // "No listings for this time"
+  Placeholders,     // the saved guide is being read: pulsing cells, no words
+  OnTheWay,         // "Listings on the way"
+  NoGuideInfo,      // "No guide info": nothing more is coming
+};
+EmptyRow emptyRow(bool later, bool listed, bool askedEmpty, bool onTheWay, bool savedReading);
+constexpr const char* kListingsOnTheWay = "Listings on the way";
+
 // Channels whose name, number, local station or neighborhood matches,
 // best first: exact name, number, name start, station start, word start,
 // anywhere in the name, the neighborhood; lineup and favourites a little

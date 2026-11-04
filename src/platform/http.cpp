@@ -38,6 +38,9 @@ struct Sink {
   std::string* buffer = nullptr;  // gunzip without onChunk: collect here
   size_t bufferCap = 0;
   uint64_t bytes = 0;
+  // On the wire (before gunzip), for Request::onProgress, and the size the
+  // headers gave (0: none).
+  uint64_t wire = 0, wireTotal = 0;
   bool overflow = false;
 
   bool deliver(std::string_view c) {
@@ -252,15 +255,22 @@ void Client::execute(Ticket::Job& job) {
   size_t wireCap = q.maxBytes ? q.maxBytes : streamed && q.onChunk ? transport::kStreamedMax : 0;
   if (!q.onChunk && q.gunzip && !q.maxBytes) wireCap = transport::kBufferedMax;
   std::function<bool(std::string_view)> receive;
+  std::function<void(std::string_view)> onHead;
   if (streamed) {
-    receive = [&sink](std::string_view chunk) {
+    receive = [&sink, &q](std::string_view chunk) {
       if (sink.job->stopped()) return false;
+      if (q.onProgress) {
+        sink.wire += chunk.size();
+        q.onProgress(sink.wire, sink.wireTotal);
+      }
       if (sink.gunzip) return sink.gunzip->feed(chunk);
       return sink.deliver(chunk);
     };
+    if (q.onProgress) onHead = [&sink](std::string_view block) { sink.wireTotal = wireLength(block); };
   }
 
-  transport::Result r = transport::fetch(q, job.handle, wireCap, receive, [&job] { return job.stopped(); });
+  transport::Result r =
+      transport::fetch(q, job.handle, wireCap, receive, [&job] { return job.stopped(); }, onHead);
 
   out.status = r.status;
   out.ms = r.ms;

@@ -31,6 +31,7 @@ const char* title(Step s) {
     case Step::Channels: return "Channels";
     case Step::Sports: return "Sports";
     case Step::Teams: return "Teams";
+    case Step::Guide: return "Your guide";
     case Step::Done: return "Done";
   }
   return "";

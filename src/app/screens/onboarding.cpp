@@ -1,10 +1,11 @@
 // First-run setup, the screens that aren't My Lineup's or My Sports': the
 // welcome (the provider from the phone or with the remote), "Scan with your
 // phone" (the TV serves the provider form to a phone on the home network;
-// core/net/phone_setup) and "You're all set". The order is Provider, Area,
-// Languages, Channels, Sports, Teams, Done (setup_ui::Step); Back goes to
-// the step before.
+// core/net/phone_setup), "Getting your guide ready" (Build 130) and "You're
+// all set". The order is Provider, Area, Languages, Channels, Sports, Teams,
+// Guide, Done (setup_ui::Step); Back goes to the step before.
 #include <algorithm>
+#include <cmath>
 #include <memory>
 
 #include "app/app.hpp"
@@ -411,11 +412,162 @@ class PhoneSignIn : public Screen {
   std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 };
 
+// --------------------------------------------------------- your guide
+
+// "Getting your guide ready" (Build 130): on a first run there is no saved
+// guide, so setup waits here until it is usable. Three steps tick as the
+// store gets there (Store::guideReady(), asked four times a second); once
+// all three are ticked it moves on to "You're all set" by itself. No
+// buttons, unless the provider's listings failed or are still going 5
+// minutes after this step opened: then the step says so and Continue goes
+// on (they keep loading in the background). Back goes to the teams; coming
+// forward again waits on (the load never stops for either).
+class SetupGuide : public Screen {
+ public:
+  explicit SetupGuide(App& app) : Screen(app) {}
+
+  bool tick(uint32_t ms) override {
+    bool changed = false;
+    wake_.clear();
+    if (!openedAt_) openedAt_ = ms ? ms : 1;
+    if (!askedAt_ || ms - askedAt_ >= kAskEveryMs) {
+      askedAt_ = ms ? ms : 1;
+      GuideReady r = app_.store().guideReady();
+      // A tick stays (My Lineup is made again once the listings are in).
+      r.channels = r.channels || ready_.channels;
+      r.lineup = r.lineup || ready_.lineup;
+      r.listings = r.listings || ready_.listings;
+      // The bar never goes back while it shows.
+      if (r.listingsProgress >= 0 && ready_.listingsProgress > r.listingsProgress)
+        r.listingsProgress = ready_.listingsProgress;
+      if (r.channels != ready_.channels || r.lineup != ready_.lineup || r.listings != ready_.listings ||
+          r.listingsProblem != ready_.listingsProblem || r.problemLine != ready_.problemLine ||
+          std::abs(r.listingsProgress - ready_.listingsProgress) >= 0.005f)
+        changed = true;
+      ready_ = r;
+    }
+    bool all = ready_.channels && ready_.lineup && ready_.listings;
+    // Never stuck: a failure, or 5 minutes, brings Continue (it stays).
+    if (!all && !slow_ && (ready_.listingsProblem || ms - openedAt_ >= kSlowMs)) {
+      slow_ = true;
+      changed = true;
+    }
+    if (all && !doneAt_) {
+      doneAt_ = ms + kDonePauseMs;  // the three ticks for a moment
+      changed = true;
+    }
+    if (doneAt_ && ms >= doneAt_) {
+      doneAt_ = 0;
+      next(true);
+      return true;
+    }
+    // A spinner moves every 125 ms while a step is busy; asleep otherwise
+    // until the next look at the store (or the 5 minutes).
+    if (anyBusy() && spinner_.tick(ms, wake_)) changed = true;
+    wake_.at(askedAt_ + kAskEveryMs);
+    if (!slow_) wake_.at(openedAt_ + kSlowMs);
+    wake_.at(doneAt_);
+    return changed;
+  }
+  uint32_t wakeAt() const override { return wake_.get(); }
+  const char* name() const override { return "setup guide"; }
+
+  bool key(const KeyEvent& e) override {
+    switch (e.key) {
+      case Key::Ok:
+        if (slow_ && !doneAt_) next(false);
+        return true;
+      case Key::Back: return false;  // the teams; the guide loads on
+      default: return true;
+    }
+  }
+
+  void draw(ui::Ctx& c) override {
+    c.g.fill({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight}, theme::hex(theme::kBackground));
+    float y = setup_ui::heading(c, setup_ui::kicker(Step::Guide), "Getting your guide ready",
+                                "This happens once. Next time the guide opens straight away.", 1400) +
+              10;
+    Rect panel{kLeft, y, 1100, kPanelH};
+    c.g.fill(panel, theme::hex(0x1C1F25), 22);
+    float x = panel.x + 44, ry = panel.y + 44;
+    row(c, x, ry, ready_.channels ? State::Done : State::Busy, "Your channels", "");
+    ry += 100;
+    row(c, x, ry, lineupState(), "My Lineup", "Your local stations and the channels you picked");
+    ry += 120;
+    State listings = listingsState();
+    if (listings == State::Warning) {
+      row(c, x, ry, listings, "TV listings",
+          ready_.listingsProblem && !ready_.problemLine.empty() ? ready_.problemLine
+                                                                 : "Your provider's listings are taking longer than usual");
+      ui::label(c, "They keep loading in the background. Channels play now; shows fill in as they arrive.", x + 60,
+                ry + 76, Weight::Regular, 22, theme::white(0.75f), panel.w - 148);
+    } else {
+      row(c, x, ry, listings, "TV listings", "Your provider's listings");
+      // How far the download is, when the provider says how big it is.
+      if (listings == State::Busy && ready_.listingsProgress >= 0)
+        ui::progress(c, {x + 60, ry + 88, 700, 6}, static_cast<double>(ready_.listingsProgress));
+    }
+    // The only button this screen has.
+    if (slow_ && !doneAt_) setup_ui::buttons(c, kLeft, panel.y + panel.h + 60, {"Continue"}, 0, kHitButton);
+    setup_ui::stepBar(c, Step::Guide);
+    setup_ui::keys(c, app_.remoteKeys(), false);
+  }
+
+ private:
+  enum class State { Done, Busy, Warning, ToDo };
+  static constexpr uint32_t kAskEveryMs = 250;
+  static constexpr uint32_t kSlowMs = 5 * 60 * 1000;
+  static constexpr uint32_t kDonePauseMs = 900;
+  static constexpr float kPanelH = 420;
+
+  State lineupState() const { return ready_.lineup ? State::Done : ready_.channels ? State::Busy : State::ToDo; }
+  State listingsState() const {
+    if (ready_.listings) return State::Done;
+    if (slow_) return State::Warning;
+    return ready_.channels ? State::Busy : State::ToDo;
+  }
+  bool anyBusy() const {
+    return !ready_.channels || lineupState() == State::Busy || listingsState() == State::Busy;
+  }
+
+  // A step: its mark, its name and a line under it.
+  void row(ui::Ctx& c, float x, float y, State st, const std::string& title, const std::string& line) {
+    Rect dot{x, y + 2, 36, 36};
+    switch (st) {
+      case State::Done:
+        c.g.fill(dot, theme::hex(theme::kToggleOn), 18);
+        ui::labelIn(c, "\xe2\x9c\x93", dot, Weight::Bold, 20, theme::white(), Align::Center);
+        break;
+      case State::Busy: ui::spinner(c, dot.x + 18, dot.y + 18, 13); break;
+      case State::Warning:
+        c.g.fill(dot, theme::hex(theme::kWarning), 18);
+        ui::labelIn(c, "!", dot, Weight::Bold, 22, theme::black(), Align::Center);
+        break;
+      case State::ToDo: c.g.stroke(dot, theme::white(0.25f), 18, 3); break;
+    }
+    ui::label(c, title, x + 60, y, Weight::Bold, 30, st == State::ToDo ? theme::white(0.5f) : theme::white(), 960);
+    if (!line.empty()) ui::label(c, line, x + 60, y + 42, Weight::Regular, 22, theme::white(0.6f), 960);
+  }
+
+  // On to "You're all set", in this step's place: Back from there goes to
+  // the teams.
+  void next(bool ready) {
+    app_.nav().pop();
+    app_.nav().push(makeSetupDone(app_, ready));
+  }
+
+  GuideReady ready_;
+  bool slow_ = false;
+  uint32_t openedAt_ = 0, askedAt_ = 0, doneAt_ = 0;
+  wake::Due wake_;
+  wake::Steps spinner_;
+};
+
 // --------------------------------------------------------------- done
 
 class SetupDone : public Screen {
  public:
-  explicit SetupDone(App& app) : Screen(app) {}
+  SetupDone(App& app, bool guideReady) : Screen(app), guideReady_(guideReady) {}
 
   bool tick(uint32_t) override {
     auto ch = app_.store().channels();
@@ -466,7 +618,8 @@ class SetupDone : public Screen {
     };
     std::vector<Stat> stats;
     // Never how many channels.
-    stats.push_back({ready_ ? "\xe2\x9c\x93" : "\xe2\x80\xa6", ready_ ? "My Lineup is ready" : "building My Lineup"});
+    if (guideReady_) stats.push_back({"\xe2\x9c\x93", "My Lineup and your guide are ready"});
+    else stats.push_back({ready_ ? "\xe2\x9c\x93" : "\xe2\x80\xa6", ready_ ? "My Lineup is ready" : "building My Lineup"});
     if (games > 0) stats.push_back({std::to_string(games), "games on your channels today"});
     if (!my.teams.empty()) {
       std::string l = my.teams.size() == 1 ? "favorite team" : "favorite teams";
@@ -504,6 +657,7 @@ class SetupDone : public Screen {
     if (events) g->openEvents();
   }
 
+  bool guideReady_;  // reached through "Getting your guide ready"
   bool ready_ = false;
   size_t lineup_ = 0;
   int button_ = 0;
@@ -513,6 +667,9 @@ class SetupDone : public Screen {
 
 std::unique_ptr<Screen> makeWelcome(App& app) { return std::make_unique<Welcome>(app); }
 std::unique_ptr<Screen> makePhoneSignIn(App& app, bool firstRun) { return std::make_unique<PhoneSignIn>(app, firstRun); }
-std::unique_ptr<Screen> makeSetupDone(App& app) { return std::make_unique<SetupDone>(app); }
+std::unique_ptr<Screen> makeSetupGuide(App& app) { return std::make_unique<SetupGuide>(app); }
+std::unique_ptr<Screen> makeSetupDone(App& app, bool guideReady) {
+  return std::make_unique<SetupDone>(app, guideReady);
+}
 
 }  // namespace marigold::app

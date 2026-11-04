@@ -45,7 +45,18 @@ struct Request {
 
   // Worker thread. Return false to stop the transfer.
   std::function<bool(std::string_view)> onChunk;
+  // Worker thread, a streamed body (Build 130): after each piece, the bytes
+  // received on the wire so far and the size the server gave for them
+  // (wireLength() of its headers; 0 when it gave none, or on a platform
+  // that can't tell the headers before the body).
+  std::function<void(uint64_t received, uint64_t total)> onProgress;
 };
+
+// The body's size on the wire from a raw header block ("Name: value\r\n...",
+// the last response in it): its Content-Length, or 0 when there is none or
+// the body is decoded on the way (a Content-Encoding other than identity),
+// since the pieces handed over are then not the bytes it counts.
+uint64_t wireLength(std::string_view headers);
 
 struct Response {
   int status = 0;           // 0 = no HTTP response

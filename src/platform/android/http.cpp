@@ -14,6 +14,8 @@ namespace {
 struct Call {
   const std::function<bool(std::string_view)>* receive = nullptr;
   const std::function<bool()>* stop = nullptr;
+  const std::function<void(std::string_view)>* onHead = nullptr;
+  bool headed = false;  // onHead called (before the first piece of a 2xx body)
   Result* out = nullptr;
   size_t cap = 0;
   size_t received = 0;
@@ -28,11 +30,12 @@ Call* callOf(jlong p) { return reinterpret_cast<Call*>(static_cast<intptr_t>(p))
 void prepare() {}
 
 Result fetch(const Request& q, Handle*, size_t wireCap, const std::function<bool(std::string_view)>& receive,
-             const std::function<bool()>& stop) {
+             const std::function<bool()>& stop, const std::function<void(std::string_view)>& onHead) {
   Result out;
   Call call;
   call.receive = receive ? &receive : nullptr;
   call.stop = &stop;
+  call.onHead = &onHead;
   call.out = &out;
   call.cap = wireCap ? wireCap : receive ? kStreamedMax : kBufferedDefault;
 
@@ -91,6 +94,11 @@ JNIEXPORT jboolean JNICALL Java_org_marigold_app_Bridge_nativeHttpChunk(JNIEnv* 
   // As rede: a streamed body goes to its consumer only on a 2xx response.
   int status = c->out->status;
   if (c->receive && (status < 200 || status >= 300)) return JNI_TRUE;
+  // The headers came first (nativeHttpHead).
+  if (c->receive && !c->headed) {
+    c->headed = true;
+    if (*c->onHead) (*c->onHead)(c->out->headers);
+  }
   jbyte* data = env->GetByteArrayElements(buf, nullptr);
   bool more = true;
   std::string_view chunk(reinterpret_cast<const char*>(data), static_cast<size_t>(n));

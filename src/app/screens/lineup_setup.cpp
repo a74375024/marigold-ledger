@@ -3,7 +3,7 @@
 //   2. Languages: the countries and languages channels are kept from;
 //   3. Channels: kinds of channels, "Only channels with a guide";
 // then "My Lineup is ready" with its kinds of channels (never how many). In
-// first-run setup these are steps 2-4 of 7 and Channels carries on to My
+// first-run setup these are steps 2-4 of 8 and Channels carries on to My
 // Sports instead. Nothing is saved until the last step. Settings › My
 // Lineup opens one step on its own (makeLineupStep), which saves as you go.
 #include <algorithm>

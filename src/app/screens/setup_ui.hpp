@@ -1,5 +1,5 @@
 // Drawing shared by the setup screens (first run, My Lineup, My Sports): the
-// seven steps along the bottom, the heading at the top left, rows of pill
+// eight steps along the bottom, the heading at the top left, rows of pill
 // buttons, the remote's key hints, QR codes and jumping a letter in A-to-Z
 // lists.
 #pragma once
@@ -14,16 +14,17 @@
 
 namespace marigold::app::setup_ui {
 
-// First-run setup, in order.
-enum class Step { Provider, Area, Languages, Channels, Sports, Teams, Done };
-constexpr int kSteps = 7;
+// First-run setup, in order. Guide (Build 130): "Getting your guide ready"
+// waits until the guide is usable.
+enum class Step { Provider, Area, Languages, Channels, Sports, Teams, Guide, Done };
+constexpr int kSteps = 8;
 
 constexpr float kLeft = 80;
 constexpr float kStepsY = 944;   // the step bar's top
 constexpr float kContentBottom = 910;  // first run: nothing below this but the bars
 
 const char* title(Step s);
-// "STEP 3 OF 7 · LANGUAGES"
+// "STEP 3 OF 8 · LANGUAGES"
 std::string kicker(Step s);
 // The steps along the bottom, `at` highlighted, the ones before ticked.
 void stepBar(ui::Ctx& c, Step at);

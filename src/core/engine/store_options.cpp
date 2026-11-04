@@ -75,7 +75,11 @@ void Store::setLineupCountries(const std::set<std::string>& countries) {
   impl_->ev.boardDirty = true;
 }
 
-void Store::refreshSuggestions() { buildLineup(impl_->prefs); }
+bool Store::refreshSuggestions() {
+  if (guideLoading()) return false;
+  buildLineup(impl_->prefs);
+  return true;
+}
 
 void Store::setCoast(catalog::Coast coast) {
   catalog::LineupPrefs p = impl_->prefs;
@@ -179,10 +183,99 @@ void Store::setGuideShard(const std::string& id, bool on) {
   scheduleOutside(true);
 }
 
-void Store::refreshListings() {
+bool Store::refreshListings() {
+  if (guideLoading()) return false;
   scheduleProvider(true);
   if (settings_.fillMissingListings) scheduleOutside(true);
+  return true;
 }
+
+bool Store::guideLoading() const { return impl_->outsideRunning || providerGuideLoading(); }
+
+bool Store::providerGuideLoading() const {
+  const Impl& m = *impl_;
+  if (m.providerRunning) return true;
+  // The first provider guide is due to start (launch, a new provider): no
+  // guide yet for a provider that has a guide file.
+  if (!m.providerAt) return false;
+  for (const sources::Account& a : m.accounts) {
+    bool file = a.kind == sources::AccountKind::Xtream || (a.kind == sources::AccountKind::M3U && !a.guideUrl.empty());
+    if (file && !m.providerSaved.count(guide::provider::cacheKey("default", a.sourceId()))) return true;
+  }
+  return false;
+}
+
+GuideBuildLine guideBuildLine(bool providerRunning, bool firstProviderGuide, bool outsideRunning, bool outsideWaiting) {
+  GuideBuildLine out;
+  if (providerRunning) {
+    out.line = firstProviderGuide ? "Loading the guide for the first time\xe2\x80\xa6" : "Updating the provider's guide\xe2\x80\xa6";
+    out.mark = StoreStatus::Mark::Busy;
+  } else if (outsideRunning) {
+    if (outsideWaiting) {
+      out.line = "Missing listings wait until you stop watching";
+    } else {
+      out.line = "Filling in missing listings\xe2\x80\xa6";
+      out.mark = StoreStatus::Mark::Busy;
+    }
+  }
+  return out;
+}
+
+GuideReady Store::guideReady() const {
+  const Impl& m = *impl_;
+  GuideReady r;
+  r.channels = status_.phase == StoreStatus::Phase::Ready && channels_ && !channels_->all.empty() && !m.partial;
+  // The lineup's rows are made on a worker after the setup saves it, then
+  // published by the next tick.
+  r.lineup = r.channels && channels_->lineupConfigured && m.rowsBuilt && !m.channelsDirty;
+  bool missing = false, failed = false;
+  for (const sources::Account& a : m.accounts) {
+    bool file = a.kind == sources::AccountKind::Xtream || (a.kind == sources::AccountKind::M3U && !a.guideUrl.empty());
+    if (!file) continue;
+    std::string key = guide::provider::cacheKey("default", a.sourceId());
+    if (m.providerSaved.count(key)) continue;
+    missing = true;
+    if (m.providerProblems.count(key)) failed = true;
+  }
+  if (!missing) {
+    // No guide file at all (Emby, an M3U without a guide link), or each
+    // has its guide: nothing to wait for.
+    r.listings = true;
+  } else if (m.providerRunning || m.providerAt || m.loading || m.partial || !r.channels) {
+    // On its way (or due once the list is in).
+    if (m.providerRunning) {
+      int p = m.providerProgress->load();
+      if (p >= 0) r.listingsProgress = std::min(1.0f, static_cast<float>(p) / 1000.0f);
+    }
+  } else if (failed) {
+    r.listingsProblem = true;
+    r.problemLine = "Your provider's listings couldn't be loaded right now";
+  } else {
+    // Nothing to read in it (none of the chosen countries' channels): done.
+    r.listings = true;
+  }
+  return r;
+}
+
+bool Store::listingsOnTheWay(const std::string& entryId) const {
+  const Impl& m = *impl_;
+  if (m.providerRunning || m.outsideRunning || providerGuideLoading()) return true;
+  // The first missing listings are due (they start once the provider's
+  // guide is in).
+  if (settings_.fillMissingListings && m.outsideAt && !m.outsideSaved) return true;
+  auto loading = [&m](const std::string& id) {
+    auto st = m.guideState.find(id);
+    return m.pendingGuideSet.count(id) > 0 || (st != m.guideState.end() && st->second == Impl::GuideState::Loading);
+  };
+  if (loading(entryId)) return true;
+  auto info = m.entryInfo.find(entryId);
+  if (info == m.entryInfo.end()) return false;
+  for (const std::string& member : m.catalog->entries[info->second].members)
+    if (loading(member)) return true;
+  return false;
+}
+
+bool Store::savedListingsReading() const { return impl_->savedListingsReading; }
 
 GuideListingsStatus Store::guideListings() const {
   const Impl& m = *impl_;

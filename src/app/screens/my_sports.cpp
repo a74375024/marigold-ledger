@@ -1,8 +1,8 @@
 // My Sports setup (MySportsSetupView): 1. what do you watch, 2. favourite
 // teams, a league at a time from the rail on the left, 3. review with
 // "Remind me before my teams play". In first-run setup these are steps 5
-// and 6 of 7 (the reminder switch is on the teams screen, and the summary
-// follows). Nothing is saved until the last step. Settings › Live Events ›
+// and 6 of 8 (the reminder switch is on the teams screen; "Getting your
+// guide ready" and the summary follow). Nothing is saved until the last step. Settings › Live Events ›
 // My teams starts on step 2 (Back from there closes).
 //
 // Step 1 (Build 127): sixteen tiles, the big US leagues first, each with
@@ -247,7 +247,7 @@ class MySportsSetup : public Screen {
     draft_.configured = true;
     draft_.prompted = true;
     app_.store().setMySports(draft_);
-    app_.nav().push(makeSetupDone(app_));
+    app_.nav().push(makeSetupGuide(app_));
   }
 
   // "I don't watch sports": saved with no leagues (games go to More events).
@@ -257,7 +257,7 @@ class MySportsSetup : public Screen {
     draft_.prompted = true;
     app_.store().setMySports(draft_);
     if (onboarding_) {
-      app_.nav().push(makeSetupDone(app_));
+      app_.nav().push(makeSetupGuide(app_));
     } else {
       app_.toast("My Sports saved");
       app_.nav().pop();

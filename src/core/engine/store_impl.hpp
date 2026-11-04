@@ -364,11 +364,20 @@ struct Store::Impl {
   time::Seconds providerTriedAt = 0, outsideTriedAt = 0;
   uint32_t guidesLookAt = 0;
   time::Seconds lastTickAt = 0;
+  // A forced build asked for while one runs (or before the full list is
+  // in) waits here and runs when that one ends.
   bool providerForce = false, outsideForce = false;
+  // The launch asked for the rows on screen before the lineup was made:
+  // asked again once it is published.
+  bool listingsOnLineup = false;
+  // A reload cancelled the guide builds: started again once the channel
+  // list is in, whatever it turned out to be.
+  bool guidesAfterLoad = false;
   std::map<std::string, guide::provider::Saved> providerSaved;  // by cache key
   std::map<std::string, std::string> providerProblems;          // by cache key, last failure
   std::optional<guide::Saved> outsideSaved;
   bool savedListingsRead = false;
+  bool savedListingsReading = false;  // asked for, not back yet
   std::string guideLine;  // status line of a running guide job
   std::vector<catalog::markets::Market> tvMarkets;  // last list loaded for the setup
   // Station directory (Wikipedia's affiliate lists, built into the app).
@@ -380,6 +389,12 @@ struct Store::Impl {
   std::shared_ptr<std::atomic<bool>> playingFull = std::make_shared<std::atomic<bool>>(false);
   // The provider guide build is waiting for playback to stop (status line).
   std::shared_ptr<std::atomic<bool>> providerWaiting = std::make_shared<std::atomic<bool>>(false);
+  // The same for the missing listings (the guide's header line says so).
+  std::shared_ptr<std::atomic<bool>> outsideWaiting = std::make_shared<std::atomic<bool>>(false);
+  // How far the provider guide's download is, in thousandths (its files in
+  // turn, each by its bytes on the wire against the size the server gave):
+  // -1 while it can't tell. Set by the build's worker, read by guideReady().
+  std::shared_ptr<std::atomic<int>> providerProgress = std::make_shared<std::atomic<int>>(-1);
   // Foreground jobs running now (loading the saved lists, the channel sort):
   // guide builds wait for them, so the memory peaks never add up.
   std::shared_ptr<std::atomic<int>> foregroundJobs = std::make_shared<std::atomic<int>>(0);

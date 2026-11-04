@@ -178,7 +178,10 @@ TEST_CASE("loading: a list that couldn't be updated stays, and the header says s
   CHECK(store.status().line.find("Couldn't update the channel list") == 0);
   CHECK(store.channels().get() == shown.get());
   frame(store, tv, 4100);
-  CHECK(store.status().mark == StoreStatus::Mark::None);
+  // Its few seconds are up (the guide builds it restarted may say they're
+  // working, with their spinner, since Build 130).
+  CHECK(store.status().mark != StoreStatus::Mark::Failed);
+  CHECK(store.status().line.find("Couldn't update the channel list") == std::string::npos);
 }
 
 TEST_CASE("loading: a list an older version saved opens the guide, then is sorted again") {

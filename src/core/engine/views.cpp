@@ -255,6 +255,15 @@ std::string nowPlaying(const Listing& playing, time::Seconds now) {
   return left.empty() ? playing.title : playing.title + " \xc2\xb7 " + left;
 }
 
+EmptyRow emptyRow(bool later, bool listed, bool askedEmpty, bool onTheWay, bool savedReading) {
+  if (later) return EmptyRow::NoneForThisTime;
+  // Listings, just none now: they came, and say nothing about this hour.
+  if (listed) return EmptyRow::NoGuideInfo;
+  // A relaunch reads the saved guide in a moment: nothing is said yet.
+  if (savedReading && !askedEmpty) return EmptyRow::Placeholders;
+  return onTheWay ? EmptyRow::OnTheWay : EmptyRow::NoGuideInfo;
+}
+
 std::string folded(const std::string& s) { return str::lowerAscii(str::foldDiacritics(s)); }
 
 std::vector<std::string> searchChannels(const Channels& ch, const std::string& query, size_t max) {

@@ -5,6 +5,7 @@
 // test sees the engine reach a settled state before it checks anything.
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <deque>
 #include <filesystem>
@@ -94,6 +95,10 @@ class Pool final : public http::Pool {
 
   // How many times each link was asked for.
   std::map<std::string, int> asked;
+  // Streamed bodies: whether the server says how big they are (onProgress
+  // gets the size), and a look in after each piece (on the same thread).
+  bool announceLength = false;
+  std::function<void()> duringBody;
 
  private:
   http::Response run(http::Request& req) {
@@ -108,10 +113,13 @@ class Pool final : public http::Pool {
       const std::string& body = it->second.body;
       r.bytes = body.size();
       if (req.onChunk) {
-        // In pieces, like a real transfer.
+        // In pieces, like a real transfer, with the progress the pool
+        // reports (the size only when the server is to have given it).
         constexpr size_t kPiece = 4096;
         for (size_t at = 0; at < body.size(); at += kPiece) {
           if (!req.onChunk(std::string_view(body).substr(at, kPiece))) break;
+          if (req.onProgress) req.onProgress(std::min(body.size(), at + kPiece), announceLength ? body.size() : 0);
+          if (duringBody) duringBody();
         }
       } else {
         r.body = body;

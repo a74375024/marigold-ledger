@@ -130,6 +130,34 @@ struct GuideListingsStatus {
   std::vector<std::string> sourceLines;  // one per listings file, no links
 };
 
+// First-run setup's "Getting your guide ready" (Build 130): its three steps,
+// worked out from what the store holds whenever it is asked. Only the
+// provider's guide is waited for, never the missing listings.
+struct GuideReady {
+  bool channels = false;  // the channel list is in and sorted, its rows on screen
+  bool lineup = false;    // My Lineup is made and its rows are published
+  // The provider's listings are in: every provider with a guide file has
+  // one built (none with a file: done at once; nothing of theirs to read:
+  // done once the list is in).
+  bool listings = false;
+  // Its download or read failed and nothing is running now: the line says so.
+  bool listingsProblem = false;
+  std::string problemLine;
+  // How far the download is, 0..1, while it runs and the server gave its
+  // size; -1 otherwise.
+  float listingsProgress = -1;
+};
+
+// The guide header's line while a guide builds (Build 130; the channel
+// list's own lines go first): the provider's guide ("for the first time"
+// when none was ever saved), else the missing listings, which say so while
+// they wait for full-screen playback to end. Empty when neither runs.
+struct GuideBuildLine {
+  std::string line;
+  StoreStatus::Mark mark = StoreStatus::Mark::None;
+};
+GuideBuildLine guideBuildLine(bool providerRunning, bool firstProviderGuide, bool outsideRunning, bool outsideWaiting);
+
 // A show in the loaded guide (search, other airings).
 struct ProgramHit {
   std::string entryId;
@@ -404,7 +432,9 @@ class Store {
   std::vector<GroupSummary> groups() const;
   void setGroupHidden(const std::string& name, bool hidden);
   void setLineupCountries(const std::set<std::string>& countries);
-  void refreshSuggestions();
+  // False, and nothing done, while the guide is loading (guideLoading()):
+  // the suggestions would miss the listings still on their way.
+  bool refreshSuggestions();
   // East/West feeds: the setting, what Automatic stands for here, and the
   // channels that have both versions (their names, East first).
   void setCoast(catalog::Coast coast);
@@ -423,7 +453,28 @@ class Store {
   void setHomeMarket(const std::string& name);
   GuideListingsStatus guideListings() const;
   void setGuideShard(const std::string& id, bool on);
-  void refreshListings();
+  // False, and nothing started, while the guide is loading.
+  bool refreshListings();
+  // A guide build runs, or the first one is about to start: Settings' rows
+  // that refresh the guide or the lineup say "The guide is already loading"
+  // instead of starting another.
+  bool guideLoading() const;
+  // The same for the provider's guide alone (its build runs, or the first
+  // one is due): "Reload channels and listings" waits only for this one,
+  // since the missing listings can take long (they wait while you watch)
+  // and start again after a reload anyway.
+  bool providerGuideLoading() const;
+  // First-run setup waits on this (cheap: a few lookups; asked a few times
+  // a second at most).
+  GuideReady guideReady() const;
+  // A guide row with no listings yet may still get some (Build 130): the
+  // provider's guide builds (or its first is due), the missing listings
+  // build (or their first is due), or the row's own request is on its way.
+  // The guide says "Listings on the way" then, "No guide info" after.
+  bool listingsOnTheWay(const std::string& entryId) const;
+  // The listings saved on this TV are being read (a relaunch): rows wait
+  // with placeholders rather than saying anything.
+  bool savedListingsReading() const;
   std::set<std::string> guideShards() const;
   // Remind Me on a show (reminders are shared with games).
   bool hasShowReminder(const std::string& entryId, time::Seconds start) const;
@@ -536,6 +587,9 @@ class Store {
   // and a memory line in the playback log.
   void afterBigJob(const char* what);
   void startGuides(bool requestRows);
+  // Listings for the rows the guide opens on: favourites, recents and the
+  // lineup's first rows.
+  void wantFirstRows();
   void readSavedListings();
   void installProviderSaved();
   void scheduleProvider(bool force);

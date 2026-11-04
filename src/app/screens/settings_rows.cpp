@@ -295,8 +295,8 @@ std::unique_ptr<Screen> guideListingsPage(App& app) {
     p.items.push_back(ui::PanelItem::header(""));
     ui::PanelItem refresh{ui::PanelItem::Kind::Action, "Refresh listings now"};
     refresh.select = [&app] {
-      app.store().refreshListings();
-      app.toast("Refreshing listings");
+      // Never a second build while one runs.
+      app.toast(app.store().refreshListings() ? "Refreshing listings" : "The guide is already loading");
     };
     p.items.push_back(refresh);
     p.hint = "Help & info \xe2\x80\xba Status has each file";
@@ -550,8 +550,8 @@ void lineupRows(App& app, ui::ListPanel& p) {
   refresh.about = "Re-checks which channels have listings and picks up new ones. Channels you added or removed stay "
                   "as they are.";
   refresh.select = [&app] {
-    app.store().refreshSuggestions();
-    app.toast("Refreshing My Lineup");
+    // While the guide loads the suggestions would miss its listings.
+    app.toast(app.store().refreshSuggestions() ? "Refreshing My Lineup" : "The guide is already loading");
   };
   dim(refresh, configured, kSetUpFirst);
   p.items.push_back(refresh);
@@ -733,6 +733,12 @@ void providersRows(App& app, ui::ListPanel& p) {
   reload.detail = "Reads every provider again";
   reload.about = "Reads every provider's channels and the listings again, now. Marigold also does this by itself.";
   reload.select = [&app] {
+    // Not while the provider's guide loads (a reload would start it over);
+    // during the missing listings it reloads, and they start again after.
+    if (app.store().providerGuideLoading()) {
+      app.toast("The guide is already loading");
+      return;
+    }
     app.store().refreshAll();
     app.toast("Reloading");
   };

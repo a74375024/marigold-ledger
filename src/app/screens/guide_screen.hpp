@@ -183,6 +183,7 @@ class GuideScreen : public Screen {
   LaunchMark launch_;
   bool launchOff_ = false;
   bool skeletonShown_ = false;  // placeholders were drawn last frame
+  bool waySpinnerShown_ = false;  // the top's "Listings on the way" spinner too
   uint32_t pulseStep_ = 0;
   std::string shownLine_;
   StoreStatus::Mark shownMark_ = StoreStatus::Mark::None;

@@ -188,6 +188,13 @@ bool hasGuideFile(const sources::Account& a) {
   return a.kind == sources::AccountKind::Xtream || (a.kind == sources::AccountKind::M3U && !a.guideUrl.empty());
 }
 
+// A provider with a guide file has none saved yet: its first guide.
+bool providerGuideMissing(const Store::Impl& m) {
+  for (const sources::Account& a : m.accounts)
+    if (hasGuideFile(a) && !m.providerSaved.count(guide::provider::cacheKey("default", a.sourceId()))) return true;
+  return false;
+}
+
 std::string hostOf(const std::string& url) {
   size_t s = url.find("://");
   size_t start = s == std::string::npos ? 0 : s + 3;
@@ -1189,7 +1196,14 @@ void Store::refreshAll() {
   }
   m.loading = false;
   m.activeGuideFetches = 0;
+  m.savedListingsReading = false;  // dropped with the rest
+  // The guide builds were cancelled with the rest: each that was running
+  // starts again from the top once the list is in (tick), whether the list
+  // changed, only renamed event slots or came back the same.
+  if (m.providerRunning) m.providerForce = true;
+  if (m.outsideRunning) m.outsideForce = true;
   m.providerRunning = m.outsideRunning = false;
+  m.guidesAfterLoad = true;
   // Search's builds were dropped with the rest.
   m.searchGuide.busy = m.searchGuide.quickBusy = m.searchBoard.busy = false;
   // So were Live Events' (one may still run: the next board has an index of
@@ -1246,7 +1260,7 @@ void Store::load(bool force) {
       m.accountsChanged = true;
     }
     m.signature = signature;
-    m.savedListingsRead = false;
+    m.savedListingsRead = m.savedListingsReading = false;
     m.providerSaved.clear();
     m.outsideSaved.reset();
   }
@@ -1906,6 +1920,11 @@ void Store::rebuildEntries() {
                      ids.reserve(impl_->entryInfo.size());
                      for (const auto& [id, idx] : impl_->entryInfo) ids.push_back(id);
                      applyEntryGuides(ids);
+                     // The launch's rows, asked for before there was a lineup.
+                     if (impl_->listingsOnLineup) {
+                       impl_->listingsOnLineup = false;
+                       wantFirstRows();
+                     }
                    },
                    http::Priority::Visible);
 }
@@ -2491,22 +2510,31 @@ void Store::startGuides(bool requestRows) {
   scheduleProvider(false);
   scheduleOutside(false);
   if (requestRows) {
-    std::vector<std::string> ids;
-    for (const std::string& f : m.favorites) {
-      if (ids.size() >= 40) break;
-      ids.push_back(f);
-    }
-    for (size_t i = 0; i < m.recents.size() && i < 20; ++i) ids.push_back(m.recents[i]);
-    const auto& visible = m.prefs.configured ? m.lineup.lineupEntries : m.lineup.browseEntries;
-    for (size_t i = 0; i < visible.size() && i < 60; ++i) ids.push_back(visible[i].id);
-    wantListings(ids);
+    // The lineup is still being made on its worker (installCatalog just
+    // started it): its first rows are asked for once it is published.
+    if (!m.rowsBuilt) m.listingsOnLineup = true;
+    wantFirstRows();
   }
+}
+
+void Store::wantFirstRows() {
+  Impl& m = *impl_;
+  std::vector<std::string> ids;
+  for (const std::string& f : m.favorites) {
+    if (ids.size() >= 40) break;
+    ids.push_back(f);
+  }
+  for (size_t i = 0; i < m.recents.size() && i < 20; ++i) ids.push_back(m.recents[i]);
+  const auto& visible = m.prefs.configured ? m.lineup.lineupEntries : m.lineup.browseEntries;
+  for (size_t i = 0; i < visible.size() && i < 60; ++i) ids.push_back(visible[i].id);
+  wantListings(ids);
 }
 
 void Store::readSavedListings() {
   Impl& m = *impl_;
   if (m.savedListingsRead) return;
   m.savedListingsRead = true;
+  m.savedListingsReading = true;
   struct Read {
     std::map<std::string, guide::provider::Saved> provider;
     std::optional<guide::Saved> outside;
@@ -2535,6 +2563,7 @@ void Store::readSavedListings() {
       [this, gen, box] {
         Impl& mm = *impl_;
         if (gen != mm.generation) return;
+        mm.savedListingsReading = false;
         bool any = false;
         for (auto& [key, saved] : box->provider) {
           if (!mm.providerSaved.count(key)) {
@@ -2663,9 +2692,13 @@ void waitForPlayback(const GuideReadState& st) {
 
 void Store::runProviderGuide() {
   Impl& m = *impl_;
+  // One already running (or only the first part of the list in): a forced
+  // build stays asked for, and runs when that one ends (or the full list
+  // is in). Countries changed during setup while the first guide was
+  // downloading lost theirs for 12 hours.
+  if (m.providerRunning || m.partial || m.channels->empty()) return;
   bool force = m.providerForce;
   m.providerForce = false;
-  if (m.providerRunning || m.partial || m.channels->empty()) return;
   struct Job {
     std::string sourceId, name, url, key;
     bool insecure = false;
@@ -2719,14 +2752,20 @@ void Store::runProviderGuide() {
   std::string dir = host_.files.dir();
   Files* storage = &host_.files;
   uint64_t gen = m.generation;
+  std::shared_ptr<std::atomic<int>> progress = m.providerProgress;
+  *progress = -1;
   host_.pool.post(
-      [shared, results, st, &pool, storage] {
-        for (Job& j : *shared) {
+      [shared, results, st, &pool, storage, progress] {
+        size_t count = shared->size();
+        for (size_t index = 0; index < count; ++index) {
+          Job& j = (*shared)[index];
           if (st.stop->load()) return;
+          *progress = -1;
           std::string url = j.url;
           bool insecure = j.insecure;
-          guide::provider::ReadExactFn read = [&pool, url, insecure, st](const auto& ids, guide::Window window,
-                                                                 guide::provider::ReadFailure& failure)
+          guide::provider::ReadExactFn read = [&pool, url, insecure, st, progress, index, count](
+                                                  const auto& ids, guide::Window window,
+                                                  guide::provider::ReadFailure& failure)
               -> std::optional<guide::provider::ExactRead> {
             waitForPlayback(st);
             auto reader = std::make_shared<guide::XmltvReader>(guide::XmltvReader::exact(ids, window));
@@ -2742,6 +2781,14 @@ void Store::runProviderGuide() {
             q.onChunk = [reader](std::string_view c) {
               reader->feed(c);
               return true;
+            };
+            // Setup's "Getting your guide ready" bar: each file its share,
+            // by its bytes against the size the server gave (none: -1).
+            q.onProgress = [progress, index, count](uint64_t received, uint64_t total) {
+              if (!total) return;
+              double within = std::min(1.0, static_cast<double>(received) / static_cast<double>(total));
+              double all = (static_cast<double>(index) + within) / static_cast<double>(count);
+              *progress = static_cast<int>(all * 1000.0);
             };
             http::Response r = pool.fetchNow(std::move(q));
             if (!r.ok) {
@@ -2771,6 +2818,12 @@ void Store::runProviderGuide() {
         Impl& mm = *impl_;
         if (gen != mm.generation) return;
         mm.providerRunning = false;
+        *mm.providerProgress = -1;
+        // Forced while this one ran: the next one now.
+        if (mm.providerForce) {
+          mm.providerAt = 0;
+          scheduleProvider(true);
+        }
         for (auto& [key, outcome] : *results) {
           if (outcome.kind == guide::provider::Outcome::Kind::built) {
             MLOG_I("guide", "provider guide: %zu channels matched", outcome.saved.programs.size());
@@ -2792,9 +2845,11 @@ void Store::runProviderGuide() {
 
 void Store::runOutsideGuide() {
   Impl& m = *impl_;
+  // As the provider guide: a forced build waits for the one running.
+  if (m.outsideRunning || m.partial || m.channels->empty()) return;
   bool force = m.outsideForce;
   m.outsideForce = false;
-  if (!settings_.fillMissingListings || m.outsideRunning || m.partial || m.channels->empty()) return;
+  if (!settings_.fillMissingListings) return;
   // Event feeds are named per event; only the chosen countries' channels
   // (or ones of unknown country) take part.
   std::set<std::string> countries = m.prefs.guideCountries();
@@ -2831,6 +2886,7 @@ void Store::runOutsideGuide() {
   st.playing = m.playingFull;
   st.stop = m.stopJobs;
   st.foreground = m.foregroundJobs;
+  st.waiting = m.outsideWaiting;
   http::Pool& pool = host_.pool;
   uint64_t gen = m.generation;
   auto newSaved = std::make_shared<std::optional<guide::Saved>>();
@@ -2950,6 +3006,10 @@ void Store::runOutsideGuide() {
         Impl& mm = *impl_;
         if (gen != mm.generation) return;
         mm.outsideRunning = false;
+        if (mm.outsideForce) {
+          mm.outsideAt = 0;
+          scheduleOutside(true);
+        }
         for (const std::string& line : built->log) MLOG_I("guide", "%s", redact(line).c_str());
         for (const std::string& p : built->problems) MLOG_W("guide", "%s", redact(p).c_str());
         if (!*newSaved) return;
@@ -3566,6 +3626,15 @@ bool Store::tick(uint32_t ms) {
   // The saved M3U links, once the first frame is up (the second tick).
   if (!m.linksAsked && ++m.ticks > 1) readLinksLater();
   lookAtGuides(ms);
+  // A reload is done (its list sorted, unchanged, renamed or failed): the
+  // guides it stopped go on. Each is built only if due or forced.
+  if (m.guidesAfterLoad && !m.loading) {
+    m.guidesAfterLoad = false;
+    if (!m.channels->empty()) {
+      scheduleProvider(false);
+      scheduleOutside(false);
+    }
+  }
   if (m.guideFlushAt && ms >= m.guideFlushAt) {
     m.guideFlushAt = 0;
     startGuideFetches();
@@ -3589,7 +3658,10 @@ bool Store::tick(uint32_t ms) {
     if (m.guideWindowStart && m.guideWindowStart != start) {
       m.guideWindowStart = start;
       rebuildOutsidePrograms();
-      wantListings(m.recentlyRequested);
+      // A copy: wantListings reorders recentlyRequested while it reads the
+      // ids it was given.
+      std::vector<std::string> again = m.recentlyRequested;
+      wantListings(again);
     }
     if (m.catalogUnsaved && !m.loading && time::now() - m.catalogSavedAt >= kRenamedSaveEvery) saveCatalog();
     if (m.channelsLoadedAt && time::now() - m.channelsLoadedAt > channelLifetime() && !m.loading && !*m.playingFull) {
@@ -3650,10 +3722,11 @@ bool Store::tick(uint32_t ms) {
   } else if (m.failedUntil && ms < m.failedUntil) {
     line = "Couldn't update the channel list \xc2\xb7 tries again later";
     mark = StoreStatus::Mark::Failed;
-  } else if (m.providerRunning) {
-    line = "Updating the provider's guide\xe2\x80\xa6";
-  } else if (m.outsideRunning) {
-    line = "Filling in missing listings\xe2\x80\xa6";
+  } else if (m.providerRunning || m.outsideRunning) {
+    GuideBuildLine g = guideBuildLine(m.providerRunning, m.providerRunning && providerGuideMissing(m),
+                                      m.outsideRunning, m.outsideWaiting->load());
+    line = std::move(g.line);
+    mark = g.mark;
   }
   if (m.updatedUntil && ms >= m.updatedUntil) m.updatedUntil = 0;
   if (m.failedUntil && ms >= m.failedUntil) m.failedUntil = 0;

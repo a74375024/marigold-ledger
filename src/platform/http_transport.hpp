@@ -49,8 +49,10 @@ struct Result {
 // Runs `q` on the calling (worker) thread. `wireCap` caps the body bytes
 // received (0: kBufferedDefault for a buffered body). With `receive` set
 // the body is handed over in pieces and not kept; it returns false to stop.
-// `stop` is polled while waiting.
+// `stop` is polled while waiting. `onHead`, when set, gets the header block
+// of the 2xx response a streamed body comes with, once, before its first
+// piece (the pool reads its size there for Request::onProgress).
 Result fetch(const Request& q, Handle* h, size_t wireCap, const std::function<bool(std::string_view)>& receive,
-             const std::function<bool()>& stop);
+             const std::function<bool()>& stop, const std::function<void(std::string_view)>& onHead);
 
 }  // namespace marigold::http::transport

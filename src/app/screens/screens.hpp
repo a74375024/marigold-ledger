@@ -74,12 +74,16 @@ std::unique_ptr<Screen> makeAddProvider(App& app);
 // One provider: its state and Remove (which asks first).
 std::unique_ptr<Screen> makeProvider(App& app, const std::string& accountId);
 // First-run setup (onboarding.cpp): the welcome (the root until a provider
-// is added), signing in from a phone, and the summary at the end.
+// is added), signing in from a phone, "Getting your guide ready" after the
+// teams (it waits until the guide is usable, then carries on by itself) and
+// the summary at the end.
 std::unique_ptr<Screen> makeWelcome(App& app);
 // The provider from a phone on the home network. `firstRun` carries on to
 // My Lineup's Area step; otherwise it closes once the channels are in.
 std::unique_ptr<Screen> makePhoneSignIn(App& app, bool firstRun);
-std::unique_ptr<Screen> makeSetupDone(App& app);
+std::unique_ptr<Screen> makeSetupGuide(App& app);
+// `guideReady`: reached through that wait (My Lineup and the guide are in).
+std::unique_ptr<Screen> makeSetupDone(App& app, bool guideReady = false);
 // My Lineup setup: Area, Languages, Channels. `onboarding` is first-run
 // setup's steps 2-4, which carries on to My Sports.
 std::unique_ptr<Screen> makeLineupSetup(App& app, bool onboarding = false);
