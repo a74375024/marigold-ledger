@@ -237,6 +237,7 @@ struct StreamLinks {
   std::mutex fileMu;
   std::atomic<uint64_t> writes{0};  // writes asked for
   uint64_t written = 0;             // and done (under `fileMu`)
+  std::shared_ptr<disk::Keeper> disk;  // a big playlist's links run to MB
 };
 
 struct Store::Impl {
@@ -281,6 +282,11 @@ struct Store::Impl {
   catalog::LineupPrefs prefs;
 
   std::map<std::string, AccountRun> runs;  // by source id ("xt:..")
+  // accounts.json was there and didn't read: which caches are in use can't
+  // be told, so none is removed for want of an owner.
+  bool accountsUnreadable = false;
+  // The data folder's keeper (disk.hpp), shared with the workers.
+  std::shared_ptr<disk::Keeper> disk;
   std::shared_ptr<StreamLinks> links = std::make_shared<StreamLinks>();
   bool linksAsked = false;  // the saved links' read has been started
   int ticks = 0;            // tick() calls (the read waits for the first frame)

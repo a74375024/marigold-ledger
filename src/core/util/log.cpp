@@ -1,5 +1,6 @@
 #include "core/util/log.hpp"
 
+#include <atomic>
 #include <cstdio>
 #include <ctime>
 #include <deque>
@@ -26,6 +27,12 @@ State& state() {
   static State s;
   return s;
 }
+
+// The open file's descriptor for the crash note (fileDescriptor()): a plain
+// atomic, readable from a signal handler.
+std::atomic<int> gFd{-1};
+
+void setFd(std::FILE* f) { gFd.store(f ? fileno(f) : -1); }
 
 const char* levelName(Level level) {
   switch (level) {
@@ -64,10 +71,12 @@ std::string timestamp() {
 // Caller holds the lock.
 void rotateIfNeeded(State& s) {
   if (!s.file || s.maxBytes == 0 || s.written < s.maxBytes) return;
+  gFd.store(-1);
   std::fclose(s.file);
   std::string old = s.path + ".1";
   std::rename(s.path.c_str(), old.c_str());
   s.file = std::fopen(s.path.c_str(), "w");
+  setFd(s.file);
   s.written = 0;
 }
 
@@ -76,26 +85,35 @@ void rotateIfNeeded(State& s) {
 void open(const std::string& path, size_t maxBytes) {
   State& s = state();
   std::lock_guard<std::mutex> lock(s.mu);
+  gFd.store(-1);
   if (s.file) std::fclose(s.file);
   s.path = path;
   s.maxBytes = maxBytes;
   s.file = std::fopen(path.c_str(), "a");
+  setFd(s.file);
   s.written = 0;
   if (s.file) {
     std::fseek(s.file, 0, SEEK_END);
     long size = std::ftell(s.file);
     s.written = size > 0 ? static_cast<size_t>(size) : 0;
-    for (const std::string& line : s.recent) std::fprintf(s.file, "%s\n", line.c_str());
+    for (const std::string& line : s.recent) {
+      std::fprintf(s.file, "%s\n", line.c_str());
+      s.written += line.size() + 1;  // counted: the cap holds from the first line
+    }
     std::fflush(s.file);
+    rotateIfNeeded(s);
   }
 }
 
 void close() {
   State& s = state();
   std::lock_guard<std::mutex> lock(s.mu);
+  gFd.store(-1);
   if (s.file) std::fclose(s.file);
   s.file = nullptr;
 }
+
+int fileDescriptor() { return gFd.load(); }
 
 void writev(Level level, const char* tag, const char* fmt, va_list args) {
   std::string line = timestamp();

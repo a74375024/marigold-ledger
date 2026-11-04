@@ -276,6 +276,7 @@ void TestScreen::drawHeader() {
                         info_.webosMajor ? std::to_string(info_.webosMajor).c_str() : "?",
                         info_.sdlRuntime.c_str(), info_.glRenderer.c_str(), info_.drawableW,
                         info_.drawableH, info_.transparentSurface ? "yes" : "NO");
+  if (!info_.lastCrash.empty()) sys += "  \xc2\xb7  last run crashed: " + info_.lastCrash;
   t_.draw(g_, sys, 80, 118, Weight::Regular, 22, kDim, 1760);
 }
 

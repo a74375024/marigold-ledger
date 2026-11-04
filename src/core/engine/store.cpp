@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cmath>
 #include <chrono>
 #include <cstdio>
@@ -257,31 +258,61 @@ bool readFile(const std::string& path, std::string& out) {
   return true;
 }
 
-// Writes `data` next to `path` and renames it into place.
-bool writeFileAtomic(const std::string& path, const std::string& data, bool secret = false) {
+// The size of the file at `path` now (0: none): about what its next
+// version needs on top of it while both are on disk.
+uint64_t sizeOnDisk(const std::string& path) {
+  struct stat st;
+  return stat(path.c_str(), &st) == 0 ? static_cast<uint64_t>(st.st_size) : 0;
+}
+
+// Writes `data` next to `path` and renames it into place. A big one waits
+// for room on the partition (`keeper`, disk.hpp); a failed one leaves the
+// old file as it was and no temporary file behind.
+bool writeFileAtomic(const std::string& path, const std::string& data, bool secret = false,
+                     disk::Keeper* keeper = nullptr) {
+  if (keeper && !keeper->roomFor(path, data.size())) return false;
   std::string tmp = path + ".tmp";
+  bool ok;
+  int err = 0;
   {
     std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
     if (!f) return false;
     f.write(data.data(), static_cast<std::streamsize>(data.size()));
-    if (!f) return false;
+    f.close();  // the last of it reaches the disk here, and can fail
+    ok = !f.fail();
+    if (!ok) err = errno;
   }
-  if (secret) chmod(tmp.c_str(), 0600);
-  return std::rename(tmp.c_str(), path.c_str()) == 0;
+  if (ok && secret) chmod(tmp.c_str(), 0600);
+  if (!ok || std::rename(tmp.c_str(), path.c_str()) != 0) {
+    if (keeper) keeper->failed(path, ok ? errno : err);
+    std::remove(tmp.c_str());
+    return false;
+  }
+  return true;
 }
 
 // Writes a file a piece at a time (`write` sends its chunks to the sink),
-// next to `path`, and renames it into place.
+// next to `path`, and renames it into place. With a `keeper` it starts only
+// with room for about the old file's size, and stops (the old file kept)
+// when the partition gets down to the margin while it writes.
 bool writeFileStreaming(const std::string& path, const std::function<bool(const json::Writer::Sink&)>& write,
-                        bool gzip = false) {
+                        bool gzip = false, disk::Keeper* keeper = nullptr) {
+  if (keeper && !keeper->roomFor(path, std::max(sizeOnDisk(path), keeper->limits().bigWrite))) return false;
   std::string tmp = path + ".tmp";
-  bool ok;
+  bool ok, full = false;
+  int err = 0;
   {
     std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
     if (!f) return false;
-    auto toFile = [&f](std::string_view chunk) {
+    uint64_t written = 0, nextLook = keeper ? keeper->limits().recheckEvery : 0;
+    auto toFile = [&](std::string_view chunk) {
       f.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
-      return static_cast<bool>(f);
+      written += chunk.size();
+      if (keeper && written >= nextLook) {
+        nextLook = written + keeper->limits().recheckEvery;
+        if (!keeper->stillRoom(path)) full = true;
+      }
+      return static_cast<bool>(f) && !full;
     };
     if (gzip) {
       // A fraction of the size on flash (JSON packs well), written as made.
@@ -290,13 +321,21 @@ bool writeFileStreaming(const std::string& path, const std::function<bool(const 
     } else {
       ok = write(toFile);
     }
-    ok = ok && static_cast<bool>(f);
+    f.close();  // the last of it reaches the disk here, and can fail
+    ok = ok && !f.fail() && !full;
+    if (!ok && !full) err = errno;
   }
   if (!ok) {
+    if (keeper && !full) keeper->failed(path, err);
     std::remove(tmp.c_str());
     return false;
   }
-  return std::rename(tmp.c_str(), path.c_str()) == 0;
+  if (std::rename(tmp.c_str(), path.c_str()) != 0) {
+    if (keeper) keeper->failed(path, errno);
+    std::remove(tmp.c_str());
+    return false;
+  }
+  return true;
 }
 
 using SteadyClock = std::chrono::steady_clock;
@@ -575,7 +614,7 @@ void writeLinks(StreamLinks& l, const std::string& path) {
     x.set("headers", h);
     v.set(id, x);
   }
-  writeFileAtomic(path, json::write(v), true);
+  writeFileAtomic(path, json::write(v), true, l.disk.get());
   l.written = asked;
 }
 
@@ -644,11 +683,16 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
   auto started = SteadyClock::now();
   Files& st = host_.files;
   Impl& m = *impl_;
+  m.disk = std::make_shared<disk::Keeper>(st.dir(), host_.freeSpace);
+  m.links->disk = m.disk;
 
   if (auto main = st.read(kAccountsFile)) {
     auto decoded = sources::decodeAccounts(*main, st.read(kSecretsFile).value_or(""));
     if (decoded) m.accounts = decoded.take();
-    else MLOG_W("store", "accounts file unreadable: %s", decoded.error().message.c_str());
+    else {
+      MLOG_W("store", "accounts file unreadable: %s", decoded.error().message.c_str());
+      m.accountsUnreadable = true;
+    }
   }
   if (auto text = st.read(kSettingsFile)) {
     if (auto v = json::parse(*text)) {
@@ -728,6 +772,8 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
     status_.line = "Loading channels\xe2\x80\xa6";
     load(false);
   }
+  // What an older session left: a removed provider's guide, an old list.
+  pruneDisk();
   m.launch.ready = msSince(kProcessStart);
   MLOG_I("store", "timing opened=%.1fms", msSince(started));
 }
@@ -758,6 +804,7 @@ void Store::saveAccounts() {
   host_.files.write(kSecretsFile, enc.secrets, true);
   impl_->savedAccounts = std::move(enc.main);
   impl_->savedSecrets = std::move(enc.secrets);
+  impl_->accountsUnreadable = false;  // the file on disk is ours again
 }
 
 void Store::saveLists() {
@@ -1174,6 +1221,7 @@ void Store::removeAccount(const std::string& id) {
   refreshAll();
   // After refreshAll: it drops the jobs queued before it.
   dropLinks({source + "|"});
+  pruneDisk();  // its saved guide and channel list
 }
 
 // ------------------------------------------------------------ loading
@@ -1182,6 +1230,36 @@ std::string Store::currentSignature() const {
   std::string s = "default";
   for (const sources::Account& a : impl_->accounts) s += "|" + a.sourceId();
   return s;
+}
+
+disk::Owners Store::diskOwners() const {
+  const Impl& m = *impl_;
+  disk::Owners o;
+  o.known = !m.accountsUnreadable;
+  std::string signature = currentSignature();
+  o.keep.insert(catalog::cache::fileName(signature, catalog::cache::Part::first));
+  o.keep.insert(catalog::cache::fileName(signature, catalog::cache::Part::full));
+  o.keep.insert(guide::savedFileName(signature));
+  for (const sources::Account& a : m.accounts)
+    if (hasGuideFile(a)) o.keep.insert(guide::provider::savedFileName(guide::provider::cacheKey("default", a.sourceId())));
+  // The outside guide files of the areas chosen (none while missing
+  // listings aren't filled in).
+  if (settings_.fillMissingListings) {
+    std::set<std::string> shards = guideShards();
+    for (const guide::Source& source : guide::sources()) {
+      if (!source.appliesTo(shards)) continue;
+      std::string name = std::string(disk::kGuidesDir) + "/" + source.id();
+      o.keep.insert(name);
+      if (source.backup) o.spare.insert(name);
+    }
+  }
+  return o;
+}
+
+void Store::pruneDisk() {
+  std::shared_ptr<disk::Keeper> keeper = impl_->disk;
+  if (!keeper) return;
+  host_.pool.post([keeper, owners = diskOwners()] { keeper->prune(owners); }, nullptr, http::Priority::Background);
 }
 
 void Store::refreshAll() {
@@ -1823,7 +1901,7 @@ void Store::saveCatalog() {
   std::string firstPath = host_.files.path(catalog::cache::fileName(m.signature, catalog::cache::Part::first));
   std::string fullPath = host_.files.path(catalog::cache::fileName(m.signature, catalog::cache::Part::full));
   host_.pool.post(
-      [job, first, families, firstPath, fullPath] {
+      [job, first, families, firstPath, fullPath, keeper = m.disk, owners = diskOwners()] {
         job->ref.channels = job->channels.get();
         job->ref.catalog = job->catalog.get();
         job->ref.xtreamFormats = &job->formats;
@@ -1833,12 +1911,15 @@ void Store::saveCatalog() {
           // still be on); the full file has the rest.
           catalog::cache::Saved part = catalog::cache::firstPart(job->ref, first, families, time::now() - 6 * 3600);
           part.fingerprint = 0;  // only the full list can skip a sort
-          writeFileStreaming(firstPath, [&](const json::Writer::Sink& sink) {
-            return catalog::cache::writeSaved(catalog::cache::ref(part), [&](std::string_view c) {
-              partBytes += static_cast<int64_t>(c.size());
-              return sink(c);
-            });
-          });
+          writeFileStreaming(
+              firstPath,
+              [&](const json::Writer::Sink& sink) {
+                return catalog::cache::writeSaved(catalog::cache::ref(part), [&](std::string_view c) {
+                  partBytes += static_cast<int64_t>(c.size());
+                  return sink(c);
+                });
+              },
+              false, keeper.get());
         }
         // The full list gzipped (read after the first screen is up); the
         // first-screen file stays plain, so launch never waits to inflate.
@@ -1850,9 +1931,11 @@ void Store::saveCatalog() {
                 return sink(c);
               });
             },
-            true);
+            true, keeper.get());
         MLOG_I("store", "saved channel list: first screen %s, full %s", catalog::sizeText(partBytes).c_str(),
                catalog::sizeText(fullBytes).c_str());
+        // An older list of other providers goes now (it has no owner).
+        if (keeper) keeper->prune(owners);
       },
       nullptr, http::Priority::Background);
 }
@@ -2755,7 +2838,7 @@ void Store::runProviderGuide() {
   std::shared_ptr<std::atomic<int>> progress = m.providerProgress;
   *progress = -1;
   host_.pool.post(
-      [shared, results, st, &pool, storage, progress] {
+      [shared, results, st, &pool, storage, progress, keeper = m.disk] {
         size_t count = shared->size();
         for (size_t index = 0; index < count; ++index) {
           Job& j = (*shared)[index];
@@ -2807,9 +2890,11 @@ void Store::runProviderGuide() {
           };
           guide::provider::Outcome o = guide::provider::build(j.channels, time::now(), read);
           if (o.kind == guide::provider::Outcome::Kind::built) {
+            // Not saved (no room): the guide is used from memory all the same.
             writeFileStreaming(
                 storage->path(guide::provider::savedFileName(j.key)),
-                [&o](const json::Writer::Sink& sink) { return guide::provider::writeSaved(o.saved, sink); }, true);
+                [&o](const json::Writer::Sink& sink) { return guide::provider::writeSaved(o.saved, sink); }, true,
+                keeper.get());
           }
           results->push_back({j.key, std::move(o)});
         }
@@ -2838,6 +2923,7 @@ void Store::runProviderGuide() {
         rebuildOutsidePrograms();
         scheduleLineupRefresh();
         afterBigJob("provider guide built");
+        pruneDisk();
       },
       http::Priority::LongFirst);
   (void)dir;
@@ -2891,34 +2977,67 @@ void Store::runOutsideGuide() {
   uint64_t gen = m.generation;
   auto newSaved = std::make_shared<std::optional<guide::Saved>>();
   host_.pool.post(
-      [snapshot, shards, previous, built, guideDir, savedPath, st, &pool, newSaved, stations = m.stations] {
+      [snapshot, shards, previous, built, guideDir, savedPath, st, &pool, newSaved, stations = m.stations,
+       keeper = m.disk] {
         waitForPlayback(st);
         guide::BuildIO io;
         io.cancelled = [st] { return st.stop->load(); };
-        io.fetch = [&pool, guideDir, st](const guide::Source& source, const std::optional<std::string>& etag,
-                                          const std::optional<time::Seconds>& lastModified, bool waitPlayback) {
+        io.fetch = [&pool, guideDir, st, keeper](const guide::Source& source, const std::optional<std::string>& etag,
+                                                  const std::optional<time::Seconds>& lastModified, bool waitPlayback) {
           guide::BuildIO::FetchOutcome out;
           if (waitPlayback) waitForPlayback(st);
           std::string file = guideDir + "/" + source.id();
           std::string tmp = file + ".part";
+          struct stat sb;
+          bool have = stat(file.c_str(), &sb) == 0;
+          // The new copy lands next to the old one: room for one more of
+          // the size it had, and the margin (a first one: the margin, looked
+          // at again as it downloads).
+          uint64_t expected = have ? static_cast<uint64_t>(sb.st_size) : 0;
+          if (keeper && !keeper->roomFor(file, std::max(expected, keeper->limits().bigWrite))) {
+            if (have) {
+              guide::Fetched kept;
+              kept.file = file;
+              kept.status = 0;
+              kept.etag = etag;
+              kept.bytes = sb.st_size;
+              kept.problem = "not enough free space to update it";
+              out.fetched = kept;
+            } else {
+              out.error = "not enough free space";
+            }
+            return out;
+          }
           auto f = std::make_shared<std::ofstream>(tmp, std::ios::binary | std::ios::trunc);
+          auto full = std::make_shared<bool>(false);
           http::Request q;
           q.url = source.url;
           q.tag = "outside.guide";
           q.timeoutMs = 300000;
           q.priority = http::Priority::Background;
           q.follow = true;
-          struct stat sb;
-          bool have = stat(file.c_str(), &sb) == 0;
           if (have && etag) q.headers.push_back("If-None-Match: " + *etag);
           (void)lastModified;
-          // Raw bytes to disk (inflated later, while reading).
-          q.onChunk = [f](std::string_view c) {
+          // Raw bytes to disk (inflated later, while reading). The free
+          // space is looked at again every few MB: the download stops while
+          // the partition still has its margin.
+          auto written = std::make_shared<uint64_t>(0);
+          auto nextLook = std::make_shared<uint64_t>(keeper ? keeper->limits().recheckEvery : 0);
+          q.onChunk = [f, full, written, nextLook, keeper, file](std::string_view c) {
             f->write(c.data(), static_cast<std::streamsize>(c.size()));
-            return static_cast<bool>(*f);
+            *written += c.size();
+            if (keeper && *written >= *nextLook) {
+              *nextLook = *written + keeper->limits().recheckEvery;
+              if (!keeper->stillRoom(file)) *full = true;
+            }
+            return static_cast<bool>(*f) && !*full;
           };
           http::Response r = pool.fetchNow(std::move(q));
-          f->close();
+          bool wroteBad = !*f;
+          int err = wroteBad ? errno : 0;
+          f->close();  // the last of it reaches the disk here, and can fail
+          bool savedOk = !wroteBad && !f->fail() && !*full;
+          if (!savedOk && !*full && keeper && r.status == 200) keeper->failed(file, err ? err : errno);
           guide::Fetched fetched;
           fetched.file = file;
           if (r.status == 304 && have) {
@@ -2929,8 +3048,7 @@ void Store::runOutsideGuide() {
             out.fetched = fetched;
             return out;
           }
-          if (r.ok && r.status == 200) {
-            std::rename(tmp.c_str(), file.c_str());
+          if (r.ok && r.status == 200 && savedOk && std::rename(tmp.c_str(), file.c_str()) == 0) {
             fetched.status = 200;
             if (!r.etag.empty()) fetched.etag = r.etag;
             fetched.bytes = static_cast<int64_t>(r.bytes);
@@ -2938,7 +3056,10 @@ void Store::runOutsideGuide() {
             return out;
           }
           unlink(tmp.c_str());
-          std::string problem = r.status ? "error " + std::to_string(r.status) : r.error;
+          std::string problem = *full                       ? std::string("not enough free space to update it")
+                                : r.status == 200 && !savedOk ? std::string("couldn't save it")
+                                : r.status                 ? "error " + std::to_string(r.status)
+                                                           : r.error;
           if (have) {
             // The saved copy after a failure.
             fetched.status = 0;
@@ -2997,8 +3118,10 @@ void Store::runOutsideGuide() {
           s.targetsKey = built->targetsKey;
           s.detailVersion = guide::kDetailVersion;
           s.readAt = built->readAt;
+          // Not saved (no room): the listings are used from memory all the same.
           writeFileStreaming(
-              savedPath, [&s](const json::Writer::Sink& sink) { return guide::writeSaved(s, sink); }, true);
+              savedPath, [&s](const json::Writer::Sink& sink) { return guide::writeSaved(s, sink); }, true,
+              keeper.get());
           *newSaved = std::move(s);
         }
       },
@@ -3012,6 +3135,7 @@ void Store::runOutsideGuide() {
         }
         for (const std::string& line : built->log) MLOG_I("guide", "%s", redact(line).c_str());
         for (const std::string& p : built->problems) MLOG_W("guide", "%s", redact(p).c_str());
+        pruneDisk();  // guide files of areas no longer chosen, and the budget
         if (!*newSaved) return;
         mm.outsideSaved = std::move(*newSaved);
         mm.outsideMatches = mm.outsideSaved->programs;

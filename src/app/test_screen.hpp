@@ -24,6 +24,7 @@ struct SystemInfo {
   std::string glRenderer;
   int drawableW = 0, drawableH = 0;
   bool transparentSurface = false;
+  std::string lastCrash;  // the previous run's signal, if it crashed
 };
 
 class TestScreen {

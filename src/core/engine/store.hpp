@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 
+#include "core/engine/disk.hpp"
 #include "core/engine/events_model.hpp"
 #include "core/engine/host.hpp"
 #include "core/engine/model.hpp"
@@ -544,6 +545,11 @@ class Store {
   void dropLinks(std::vector<std::string> prefixes);
   void setPrefs(const catalog::LineupPrefs& p);
   std::string currentSignature() const;
+  // The cache files in use (disk.hpp): this signature's channel list and
+  // listings, the providers' guides, the chosen guide areas' files.
+  disk::Owners diskOwners() const;
+  // On a worker: what has no owner removed, the folder kept in budget.
+  void pruneDisk();
   void reset();
   void load(bool force);
   void installSaved(catalog::cache::Saved saved, bool partial);

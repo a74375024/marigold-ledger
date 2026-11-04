@@ -6,6 +6,7 @@
 #include <utime.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <fstream>
@@ -14,6 +15,7 @@
 #include <string_view>
 #include <vector>
 
+#include "core/engine/disk.hpp"
 #include "core/logos/logos.hpp"
 #include "core/util/log.hpp"
 #include "core/util/strings.hpp"
@@ -41,15 +43,27 @@ bool readFile(const std::string& path, std::string& out) {
   return !out.empty();
 }
 
-bool writeFileAtomic(const std::string& path, const std::string& data) {
+// A logo kept on disk only while the partition keeps its margin (disk.hpp):
+// short of room it is shown from memory and fetched again next time.
+std::atomic<bool> gNoRoomLogged{false};
+
+bool writeFileAtomic(const std::string& dir, const std::string& path, const std::string& data) {
+  if (!engine::disk::roomFor(engine::disk::freeBytes(dir), data.size())) {
+    if (!gNoRoomLogged.exchange(true)) MLOG_W("logos", "storage nearly full: logos are not kept on disk for now");
+    return false;
+  }
   std::string tmp = path + ".tmp";
+  bool ok;
   {
     std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
     if (!f) return false;
     f.write(data.data(), static_cast<std::streamsize>(data.size()));
-    if (!f) return false;
+    f.close();
+    ok = !f.fail();
   }
-  return std::rename(tmp.c_str(), path.c_str()) == 0;
+  if (ok && std::rename(tmp.c_str(), path.c_str()) == 0) return true;
+  std::remove(tmp.c_str());  // a full disk: no half file left behind
+  return false;
 }
 
 }  // namespace
@@ -224,9 +238,9 @@ void LogoCache::fetch(const std::string& key, std::shared_ptr<Result> r, size_t 
     bool cancelled = resp.cancelled;
     gate_.run([this, alive, epoch, key, r, index, more, path, art, cancelled] {
       pool_.post(
-          [r, path, art] {
+          [r, path, art, dir = dir_] {
             r->decode(r->bytes, art);
-            if (r->image) writeFileAtomic(path, r->bytes);
+            if (r->image) writeFileAtomic(dir, path, r->bytes);
             r->bytes = std::string();
           },
           [this, alive, epoch, key, r, index, more, cancelled, size = r->bytes.size()] {

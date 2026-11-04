@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "app/app.hpp"
+#include "app/crash_note.hpp"
 #include "app/playback.hpp"
 #include "app/screens/screens.hpp"
 #include "core/util/log.hpp"
@@ -40,6 +41,7 @@ class DiagnosticsScreen : public Screen {
             (v.width ? ", " + std::to_string(v.width) + "x" + std::to_string(v.height) : std::string()) +
             (v.error.empty() ? std::string() : ", " + v.error),
     };
+    if (!crash::previousSummary().empty()) lines.push_back("Last run crashed: " + crash::previousSummary());
     for (const std::string& line : lines) {
       ui::label(c, line, x, y, ui::Weight::Medium, 26, white(0.9f), gfx::kLayoutWidth - 2 * x);
       y += 44;

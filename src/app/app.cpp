@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 
+#include "app/crash_note.hpp"
 #include "app/playback.hpp"
 #include "app/screens/screens.hpp"
 #include "app/store/store.hpp"
@@ -42,6 +43,9 @@ App::App(platform::Window& window, platform::Storage& storage, gfx::Renderer& g,
   host.build = build_.build;
   store_ = std::make_unique<Store>(std::move(host));
   playback_ = std::make_unique<Playback>(*this);
+  // The previous run's crash, in the playback log Help exports (no links:
+  // a signal, a build, addresses and symbols).
+  if (!crash::previousSummary().empty()) playback_->logNote("previous run crashed", crash::previousSummary());
 }
 
 App::~App() {

@@ -18,6 +18,9 @@ enum class Level { Debug, Info, Warn, Error };
 // The file is rotated to "<path>.1" when it passes maxBytes.
 void open(const std::string& path, size_t maxBytes = 1u << 20);
 void close();
+// The open file's descriptor (-1: none), for a crash handler's write(2).
+// Lines are flushed as written, so raw writes land after them.
+int fileDescriptor();
 
 void write(Level level, const char* tag, const char* fmt, ...)
 #if defined(__GNUC__)

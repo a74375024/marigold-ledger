@@ -59,6 +59,9 @@ struct Host {
   std::function<void()> requestsCancelled;
   // The app's build number, for the report.
   std::string build;
+  // Free bytes on the partition holding a folder (disk.hpp); unset: the
+  // real statvfs. Tests set it to try a nearly full partition.
+  std::function<std::optional<uint64_t>(const std::string& dir)> freeSpace;
 };
 
 }  // namespace marigold::engine

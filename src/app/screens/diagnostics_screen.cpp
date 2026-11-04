@@ -4,6 +4,7 @@
 #include <SDL2/SDL.h>
 
 #include "app/app.hpp"
+#include "app/crash_note.hpp"
 #include "app/playback.hpp"
 #include "app/screens/screens.hpp"
 #include "app/test_screen.hpp"
@@ -44,6 +45,7 @@ class DiagnosticsScreen : public Screen {
     i.drawableW = app.window().drawableWidth();
     i.drawableH = app.window().drawableHeight();
     i.transparentSurface = app.window().transparentSurface();
+    i.lastCrash = crash::previousSignal();
     return i;
   }
   TestScreen test_;

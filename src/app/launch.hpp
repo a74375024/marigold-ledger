@@ -10,12 +10,14 @@
 
 namespace marigold::app {
 
-// First thing, before any thread starts: memory arenas, private data files,
-// the C locale for numbers (JSON payloads are built with printf).
+// First thing, before any thread starts: no core dumps, the crash note's
+// handlers (crash_note.hpp), memory arenas, private data files, the C
+// locale for numbers (JSON payloads are built with printf).
 void prepareProcess();
 
 // Opens the data folder under `appDir` and the log in it (the previous
-// session's log survives one launch, for crashes).
+// session's log survives one launch, for crashes), removes core dumps and
+// unfinished writes left behind, and reads the previous run's crash note.
 void openStorage(platform::Storage& storage, const std::string& appDir);
 
 // From an open window to the end of the app. `assetDir` holds fonts/ and

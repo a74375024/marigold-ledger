@@ -1,7 +1,11 @@
 // The webOS entry point: the TV-specific set-up around app::run (launch.hpp).
 #include <SDL2/SDL.h>
 
+#include <unistd.h>
+
+#include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 
 #include "app/launch.hpp"
@@ -25,8 +29,14 @@ namespace {
 
 std::string installDir() {
   char* base = SDL_GetBasePath();
-  std::string dir = base ? base : "./";
+  std::string dir = base ? base : "";
   SDL_free(base);
+  if (dir.empty()) {
+    // Absolute: the working folder changes below.
+    char* cwd = getcwd(nullptr, 0);  // glibc: allocated to fit
+    dir = cwd ? cwd : "/";
+    std::free(cwd);
+  }
   while (dir.size() > 1 && dir.back() == '/') dir.pop_back();
   return dir;
 }
@@ -46,6 +56,10 @@ int main(int argc, char** argv) {
   platform::captureStdout();
   MLOG_I("app", "Marigold %s build %s, data in %s", MARIGOLD_VERSION, MARIGOLD_BUILD,
          storage.dir().empty() ? "(nowhere writable)" : storage.dir().c_str());
+  // The working folder was the install folder, where anything written by a
+  // relative name (core dumps were) fills the partition every developer app
+  // shares. Every path the app uses is absolute; /tmp is a RAM disk.
+  if (chdir("/tmp") != 0) MLOG_W("app", "couldn't leave the install folder (errno %d)", errno);
 
   platform::Window window;
   if (!window.open("Marigold")) {

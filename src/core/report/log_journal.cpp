@@ -87,7 +87,9 @@ bool JournalFile::write(const LogJournal::Write& w) {
     if (!f) return false;
     bool ok = std::fwrite(w.text.data(), 1, w.text.size(), f) == w.text.size();
     ok = std::fclose(f) == 0 && ok;
-    return ok && std::rename(tmp.c_str(), path_.c_str()) == 0;
+    if (ok && std::rename(tmp.c_str(), path_.c_str()) == 0) return true;
+    std::remove(tmp.c_str());  // a full disk: no half file left behind
+    return false;
   }
   if (w.text.empty()) return true;
   std::FILE* f = std::fopen(path_.c_str(), "a+b");
