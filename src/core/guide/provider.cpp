@@ -102,6 +102,12 @@ bool inScope(const Channel& channel, const std::set<std::string>& countries) {
   return true;
 }
 
+bool inScope(const Channel& channel, const std::set<std::string>& countries,
+             const std::function<bool(const Channel&)>& forEvents) {
+  if (inScope(channel, countries)) return true;
+  return channel.epgId && !channel.epgId->empty() && forEvents && forEvents(channel);
+}
+
 std::string cacheKey(std::string_view profile, std::string_view sourceID) {
   std::string raw = std::string(profile) + "-" + std::string(sourceID);
   // CharacterSet.alphanumerics per code point, at most 90 (ASCII in practice).
@@ -142,7 +148,8 @@ std::unordered_map<std::string, std::vector<std::string>> guideIds(
 }
 
 Outcome build(const std::vector<Channel>& channels, time::Seconds nowSec, const ReadExactFn& read,
-              const std::function<void(const std::string&)>& progress) {
+              const std::function<void(const std::string&)>& progress,
+              const std::unordered_set<std::string>* eventsOnly) {
   Outcome out;
   auto ids = guideIds(channels);
   if (ids.empty()) {
@@ -152,6 +159,17 @@ Outcome build(const std::vector<Channel>& channels, time::Seconds nowSec, const 
   }
   int now = static_cast<int>(nowSec / 60);
   Window window{now - 180, now + kKeepHours * 60, now + kDescHours * 60};
+  if (eventsOnly && !eventsOnly->empty()) {
+    // Guide ids only Live Events reads: no further than it reads, from the
+    // start (their channels shared with others are cut after).
+    auto shortIds = std::make_shared<std::unordered_set<std::string>>();
+    for (const auto& [id, users] : ids) {
+      if (std::all_of(users.begin(), users.end(), [&](const std::string& u) { return eventsOnly->count(u) > 0; }))
+        shortIds->insert(id);
+    }
+    window.shortIds = std::move(shortIds);
+    window.shortHigh = now + kEventsOnlyHours * 60;
+  }
   if (progress) progress("Downloading your provider's guide\xE2\x80\xA6");
   ReadFailure failure;
   std::optional<ExactRead> found = read ? read(ids, window, failure) : std::nullopt;
@@ -196,7 +214,17 @@ Outcome build(const std::vector<Channel>& channels, time::Seconds nowSec, const 
         list = std::make_shared<const std::vector<RawProgram>>(std::move(copy));
       }
     }
-    programs[channelID] = list;
+    if (eventsOnly && eventsOnly->count(channelID)) {
+      // Read for Live Events only: what it reads of it.
+      const int until = now + kEventsOnlyHours * 60;
+      std::vector<RawProgram> soon;
+      for (const RawProgram& p : *list)
+        if (p.s < until) soon.push_back(p);
+      if (soon.empty()) continue;
+      programs[channelID] = std::make_shared<const std::vector<RawProgram>>(std::move(soon));
+    } else {
+      programs[channelID] = list;
+    }
     out.saved.notes[channelID] = "Provider guide: " + entry.note;
   }
   found->programs.clear();

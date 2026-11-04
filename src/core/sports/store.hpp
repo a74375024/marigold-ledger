@@ -42,11 +42,13 @@ constexpr Seconds kListingsStale = 600;
 constexpr Seconds kListingsMoved = 60;
 
 // A channel whose guide may show games: sports, local and Spanish channels
-// in My Lineup or the browse list, and sports channels of unknown country.
+// in My Lineup or the browse list, and sports channels of unknown country;
+// Build 132: the sports brands (brands.hpp) among the browse list's other
+// countries' channels, and those of countries you didn't pick (`abroad`).
 struct ListingChannel {
   std::string id;
   bool inLineup = false;
-  bool spanish = false;
+  std::string lang;  // languages::ofChannel ("" not known)
   int rank = station_rank::elsewhere;
   // A sports channel (not a station, not a free streaming channel): its
   // tennis coverage of named tournaments counts.
@@ -54,15 +56,28 @@ struct ListingChannel {
   // A cricket channel (a sports channel named for it: Willow, Willow Xtra,
   // Sky Sports Cricket): its live match counts though it names no teams.
   bool cricketChannel = false;
+  // Build 132: a sports channel from a country you didn't pick, read for
+  // Live Events only (rank station_rank::abroad; never tennis coverage).
+  bool abroad = false;
 };
 // A cricket channel's name: "Willow", "Willow Cricket Xtra", "Sky Sports
-// Cricket", "SuperSport Cricket", "Fox Cricket".
+// Cricket", "SuperSport Cricket", "Fox Cricket"; Build 132: "Star Sports",
+// "PTV Sports", "Ten Sports", "A Sports", any "SuperSport".
 bool cricketChannelName(std::string_view name);
-// Which channels to read, with their rank (station_rank) and language.
+// Build 132: the sports channels of other countries you have (brands.hpp)
+// that aren't in My Lineup or the browse list (`entries`: every entry
+// channel; one in a hidden group is left out).
+std::vector<std::string> abroadChannels(const std::vector<Channel>& entries, const std::set<std::string>& lineup,
+                                        const std::vector<std::string>& browseIDs,
+                                        const std::unordered_map<std::string, catalog::EntryInfo>& entryInfo,
+                                        const std::set<std::string>& hiddenGroups, const std::string& otherGroup);
+// Which channels to read, with their rank (station_rank) and language;
+// `abroad` (abroadChannels) last, ranked station_rank::abroad.
 std::vector<ListingChannel> listingChannels(const std::set<std::string>& lineup,
                                             const std::vector<std::string>& browseIDs,
                                             const std::unordered_map<std::string, catalog::EntryInfo>& entryInfo,
-                                            const StationMarkets& markets);
+                                            const StationMarkets& markets,
+                                            const std::vector<std::string>& abroad = {});
 
 // One programme as a game listing: a title (with its episode title) that
 // names two sides, or a plain sports title ("NBA Basketball") whose
@@ -102,9 +117,10 @@ std::optional<std::string> listingsDue(Seconds changedAt, Seconds pendingSince,
 
 // MARK: Rebuild
 
-// Provider events as matcher input: Spanish when the provider marks it so
-// or the title says so; `guessed` from the event, else from its feed's raw
-// slot text (lists saved by older builds).
+// Provider events as matcher input: their language (languages::ofFeed:
+// Spanish when the provider marks it so or the title says so); `guessed`
+// from the event, else from its feed's raw slot text (lists saved by older
+// builds).
 // A provider group of high-school games ("US| NFHS PPV").
 bool highSchoolFamily(std::string_view family);
 
@@ -129,14 +145,14 @@ std::string channelIndexKey(int entriesRevision, const std::set<std::string>& li
 
 // Rebuilds run only when an input changes: provider events, the schedule,
 // the lineup, the sports listings, a 30-minute time bucket, hidden groups,
-// the Spanish preference, the schedule switch or the school list.
+// the viewer's languages, the schedule switch or the school list.
 struct Fingerprint {
   int eventsRevision = 0;
   int scheduleRevision = 0;
   int entriesRevision = 0;
   int listingsRevision = 0;
   std::set<std::string> hidden;
-  bool preferSpanish = false;
+  std::set<std::string> languages;  // languages::ofViewer
   bool enabled = true;
   size_t schools = 0;
 };
@@ -146,8 +162,8 @@ struct RebuildInput {
   std::vector<SportsGame> games;
   std::vector<SportsTeam> schools;
   std::vector<matcher::RosterLeague> rosters;
-  // The viewer picked US Spanish ("US-ES" in the lineup countries).
-  bool preferSpanish = false;
+  // The viewer's languages (languages::ofViewer of the lineup countries).
+  std::set<std::string> languages = {"en"};
   std::vector<catalog::LiveEvent> events;
   std::unordered_map<std::string, catalog::ChannelTraits> traits;
   // Marigold: the live catalog's, shared rather than copied on the UI
@@ -270,12 +286,16 @@ struct Resolver {
   std::function<std::vector<std::string>(const std::vector<std::string>& feedIDs)> bestFeeds;
   // An entry exists with this id (a guide channel picked: watch it).
   std::function<bool(const std::string&)> isEntry;
+  // Build 132: the viewer's languages (languages::ofViewer).
+  std::set<std::string> languages = {"en"};
 };
 
 // Everything that can play an event, in order (the automatic backup order):
 // the picked source (if any) first, then My Lineup / guide channels (each
 // with its versions), then provider feeds, a team's own channel last.
-// Raw channel ids, without repeats.
+// Build 132: My Lineup's and those in your languages (or not known) first:
+// their channels, then their feeds; then another language's channels and
+// feeds; team channels last. Raw channel ids, without repeats.
 std::vector<std::string> eventCandidates(const SportsEvent& event, const std::optional<std::string>& preferring,
                                          const Resolver& resolver);
 
@@ -298,7 +318,8 @@ WatchPlan watchPlan(const SportsEvent& event, const std::optional<std::string>& 
                     const std::optional<std::string>& remembered, const Resolver& resolver);
 
 // What a reminder for an upcoming event points at: its best channel (a
-// channel, else a feed), for the event's usual length.
+// channel, else a feed; Build 132: in your languages first, as Watch), for
+// the event's usual length.
 std::optional<LiveReminder> reminderTarget(const SportsEvent& event, const Resolver& resolver);
 
 // MARK: Saved result (shown instantly on the next launch)

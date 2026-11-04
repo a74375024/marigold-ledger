@@ -158,7 +158,7 @@ TEST_CASE("channel index and each game's channels") {
   CHECK(index.byKey.count("card:ufc|prelims"));
   CHECK(index.teamChannels == 1);
   CHECK(index.fightChannels == 1);
-  CHECK(index.byKey.at("net:TELEMUNDO").front().spanish);
+  CHECK(index.byKey.at("net:TELEMUNDO").front().lang == "es");
 
   Seconds sunday = utc(2026, 10, 25, 17, 0);
   SportsGame onFox = game("NFL", "NFL", "1", team("1", "Harbor City Gulls"), team("2", "Team Alpha"), sunday, {"FOX"});
@@ -202,7 +202,7 @@ TEST_CASE("channel index and each game's channels") {
   // Spanish stations are marked so.
   const auto& mls = mapped.sources.at("MLS|4");
   REQUIRE(mls.size() == 1);
-  CHECK(mls[0].spanish);
+  CHECK(mls[0].spanish());
   // A numbered card's part on the promotion's channel for it.
   const auto& ufc = mapped.sources.at("UFC|600|prelims");
   REQUIRE(ufc.size() == 1);

@@ -202,14 +202,18 @@ bool marksEnglish(std::string_view name) { return rx::test("\\b(english|eng)\\b"
 
 // The market a directory language belongs to ("es" -> US Spanish, "ur" ->
 // Pakistan); nullopt for English or a language this doesn't place.
-std::optional<std::string> marketOfLanguage(std::string_view language) {
+const std::unordered_map<std::string, std::string>& languageMarkets() {
   static const std::unordered_map<std::string, std::string> kMarkets = {
       {"es", "US-ES"}, {"fr", "FR"}, {"pt", "BR"}, {"hi", "IN"}, {"pa", "IN"}, {"gu", "IN"}, {"ta", "IN"},
       {"te", "IN"},    {"ml", "IN"}, {"bn", "IN"}, {"ur", "PK"}, {"ar", "AE"}, {"zh", "CN"}, {"ko", "KR"},
       {"ja", "JP"},    {"it", "IT"}, {"de", "DE"}, {"pl", "PL"}, {"ru", "RU"}, {"vi", "VN"}, {"fa", "IR"},
       {"tl", "PH"},    {"he", "IL"}, {"el", "GR"}, {"tr", "TR"}};
-  auto it = kMarkets.find(std::string(language));
-  if (it == kMarkets.end()) return std::nullopt;
+  return kMarkets;
+}
+
+std::optional<std::string> marketOfLanguage(std::string_view language) {
+  auto it = languageMarkets().find(std::string(language));
+  if (it == languageMarkets().end()) return std::nullopt;
   return it->second;
 }
 
@@ -428,6 +432,35 @@ std::string familyDisplayName(const Channel* first, const std::string& family) {
 }
 
 }  // namespace
+
+std::string marketLanguage(std::string_view market) {
+  static const std::unordered_map<std::string, std::string> kLanguages = [] {
+    // The language -> market map read the other way, where a market has
+    // one language in it ("IN" has seven: none).
+    std::unordered_map<std::string, std::string> out;
+    std::unordered_map<std::string, int> count;
+    for (const auto& [lang, place] : languageMarkets()) count[place] += 1;
+    for (const auto& [lang, place] : languageMarkets()) {
+      if (count[place] == 1) out[place] = lang;
+    }
+    // Countries that map doesn't list.
+    static const std::pair<const char*, const char*> kMore[] = {
+        {"US", "en"}, {"UK", "en"}, {"IE", "en"}, {"AU", "en"}, {"NZ", "en"}, {"ZA", "en"}, {"NG", "en"},
+        {"KE", "en"}, {"GH", "en"}, {"JM", "en"}, {"MX", "es"}, {"ES", "es"}, {"CO", "es"}, {"CL", "es"},
+        {"PE", "es"}, {"VE", "es"}, {"EC", "es"}, {"UY", "es"}, {"PY", "es"}, {"BO", "es"}, {"CR", "es"},
+        {"PA", "es"}, {"DO", "es"}, {"GT", "es"}, {"HN", "es"}, {"SV", "es"}, {"NI", "es"}, {"CU", "es"},
+        {"LA", "es"}, {"PT", "pt"}, {"AT", "de"}, {"NL", "nl"}, {"SE", "sv"}, {"NO", "no"}, {"DK", "da"},
+        {"FI", "fi"}, {"RO", "ro"}, {"HU", "hu"}, {"CZ", "cs"}, {"SK", "sk"}, {"HR", "hr"}, {"RS", "sr"},
+        {"BG", "bg"}, {"AL", "sq"}, {"UA", "uk"}, {"SA", "ar"}, {"QA", "ar"}, {"KW", "ar"}, {"EG", "ar"},
+        {"MA", "ar"}, {"TN", "ar"}, {"DZ", "ar"}, {"LB", "ar"}, {"TH", "th"}, {"ID", "id"}, {"MY", "ms"},
+        {"BD", "bn"}, {"KU", "ku"}, {"HK", "zh"}, {"TW", "zh"}, {"SI", "sl"}, {"LT", "lt"}, {"LV", "lv"},
+        {"EE", "et"}, {"IS", "is"}, {"GE", "ka"}, {"AM", "hy"}, {"AZ", "az"}};
+    for (const auto& [place, lang] : kMore) out.emplace(place, lang);
+    return out;
+  }();
+  auto it = kLanguages.find(std::string(market));
+  return it == kLanguages.end() ? std::string() : it->second;
+}
 
 // MARK: Context
 

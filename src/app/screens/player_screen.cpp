@@ -82,6 +82,8 @@ class PlayerScreen : public Screen {
   ~PlayerScreen() override {
     Playback& p = app_.playback();
     if (p.active() && p.full()) p.stop();
+    // What was typed in the player's search goes with it (Build 132).
+    p.setPlayerQuery({});
   }
 
   // Holding OK on the Subtitles button opens languages and style.

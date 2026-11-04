@@ -42,7 +42,7 @@ ProviderEvent provider(const std::string& id, const std::string& title, const st
   e.start = start;
   e.feeds = std::move(feeds);
   e.family = family;
-  e.spanish = spanish;
+  e.lang = spanish ? "es" : "en";
   e.guessed = guessed;
   return e;
 }
@@ -332,7 +332,8 @@ TEST_CASE("Spanish feeds after English unless the viewer prefers Spanish") {
   auto out = build(in);
   REQUIRE(out);
   CHECK(ids(findGame(out->events, "NFL|1")->sources) == std::vector<std::string>{"xt|en", "xt|es"});
-  in.preferSpanish = true;
+  // Build 132: the viewer's languages (US Spanish picked: Spanish).
+  in.languages = {"es"};
   out = build(in);
   CHECK(ids(findGame(out->events, "NFL|1")->sources) == std::vector<std::string>{"xt|es", "xt|en"});
 }

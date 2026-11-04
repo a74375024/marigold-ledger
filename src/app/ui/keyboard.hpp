@@ -35,6 +35,9 @@ struct Look {
   bool focused = true;  // the focus is on the keyboard (else it dims)
   bool tab = false;     // results to the right
   bool caret = true;
+  // Drawn this far from its place (the player's search draws it inside
+  // the guide's card, Build 132); the pointer ids are the same.
+  float dx = 0, dy = 0;
 };
 void draw(Ctx& c, const search_keys::Grid& grid, const Look& look, int base);
 

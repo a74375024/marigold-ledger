@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <map>
 
+#include "core/sports/languages.hpp"
 #include "core/sports/matcher.hpp"
 #include "core/sports/text.hpp"
 
@@ -429,7 +430,7 @@ std::vector<EventSource> f1ChannelSources(const std::vector<Channel>& entries,
     EventSource source;
     source.channelID = entry.id;
     source.kind = EventSource::Kind::team;
-    source.spanish = spanish;
+    source.lang = spanish ? std::string("es") : isEnglish ? std::string("en") : languages::ofChannel(info->second);
     source.detail = kF1ChannelDetail;
     if (inLineup) {
       mine.push_back(std::move(source));

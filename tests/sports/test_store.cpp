@@ -68,12 +68,12 @@ TEST_CASE("listing channels: sports, local and Spanish ones you have, ranked") {
   CHECK(list[0].rank == station_rank::lineupHome);
   CHECK(list[1].id == "e|ppv");  // sports of unknown country, though not in the browse list
   CHECK(list[2].id == "e|uni");
-  CHECK(list[2].spanish);
+  CHECK(list[2].lang == "es");
   CHECK(list[2].rank == station_rank::elsewhere);
 }
 
 TEST_CASE("a programme as a game listing: two sides, or a sports title with a venue") {
-  ListingChannel ch{"e|fox13", true, false, station_rank::lineupHome};
+  ListingChannel ch{"e|fox13", true, "en", station_rank::lineupHome};
   Seconds s = utc(2026, 10, 25, 17, 0), e = s + 3 * 3600;
   auto game1 = listingFor(ch, "NFL Football", std::string("Team Alpha at Harbor City Gulls"), std::nullopt, true, s, e);
   REQUIRE(game1);
@@ -138,7 +138,7 @@ TEST_CASE("tennis coverage: a sports channel's listing naming tournaments") {
 
 TEST_CASE("extracting listings: the guide's window, then saved listings past it") {
   Seconds now = utc(2026, 10, 25, 15, 0);
-  ListingChannel ch{"e|fox13", true, false, 0};
+  ListingChannel ch{"e|fox13", true, "en", 0};
   std::vector<Program> programs = {
       program("Old Game: Team A vs Team B", now - 7 * 3600, now - 6 * 3600),
       program("Team Alpha at Harbor City Gulls", now + 2 * 3600, now + 5 * 3600),
@@ -188,9 +188,9 @@ TEST_CASE("provider events: Spanish by market or title; a guessed day from the r
   traits["xt|3"].eventText = std::string("Team A vs Team B 7:30 PM ET");
   auto out = providerEvents(events, traits, now);
   REQUIRE(out.size() == 3);
-  CHECK(out[0].spanish);
-  CHECK(out[1].spanish);
-  CHECK_FALSE(out[2].spanish);
+  CHECK(out[0].lang == "es");
+  CHECK(out[1].lang == "es");
+  CHECK(out[2].lang.empty());  // no market, nothing said: not known
   CHECK_FALSE(out[0].guessed);
   CHECK(out[2].guessed == catalog::parseEventDetailed("Team A vs Team B 7:30 PM ET", now).guessed);
   CHECK(out[2].guessed);
@@ -208,7 +208,7 @@ TEST_CASE("the rebuild: network channels, feeds, listings; watchable leagues") {
   in.games = {nfl, f1};
   in.now = now;
   in.zone = time::Zone::usEastern();
-  in.channelIndex.byKey["net:FOX"] = {{"e|fox13", true, false, station_rank::lineupHome}};
+  in.channelIndex.byKey["net:FOX"] = {{"e|fox13", true, "en", station_rank::lineupHome}};
   in.f1Sources = {source("e|f1chan", EventSource::Kind::guide, false, std::nullopt, "In your channels")};
   in.events = {sportsdata::liveEvent("ev1", "NFL 01: Team Alpha @ Harbor City Gulls", "NFL", nfl.start, {"xt|1"})};
   in.previous = {};

@@ -39,13 +39,14 @@
 
 #include "app/app.hpp"
 #include "app/playback.hpp"
-#include "app/screens/events_ui.hpp"
 #include "app/screens/left_rail.hpp"
 #include "app/screens/panel_screen.hpp"
+#include "app/screens/search_view.hpp"
 #include "app/screens/screens.hpp"
 #include "app/screens/top_bar.hpp"
 #include "app/store/store.hpp"
 #include "app/ui/keyboard.hpp"
+#include "core/engine/search_live.hpp"
 #include "core/engine/views.hpp"
 #include "core/input/hints.hpp"
 #include "core/input/preview_pace.hpp"
@@ -71,7 +72,6 @@ constexpr float kX = 760, kRight = 1840, kW = kRight - kX;
 constexpr float kBandW = 656;
 constexpr float kListTop = 330, kListBottom = 990;
 constexpr float kTileW = 530, kTileH = 112, kRowH = 96, kChipH = 56;
-constexpr uint32_t kShowsDelayMs = 450;   // shows are looked for once typing pauses
 constexpr uint32_t kDigitsMs = 1500;      // number keys: the pause that ends a number
 constexpr uint32_t kReturnMs = 120000;    // Back from the player within this: the corner
 constexpr uint32_t kRestoreMs = 300000;   // reopened within this: the last query
@@ -87,30 +87,10 @@ struct Last {
 };
 Last gLast;
 
-enum class CellKind { Channel, Team, Game, Show, Genre, Chip, Recent, ClearRecents, Instead, Follow, Scope };
-
-struct Cell {
-  CellKind kind = CellKind::Channel;
-  std::string id;     // entry id, team key, event id, genre or chip key, recent id
-  std::string title;  // chips, genres, recent searches
-  std::string entryId;
-  Listing listing;    // shows
-  time::Seconds also = 0;
-  bool top = false;   // the band's top result card
-  bool outside = false;  // marked "Outside your lineup"
-  bool family = false;   // a Channel cell for an event channel group (Build 119)
-  // What it shows, made by label() after a layout, each minute and when
-  // the data changes: drawing makes no text.
-  struct Label {
-    bool missing = false;  // its channel, game or team is gone: only the box
-    std::string title, line, tag, ok;
-    bool live = false, west = false, logo = false;
-    std::string logoUrl, logoName;  // a channel's or show's logo; a game's channel
-    std::vector<EventSide> sides;   // a game's two badges, or a team's one
-    std::string cardTag, cardTitle, cardLineOk;  // the top result's card
-    std::string cornerLogo, cornerName, cornerTitle, cornerLine;  // the corner's
-  } label;
-};
+using search_view::Cell;
+using search_view::CellKind;
+using search_view::liveTile;
+using search_view::playsGame;
 
 enum class RowKind { Band, Tiles, Chips, List, Note };  // Note: one quiet line (its header), no cells
 
@@ -121,47 +101,10 @@ struct Row {
   float y = 0, h = 0;
 };
 
-bool liveTile(const EventTile& t) {
-  if (t.upcoming || t.finished) return false;
-  using P = EventTile::Pill;
-  return t.pill == P::Live || t.pill == P::LiveOutline || t.pill == P::OnNow || t.pill == P::Delayed;
-}
-
-// OK plays a game: live in your channels, or (as on the board) starting
-// within half an hour on a channel (views::startsSoonOnChannel()).
-bool playsGame(const EventTile& t, time::Seconds now) {
-  return (t.watchable && liveTile(t)) || engine::views::startsSoonOnChannel(t, now);
-}
-
-// "in 20 min", "Tonight 7:30 PM", "Tomorrow 7:30 PM", "Sat 7:30 PM".
-std::string whenText(const ui::Ctx& c, time::Seconds t) {
-  time::Seconds d = t - c.now;
-  if (d > 0 && d <= 3600) return "in " + std::to_string((d + 59) / 60) + " min";
-  std::string day = ui::dayWord(c, t);
-  return (day.empty() ? std::string("Today") : day) + " " + ui::clock(c, t);
-}
-
 using Clock = std::chrono::steady_clock;
 double msSince(Clock::time_point t) { return std::chrono::duration<double, std::milli>(Clock::now() - t).count(); }
 
-constexpr const char* kOutside = "Outside your lineup";
-
-// The same query for what it finds (the shows kept for it).
-bool sameQuery(const se::Query& a, const se::Query& b) {
-  return a.text == b.text && a.tokens == b.tokens && a.when == b.when && a.exactOnly == b.exactOnly &&
-         a.digits == b.digits && a.regional == b.regional;
-}
-
-std::string recentId(const Cell& cell) {
-  switch (cell.kind) {
-    case CellKind::Channel: return "c:" + cell.id;
-    case CellKind::Team: return "t:" + cell.id;
-    case CellKind::Game: return "g:" + cell.id;
-    case CellKind::Show: return "s:" + se::fold(cell.listing.title);
-    case CellKind::Genre: return "x:" + cell.id;
-    default: return {};
-  }
-}
+using search_view::recentId;
 
 class SearchScreen : public Screen {
  public:
@@ -221,13 +164,13 @@ class SearchScreen : public Screen {
     bool draw = false;
     wake_ = 0;
     // The shows once typing pauses, added to what each letter found.
-    if (showsAt_) {
-      if (ms >= showsAt_) {
-        showsAt_ = 0;
+    if (uint32_t due = live_.showsDue()) {
+      if (ms >= due) {
+        live_.typed();
         search(true, true);
         draw = true;
       } else {
-        wakeFor(showsAt_);
+        wakeFor(due);
       }
     }
     if (!digits_.empty() && digitsTick(ms)) draw = true;
@@ -239,7 +182,7 @@ class SearchScreen : public Screen {
     if (fresh && !inResults()) {
       if (ms - refreshedAt_ >= kRefreshMs) {
         refreshedAt_ = ms;
-        search(!showsAt_);
+        search(!live_.showsDue());
         draw = true;
       } else {
         wakeFor(refreshedAt_ + kRefreshMs);
@@ -365,69 +308,42 @@ class SearchScreen : public Screen {
     page_ = {};
     if (q.empty()) exactOnly_ = false;
     leaveDigits();
-    showsAt_ = 0;  // shows wait for a pause in the typing
+    live_.typed();  // shows wait for a pause in the typing
     search(false);
   }
 
-  se::Query parsed() const {
-    std::shared_ptr<const se::Index> index = index_;
-    se::Query q = se::parse(query_, [index](const std::string& f) { return index && index->isTitle(f); });
-    q.exactOnly = exactOnly_;
-    return q;
-  }
+  se::Query parsed() const { return se::parseFor(index_, query_, exactOnly_); }
 
   // Runs the query and lays out the rows, unless focus is in them. Each
   // letter looks through everything but the guide's shows; `shows` adds
   // them (after the pause; at once for one character). `keep`: what this
   // query found on this index stays, so the pause's pass looks only
   // through the shows. The shows found stay while the query and the
-  // guide's listings do (a data refresh doesn't look again).
+  // guide's listings do (a data refresh doesn't look again). The passes
+  // are core/engine/search_live's, shared with the player's search.
   void search(bool shows, bool keep = false) {
     Clock::time_point start = Clock::now();
     Store& s = app_.store();
     eventsVersion_ = s.events()->version;
     channelsVersion_ = s.channels()->version;
     listingsVersion_ = s.listings()->version;
-    std::shared_ptr<const se::Index> index = s.searchIndex();
-    bool newIndex = index != index_;
-    index_ = std::move(index);
-    if (showsIndex_ && showsIndex_->showTitles.get() != index_->showTitles.get()) {
-      showsIndex_.reset();
-      shows_.reset();
-    }
+    index_ = s.searchIndex();
     se::Query q = parsed();
-    if (!shows && q.length() >= 2 && !showsAt_) showsAt_ = app_.ms() + kShowsDelayMs;
-    else if (shows) showsAt_ = 0;
     se::Options o;
     o.now = time::now();
     o.zone = app_.zone();
     o.showScores = s.settings().showScores;
-    o.shows = shows || q.length() < 2;
     o.scoped = !wide_;  // no effect before a lineup is set up
-    if (!keep || newIndex || !find_ || !sameQuery(find_->query, q) || find_->options.scoped != o.scoped) {
-      Clock::time_point t = Clock::now();
-      find_ = se::find(*index_, q, o);
-      double ms = msSince(t);
+    se::Live::Pass pass = live_.run(index_, q, o, shows, keep, app_.ms());
+    if (pass.found) {
       ++stats_.keys;
-      stats_.runSum += ms;
-      stats_.runMax = std::max(stats_.runMax, ms);
+      stats_.runSum += pass.foundMs;
+      stats_.runMax = std::max(stats_.runMax, pass.foundMs);
     }
-    se::FoundShows none;
-    const se::FoundShows* found = &none;
-    if (o.shows && q.length() >= 2) {
-      if (!shows_ || !showsIndex_ || !sameQuery(showsQuery_, q) || showsScoped_ != o.scoped) {
-        Clock::time_point t = Clock::now();
-        shows_ = se::findShows(*index_, q, o);
-        showsIndex_ = index_;
-        showsQuery_ = q;
-        showsScoped_ = o.scoped;
-        ++stats_.shows;
-        stats_.showsMax = std::max(stats_.showsMax, msSince(t));
-      }
-      found = &*shows_;
+    if (pass.shows) {
+      ++stats_.shows;
+      stats_.showsMax = std::max(stats_.showsMax, pass.showsMs);
     }
-    found_ = se::merge(*index_, *find_, *found);
-    showsIn_ = o.shows;
     labelsDirty_ = true;
     if (!inResults()) {
       Clock::time_point t = Clock::now();
@@ -462,7 +378,7 @@ class SearchScreen : public Screen {
     rows_.clear();
     if (!digits_.empty()) layoutDigits();
     else if (!page_.empty()) layoutPage();
-    else if (found_.query.text.empty()) layoutZero();
+    else if (live_.results().query.text.empty()) layoutZero();
     else layoutResults();
     place();
     row_ = std::clamp(row_, 0, std::max(0, static_cast<int>(rows_.size()) - 1));
@@ -548,26 +464,6 @@ class SearchScreen : public Screen {
     c.kind = kind;
     c.id = id;
     c.title = title;
-    return c;
-  }
-
-  // `mark`: an item outside your lineup says so.
-  static Cell cellOf(const se::Item& it, bool mark = true) {
-    Cell c;
-    switch (it.kind) {
-      case se::Kind::Channel: c.kind = CellKind::Channel; break;
-      case se::Kind::Team: c.kind = CellKind::Team; break;
-      case se::Kind::Game: c.kind = CellKind::Game; break;
-      case se::Kind::Show: c.kind = CellKind::Show; break;
-      case se::Kind::Genre: c.kind = CellKind::Genre; break;
-    }
-    c.id = it.id;
-    c.title = it.name;
-    c.entryId = it.entryId;
-    if (it.listing) c.listing = *it.listing;
-    c.also = it.also;
-    c.outside = mark && it.outside;
-    c.family = it.family;
     return c;
   }
 
@@ -744,8 +640,8 @@ class SearchScreen : public Screen {
   }
 
   void layoutResults() {
-    const se::Results& r = found_;
-    bool topReady = showsIn_ || r.query.length() < 2;
+    const se::Results& r = live_.results();
+    bool topReady = live_.showsIn() || r.query.length() < 2;
     if (r.nothing && topReady) {
       // One plain line with what to try, then the chips and recent searches.
       addTry();
@@ -760,12 +656,12 @@ class SearchScreen : public Screen {
       if (r.top) {
         se::Kind k = r.top->kind;
         int g = k == se::Kind::Channel ? 0 : k == se::Kind::Team ? 1 : k == se::Kind::Game ? 2 : 3;
-        groups[g].push_back(cellOf(*r.top, false));
+        groups[g].push_back(search_view::cellOf(*r.top, false));
       }
-      for (const se::Item& it : r.channels) groups[0].push_back(cellOf(it, false));
-      for (const se::Item& it : r.teams) groups[1].push_back(cellOf(it, false));
-      for (const se::Item& it : r.games) groups[2].push_back(cellOf(it, false));
-      for (const se::Item& it : r.shows) groups[3].push_back(cellOf(it, false));
+      for (const se::Item& it : r.channels) groups[0].push_back(search_view::cellOf(it, false));
+      for (const se::Item& it : r.teams) groups[1].push_back(search_view::cellOf(it, false));
+      for (const se::Item& it : r.games) groups[2].push_back(search_view::cellOf(it, false));
+      for (const se::Item& it : r.shows) groups[3].push_back(search_view::cellOf(it, false));
       std::string header = "OUTSIDE YOUR LINEUP";
       for (int g = 0; g < 4; ++g) {
         if (groups[g].empty()) continue;
@@ -777,7 +673,7 @@ class SearchScreen : public Screen {
       return;
     }
     if (r.top && topReady) {
-      Cell c = cellOf(*r.top);
+      Cell c = search_view::cellOf(*r.top);
       c.top = true;
       // With a lineup, the scope's header is over the band (drawRows()).
       addBand(c, r.showing.empty() && !scopeShown() ? "TOP RESULT" : "");
@@ -785,19 +681,19 @@ class SearchScreen : public Screen {
     if (!r.showing.empty() && topReady)
       addChips({chip("instead", "Search for \xe2\x80\x9c" + query_ + "\xe2\x80\x9d instead", CellKind::Instead)}, "");
     std::vector<Cell> cells;
-    for (const se::Item& it : r.channels) cells.push_back(cellOf(it));
+    for (const se::Item& it : r.channels) cells.push_back(search_view::cellOf(it));
     addTiles(cells, "CHANNELS");
     cells.clear();
-    for (const se::Item& it : r.teams) cells.push_back(cellOf(it));
+    for (const se::Item& it : r.teams) cells.push_back(search_view::cellOf(it));
     addList(cells, "TEAMS");
     cells.clear();
-    for (const se::Item& it : r.games) cells.push_back(cellOf(it));
+    for (const se::Item& it : r.games) cells.push_back(search_view::cellOf(it));
     addList(cells, "GAMES");
     cells.clear();
-    for (const se::Item& it : r.shows) cells.push_back(cellOf(it));
+    for (const se::Item& it : r.shows) cells.push_back(search_view::cellOf(it));
     addList(cells, "SHOWS");
     cells.clear();
-    for (const se::Item& it : r.genres) cells.push_back(cellOf(it));
+    for (const se::Item& it : r.genres) cells.push_back(search_view::cellOf(it));
     addList(cells, "BROWSE");
     if (!scopeShown() || !hasResults()) return;
     // The last row: what else matches outside your lineup, by name (never a
@@ -974,8 +870,8 @@ class SearchScreen : public Screen {
       o.shows = false;
       se::Results r = se::run(*index_, se::parse(digits_), o);
       std::vector<Cell> teams;
-      for (const se::Item& it : r.teams) teams.push_back(cellOf(it));
-      if (r.top && r.top->kind != se::Kind::Channel) teams.insert(teams.begin(), cellOf(*r.top));
+      for (const se::Item& it : r.teams) teams.push_back(search_view::cellOf(it));
+      if (r.top && r.top->kind != se::Kind::Channel) teams.insert(teams.begin(), search_view::cellOf(*r.top));
       addList(teams, "OR DID YOU MEAN");
     }
     addTiles(also, "ALSO STARTING WITH " + digits_);
@@ -999,25 +895,13 @@ class SearchScreen : public Screen {
         return true;
       }
       case Key::Ok: {
-        using A = Grid::Spot::Area;
-        const Grid::Spot& at = grid_.at();
-        if (at.area == A::Speak) {
+        // The key's text (search_keys::press(), shared with the player's search).
+        search_keys::Press p = search_keys::press(grid_, query_);
+        if (p.what == search_keys::Press::Do::Speak) {
           app_.openKeyboard(query_);
-        } else if (at.area == A::Bottom) {
-          if (at.col == static_cast<int>(search_keys::Wide::Delete)) {
-            if (!query_.empty()) setQuery(dropLast(query_));
-          } else if (at.col == static_cast<int>(search_keys::Wide::Mode)) {
-            grid_.flip();  // the focus stays on the key: a second OK flips back
-          } else {
-            setQuery("");
-            grid_.letters();
-          }
-        } else if (grid_.typed() == " ") {
-          if (!query_.empty() && query_.back() != ' ') setQuery(query_ + " ");
-        } else {
-          // The page stays on 123 after a digit (numbers are several).
-          exactOnly_ = false;
-          setQuery(query_ + grid_.typed());
+        } else if (p.what == search_keys::Press::Do::Text) {
+          if (p.typed) exactOnly_ = false;
+          setQuery(p.query);
         }
         return true;
       }
@@ -1032,15 +916,6 @@ class SearchScreen : public Screen {
       default:
         return true;
     }
-  }
-
-  static std::string dropLast(const std::string& s) {
-    // One character, whole (UTF-8 from the system keyboard).
-    size_t n = s.size();
-    if (n == 0) return s;
-    --n;
-    while (n > 0 && (static_cast<unsigned char>(s[n]) & 0xC0) == 0x80) --n;
-    return s.substr(0, n);
   }
 
   bool resultsKey(const KeyEvent& e) {
@@ -1123,7 +998,7 @@ class SearchScreen : public Screen {
     if (query_.empty()) grid_.letters();
     stopPreview();
     // What changed while focus was in the results shows now.
-    search(!showsAt_);
+    search(!live_.showsDue());
   }
 
   // ---------------------------------------------------------------- digits
@@ -1243,13 +1118,8 @@ class SearchScreen : public Screen {
     return &r.cells[static_cast<size_t>(col_)];
   }
 
-  const se::TeamEntry* team(const std::string& key) const {
-    auto it = index_->teamByKey.find(key);
-    return it == index_->teamByKey.end() ? nullptr : &index_->teams[it->second];
-  }
-
-  // The game a team row stands for: live, else next.
-  std::string teamGame(const se::TeamEntry& t) const { return !t.liveGame.empty() ? t.liveGame : t.nextGame; }
+  const se::TeamEntry* team(const std::string& key) const { return search_view::team(*index_, key); }
+  static std::string teamGame(const se::TeamEntry& t) { return search_view::teamGame(t); }
 
   void remember(const Cell& c, const std::string& name) {
     // What was picked, by name: never the typed text, and only from a search.
@@ -1761,24 +1631,24 @@ class SearchScreen : public Screen {
       c.hit({kX, 34, w, 30}, kHitPill);
       ui::chip(c, pillText_, kX, 34, 20, theme::hex(theme::kNowLine, 0.3f), theme::white());
     }
-    if (!found_.showing.empty() && page_.empty() && digits_.empty() && !found_.query.text.empty()) {
+    if (!live_.results().showing.empty() && page_.empty() && digits_.empty() && !live_.results().query.text.empty()) {
       ui::label(c, showingText_, kX, 40, Weight::Bold, 26, theme::white(), kBandW);
     }
-    bool typed = page_.empty() && digits_.empty() && !found_.query.text.empty();
-    bool topReady = showsIn_ || found_.query.length() < 2;
-    if (found_.nothing && showsIn_ && page_.empty() && digits_.empty()) {
+    bool typed = page_.empty() && digits_.empty() && !live_.results().query.text.empty();
+    bool topReady = live_.showsIn() || live_.results().query.length() < 2;
+    if (live_.results().nothing && live_.showsIn() && page_.empty() && digits_.empty()) {
       ui::label(c, nothingText_, kX, 96, Weight::Bold, 34, theme::white(), kBandW);
       ui::paragraph(c, "Not in your channels or the guide right now. Try a channel name or number, a show or a team.",
                     kX, 150, kBandW, Weight::Regular, 24, theme::white(0.7f), 3);
     }
-    if (found_.outsideOnly && topReady && typed) {
+    if (live_.results().outsideOnly && topReady && typed) {
       ui::label(c, nothingInText_, kX, 96, Weight::Bold, 34, theme::white(), kBandW);
       ui::paragraph(c, "Here\xe2\x80\x99s what\xe2\x80\x99s outside it.", kX, 150, kBandW, Weight::Regular, 24,
                     theme::white(0.7f), 3);
     }
-    bool waiting = !showsIn_ && found_.query.length() >= 2 && page_.empty() && digits_.empty();
+    bool waiting = !live_.showsIn() && live_.results().query.length() >= 2 && page_.empty() && digits_.empty();
     // Once a lineup is set up, the header says where the results are from.
-    if (typed && scopeShown() && found_.showing.empty() && !(found_.nothing && topReady) && (waiting || hasResults()))
+    if (typed && scopeShown() && live_.results().showing.empty() && !(live_.results().nothing && topReady) && (waiting || hasResults()))
       ui::label(c, wide_ ? "EVERYTHING" : "YOUR LINEUP AND LIVE EVENTS", kX, 52, Weight::Bold, 20, theme::white(0.75f));
     if (waiting) {
       // The top result waits for the shows (it never swaps after it's read).
@@ -1881,45 +1751,7 @@ class SearchScreen : public Screen {
       scopeRow(c, cell, box, f);
       return;
     }
-    // Results (where logos and badges appear) take the calm focus and keep
-    // light text; the band's other cells keep the white one.
-    bool calm = cell.kind == CellKind::Channel || cell.kind == CellKind::Show || cell.kind == CellKind::Game ||
-                cell.kind == CellKind::Team || cell.kind == CellKind::Genre;
-    bool white = f && !calm;
-    if (f && calm) ui::calmFocus(c, box, 18);
-    else c.g.fill(box, f ? theme::white() : theme::white(0.07f), 18);
-    Color ink = white ? theme::black() : theme::white();
-    Color sub = white ? theme::black(0.65f) : theme::white(0.7f);
-    const Cell::Label& l = cell.label;
-    bool ok = f && !l.ok.empty();
-    float okW = ok ? ui::textWidth(c, l.ok, Weight::Bold, 20) + 24 : 0;
-    if (cell.top) {
-      drawTopCard(c, cell, box, white, ok);
-      return;
-    }
-    float tx = box.x + 22, right = box.x + box.w - 22 - okW;
-    if (ok) ui::labelIn(c, l.ok, {right + 12, box.y, okW - 12, box.h}, Weight::Bold, 20, ink, Align::Right);
-    if (l.missing) return;
-    switch (cell.kind) {
-      case CellKind::Channel:
-        ui::logo(c, l.logoUrl, l.logoName, {tx, box.y + (box.h - 54) * 0.5f, 96, 54});
-        tx += 116;
-        break;
-      case CellKind::Show:
-        if (l.logo) ui::logo(c, l.logoUrl, l.logoName, {tx, box.y + (box.h - 48) * 0.5f, 84, 48});
-        tx += 104;
-        break;
-      case CellKind::Game: tx += badges(c, l, tx, box.y + (box.h - 52) * 0.5f, 52); break;
-      case CellKind::Team: tx += teamBadge(c, l, tx, box.y + (box.h - 52) * 0.5f) + 18; break;
-      default: break;
-    }
-    float ty = box.y + box.h * 0.5f - 36;
-    float lx = tx;
-    if (l.live) lx += ui::chip(c, "LIVE", lx, ty + 4, 17, theme::hex(theme::kLive), theme::white()) + 10;
-    if (l.west) lx += ui::coastChip(c, true, lx, ty + 4, 17) + 10;
-    if (!l.tag.empty()) lx += ui::chip(c, l.tag, lx, ty + 4, 17, white ? theme::black(0.15f) : theme::white(0.18f), ink) + 10;
-    ui::label(c, l.title, lx, ty, Weight::Bold, 26, ink, right - lx);
-    ui::label(c, l.line, tx, ty + 38, Weight::Medium, 22, sub, right - tx);
+    search_view::drawCell(c, cell, box, f);
   }
 
   // The scope's row: outlined, full width, a round icon, the words and a ›
@@ -1946,67 +1778,6 @@ class SearchScreen : public Screen {
     ui::label(c, l.line, tx, ty + 38, Weight::Medium, 22, sub, rx - tx);
   }
 
-  // The top result: a type tag, a big title and what's on, beside the corner.
-  // `white`: focused on a white fill (results focus calmly, text light).
-  void drawTopCard(ui::Ctx& c, const Cell& cell, Rect box, bool white, bool ok) {
-    const Cell::Label& l = cell.label;
-    if (l.missing) return;
-    Color ink = white ? theme::black() : theme::white();
-    Color sub = white ? theme::black(0.65f) : theme::white(0.75f);
-    float tx = box.x + 22, ty = box.y + 64;
-    switch (cell.kind) {
-      case CellKind::Channel:
-        ui::logo(c, l.logoUrl, l.logoName, {tx, ty, 112, 64});
-        tx += 132;
-        break;
-      case CellKind::Game: tx += badges(c, l, tx, ty, 64); break;
-      case CellKind::Team: tx += teamBadge(c, l, tx, ty) + 18; break;
-      case CellKind::Show:
-        if (l.logo) ui::logo(c, l.logoUrl, l.logoName, {tx, ty, 112, 64});
-        tx += 132;
-        break;
-      default: break;
-    }
-    ui::label(c, l.cardTag, box.x + 22, box.y + 18, Weight::Bold, 18, sub, box.w - 44);
-    // A long title wraps to two lines here only.
-    ui::paragraph(c, l.cardTitle, tx, ty, box.x + box.w - 22 - tx, Weight::Bold, 32, ink, 2, 1.15f);
-    float lx = box.x + 22, ly = box.y + box.h - 48;
-    if (l.live) lx += ui::chip(c, "LIVE", lx, ly + 2, 18, theme::hex(theme::kLive), theme::white()) + 10;
-    ui::label(c, ok ? l.cardLineOk : l.line, lx, ly, Weight::Medium, 22, sub, box.x + box.w - 22 - lx);
-  }
-
-  // Two side badges (or the sport's mark). Returns the width used.
-  float badges(ui::Ctx& c, const Cell::Label& l, float x, float y, float size) {
-    if (l.sides.size() == 2) {
-      events_ui::badge(c, l.sides[0], x, y, size);
-      events_ui::badge(c, l.sides[1], x + size + 8, y, size);
-      return 2 * size + 28;
-    }
-    ui::logo(c, l.logoUrl, l.logoName, {x, y, size * 1.6f, size});
-    return size * 1.6f + 18;
-  }
-
-  float teamBadge(ui::Ctx& c, const Cell::Label& l, float x, float y) {
-    if (!l.sides.empty()) events_ui::badge(c, l.sides.front(), x, y, 52);
-    return 52;
-  }
-
-  // The badge the board has for a team, when it has a game; else initials.
-  EventSide teamSide(const se::TeamEntry& t) const {
-    for (const std::string& gid : {t.liveGame, t.nextGame}) {
-      const EventTile* g = app_.store().eventTile(gid);
-      if (!g || g->sides.size() != 2) continue;
-      for (const EventSide& s : g->sides) {
-        if (se::fold(s.name).empty() || t.names.empty()) continue;
-        if (t.names.front().find(se::fold(s.name)) != std::string::npos) return s;
-      }
-    }
-    EventSide side;
-    side.abbr = se::initials(se::words(se::fold(t.name)));
-    for (char& ch : side.abbr) ch = static_cast<char>(ch >= 'a' && ch <= 'z' ? ch - 32 : ch);
-    return side;
-  }
-
   // The data a cell's text is made from: made again when it moves on.
   std::array<uint64_t, 3> versions() const {
     Store& s = app_.store();
@@ -2020,214 +1791,11 @@ class SearchScreen : public Screen {
     labeled_ = versions();
     ++labelGeneration_;
     for (Row& r : rows_)
-      for (Cell& cell : r.cells) label(c, cell);
+      for (Cell& cell : r.cells) search_view::label(c, app_.store(), *index_, cell, okText(cell));
     pillText_ = page_.empty() ? std::string() : page_.title + "  \xc3\x97";
-    showingText_ = found_.showing.empty() ? std::string() : "Showing " + found_.showing;
+    showingText_ = live_.results().showing.empty() ? std::string() : "Showing " + live_.results().showing;
     nothingText_ = "Nothing for \xe2\x80\x9c" + query_ + "\xe2\x80\x9d";
     nothingInText_ = nothingText_ + " in your lineup";
-  }
-
-  void label(const ui::Ctx& c, Cell& cell) {
-    Store& s = app_.store();
-    Cell::Label& l = cell.label;
-    l = Cell::Label{};
-    l.ok = okText(cell);
-    // The board's tile for the corner's card (a game, a team's game).
-    const EventTile* corner = nullptr;
-    switch (cell.kind) {
-      case CellKind::Channel: {
-        if (cell.family) {
-          // An event channel group: its name, "Event channel" under it.
-          l.logoName = l.cornerName = l.cornerTitle = l.title = l.cardTitle = cell.title;
-          l.line = l.cornerLine = cell.outside ? std::string("Event channel \xc2\xb7 ") + kOutside : "Event channel";
-          l.cardTag = "EVENT CHANNEL";
-          break;
-        }
-        const GuideChannel* g = s.channels()->find(cell.id);
-        if (!g) {
-          l.missing = true;
-          break;
-        }
-        l.logo = true;
-        l.logoUrl = l.cornerLogo = g->logoUrl;
-        l.logoName = l.cornerName = l.cornerTitle = g->name;
-        l.title = l.cardTitle = g->name;
-        l.line = channelLine(c, *g, l.live);
-        if (cell.outside) {
-          // "2401 · Outside your lineup".
-          l.line = (g->number ? std::to_string(*g->number) + " \xc2\xb7 " : std::string()) + kOutside;
-          l.live = false;
-        }
-        l.west = g->west;
-        l.cardTag = "CHANNEL" + std::string(g->number ? " \xc2\xb7 " + std::to_string(*g->number) : "") +
-                    (g->inLineup ? " \xc2\xb7 MY LINEUP" : "");
-        views::NowNext nn = views::nowAndNext(*s.listings(), g->id, c.now);
-        if (nn.now) l.cornerLine = nn.now->title;
-        if (cell.outside) l.cornerLine = l.line;
-        break;
-      }
-      case CellKind::Show: {
-        const GuideChannel* g = s.channels()->find(cell.entryId);
-        if (g) {
-          l.logo = true;
-          l.logoUrl = l.cornerLogo = g->logoUrl;
-          l.logoName = l.cornerName = g->name;
-        }
-        const Listing& x = cell.listing;
-        l.title = l.cardTitle = l.cornerTitle = x.title;
-        l.live = x.isOn(c.now);
-        l.tag = se::showTag(se::fold(x.title));
-        l.line = showLine(c, cell, g);
-        if (cell.outside) l.line += std::string(" \xc2\xb7 ") + kOutside;
-        l.cardTag = "SHOW" + (l.tag.empty() ? std::string() : " \xc2\xb7 " + l.tag);
-        l.cornerLine = x.isOn(c.now) ? "Now until " + ui::clock(c, x.end) : whenText(c, x.start);
-        if (!x.isOn(c.now))
-          l.cornerLine += s.hasShowReminder(cell.entryId, x.start) ? " \xc2\xb7 Reminder set \xe2\x9c\x93" : " \xc2\xb7 OK: Remind me";
-        break;
-      }
-      case CellKind::Game: {
-        const EventTile* t = s.eventTile(cell.id);
-        if (!t) {
-          l.missing = true;
-          break;
-        }
-        corner = t;
-        if (t->sides.size() == 2) l.sides = t->sides;
-        l.logoUrl = t->channelLogo;
-        l.logoName = t->channelName;
-        l.title = l.cardTitle = matchup(*t);
-        l.live = liveTile(*t);
-        l.line = gameLine(c, *t);
-        l.cardTag = "GAME" + (t->league.empty() ? std::string() : " \xc2\xb7 " + t->league) +
-                    (t->favorite ? " \xc2\xb7 YOUR TEAM \xe2\x98\x85" : "");
-        break;
-      }
-      case CellKind::Team: {
-        const se::TeamEntry* t = team(cell.id);
-        if (!t) {
-          l.missing = true;
-          break;
-        }
-        l.sides = {teamSide(*t)};
-        l.title = t->name + (s.followsTeam(t->key) ? " \xe2\x98\x85" : "");
-        l.cardTitle = l.cornerTitle = t->name;
-        l.line = teamLine(c, *t, l.live);
-        // Its games say why already when they're not in your channels.
-        if (cell.outside && l.line.find("Not in your channels") == std::string::npos &&
-            l.line.find("Streaming only") == std::string::npos)
-          l.line += std::string(" \xc2\xb7 ") + kOutside;
-        l.cardTag = "TEAM \xc2\xb7 " + t->league;
-        corner = s.eventTile(teamGame(*t));
-        break;
-      }
-      case CellKind::Genre:
-        l.title = l.cardTitle = l.cornerTitle = cell.title;
-        l.line = "Live now and later today";
-        l.cardTag = cell.id.rfind("genre:", 0) == 0 ? "GENRE" : cell.id.rfind("sport:", 0) == 0 ? "SPORT" : "LEAGUE";
-        break;
-      case CellKind::Scope:
-        if (cell.id == "wide") {
-          l.title = "More outside your lineup";
-          l.line = cell.title;  // the first few names
-        } else {
-          l.title = "Only your lineup and Live Events";
-          l.line = "Hide what\xe2\x80\x99s outside your lineup";
-        }
-        l.cornerTitle = l.title;
-        break;
-      case CellKind::Follow:
-        l.title = "\xe2\x98\x85 Follow your teams";
-        l.line = "Their games show up here first. OK opens My Sports.";
-        l.cornerTitle = cell.title;
-        break;
-      default: l.cornerTitle = cell.title; break;
-    }
-    l.cardLineOk = l.line;
-    if (!l.ok.empty()) l.cardLineOk += (l.line.empty() ? "" : " \xc2\xb7 ") + l.ok;
-    if (const EventTile* t = corner) {
-      l.cornerTitle = matchup(*t);
-      l.cornerLogo = t->channelLogo;
-      l.cornerName = t->channelName;
-      if (!t->watchable)
-        l.cornerLine = std::string(t->footer == "Streaming only" ? "Streaming only" : "Not in your channels") +
-                       " \xc2\xb7 OK: Where to Watch";
-      else if (t->finished) l.cornerLine = "Ended";
-      else if (liveTile(*t)) l.cornerLine = "LIVE " + t->status;
-      else if (t->start && playsGame(*t, c.now))
-        l.cornerLine = whenText(c, t->start) + " \xc2\xb7 OK: Watch";
-      else if (t->start)
-        l.cornerLine = whenText(c, t->start) + (s.hasReminder(t->id) ? " \xc2\xb7 Reminder set \xe2\x9c\x93" : " \xc2\xb7 OK: Remind me");
-    }
-  }
-
-  // "230 · LIVE Bulls at Harbor Kings · Q3" or "24 · The Evening Report".
-  std::string channelLine(const ui::Ctx& c, const GuideChannel& g, bool& live) {
-    std::string line = g.number ? std::to_string(*g.number) : std::string();
-    if (g.style == GuideChannel::Style::Local && !g.subtitle.empty())
-      line += (line.empty() ? "" : " \xc2\xb7 ") + g.subtitle;
-    // A live game on it, by the board (its state, never a score).
-    for (const se::GameEntry& x : index_->games) {
-      if (x.state != se::GameEntry::State::Live || !x.watchable) continue;
-      const EventTile* t = app_.store().eventTile(x.id);
-      if (t && t->channelName == g.name) {
-        live = true;
-        return line + (line.empty() ? "" : " \xc2\xb7 ") + matchup(*t) + (t->status.empty() ? "" : " \xc2\xb7 " + t->status);
-      }
-    }
-    views::NowNext nn = views::nowAndNext(*app_.store().listings(), g.id, c.now);
-    if (nn.now) line += (line.empty() ? "" : " \xc2\xb7 ") + nn.now->title;
-    return line;
-  }
-
-  // "Tonight 10:00 PM · NBX 230 · also tomorrow 7:00 AM".
-  std::string showLine(const ui::Ctx& c, const Cell& cell, const GuideChannel* g) {
-    const Listing& l = cell.listing;
-    std::string line;
-    if (app_.store().hasShowReminder(cell.entryId, l.start)) line = "Reminder set \xe2\x9c\x93 \xc2\xb7 ";
-    line += l.isOn(c.now) ? "Now until " + ui::clock(c, l.end) : whenText(c, l.start);
-    if (g) line += " \xc2\xb7 " + g->name + (g->number ? " " + std::to_string(*g->number) : "");
-    if (cell.also) {
-      std::string day = ui::dayWord(c, cell.also);
-      for (char& ch : day) ch = static_cast<char>(ch >= 'A' && ch <= 'Z' ? ch + 32 : ch);
-      line += " \xc2\xb7 also " + (day.empty() ? std::string("today") : day) + " " + ui::clock(c, cell.also);
-    }
-    if (!l.episode.empty() && l.isOn(c.now)) line += " \xc2\xb7 " + l.episode;
-    return line;
-  }
-
-  // "Q3 · PBL · NBX Sports", "in 20 min · …", "Ended", "Not in your channels".
-  std::string gameLine(const ui::Ctx& c, const EventTile& t) {
-    std::string line;
-    const char* dot = " \xc2\xb7 ";
-    if (app_.store().hasReminder(t.id) && t.upcoming) line = "Reminder set \xe2\x9c\x93 \xc2\xb7 ";
-    if (t.finished) line += "Ended";
-    else if (liveTile(t)) line += t.status;
-    else if (t.start > 0) line += whenText(c, t.start);
-    if (!t.league.empty()) line += (line.empty() ? "" : dot) + t.league;
-    if (!t.watchable) line += std::string(dot) + (t.footer == "Streaming only" ? "Streaming only" : "Not in your channels");
-    else if (!t.channelName.empty()) line += dot + t.channelName;
-    return line;
-  }
-
-  // "PBL · LIVE Q3 · Bulls at Harbor Kings · NBX Sports", "PBL · Next: Sat
-  // 7:30 PM · …", "No game in the next week".
-  std::string teamLine(const ui::Ctx& c, const se::TeamEntry& t, bool& live) {
-    std::string line = t.league;
-    const char* dot = " \xc2\xb7 ";
-    if (!t.leaguePicked) return line + dot + "Add " + t.league + " in My Sports to see their games";
-    if (const EventTile* g = app_.store().eventTile(t.liveGame)) {
-      live = true;
-      line += dot + g->status + dot + matchup(*g);
-      line += dot + (g->watchable ? g->channelName : std::string("Not in your channels"));
-      return line;
-    }
-    if (const EventTile* g = app_.store().eventTile(t.nextGame)) {
-      line += std::string(dot) + "Next: " + whenText(c, g->start) + dot + matchup(*g);
-      if (!g->watchable) line += std::string(dot) + (g->footer == "Streaming only" ? "Streaming only" : "Not in your channels");
-      else if (!g->channelName.empty()) line += dot + g->channelName;
-      return line;
-    }
-    return line + dot + "No game in the next week";
   }
 
   // The corner: LG's number box; the video while the preview plays; else
@@ -2317,16 +1885,9 @@ class SearchScreen : public Screen {
   bool exactOnly_ = false;
   bool wide_ = false;  // everything, not only your lineup and Live Events (while Search is open)
   std::shared_ptr<const se::Index> index_;
-  // What the query found (each letter), the shows (after the pause, on
-  // the index they were found on) and the two merged.
-  std::optional<se::Found> find_;
-  std::optional<se::FoundShows> shows_;
-  std::shared_ptr<const se::Index> showsIndex_;
-  se::Query showsQuery_;
-  bool showsScoped_ = false;
-  se::Results found_;
-  bool showsIn_ = false;
-  uint32_t showsAt_ = 0;
+  // What the query found (each letter), the shows (after the pause) and
+  // the two merged.
+  se::Live live_;
   uint64_t eventsVersion_ = 0, channelsVersion_ = 0, listingsVersion_ = 0;
   Page page_;
   std::vector<Row> rows_;

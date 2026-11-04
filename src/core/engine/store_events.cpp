@@ -17,6 +17,7 @@
 #include "core/catalog/catalog.hpp"
 #include "core/report/live_events_report.hpp"
 #include "core/sports/game_banner.hpp"
+#include "core/sports/languages.hpp"
 #include "core/sports/leagues.hpp"
 #include "core/sports/my_sports.hpp"
 #include "core/sports/network_map.hpp"
@@ -613,7 +614,12 @@ RebuildMade rebuild(RebuildJob& job) {
   // The guide's game listings when due (sports, local and Spanish channels
   // of the lineup and the browse list).
   if (job.readListings) {
-    std::vector<ss::ListingChannel> chans = ss::listingChannels(lineup.lineupIDs, lineup.browseIDs, infos, job.markets);
+    // Build 132: other countries' sports channels too (read in the
+    // provider's guide for Live Events only).
+    std::vector<std::string> abroad = ss::abroadChannels(lineup.entries, lineup.lineupIDs, lineup.browseIDs, infos,
+                                                         job.hiddenGroups, "Other");
+    std::vector<ss::ListingChannel> chans =
+        ss::listingChannels(lineup.lineupIDs, lineup.browseIDs, infos, job.markets, abroad);
     std::vector<ss::ListingInput> inputs;
     inputs.reserve(chans.size());
     for (const ss::ListingChannel& lc : chans) {
@@ -677,7 +683,7 @@ void Store::rebuildEvents() {
   fp.scheduleRevision = e.scheduleRevision;
   fp.entriesRevision = m.lineupRevision;
   fp.listingsRevision = e.listingsRevision + (readListings ? 1 : 0);
-  fp.preferSpanish = m.prefs.countries.count("US-ES") > 0;
+  fp.languages = sports::languages::ofViewer(m.prefs.countries);
   fp.enabled = settings_.scheduleEnabled;
   fp.schools = pub.schools.size();
   std::string key = ss::fingerprint(fp, now);
@@ -706,7 +712,7 @@ void Store::rebuildEvents() {
   in.games = std::move(pub.games);
   in.schools = std::move(pub.schools);
   in.rosters = std::move(rosters);
-  in.preferSpanish = fp.preferSpanish;
+  in.languages = fp.languages;
   // Shared with the live catalog (immutable once installed), not copied.
   in.sharedEvents = std::shared_ptr<const std::vector<catalog::LiveEvent>>(m.catalog, &m.catalog->events);
   in.sharedTraits =
@@ -728,6 +734,7 @@ void Store::rebuildEvents() {
   job->lineup = e.lineupCopy;
   job->markets = markets;
   job->readListings = readListings;
+  job->hiddenGroups = m.hiddenGroups;
   if (readListings) job->programs = m.programs;  // the lists are shared, not copied
   else job->listings = e.listings;
   std::string f1Key;
@@ -736,7 +743,6 @@ void Store::rebuildEvents() {
     f1Key = sports::special_feeds::f1ChannelsKey(m.lineupRevision, m.lineup.entries.size(), m.lineup.lineupIDs,
                                                 m.hiddenGroups);
     if (f1Key == e.f1Key) job->f1Sources = e.f1Sources;
-    else job->hiddenGroups = m.hiddenGroups;
   }
   job->savePath = host_.files.path(kResultFile);
   job->lastSaved = e.lastSaved;
@@ -1529,7 +1535,7 @@ WhereToWatch Store::whereToWatch(const std::string& eventId) const {
       WatchSource ws;
       ws.title = it.name;
       ws.detail = it.detail;
-      ws.spanish = it.spanish;
+      ws.spanish = it.spanish;  // the "ES" badge
       if (m.entryInfo.count(it.channelID)) ws.entryId = it.channelID;
       else ws.channelId = it.channelID;
       list.push_back(std::move(ws));
@@ -1625,6 +1631,7 @@ std::vector<Feed> Store::eventFeeds(const std::string& eventId, const std::strin
         [this](const std::string& id) { return reliabilityOf(id); });
   };
   r.isEntry = [&m](const std::string& id) { return m.entryInfo.count(id) > 0; };
+  r.languages = m.ev.board.languages;
   std::optional<std::string> preferring;
   if (!via.empty()) preferring = via;
   ss::WatchPlan plan = ss::watchPlan(ev->second, preferring, e.memory.remembered(ev->second, time::now()), r);
@@ -1674,6 +1681,7 @@ bool Store::toggleReminder(const std::string& id) {
   r.baseVersions = [this](const std::string& c) { return versionsOf(c); };
   r.bestFeeds = [](const std::vector<std::string>& ids) { return ids; };
   r.isEntry = [&m](const std::string& c) { return m.entryInfo.count(c) > 0; };
+  r.languages = e.board.languages;
   auto target = ss::reminderTarget(ev->second, r);
   if (!target) return false;
   bool was = e.reminders.isSet(target->channelID, target->start);

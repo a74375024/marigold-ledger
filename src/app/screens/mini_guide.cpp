@@ -17,6 +17,12 @@
 // nothing previews and the picture never changes until OK. The LG pointer
 // clicks shows, the list name, the column, the lists, "Now ▼" and the edge
 // arrows; a click beside the guide closes it.
+//
+// Search (Build 132) is the first of the lists, as in the main guide's
+// rail: OK on it turns the card into search (app/screens/player_search),
+// the Search screen's keyboard and results while the picture keeps playing
+// beside the card. Back goes from the results to the keyboard, then to the
+// lists; the lists' Back there goes to the grid as it was.
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -24,6 +30,7 @@
 #include "app/app.hpp"
 #include "app/playback.hpp"
 #include "app/screens/left_rail.hpp"
+#include "app/screens/player_search.hpp"
 #include "app/screens/screens.hpp"
 #include "app/store/store.hpp"
 #include "core/engine/views.hpp"
@@ -51,6 +58,11 @@ constexpr float kRulerY = 120;
 constexpr float kGridTop = 164;
 constexpr float kRowH = 96, kRowGap = 8;
 constexpr int kVisibleRows = 7;
+// A neighborhood's name above its first row, as in the guide (Build 132):
+// the rows under it move down, so one fewer may fit.
+constexpr float kHeaderH = 22;
+constexpr float kHeaderBand = kHeaderH + kRowGap;
+constexpr float kGridH = kVisibleRows * (kRowH + kRowGap);
 constexpr float kDetailY = kGridTop + kVisibleRows * (kRowH + kRowGap) + 10;
 constexpr float kLegendY = kCard.y + kCard.h - 42;
 // 2.5 hours at rest, 1.5 with the column open: each minute stays at least
@@ -109,6 +121,17 @@ class MiniGuide : public Screen {
     const auto& s = app_.store().settings();
     nav_.setLists(rail::playerLists(s.allChannelsTab, s.scheduleEnabled));
     watching_ = app_.playback().entry();
+    if (list && *list == rail::Item::Search) {
+      // The games rail's lists picked Search: the guide of the channel
+      // playing behind it, the card on search.
+      rebuild();
+      nav_.setList(itemOf(tab_));
+      focusPlaying();
+      requestListings();
+      apply(nav_.openSearch());
+      settleSlides(app_.ms());
+      return;
+    }
     if (list && *list != rail::Item::Events) {
       openList(*list);
       settleSlides(app_.ms());
@@ -122,12 +145,18 @@ class MiniGuide : public Screen {
 
   bool opaque() const override { return false; }
   bool holdsOk() const override {
-    return area_ == Area::Grid && nav_.mode() == rail::Mode::Content && pointer_ != kHitBeside;
+    return !nav_.search() && area_ == Area::Grid && nav_.mode() == rail::Mode::Content && pointer_ != kHitBeside;
   }
 
   // Back from a show's details: closes too if a channel was picked there.
   void shown() override {
     if (app_.playback().entry() != watching_) app_.nav().pop();
+    else if (nav_.search()) search_.shown();
+  }
+
+  // The TV's keyboard (search's 🎤 Speak).
+  void text(const std::string& value, bool closed, bool) override {
+    if (nav_.search()) search_.text(value, closed);
   }
 
   bool key(const KeyEvent& e) override {
@@ -135,6 +164,7 @@ class MiniGuide : public Screen {
     // A key that isn't a click: where the pointer last was no longer counts.
     if (e.key != Key::Ok) pointer_ = 0;
     if (e.key == Key::Ok && !e.longPress && pointer_ && click()) return true;
+    if (nav_.search()) return searchKey(e);
     int d = digitOf(e.key);
     if (d >= 0) {
       // A number acts on the grid: an open column or the lists close first.
@@ -166,6 +196,10 @@ class MiniGuide : public Screen {
     // The column and the lists highlight what the pointer is on; the grid
     // behind them takes the focus only on a click.
     if (nav_.mode() != rail::Mode::Content) return;
+    if (nav_.search()) {
+      search_.hover(id);
+      return;
+    }
     if (area_ == Area::Times) {
       if (inRange(id, kHitTimes, static_cast<int>(times_.size()))) time_ = id - kHitTimes;
       return;
@@ -188,10 +222,17 @@ class MiniGuide : public Screen {
     }
   }
 
-  void pointerGone() override { pointer_ = 0; }
+  void pointerGone() override {
+    pointer_ = 0;
+    search_.pointerGone();
+  }
 
   bool tick(uint32_t ms) override {
-    if (app_.store().channels()->version != ch_->version) {
+    if (app_.store().channels()->version != ch_->version && nav_.search()) {
+      // Under search: the grid behind it made again as it is (search
+      // follows new data by itself).
+      rebuild();
+    } else if (app_.store().channels()->version != ch_->version) {
       // The list itself changed: an open column or the lists close, the
       // grid back where it was.
       bool column = nav_.mode() == rail::Mode::Column;
@@ -212,6 +253,9 @@ class MiniGuide : public Screen {
     }
     if (!digits_.empty()) wake_.at(digitsAt_ + kDigitsMs);
     if (!notice_.empty() && ms < noticeUntil_) wake_.at(noticeUntil_);
+    // Search: the shows' pass after a pause in the typing, new data.
+    if (search_.tick(ms)) changed = true;
+    wake_.at(search_.wakeAt());
     bool moving = push_.moving(ms) || lists_.moving(ms);
     settleSlides(ms);
     return moving || changed;
@@ -227,14 +271,19 @@ class MiniGuide : public Screen {
     // Beside the guide: a click there closes it. The card's blank: nothing.
     c.hit({kCard.x + kCard.w, 0, gfx::kLayoutWidth - kCard.x - kCard.w, gfx::kLayoutHeight}, kHitBeside);
     c.hit(kCard, left_rail::kHitNothing);
-    drawTop(c);
-    drawRuler(c);
-    drawGrid(c);
-    drawDetail(c);
-    float column = push_.at(c.ms);
-    if (column > 0.01f) drawColumn(c, column);
     const RemoteKeys& keys = app_.remoteKeys();
-    if (mode != rail::Mode::Menu) {
+    if (nav_.search()) {
+      // The card is search: its header, keyboard, results and legend.
+      search_.draw(c, kCard, kLegendY, mode != rail::Mode::Menu);
+    } else {
+      drawTop(c);
+      drawRuler(c);
+      drawGrid(c);
+      drawDetail(c);
+    }
+    float column = push_.at(c.ms);
+    if (column > 0.01f && !nav_.search()) drawColumn(c, column);
+    if (mode != rail::Mode::Menu && !nav_.search()) {
       hints::PlayerGuide place = mode == rail::Mode::Column ? hints::PlayerGuide::Column
                                  : area_ == Area::Times     ? hints::PlayerGuide::Times
                                  : later()                  ? hints::PlayerGuide::Later
@@ -242,7 +291,7 @@ class MiniGuide : public Screen {
       std::string legend = hints::playerGuide(keys, place, !sections_.empty(), c.pointerActive);
       ui::label(c, legend, left_, kLegendY, Weight::Regular, 22, theme::white(0.75f), kCard.x + kCard.w - 40 - left_);
     }
-    if (area_ == Area::Times && mode == rail::Mode::Content) drawTimes(c);
+    if (area_ == Area::Times && mode == rail::Mode::Content && !nav_.search()) drawTimes(c);
     if (!digits_.empty()) {
       // In the free top line, over the clock.
       Rect r{kCard.x + kCard.w - 240, kCard.y + 10, 200, 76};
@@ -312,9 +361,18 @@ class MiniGuide : public Screen {
     flip_ = views::flipList(*ch_, list);
     rows_.clear();
     sections_.clear();
+    headerAt_.clear();
     for (const views::Line& l : list.lines) {
-      if (l.kind == views::Line::Kind::Header) sections_.push_back({l.title, static_cast<int>(rows_.size())});
-      else rows_.push_back(l.channel);
+      if (l.kind == views::Line::Kind::Header) {
+        sections_.push_back({l.title, static_cast<int>(rows_.size())});
+      } else {
+        rows_.push_back(l.channel);
+        headerAt_.push_back(-1);
+      }
+    }
+    for (size_t i = 0; i < sections_.size(); ++i) {
+      size_t row = static_cast<size_t>(sections_[i].row);
+      if (row < headerAt_.size()) headerAt_[row] = static_cast<int>(i);
     }
     focus_ = 0;
     for (size_t i = 0; i < rows_.size(); ++i)
@@ -407,6 +465,18 @@ class MiniGuide : public Screen {
     if (focus_ < first_) first_ = focus_;
     if (focus_ >= first_ + kVisibleRows) first_ = focus_ - kVisibleRows + 1;
     first_ = std::clamp(first_, 0, std::max(0, static_cast<int>(rows_.size()) - kVisibleRows));
+    // The neighborhood names take room: the focused row stays whole.
+    while (first_ < focus_ && heightTo(focus_) > kGridH) ++first_;
+  }
+  // The neighborhood name above `row` (-1 none).
+  int headerAt(int row) const {
+    return row >= 0 && row < static_cast<int>(headerAt_.size()) ? headerAt_[static_cast<size_t>(row)] : -1;
+  }
+  // From the top of the grid to the bottom of `row` (first_ at the top).
+  float heightTo(int row) const {
+    float h = 0;
+    for (int r = first_; r <= row; ++r) h += (headerAt(r) >= 0 ? kHeaderBand : 0) + kRowH + kRowGap;
+    return h;
   }
 
   // The focus is on the first show in view (nothing earlier to go to at
@@ -490,10 +560,19 @@ class MiniGuide : public Screen {
           toSection(s.index);
         }
         break;
-      case Do::Open: openList(s.item); return;
+      case Do::Open:
+        search_.close();
+        openList(s.item);
+        return;
       case Do::Digits: digits_.clear(); break;
       case Do::Now: returnToNow(); break;
       case Do::Close: app_.nav().pop(); return;
+      // Search (Build 132): the card on its keyboard, its results, or the
+      // grid again as it was.
+      case Do::Search: search_.open(); break;
+      case Do::Results: search_.focusResults(); break;
+      case Do::Keyboard: search_.focusKeyboard(); break;
+      case Do::Leave: search_.close(); break;
     }
     area_ = Area::Grid;
     syncSlides();
@@ -581,6 +660,14 @@ class MiniGuide : public Screen {
       else if (id == left_rail::kHitOutside) apply(nav_.closeLists());
       return true;
     }
+    if (nav_.search()) {
+      // "◀ Lists", the keyboard's ▶ and field; on a key or a result the
+      // hover focused it and OK acts on it.
+      rail::PlayerStep s;
+      if (!search_.click(id, s)) return false;
+      apply(s);
+      return true;
+    }
     if (mode == rail::Mode::Column) {
       if (inRange(id, left_rail::kHitColumn, static_cast<int>(sections_.size()))) {
         apply(nav_.clickColumn(id - left_rail::kHitColumn));
@@ -614,6 +701,25 @@ class MiniGuide : public Screen {
   }
 
   // ---------------------------------------------------------- keys
+  // The card is search: Back and the edges are the rail's (results ->
+  // keyboard -> lists -> the grid), the rest the keyboard's or the
+  // results'. Over it, the lists take keys as over any list.
+  bool searchKey(const KeyEvent& e) {
+    if (e.key == Key::Guide) {
+      app_.nav().pop();
+      return true;
+    }
+    if (nav_.mode() == rail::Mode::Menu) {
+      if (digitOf(e.key) >= 0 || e.key == Key::ChannelUp || e.key == Key::ChannelDown) return true;
+      apply(nav_.key(e.key, gridState(), e.glide), &e);
+      return true;
+    }
+    rail::PlayerStep s = nav_.key(e.key, gridState(), e.glide);
+    if (s.what == rail::PlayerStep::Do::Grid) s = search_.key(e);
+    apply(s);
+    return true;
+  }
+
   void gridKey(const KeyEvent& e) {
     switch (e.key) {
       case Key::Up:
@@ -827,10 +933,16 @@ class MiniGuide : public Screen {
     bool active = area_ == Area::Grid && nav_.mode() == rail::Mode::Content;
     const std::string& playing = app_.playback().entry();
     time::Seconds ws = windowStart_, we = drawEnd(), now = c.now;
-    for (int k = 0; k < kVisibleRows; ++k) {
-      int row = first_ + k;
-      if (row >= static_cast<int>(rows_.size())) break;
-      float y = kGridTop + static_cast<float>(k) * (kRowH + kRowGap);
+    float y = kGridTop - (kRowH + kRowGap);
+    for (int row = first_; row < static_cast<int>(rows_.size()); ++row) {
+      y += kRowH + kRowGap;
+      // Its neighborhood's name first, when the row starts one.
+      if (int h = headerAt(row); h >= 0) {
+        if (y + kHeaderBand + kRowH > kGridTop + kGridH) break;
+        ui::label(c, sections_[static_cast<size_t>(h)].title, left_, y, Weight::Bold, 17, theme::white(0.5f));
+        y += kHeaderBand;
+      }
+      if (y + kRowH > kGridTop + kGridH) break;
       const GuideChannel& g = channel(row);
       bool rowFocused = active && row == focus_;
       // Number and logo.
@@ -955,10 +1067,12 @@ class MiniGuide : public Screen {
   std::shared_ptr<const Listings> li_;
   std::vector<int> rows_;  // indexes into Channels::all
   std::vector<Section> sections_;
+  std::vector<int> headerAt_;  // per row: the section it starts, or -1
   std::vector<std::string> flip_;  // their entries, the flip list a pick plays with
   views::Tab tab_ = views::Tab::Lineup;
   bool picked_ = false;  // a list picked in the lists (not the one playing came from)
   rail::PlayerNav nav_;
+  PlayerSearch search_{app_, nav_};  // the card as search (Build 132)
   Place place_;
   left_rail::Slide push_, lists_;  // the column's push, the lists' slide
   float left_ = kLeft;             // the grid's left edge (pushed by the column)

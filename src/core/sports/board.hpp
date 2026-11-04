@@ -370,6 +370,9 @@ struct Board {
   std::string noteLine;
   // Race weekends you can watch (race_data::refreshForBoard).
   std::vector<std::string> watchableRaceWeekends;
+  // Build 132: the viewer's languages (languages::ofViewer of
+  // Input::countries), for Where to Watch.
+  std::set<std::string> languages = {"en"};
   Seconds now = 0;
 };
 
@@ -471,6 +474,10 @@ struct WherePanel {
   std::optional<std::string> moreStations;  // "More stations in your channels are showing it"
   std::string hint;
 };
+// Build 132: "Your channels" (in your languages, or not known, and My
+// Lineup's), then a section per other language ("In Spanish", "In Arabic"),
+// then the event feeds (another language's in its section). Headings never
+// count channels.
 // `feedSummary`: extra detail for a provider feed (the store's), optional.
 WherePanel wherePanel(const Board& board, const SportsEvent& event, const ChannelFor& channelFor,
                       const std::function<std::string(const std::string&)>& feedSummary = nullptr);
@@ -486,8 +493,10 @@ struct DetailCard {
   bool canRemind = false;
   std::optional<std::string> notInChannels;  // with the "if one picks it up" line
 };
+// Watch names a channel in your languages (`viewer`; Build 132), else
+// none when there are feeds in them, else the first channel.
 DetailCard detailCard(const SportsEvent& event, Seconds now, const time::Zone& zone, const Settings& settings,
-                      const ChannelFor& channelFor);
+                      const ChannelFor& channelFor, const std::set<std::string>& viewer = {"en"});
 
 // MARK: Formatting (exposed for tests)
 

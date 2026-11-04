@@ -14,6 +14,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "core/guide/outside.hpp"
@@ -85,6 +86,13 @@ std::optional<std::string> countryPrefix(const std::optional<std::string>& group
 // guide id and is from a selected country (`countries`, which tvOS kept in a
 // static; groups without a country prefix always take part).
 bool inScope(const Channel& channel, const std::set<std::string>& countries);
+// Build 132: also a channel of another country that `forEvents` keeps for
+// Live Events (a sports channel: sports/brands.hpp). Asked only of channels
+// with a guide id whose country isn't picked. The provider's whole file is
+// read either way: this keeps a few more channels' listings, downloads
+// nothing more.
+bool inScope(const Channel& channel, const std::set<std::string>& countries,
+             const std::function<bool(const Channel&)>& forEvents);
 
 std::string cacheKey(std::string_view profile, std::string_view sourceID);
 // "provider-<key>.json"
@@ -112,8 +120,14 @@ using ReadExactFn = std::function<std::optional<ExactRead>(
     const std::unordered_map<std::string, std::vector<std::string>>& ids, Window window,
     ReadFailure& failure)>;
 
-// Reads the provider's guide for `channels` (already in scope).
+// Build 132: a channel kept for Live Events only keeps what Live Events
+// reads of it: the next 14 hours of a guide up to kRefreshAge old.
+constexpr int kEventsOnlyHours = static_cast<int>(kRefreshAge / 3600) + 14;
+
+// Reads the provider's guide for `channels` (already in scope). Those in
+// `eventsOnly` (channel ids; null: none) keep kEventsOnlyHours ahead.
 Outcome build(const std::vector<Channel>& channels, time::Seconds now, const ReadExactFn& read,
-              const std::function<void(const std::string&)>& progress = nullptr);
+              const std::function<void(const std::string&)>& progress = nullptr,
+              const std::unordered_set<std::string>* eventsOnly = nullptr);
 
 }  // namespace marigold::guide::provider

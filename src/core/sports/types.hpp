@@ -174,15 +174,20 @@ struct EventSource {
   enum class Kind : uint8_t { lineup = 0, guide = 1, provider = 2, team = 3 };
   std::string channelID;
   Kind kind = Kind::guide;
-  bool spanish = false;
+  // Build 132: the language it's in ("en", "es", "ar"...; "" not known),
+  // tagged when the channel index and listings are made
+  // (sports/languages.hpp). Saved as "lang" and, as before, "spanish".
+  std::string lang;
   // "In My Lineup", "Provider event channel", "Team channel".
   std::string detail;
   // A station's rank (StationRank): 0 My Lineup and home, 1 My Lineup,
-  // 2 home market, 3 your other markets, 4 anywhere else. nil = not ranked.
+  // 2 home market, 3 your other markets, 4 anywhere else, 5 a sports
+  // channel from another country (Build 132). nil = not ranked.
   std::optional<int> rank;
 
+  bool spanish() const { return lang == "es"; }
   bool operator==(const EventSource& o) const {
-    return channelID == o.channelID && kind == o.kind && spanish == o.spanish &&
+    return channelID == o.channelID && kind == o.kind && lang == o.lang &&
            detail == o.detail && rank == o.rank;
   }
   bool operator!=(const EventSource& o) const { return !(*this == o); }

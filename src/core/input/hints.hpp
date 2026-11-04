@@ -85,6 +85,11 @@ std::optional<Hint> pickAnotherSource(const RemoteKeys& k);
 enum class PlayerGuide { Now, Later, Column, Lists, Times, Games, Sports, GameLists };
 std::string playerGuide(const RemoteKeys& k, PlayerGuide place, bool column = true, bool pointer = false);
 
+// Search in the player (Build 132), its legend line: on the keyboard
+// (`any`: results to choose on the right), or in the results (`watch`: OK
+// switches the picture to the focused one; else it opens its details).
+std::string playerSearch(const RemoteKeys& k, bool inResults, bool any, bool watch);
+
 // The one-time "Getting around" card: six keys.
 struct Tip {
   Hint key;

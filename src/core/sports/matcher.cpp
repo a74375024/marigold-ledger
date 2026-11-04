@@ -11,6 +11,7 @@
 #include "core/catalog/catalog.hpp"
 #include "core/guide/names.hpp"
 #include "core/sports/board.hpp"
+#include "core/sports/languages.hpp"
 #include "core/sports/network_map.hpp"
 #include "core/sports/profiles.hpp"
 #include "core/sports/text.hpp"
@@ -29,11 +30,11 @@ std::vector<std::string> splitWords(const std::string& normalizedText) { return 
 
 std::string trimmed(const std::string& s) { return std::string(str::trimUnicode(s)); }
 
-EventSource providerSource(const std::string& feed, bool spanish) {
+EventSource providerSource(const std::string& feed, const std::string& lang) {
   EventSource s;
   s.channelID = feed;
   s.kind = EventSource::Kind::provider;
-  s.spanish = spanish;
+  s.lang = lang;
   s.detail = kProviderDetail;
   return s;
 }
@@ -44,7 +45,7 @@ bool containsSource(const std::vector<EventSource>& list, const std::string& id)
 
 void addFeeds(SportsEvent& value, const ProviderEvent& event) {
   for (const std::string& feed : event.feeds) {
-    if (!containsSource(value.sources, feed)) value.sources.push_back(providerSource(feed, event.spanish));
+    if (!containsSource(value.sources, feed)) value.sources.push_back(providerSource(feed, event.langOf(feed)));
   }
 }
 
@@ -76,7 +77,7 @@ SportsEvent plainEvent(const ProviderEvent& event) {
   e.league = event.league;
   e.leagueShort = shortLeague(event.league);
   e.start = event.start;
-  for (const std::string& feed : event.feeds) e.sources.push_back(providerSource(feed, event.spanish));
+  for (const std::string& feed : event.feeds) e.sources.push_back(providerSource(feed, event.langOf(feed)));
   e.family = event.family;
   e.boards = event.boards;
   e.highSchool = event.highSchool;
@@ -261,7 +262,8 @@ json::Value toJson(const GuideListing& l) {
   json::Value v = json::Value::object();
   v.set("entryID", l.entryID);
   v.set("inLineup", l.inLineup);
-  v.set("spanish", l.spanish);
+  v.set("spanish", l.lang == "es");
+  if (!l.lang.empty()) v.set("lang", l.lang);
   v.set("title", l.title);
   v.set("start", static_cast<int64_t>(l.start));
   v.set("end", static_cast<int64_t>(l.end));
@@ -271,6 +273,7 @@ json::Value toJson(const GuideListing& l) {
   if (l.rank) v.set("rank", *l.rank);
   if (l.tennisCoverage) v.set("tennisCoverage", true);
   if (l.cricket) v.set("cricket", true);
+  if (l.abroad) v.set("abroad", true);
   return v;
 }
 
@@ -281,7 +284,8 @@ std::optional<GuideListing> listingFromJson(const json::Value& v) {
   GuideListing l;
   l.entryID = v["entryID"].asString();
   l.inLineup = v["inLineup"].asBool();
-  l.spanish = v["spanish"].asBool();
+  // Saved before Build 132: "spanish" only.
+  l.lang = v["lang"].isString() ? v["lang"].asString() : v["spanish"].asBool() ? std::string("es") : std::string();
   l.title = v["title"].asString();
   l.start = v["start"].asInt();
   l.end = v["end"].asInt();
@@ -291,6 +295,7 @@ std::optional<GuideListing> listingFromJson(const json::Value& v) {
   if (v["rank"].isNumber()) l.rank = static_cast<int>(v["rank"].asInt());
   l.tennisCoverage = v["tennisCoverage"].asBool();
   l.cricket = v["cricket"].asBool();
+  l.abroad = v["abroad"].asBool();
   return l;
 }
 
@@ -633,7 +638,7 @@ std::optional<BuildResult> build(const BuildInput& in) {
         bool main = has(str::lower(event.title), "main broadcast");
         for (const std::string& feed : event.feeds) {
           if (containsSource(value.sources, feed)) continue;
-          EventSource source = providerSource(feed, event.spanish);
+          EventSource source = providerSource(feed, event.langOf(feed));
           auto at = std::find_if(value.sources.begin(), value.sources.end(),
                                  [](const EventSource& s) { return s.kind == EventSource::Kind::provider; });
           if (main && at != value.sources.end()) {
@@ -655,7 +660,7 @@ std::optional<BuildResult> build(const BuildInput& in) {
         stats.filtered += 1;
         SportsEvent value = entry(t);
         for (const std::string& feed : event.feeds) {
-          if (!containsSource(value.sources, feed)) value.sources.push_back(providerSource(feed, event.spanish));
+          if (!containsSource(value.sources, feed)) value.sources.push_back(providerSource(feed, event.langOf(feed)));
         }
         if (!value.family) value.family = event.family;
         byGame[t] = std::move(value);
@@ -1134,12 +1139,21 @@ std::optional<BuildResult> build(const BuildInput& in) {
   });
   if (anyRelevant || anyCricket) {
     auto started = std::chrono::steady_clock::now();
+    // Build 132: a title on several channels (or on one again later) is
+    // read once: whether it's left out, and the games it names.
+    struct TitleRead {
+      bool excluded = false;
+      std::optional<std::vector<int>> games;
+    };
+    std::unordered_map<std::string, TitleRead> titleReads;
     for (const GuideListing& listing : in.listings) {
       if (elapsedMs(started) > kListingsBudgetMs) {
         stats.aborted = "listings over 2 s";
         break;
       }
-      if (excluded(normalized(listing.title))) continue;
+      auto [titleRead, fresh] = titleReads.try_emplace(listing.title);
+      if (fresh) titleRead->second.excluded = excluded(normalized(listing.title));
+      if (titleRead->second.excluded) continue;
       auto airing = [&](int g) {
         const SportsGame& game = games[static_cast<size_t>(g)];
         return listing.start < game.start + 2 * 3600 && listing.end > game.start - 15 * 60;
@@ -1167,10 +1181,12 @@ std::optional<BuildResult> build(const BuildInput& in) {
           if (found.size() == 1) candidates = found;
         }
       } else if (anyRelevant) {
-        candidates = filtered(index.matches(listing.title, isRelevant), airing);
+        if (!titleRead->second.games) titleRead->second.games = index.matches(listing.title, isRelevant);
+        candidates = filtered(*titleRead->second.games, airing);
       }
       if (candidates.empty() && listing.tennisCoverage) {
-        if (!tennisMatches.empty()) coverage.push_back(&listing);
+        // Another country's channel is a guide source only (never "likely").
+        if (!tennisMatches.empty() && !listing.abroad) coverage.push_back(&listing);
         continue;
       }
       if (candidates.empty() && !listing.cricket && (listing.venue || listing.detail)) {
@@ -1214,11 +1230,13 @@ std::optional<BuildResult> build(const BuildInput& in) {
         SportsEvent value = entry(g);
         if (!value.listingEnd || listing.end > *value.listingEnd) value.listingEnd = listing.end;
         if (!containsSource(value.sources, listing.entryID)) {
-          int rank = listing.rank.value_or(listing.inLineup ? station_rank::lineup : station_rank::elsewhere);
+          int rank = listing.abroad ? station_rank::abroad
+                                    : listing.rank.value_or(listing.inLineup ? station_rank::lineup
+                                                                             : station_rank::elsewhere);
           EventSource source;
           source.channelID = listing.entryID;
-          source.kind = listing.inLineup ? EventSource::Kind::lineup : EventSource::Kind::guide;
-          source.spanish = listing.spanish;
+          source.kind = listing.inLineup && !listing.abroad ? EventSource::Kind::lineup : EventSource::Kind::guide;
+          source.lang = listing.lang;
           source.detail = stationDetail(rank);
           source.rank = rank;
           value.sources.push_back(std::move(source));
@@ -1251,7 +1269,7 @@ std::optional<BuildResult> build(const BuildInput& in) {
         EventSource source;
         source.channelID = listing->entryID;
         source.kind = EventSource::Kind::team;
-        source.spanish = listing->spanish;
+        source.lang = listing->lang;
         source.detail = kCoverageDetail;
         source.rank = listing->rank.value_or(listing->inLineup ? station_rank::lineup : station_rank::elsewhere);
         value.sources.push_back(std::move(source));
@@ -1435,8 +1453,8 @@ std::optional<BuildResult> build(const BuildInput& in) {
         SportsEvent& tile = plainTiles[*at];
         // The English feed names the tile.
         bool allSpanish = std::all_of(tile.sources.begin(), tile.sources.end(),
-                                      [](const EventSource& s) { return s.spanish; });
-        if (!event.spanish && allSpanish) {
+                                      [](const EventSource& s) { return s.spanish(); });
+        if (event.lang != "es" && allSpanish) {
           std::vector<EventSource> previous = tile.sources;
           tile = plainEvent(event);
           for (const EventSource& source : previous) {
@@ -1651,34 +1669,53 @@ std::optional<BuildResult> build(const BuildInput& in) {
   }
   lap("3 assemble");
 
-  // Source order: My Lineup, other channels, provider feeds, team channels;
-  // Spanish after English unless the viewer picked US Spanish. Stations
-  // beyond the best few (one game can be on 90 stations) are counted, not
-  // listed.
+  // Source order (Build 132): My Lineup first, whatever its language (you
+  // chose it); then by language: yours, not known, another; then other
+  // channels, provider feeds, team channels; then station rank and the
+  // order found. Stations beyond the best few of a language (one game can
+  // be on 90 stations) are counted, not listed: yours and unknown ones
+  // together, each other language apart, so another language's stations
+  // never push yours out. Other countries' sports channels past two go.
   for (SportsEvent& event : result) {
     if (event.sources.size() <= 1) continue;
-    std::vector<std::pair<size_t, EventSource>> numbered;
-    for (size_t i = 0; i < event.sources.size(); ++i) numbered.emplace_back(i, event.sources[i]);
-    auto lang = [&](const EventSource& s) { return (in.preferSpanish ? !s.spanish : s.spanish) ? 1 : 0; };
-    std::sort(numbered.begin(), numbered.end(), [&](const auto& a, const auto& b) {
-      if (a.second.kind != b.second.kind) return static_cast<int>(a.second.kind) < static_cast<int>(b.second.kind);
-      int ra = a.second.rank.value_or(4), rb = b.second.rank.value_or(4);
+    struct Keyed {
+      size_t index;
+      int lineup, fit;
+      EventSource source;
+    };
+    std::vector<Keyed> keyed;
+    keyed.reserve(event.sources.size());
+    for (size_t i = 0; i < event.sources.size(); ++i) {
+      EventSource& s = event.sources[i];
+      keyed.push_back({i, s.kind == EventSource::Kind::lineup ? 0 : 1,
+                       static_cast<int>(languages::fit(s.lang, in.languages)), std::move(s)});
+    }
+    std::sort(keyed.begin(), keyed.end(), [](const Keyed& a, const Keyed& b) {
+      if (a.lineup != b.lineup) return a.lineup < b.lineup;
+      if (a.fit != b.fit) return a.fit < b.fit;
+      if (a.source.kind != b.source.kind) return static_cast<int>(a.source.kind) < static_cast<int>(b.source.kind);
+      int ra = a.source.rank.value_or(4), rb = b.source.rank.value_or(4);
       if (ra != rb) return ra < rb;
-      int sa = lang(a.second), sb = lang(b.second);
-      if (sa != sb) return sa < sb;
-      return a.first < b.first;
+      return a.index < b.index;
     });
     std::vector<EventSource> kept;
-    int stations = 0, folded = 0;
-    for (auto& item : numbered) {
-      if (item.second.kind == EventSource::Kind::guide) {
-        stations += 1;
-        if (stations > 3) {
+    kept.reserve(keyed.size());
+    std::map<std::string, int> stations;  // "" yours and unknown; else the language
+    int folded = 0, abroad = 0;
+    for (Keyed& item : keyed) {
+      EventSource& source = item.source;
+      if (source.rank == station_rank::abroad && ++abroad > kAbroadPerGame) {
+        stats.abroadDropped += 1;
+        continue;
+      }
+      if (source.kind == EventSource::Kind::guide) {
+        int& count = stations[item.fit == static_cast<int>(languages::Fit::other) ? source.lang : std::string()];
+        if (++count > 3) {
           folded += 1;
           continue;
         }
       }
-      kept.push_back(std::move(item.second));
+      kept.push_back(std::move(source));
     }
     event.sources = std::move(kept);
     if (folded > 0) {

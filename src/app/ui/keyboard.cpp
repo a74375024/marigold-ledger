@@ -20,6 +20,10 @@ void microphone(Ctx& c, float cx, float cy, Color col) {
   c.g.fill({cx - 5, cy + 13, 10, 2}, col, 1);
 }
 
+// The keyboard moved by the look's offset (the player's card draws it
+// inside; the Search screen at its place, unmoved).
+Rect moved(Rect r, const Look& l) { return {r.x + l.dx, r.y + l.dy, r.w, r.h}; }
+
 Rect keyRect(int row, int col, int span = 1) {
   return {kLeft + kStepX * static_cast<float>(col), kKeysTop + kStepY * static_cast<float>(row),
           kKeyW + kStepX * static_cast<float>(span - 1), kKeyH};
@@ -48,27 +52,29 @@ void key(Ctx& c, Rect r, const std::string& text, bool focused, float dim, int p
 }  // namespace
 
 void draw(Ctx& c, const Grid& grid, const Look& look, int base) {
+  const Rect field = moved(kField, look), speak = moved(kSpeak, look), panel = moved(kPanel, look);
+  const Rect tab = moved(kTab, look);
   float dim = look.focused ? 1.0f : 0.6f;
   const Grid::Spot& at = grid.at();
   // The field: what's typed, or what can be found.
-  c.hit(kField, base + kHitField);
-  c.g.fill(kField, theme::white(0.1f), kField.h * 0.5f);
-  magnifier(c, kField.x + 34, kField.y + 34, theme::white(0.85f));
-  Rect text{kField.x + 58, kField.y, kField.w - 80, kField.h};
+  c.hit(field, base + kHitField);
+  c.g.fill(field, theme::white(0.1f), field.h * 0.5f);
+  magnifier(c, field.x + 34, field.y + 34, theme::white(0.85f));
+  Rect text{field.x + 58, field.y, field.w - 80, field.h};
   if (look.query.empty()) {
     labelIn(c, "Channel, show, movie or team", text, Weight::Medium, 26, theme::white(0.55f));
   } else {
     float w = labelIn(c, look.query, text, Weight::Medium, 28, theme::white());
     if (look.focused && look.caret && w < text.w)
-      c.g.fill({text.x + w + 3, kField.y + 20, 2, kField.h - 40}, theme::white(0.9f));
+      c.g.fill({text.x + w + 3, field.y + 20, 2, field.h - 40}, theme::white(0.9f));
   }
   if (grid.speak()) {
     bool f = look.focused && at.area == Area::Speak;
-    c.hit(kSpeak, base + kHitSpeak);
-    c.g.fill(kSpeak, f ? theme::white() : theme::white(0.1f), kSpeak.h * 0.5f);
+    c.hit(speak, base + kHitSpeak);
+    c.g.fill(speak, f ? theme::white() : theme::white(0.1f), speak.h * 0.5f);
     Color ink = f ? theme::black() : theme::white(0.92f);
-    microphone(c, kSpeak.x + 30, kSpeak.y + 36, ink);
-    labelIn(c, "Speak", {kSpeak.x + 46, kSpeak.y, kSpeak.w - 52, kSpeak.h}, Weight::Bold, 24, ink);
+    microphone(c, speak.x + 30, speak.y + 36, ink);
+    labelIn(c, "Speak", {speak.x + 46, speak.y, speak.w - 52, speak.h}, Weight::Bold, 24, ink);
   }
   using search_keys::Page;
   Page page = grid.page();
@@ -82,25 +88,27 @@ void draw(Ctx& c, const Grid& grid, const Look& look, int base) {
         char ch = Grid::keyAt(page, row, col);
         int id = base + kHitKeys + search_keys::targetOf(page, {Area::Key, row, col});
         if (ch == ' ') {
-          key(c, keyRect(row, col, search_keys::kLetterCols - col), "Space", focusedKey(row, col), dim, 24, id);
+          key(c, moved(keyRect(row, col, search_keys::kLetterCols - col), look), "Space", focusedKey(row, col), dim, 24,
+              id);
           break;
         }
-        key(c, keyRect(row, col), std::string(1, ch), focusedKey(row, col), dim, 32, id);
+        key(c, moved(keyRect(row, col), look), std::string(1, ch), focusedKey(row, col), dim, 32, id);
       }
     }
   } else {
     // The keypad on its panel, the margins even; Space across its row.
-    c.g.fill(kPanel, theme::white(0.035f * dim), 22);
-    c.g.stroke(kPanel, theme::white(0.06f * dim), 22, 1);
+    c.g.fill(panel, theme::white(0.035f * dim), 22);
+    c.g.stroke(panel, theme::white(0.06f * dim), 22, 1);
     for (int row = 0; row + 1 < search_keys::kRows; ++row) {
       for (int col = 0; col < search_keys::kPadCols; ++col) {
         char ch = Grid::keyAt(page, row, col);
-        key(c, padRect(row, col), std::string(1, ch), focusedKey(row, col), dim, ch == '&' || ch == '\'' ? 30 : 32,
-            base + kHitKeys + search_keys::targetOf(page, {Area::Key, row, col}), ch == '&' || ch == '\'');
+        key(c, moved(padRect(row, col), look), std::string(1, ch), focusedKey(row, col), dim,
+            ch == '&' || ch == '\'' ? 30 : 32, base + kHitKeys + search_keys::targetOf(page, {Area::Key, row, col}),
+            ch == '&' || ch == '\'');
       }
     }
     int row = search_keys::kRows - 1;
-    key(c, keyRect(row, 0, search_keys::kLetterCols), "Space", focusedKey(row, 0), dim, 24,
+    key(c, moved(keyRect(row, 0, search_keys::kLetterCols), look), "Space", focusedKey(row, 0), dim, 24,
         base + kHitKeys + search_keys::targetOf(page, {Area::Key, row, 0}));
   }
   // ⌫ Delete · 123 (abc) · Clear: Clear sits at the far end, away from Delete.
@@ -108,10 +116,11 @@ void draw(Ctx& c, const Grid& grid, const Look& look, int base) {
   for (int col = 0; col < 3; ++col) {
     bool f = look.focused && at.area == Area::Bottom && at.col == col;
     bool mode = col == static_cast<int>(search_keys::Wide::Mode);
-    key(c, wideRect(col), wide[col], f, dim, 24, base + kHitKeys + search_keys::kTargetWide + col, false, mode);
+    key(c, moved(wideRect(col), look), wide[col], f, dim, 24, base + kHitKeys + search_keys::kTargetWide + col, false,
+        mode);
     if (col == 0) {
       // ⌫: a small key shape with a cross, before the word.
-      Rect r = wideRect(0);
+      Rect r = moved(wideRect(0), look);
       Color ink = f ? theme::black() : theme::white(0.92f * dim);
       float tw = textWidth(c, wide[0], Weight::Medium, 24);
       float x = r.x + (r.w - tw) * 0.5f - 34;
@@ -123,9 +132,9 @@ void draw(Ctx& c, const Grid& grid, const Look& look, int base) {
   }
   if (look.tab) {
     // The way to the results.
-    c.hit(kTab, base + kHitTab);
-    c.g.fill(kTab, theme::white(look.focused ? 0.14f : 0.08f), 32);
-    labelIn(c, "\xe2\x96\xb6", kTab, Weight::Bold, 30, theme::white(0.92f), Align::Center);
+    c.hit(tab, base + kHitTab);
+    c.g.fill(tab, theme::white(look.focused ? 0.14f : 0.08f), 32);
+    labelIn(c, "\xe2\x96\xb6", tab, Weight::Bold, 30, theme::white(0.92f), Align::Center);
   }
 }
 

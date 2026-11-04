@@ -137,6 +137,40 @@ Grid::Move Grid::move(Key k, uint32_t glide) {
   return {true, Edge::None};
 }
 
+std::string dropLast(const std::string& s) {
+  size_t n = s.size();
+  if (n == 0) return s;
+  --n;
+  while (n > 0 && (static_cast<unsigned char>(s[n]) & 0xC0) == 0x80) --n;
+  return s.substr(0, n);
+}
+
+Press press(Grid& grid, const std::string& query) {
+  using A = Grid::Spot::Area;
+  const Grid::Spot& at = grid.at();
+  if (at.area == A::Speak) return {Press::Do::Speak, query, false};
+  if (at.area == A::Bottom) {
+    if (at.col == static_cast<int>(Wide::Delete)) {
+      if (query.empty()) return {};
+      return {Press::Do::Text, dropLast(query), false};
+    }
+    if (at.col == static_cast<int>(Wide::Mode)) {
+      grid.flip();  // the focus stays on the key: a second OK flips back
+      return {};
+    }
+    grid.letters();
+    return {Press::Do::Text, std::string(), false};
+  }
+  std::string typed = grid.typed();
+  if (typed == " ") {
+    if (query.empty() || query.back() == ' ') return {};
+    return {Press::Do::Text, query + " ", false};
+  }
+  if (typed.empty()) return {};
+  // The page stays on 123 after a digit (numbers are several).
+  return {Press::Do::Text, query + typed, true};
+}
+
 int targetOf(Page page, const Grid::Spot& spot) {
   switch (spot.area) {
     case Grid::Spot::Area::Speak: return -1;

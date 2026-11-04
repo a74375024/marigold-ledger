@@ -7,6 +7,7 @@
 #include "core/catalog/catalog.hpp"
 #include "core/guide/names.hpp"
 #include "core/sports/calendars.hpp"
+#include "core/sports/languages.hpp"
 #include "core/sports/leagues.hpp"
 #include "core/sports/matcher.hpp"
 #include "core/sports/player_photos.hpp"
@@ -478,6 +479,8 @@ struct Context {
   const Input& in;
   Seconds now;
   std::map<std::string, std::string> familyNames;
+  // The viewer's languages (languages::ofViewer of in.countries).
+  std::set<std::string> languages;
 };
 
 }  // namespace
@@ -701,10 +704,10 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
     place.endedAt = endedAt;
   }
 
-  // Where to watch.
-  bool hasSpanish = std::any_of(basis.sources.begin(), basis.sources.end(), [](const EventSource& s) { return s.spanish; });
-  bool hasEnglish = std::any_of(basis.sources.begin(), basis.sources.end(), [](const EventSource& s) { return !s.spanish; });
-  bool spanishToo = hasSpanish && hasEnglish;
+  // Where to watch. Build 132: the tile names, and Watch starts on, a
+  // source in your languages (or My Lineup's, or one not known); a game only
+  // on another language's channels names the first of them.
+  auto welcome = [&](const EventSource& s) { return languages::welcome(s, ctx.languages); };
   std::optional<std::string> streaming;
   if (event.game) {
     for (const std::string& n : event.game->networks) {
@@ -718,22 +721,51 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
   // when there's no feed for the game itself.
   const EventSource* named = nullptr;
   for (const EventSource& s : basisChannels) {
-    if (s.kind != EventSource::Kind::team) {
+    if (s.kind != EventSource::Kind::team && welcome(s)) {
       named = &s;
       break;
     }
   }
+  bool welcomeFeeds = std::any_of(basisFeeds.begin(), basisFeeds.end(), welcome);
+  if (!named && !welcomeFeeds) {
+    for (const EventSource& s : basisChannels) {
+      if (s.kind != EventSource::Kind::team) {
+        named = &s;
+        break;
+      }
+    }
+  }
   if (!named && basisFeeds.empty() && !basisChannels.empty()) named = &basisChannels.front();
+  // "Also in Spanish": another language the game is on than the one named,
+  // or than yours: English or Spanish (both on US channels) or one of yours,
+  // never another country's channel (a game on a dozen countries' feeds
+  // would say little).
+  std::optional<std::string> alsoIn;
+  for (const EventSource& s : basis.sources) {
+    if (s.lang.empty() || s.rank == station_rank::abroad) continue;
+    if (s.lang != "en" && s.lang != "es" && !ctx.languages.count(s.lang)) continue;
+    bool other = named && !named->lang.empty() ? s.lang != named->lang
+                                               : languages::fit(s.lang, ctx.languages) == languages::Fit::other;
+    std::string language = other ? languages::name(s.lang) : std::string();
+    if (!language.empty()) {
+      alsoIn = "Also in " + language;
+      break;
+    }
+  }
+  bool hasWelcome = std::any_of(basis.sources.begin(), basis.sources.end(), welcome);
   std::optional<ChannelLabel> channel = named && in.channelFor ? in.channelFor(*named) : std::nullopt;
   if (channel) {
     place.channel = channel;
     place.inLineup = named->kind == EventSource::Kind::lineup;
+    std::string namedLanguage = welcome(*named) ? std::string() : languages::name(named->lang);
     if (named->rank == station_rank::lineupHome || named->rank == station_rank::home) {
       place.footer = "Your local station";
     } else if (place.inLineup) {
       place.footer = "In your lineup";
-    } else if (spanishToo && !named->spanish) {
-      place.footer = "Also in Spanish";
+    } else if (!namedLanguage.empty()) {
+      place.footer = "In " + namedLanguage;
+    } else if (alsoIn) {
+      place.footer = *alsoIn;
     } else if (place.feeds > 0) {
       place.footer = "+ " + std::to_string(place.feeds) + " backup feeds";
     } else if (streaming) {
@@ -746,7 +778,7 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
     } else {
       place.pill = std::string("Event feed");
     }
-    place.footer = spanishToo ? std::string("Also in Spanish") : countText(place.feeds, "1 feed", "feeds");
+    place.footer = alsoIn && hasWelcome ? *alsoIn : countText(place.feeds, "1 feed", "feeds");
   } else if (event.game && !event.game->networks.empty()) {
     const std::string& network = event.game->networks.front();
     place.pill = network;
@@ -1495,7 +1527,8 @@ Board build(const Input& in) {
   if (!untimed.empty()) drafts.push_back({"untimed", "Time not listed", untimed, {}, 0, true});
 
   // What each shown tile says.
-  Context ctx{in, now, {}};
+  Context ctx{in, now, {}, languages::ofViewer(in.countries)};
+  board.languages = ctx.languages;
   for (const catalog::EventFamily& f : in.families) ctx.familyNames.emplace(f.id, f.name);
   std::map<std::string, Place> places;
   for (const RowDraft& row : drafts) {
@@ -1978,7 +2011,7 @@ std::vector<SourceItem> guideSources(const Board& board, const std::string& tile
   for (const EventSource& source : basis.sources) {
     auto channel = channelFor ? channelFor(source) : std::nullopt;
     if (!channel) continue;
-    out.push_back({source.channelID, channel->name, source.detail, source.spanish});
+    out.push_back({source.channelID, channel->name, source.detail, source.spanish()});
   }
   return out;
 }
@@ -2022,7 +2055,7 @@ WherePanel wherePanel(const Board& board, const SportsEvent& event, const Channe
         if (!extra.empty()) parts.push_back(extra);
         detail = str::join(parts, kDot);
       }
-      s.items.push_back({source.channelID, channel->name, detail, source.spanish});
+      s.items.push_back({source.channelID, channel->name, detail, source.spanish()});
     }
     if (!s.items.empty()) panel.sections.push_back(std::move(s));
   };
@@ -2034,30 +2067,39 @@ WherePanel wherePanel(const Board& board, const SportsEvent& event, const Channe
     }
     return panel;
   }
-  std::vector<EventSource> english, spanish, feeds;
-  for (const EventSource& s : event.channels()) {
-    if (!s.spanish) english.push_back(s);
-  }
+  // Yours (in your languages or not known, and My Lineup's), each other
+  // language in the order of its best source, then the feeds.
+  std::vector<EventSource> yours, feeds;
+  std::vector<std::pair<std::string, std::vector<EventSource>>> others;
   for (const EventSource& s : event.sources) {
-    if (s.spanish) spanish.push_back(s);
+    if (languages::welcome(s, board.languages)) {
+      (s.kind == EventSource::Kind::provider ? feeds : yours).push_back(s);
+      continue;
+    }
+    auto other = std::find_if(others.begin(), others.end(), [&](const auto& o) { return o.first == s.lang; });
+    if (other == others.end()) {
+      others.emplace_back(s.lang, std::vector<EventSource>{});
+      other = others.end() - 1;
+    }
+    other->second.push_back(s);
   }
-  for (const EventSource& s : event.feeds()) {
-    if (!s.spanish) feeds.push_back(s);
-  }
-  if (!english.empty()) section("Your channels", english, event.id);
+  if (!yours.empty()) section("Your channels", yours, event.id);
   if (event.moreStations && *event.moreStations > 0) {
     int more = *event.moreStations;
     // Never how many: the product shows no channel counts.
     panel.moreStations = more == 1 ? std::string("Another station in your channels is showing it")
                                    : std::string("More stations in your channels are showing it");
   }
-  if (!spanish.empty()) section("Spanish", spanish, event.id);
+  for (const auto& [lang, list] : others) {
+    std::string language = languages::name(lang);
+    section(language.empty() ? std::string("In another language") : "In " + language, list, event.id);
+  }
   if (!feeds.empty()) section("Event feeds from your provider", feeds, event.id);
   return panel;
 }
 
 DetailCard detailCard(const SportsEvent& event, Seconds now, const time::Zone& zone, const Settings& settings,
-                      const ChannelFor& channelFor) {
+                      const ChannelFor& channelFor, const std::set<std::string>& viewer) {
   DetailCard card;
   card.leagueLine = leagueLine(event);
   if (event.game) {
@@ -2082,12 +2124,21 @@ DetailCard detailCard(const SportsEvent& event, Seconds now, const time::Zone& z
   if (event.game && event.game->venue) parts.push_back(*event.game->venue);
   std::vector<EventSource> channels = event.channels();
   std::vector<EventSource> feeds = event.feeds();
-  std::optional<ChannelLabel> channel =
-      !channels.empty() && channelFor ? channelFor(channels.front()) : std::nullopt;
+  // In your languages (Build 132): such a channel, else none when there's
+  // such a feed, else the first channel.
+  auto welcome = [&](const EventSource& s) { return languages::welcome(s, viewer); };
+  auto mine = std::find_if(channels.begin(), channels.end(), welcome);
+  const EventSource* watch = nullptr;
+  if (mine != channels.end()) {
+    watch = &*mine;
+  } else if (!channels.empty() && std::none_of(feeds.begin(), feeds.end(), welcome)) {
+    watch = &channels.front();
+  }
+  std::optional<ChannelLabel> channel = watch && channelFor ? channelFor(*watch) : std::nullopt;
   if (channel) {
     parts.push_back("On " + channel->name);
     card.watchLabel = "Watch " + channel->name + " Now";
-    card.watchSourceID = channels.front().channelID;
+    card.watchSourceID = watch->channelID;
   } else if (feeds.empty() && event.game && !event.game->networks.empty()) {
     parts.push_back("On " + event.game->networks.front());
   }

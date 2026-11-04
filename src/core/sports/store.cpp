@@ -7,6 +7,8 @@
 #include <unordered_set>
 
 #include "core/catalog/catalog.hpp"
+#include "core/sports/brands.hpp"
+#include "core/sports/languages.hpp"
 #include "core/sports/text.hpp"
 #include "core/sports/titles.hpp"
 #include "core/util/json.hpp"
@@ -15,10 +17,34 @@ namespace marigold::sports::store {
 
 // MARK: Guide listings
 
+std::vector<std::string> abroadChannels(const std::vector<Channel>& entries, const std::set<std::string>& lineup,
+                                        const std::vector<std::string>& browseIDs,
+                                        const std::unordered_map<std::string, catalog::EntryInfo>& entryInfo,
+                                        const std::set<std::string>& hiddenGroups, const std::string& otherGroup) {
+  using catalog::LineupCategory;
+  std::unordered_set<std::string> browse(browseIDs.begin(), browseIDs.end());
+  std::vector<std::string> out;
+  for (const Channel& entry : entries) {
+    if (lineup.count(entry.id) || browse.count(entry.id) || hiddenGroups.count(entry.group.value_or(otherGroup))) {
+      continue;
+    }
+    auto found = entryInfo.find(entry.id);
+    if (found == entryInfo.end()) continue;
+    const catalog::EntryInfo& info = found->second;
+    // Another country's (a sports channel of no country is read already).
+    if (info.kind != catalog::ChannelKind::channel || !info.market || !info.closed.empty() ||
+        (info.category != LineupCategory::international && info.category != LineupCategory::sports)) {
+      continue;
+    }
+    if (brands::isSportsBrand(info.name)) out.push_back(entry.id);
+  }
+  return out;
+}
+
 std::vector<ListingChannel> listingChannels(const std::set<std::string>& lineup,
                                             const std::vector<std::string>& browseIDs,
                                             const std::unordered_map<std::string, catalog::EntryInfo>& entryInfo,
-                                            const StationMarkets& markets) {
+                                            const StationMarkets& markets, const std::vector<std::string>& abroad) {
   using catalog::LineupCategory;
   // Every such channel you have, not only My Lineup's: any station whose
   // guide shows the game is a way to watch it. Sports channels of unknown
@@ -35,17 +61,37 @@ std::vector<ListingChannel> listingChannels(const std::set<std::string>& lineup,
     auto found = entryInfo.find(id);
     if (found == entryInfo.end()) continue;
     const catalog::EntryInfo& info = found->second;
+    // Build 132: another country's channel in the browse list is
+    // "international"; a sports brand among them is read too.
+    bool brand = info.category == LineupCategory::international && info.kind == catalog::ChannelKind::channel &&
+                 brands::isSportsBrand(info.name);
     if (info.category != LineupCategory::sports && info.category != LineupCategory::local &&
-        info.category != LineupCategory::spanish) {
+        info.category != LineupCategory::spanish && !brand) {
       continue;
     }
     ListingChannel channel;
     channel.id = id;
     channel.inLineup = lineup.count(id) > 0;
-    channel.spanish = info.category == LineupCategory::spanish || info.market == std::string("US-ES");
+    channel.lang = languages::ofChannel(info);
     channel.rank = stationRank(info, markets, channel.inLineup);
-    channel.sportsChannel = info.category == LineupCategory::sports && info.kind == catalog::ChannelKind::channel;
+    channel.sportsChannel =
+        (info.category == LineupCategory::sports || brand) && info.kind == catalog::ChannelKind::channel;
     channel.cricketChannel = channel.sportsChannel && cricketChannelName(info.name);
+    out.push_back(std::move(channel));
+  }
+  // Other countries' sports channels: the games their listings name, ranked
+  // last (never tennis coverage: a "likely" source).
+  std::set<std::string> taken;
+  for (const std::string& id : abroad) {
+    auto found = entryInfo.find(id);
+    if (found == entryInfo.end() || candidates.count(id) || !taken.insert(id).second) continue;
+    const catalog::EntryInfo& info = found->second;
+    ListingChannel channel;
+    channel.id = id;
+    channel.lang = languages::ofChannel(info);
+    channel.rank = station_rank::abroad;
+    channel.cricketChannel = cricketChannelName(info.name);
+    channel.abroad = true;
     out.push_back(std::move(channel));
   }
   return out;
@@ -53,7 +99,11 @@ std::vector<ListingChannel> listingChannels(const std::set<std::string>& lineup,
 
 bool cricketChannelName(std::string_view name) {
   std::string words = matcher::normalized(name);
-  return words.find(" willow ") != std::string::npos || words.find(" cricket ") != std::string::npos;
+  for (const char* brand : {" willow ", " cricket ", " star sports ", " ptv sports ", " ten sports ", " a sports ",
+                            " supersport "}) {
+    if (words.find(brand) != std::string::npos) return true;
+  }
+  return false;
 }
 
 std::optional<matcher::GuideListing> listingFor(const ListingChannel& channel, const std::string& rawTitle,
@@ -64,7 +114,8 @@ std::optional<matcher::GuideListing> listingFor(const ListingChannel& channel, c
   matcher::GuideListing listing;
   listing.entryID = channel.id;
   listing.inLineup = channel.inLineup;
-  listing.spanish = channel.spanish;
+  listing.lang = channel.lang;
+  listing.abroad = channel.abroad;
   listing.title = title;
   listing.start = start;
   listing.end = end;
@@ -165,8 +216,6 @@ bool highSchoolFamily(std::string_view family) {
 std::vector<matcher::ProviderEvent> providerEvents(
     const std::vector<catalog::LiveEvent>& events,
     const std::unordered_map<std::string, catalog::ChannelTraits>& traits, Seconds now) {
-  static const char* const kSpanishWords =
-      "\\b(spanish|espanol|espa\xC3\xB1ol|deportes|telemundo|univision|tudn|unimas)\\b";
   std::vector<matcher::ProviderEvent> out;
   out.reserve(events.size());
   for (const catalog::LiveEvent& event : events) {
@@ -181,7 +230,20 @@ std::vector<matcher::ProviderEvent> providerEvents(
     p.start = event.start;
     p.feeds = event.feeds;
     p.family = event.family;
-    p.spanish = event.market == std::string("US-ES") || rx::test(kSpanishWords, event.title, true);
+    p.lang = languages::ofFeed(event.title, event.family, event.market);
+    // Each feed by its own channel's market where that says otherwise: a
+    // provider group of several countries' channels ("grp:...") has its
+    // first channel's market for all its events ("AL: ..." beside "LV: ...").
+    const bool group = str::startsWith(event.family, "grp:");
+    for (size_t i = 0; i < event.feeds.size(); ++i) {
+      auto t = traits.find(event.feeds[i]);
+      if (t == traits.end()) continue;
+      std::optional<std::string> own = t->second.market;
+      if (!own && !group) continue;
+      if (own == event.market) continue;
+      if (p.feedLangs.empty()) p.feedLangs.assign(event.feeds.size(), p.lang);
+      p.feedLangs[i] = languages::ofFeed(event.title, event.family, own);
+    }
     // Feeds that are boards of one darts event.
     std::set<std::string> boards;
     for (const std::string& feed : event.feeds) {
@@ -272,7 +334,8 @@ std::string fingerprint(const Fingerprint& f, Seconds now) {
   std::vector<std::string> hidden(f.hidden.begin(), f.hidden.end());
   return std::to_string(f.eventsRevision) + "|" + std::to_string(f.scheduleRevision) + "|" +
          std::to_string(f.entriesRevision) + "|" + std::to_string(f.listingsRevision) + "|" +
-         std::to_string(now / 1800) + "|" + str::join(hidden, ",") + "|" + (f.preferSpanish ? "true" : "false") + "|" +
+         std::to_string(now / 1800) + "|" + str::join(hidden, ",") + "|" +
+         str::join(std::vector<std::string>(f.languages.begin(), f.languages.end()), ",") + "|" +
          (f.enabled ? "true" : "false") + "|" + std::to_string(f.schools);
 }
 
@@ -297,7 +360,7 @@ std::optional<RebuildResult> rebuild(const RebuildInput& in) {
   }
   b.games = in.games;
   b.listings = in.listings;
-  b.preferSpanish = in.preferSpanish;
+  b.languages = in.languages;
   b.now = in.now;
   b.zone = in.zone;
   for (const SportsEvent& event : in.previous) {
@@ -553,19 +616,27 @@ std::vector<std::string> eventCandidates(const SportsEvent& event, const std::op
     }
   }
   std::vector<EventSource> channels = event.channels();
-  for (const EventSource& source : channels) {
-    if (source.kind == EventSource::Kind::team) continue;
-    if (auto channel = resolve(source)) add(versions(channel->id));
+  // Yours (My Lineup's, in your languages or not known) first: their
+  // channels, then their feeds; then another language's.
+  for (bool welcome : {true, false}) {
+    auto fits = [&](const EventSource& s) { return languages::welcome(s, resolver.languages) == welcome; };
+    for (const EventSource& source : channels) {
+      if (source.kind == EventSource::Kind::team || !fits(source)) continue;
+      if (auto channel = resolve(source)) add(versions(channel->id));
+    }
+    std::vector<std::string> feeds;
+    for (const EventSource& source : event.feeds()) {
+      if (!fits(source)) continue;
+      if (auto channel = resolve(source)) feeds.push_back(channel->id);
+    }
+    add(resolver.bestFeeds ? resolver.bestFeeds(feeds) : feeds);
   }
-  std::vector<std::string> feeds;
-  for (const EventSource& source : event.feeds()) {
-    if (auto channel = resolve(source)) feeds.push_back(channel->id);
-  }
-  add(resolver.bestFeeds ? resolver.bestFeeds(feeds) : feeds);
   // A team's own channel last: likely, not certain, to carry the game.
-  for (const EventSource& source : channels) {
-    if (source.kind != EventSource::Kind::team) continue;
-    if (auto channel = resolve(source)) add(versions(channel->id));
+  for (bool welcome : {true, false}) {
+    for (const EventSource& source : channels) {
+      if (source.kind != EventSource::Kind::team || languages::welcome(source, resolver.languages) != welcome) continue;
+      if (auto channel = resolve(source)) add(versions(channel->id));
+    }
   }
   return list;
 }
@@ -600,7 +671,15 @@ std::optional<LiveReminder> reminderTarget(const SportsEvent& event, const Resol
   if (!event.start || !resolver.sourceChannel) return std::nullopt;
   std::vector<EventSource> channels = event.channels();
   std::vector<EventSource> feeds = event.feeds();
-  const EventSource* source = !channels.empty() ? &channels.front() : (!feeds.empty() ? &feeds.front() : nullptr);
+  // As Watch: a channel in your languages, else a feed in them, else any.
+  auto welcome = [&](const EventSource& s) { return languages::welcome(s, resolver.languages); };
+  auto mine = std::find_if(channels.begin(), channels.end(), welcome);
+  auto mineFeed = std::find_if(feeds.begin(), feeds.end(), welcome);
+  const EventSource* source = mine != channels.end()      ? &*mine
+                              : mineFeed != feeds.end()   ? &*mineFeed
+                              : !channels.empty()         ? &channels.front()
+                              : !feeds.empty()            ? &feeds.front()
+                                                          : nullptr;
   if (!source) return std::nullopt;
   auto channel = resolver.sourceChannel(*source);
   if (!channel) return std::nullopt;

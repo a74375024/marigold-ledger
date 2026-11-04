@@ -152,3 +152,17 @@ TEST_CASE("hints: the guide in the player, per remote and place") {
   CHECK(playerGuide(siri, PlayerGuide::Later).find("Click and hold remind") != std::string::npos);
   CHECK(playerGuide(siri, PlayerGuide::Sports).rfind("Click or \xe2\x96\xb6 its games", 0) == 0);
 }
+
+TEST_CASE("hints: search in the player, on the keyboard and in the results") {
+  const std::string dot = " \xc2\xb7 ";
+  using marigold::hints::playerSearch;
+  RemoteKeys lg = RemoteKeys::lg();
+  CHECK(playerSearch(lg, false, true, false) == "OK type" + dot + "\xe2\x96\xb6 results" + dot + "Back: lists");
+  // Nothing on the right yet: no way there.
+  CHECK(playerSearch(lg, false, false, false) == "OK type" + dot + "Back: lists");
+  CHECK(playerSearch(lg, true, true, true) == "\xe2\x96\xb2\xe2\x96\xbc results" + dot + "OK watch here" + dot +
+                                                 "\xe2\x97\x80 keyboard" + dot + "Back: keyboard");
+  CHECK(playerSearch(lg, true, true, false).find("OK details") != std::string::npos);
+  CHECK(playerSearch(RemoteKeys::appleTv(), false, true, false).rfind("Click type", 0) == 0);
+  CHECK(playerSearch(RemoteKeys::appleTv(), true, true, true).find("Click watch here") != std::string::npos);
+}

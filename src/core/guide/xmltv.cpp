@@ -134,8 +134,9 @@ void XmltvReader::startElement(std::string_view element, const xml::Attributes& 
       start = s.value_or(0);
       end = e.value_or(0);
     }
-    if (!keep_->count(id) || !timed || !(end > start) || !(end > window_.low) ||
-        !(start < window_.high)) {
+    int high = window_.high;
+    if (window_.shortIds && window_.shortIds->count(id)) high = std::min(high, window_.shortHigh);
+    if (!keep_->count(id) || !timed || !(end > start) || !(end > window_.low) || !(start < high)) {
       programmeChannel_.reset();
       return;
     }

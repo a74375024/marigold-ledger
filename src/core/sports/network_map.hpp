@@ -31,6 +31,9 @@ constexpr int lineup = 1;
 constexpr int home = 2;
 constexpr int market = 3;
 constexpr int elsewhere = 4;
+// Build 132: a sports channel from a country you didn't pick (brands.hpp),
+// read for Live Events only.
+constexpr int abroad = 5;
 // Ranks that count as "your local station".
 inline bool isLocal(int rank) { return rank == home || rank == market; }
 }  // namespace station_rank
@@ -56,7 +59,7 @@ std::optional<std::string> nextHomeMarket(const catalog::LineupPrefs& prefs);
 // other markets, anywhere else.
 int stationRank(const catalog::EntryInfo& info, const StationMarkets& markets, bool inLineup);
 // How a station shows on a tile, by rank: "In My Lineup", "Your local
-// station", "In your channels".
+// station", "In your channels", "From another country".
 std::string stationDetail(int rank);
 
 // Regional sports networks under their many names: the schedule writes
@@ -87,10 +90,10 @@ struct ChannelIndex {
   struct Item {
     std::string id;
     bool inLineup = false;
-    bool spanish = false;
+    std::string lang;  // languages::ofChannel ("" not known)
     int rank = station_rank::elsewhere;
     bool operator==(const Item& o) const {
-      return id == o.id && inLineup == o.inLineup && spanish == o.spanish && rank == o.rank;
+      return id == o.id && inLineup == o.inLineup && lang == o.lang && rank == o.rank;
     }
   };
   std::map<std::string, std::vector<Item>> byKey;

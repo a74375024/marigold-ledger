@@ -28,7 +28,9 @@ namespace marigold::sports::matcher {
 struct GuideListing {
   std::string entryID;
   bool inLineup = false;
-  bool spanish = false;
+  // The channel's language (languages::ofChannel; "" not known). Saved as
+  // "lang" and, as before, "spanish".
+  std::string lang;
   std::string title;
   Seconds start = 0;
   Seconds end = 0;
@@ -49,12 +51,15 @@ struct GuideListing {
   // Cricket", described "3rd T20I."): the scheduled match in play then, when
   // only one is (or its number or format picks one out).
   bool cricket = false;
+  // Build 132: a sports channel from a country you didn't pick (brands.hpp):
+  // a way to watch the game it names, ranked last, two at most per game.
+  bool abroad = false;
 
   bool operator==(const GuideListing& o) const {
-    return entryID == o.entryID && inLineup == o.inLineup && spanish == o.spanish &&
+    return entryID == o.entryID && inLineup == o.inLineup && lang == o.lang &&
            title == o.title && start == o.start && end == o.end && detail == o.detail &&
            venue == o.venue && city == o.city && rank == o.rank && tennisCoverage == o.tennisCoverage &&
-           cricket == o.cricket;
+           cricket == o.cricket && abroad == o.abroad;
   }
   bool operator!=(const GuideListing& o) const { return !(*this == o); }
 };
@@ -86,7 +91,17 @@ struct ProviderEvent {
   std::optional<Seconds> start;
   std::vector<std::string> feeds;
   std::string family;
-  bool spanish = false;
+  // The feed's language (languages::ofFeed; "" not known), and each feed's
+  // own where it differs (parallel to `feeds`; empty: all `lang`): a group
+  // of several countries' channels has one market for its events.
+  std::string lang;
+  std::vector<std::string> feedLangs;
+  const std::string& langOf(const std::string& feed) const {
+    for (size_t i = 0; i < feeds.size() && i < feedLangs.size(); ++i) {
+      if (feeds[i] == feed) return feedLangs[i];
+    }
+    return lang;
+  }
   // Only a clock time was given; the day is a guess.
   bool guessed = false;
   // Darts: the event's boards, each one of its feeds ("Board 1".."Board 5").
@@ -154,6 +169,8 @@ struct Stats {
   // A cricket channel's live match joined to the match in play.
   int cricketListings = 0;
   int trimmedStations = 0;
+  // Build 132: other countries' sports channels past the two a game keeps.
+  int abroadDropped = 0;
   // Fight feeds joined to a card part (from the schedule or each other).
   int fightFeeds = 0;
   // Feeds of a team sport that aren't a game: shows and replays (hidden).
@@ -189,7 +206,9 @@ struct BuildInput {
   // a day-less copy of one is a leftover, never shown themselves.
   std::vector<ProviderEvent> pastEvents;
   std::vector<GuideListing> listings;
-  bool preferSpanish = false;
+  // Build 132: the viewer's languages (languages::ofViewer): a game's
+  // sources in them first.
+  std::set<std::string> languages = {"en"};
   Seconds now = 0;
   // The viewer's zone (Calendar.current): "before today" for stale feeds.
   time::Zone zone = time::Zone::device();
@@ -219,15 +238,20 @@ struct BuildResult {
 // that was there on an earlier day (Stats::hidden; the Live Events report).
 constexpr const char* kLeftoverNotScheduled = "a leftover: not on the schedule";
 
-// Matches everything, then orders each event's sources best first (My
-// Lineup, other channels, provider feeds, team channels; Spanish after
-// English unless preferSpanish; stations beyond the best three counted in
-// moreStations) and the events by start, title and id. nullopt when
-// shouldStop stopped it.
+// Matches everything, then orders each event's sources best first and the
+// events by start, title and id. A game's sources (Build 132): My Lineup
+// first (whatever its language), then by language (one of `languages`, not
+// known, another), then by kind (other channels, provider feeds, team
+// channels), station rank and the order found. Guide stations beyond the
+// best three of each language (yours and unknown together) are counted in
+// moreStations; other countries' sports channels beyond two are dropped.
+// Nothing else is removed. nullopt when shouldStop stopped it.
 std::optional<BuildResult> build(const BuildInput& input);
 
 // The 2 s budget for reading guide listings.
 constexpr int kListingsBudgetMs = 2000;
+// Other countries' sports channels (GuideListing::abroad) a game keeps.
+constexpr int kAbroadPerGame = 2;
 
 // MARK: Fight cards
 

@@ -19,6 +19,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "core/guide/names.hpp"
@@ -293,6 +294,11 @@ struct Window {
   // Descriptions are kept for programmes starting before this (and for
   // sports); 0: kDescHours after low + 180 (the time of the read).
   int descUntil = 0;
+  // Build 132: these guide ids (lower case) keep programmes starting before
+  // `shortHigh` only: channels read for Live Events only
+  // (provider::kEventsOnlyHours). Null: none.
+  std::shared_ptr<const std::unordered_set<std::string>> shortIds = nullptr;
+  int shortHigh = 0;
 };
 
 // One source's matches from a file (XMLTVReader.SourceResult).

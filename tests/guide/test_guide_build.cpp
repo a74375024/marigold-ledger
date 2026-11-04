@@ -289,6 +289,27 @@ TEST_CASE("provider guide: scope, rebuild, outcomes") {
   CHECK(provider::inScope(c, {"UK"}));  // no country prefix: always
   c.epgId = "";
   CHECK_FALSE(provider::inScope(c, {"UK"}));
+  // Build 132: another country's channel kept for Live Events is in scope
+  // when it has a guide id; asked only of those out of scope.
+  int asked = 0;
+  auto sportsOnly = [&asked](const Channel& ch) {
+    ++asked;
+    return ch.name.find("Sky Sports") != std::string::npos;
+  };
+  Channel sky = userChannel("s", "Sky Sports Main Event", std::string("UK| Sports"));
+  sky.epgId = "skysportsmain.uk";
+  Channel drama = userChannel("d", "Harbour Drama", std::string("UK| Drama"));
+  drama.epgId = "drama.uk";
+  Channel noId = userChannel("n", "Sky Sports Golf", std::string("UK| Sports"));
+  Channel home = userChannel("h", "NBC", std::string("US| Locals"));
+  home.epgId = "nbc.us";
+  CHECK(provider::inScope(sky, {"US"}, sportsOnly));
+  CHECK_FALSE(provider::inScope(drama, {"US"}, sportsOnly));
+  CHECK_FALSE(provider::inScope(noId, {"US"}, sportsOnly));  // no guide id: never asked
+  CHECK(asked == 2);
+  CHECK(provider::inScope(home, {"US"}, sportsOnly));  // in scope anyway: not asked
+  CHECK(asked == 2);
+  CHECK_FALSE(provider::inScope(sky, {"US"}, nullptr));
   CHECK(provider::cacheKey("Main Profile", "xt:acct-1") == "Main_Profile_xt_acct_1");
   CHECK(provider::savedFileName("k") == "provider-k.json");
 
@@ -372,6 +393,45 @@ TEST_CASE("provider guide: scope, rebuild, outcomes") {
   CHECK((*back->programs.at("b"))[1].t == "Later");
   CHECK(back->notes == built.saved.notes);
   CHECK(back->bytes == 4096);
+
+  // Build 132: a channel read for Live Events only keeps what Live Events
+  // reads of it (kEventsOnlyHours ahead); the others the whole 48 hours.
+  // A guide id only such channels have is read no further (the file's
+  // programmes past it are never kept); one shared with another channel is
+  // read whole and cut for that channel after.
+  CHECK(provider::kEventsOnlyHours == 26);
+  std::vector<Channel> mixed = channels;
+  mixed[2].epgId = "two.us";
+  std::unordered_set<std::string> eventsOnly = {"b", "c"};
+  auto trimmed = provider::build(
+      mixed, kNowSec,
+      [&](const auto& wanted, Window window, provider::ReadFailure&) {
+        REQUIRE(static_cast<bool>(window.shortIds));
+        CHECK(*window.shortIds == std::unordered_set<std::string>{"two.us"});
+        CHECK(window.shortHigh == kNow + 26 * 60);
+        XmltvReader reader = XmltvReader::exact(wanted, window);
+        xmltvdata::Builder b;
+        b.channel("ONE.us", {"One TV"}).channel("TWO.us", {"Two TV"});
+        for (const char* id : {"one.us", "two.us"}) {
+          b.programme(id, kNow, 30, "First")
+              .programme(id, kNow + 25 * 60, 30, "Tomorrow")
+              .programme(id, kNow + 30 * 60, 30, "Too Far");
+        }
+        reader.feed(b.done());
+        reader.finish();
+        provider::ExactRead read;
+        read.programs = reader.result();
+        read.guideChannels = reader.guideChannelCount();
+        read.programmes = reader.programmeCount();
+        return std::optional<provider::ExactRead>(read);
+      },
+      nullptr, &eventsOnly);
+  REQUIRE(trimmed.kind == provider::Outcome::Kind::built);
+  CHECK(trimmed.saved.programs.at("a")->size() == 3);
+  REQUIRE(trimmed.saved.programs.at("b")->size() == 2);
+  CHECK(trimmed.saved.programs.at("b")->back().t == "Tomorrow");
+  REQUIRE(trimmed.saved.programs.at("c")->size() == 2);
+  CHECK(trimmed.saved.programs.at("c")->back().t == "Tomorrow");
 }
 
 TEST_CASE("station directory: rows, carried-over cities, channel numbers") {

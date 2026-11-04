@@ -82,7 +82,7 @@ inline EventSource source(const std::string& id, EventSource::Kind kind, bool sp
   EventSource s;
   s.channelID = id;
   s.kind = kind;
-  s.spanish = spanish;
+  s.lang = spanish ? "es" : "";
   s.rank = rank;
   s.detail = detail;
   return s;

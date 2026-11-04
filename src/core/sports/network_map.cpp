@@ -5,6 +5,7 @@
 #include <unordered_set>
 
 #include "core/catalog/catalog.hpp"
+#include "core/sports/languages.hpp"
 #include "core/sports/matcher.hpp"
 #include "core/sports/text.hpp"
 
@@ -107,6 +108,7 @@ int stationRank(const catalog::EntryInfo& info, const StationMarkets& markets, b
 std::string stationDetail(int rank) {
   if (rank <= station_rank::lineup) return "In My Lineup";
   if (station_rank::isLocal(rank)) return "Your local station";
+  if (rank == station_rank::abroad) return "From another country";
   return "In your channels";
 }
 
@@ -347,16 +349,15 @@ ChannelIndex channelIndex(const std::set<std::string>& lineup, const std::vector
       }
       // From the full list, only sports channels of unknown country.
       if (pass == 2 && (info.market || info.category != LineupCategory::sports)) continue;
-      bool spanish = info.category == LineupCategory::spanish || info.market == std::string("US-ES");
+      if (!info.core && info.category != LineupCategory::sports && info.category != LineupCategory::local &&
+          info.category != LineupCategory::spanish) {
+        continue;
+      }
       bool inLineup = lineup.count(entry.id) > 0;
-      ChannelIndex::Item item{entry.id, inLineup, spanish, stationRank(info, markets, inLineup)};
+      ChannelIndex::Item item{entry.id, inLineup, languages::ofChannel(info), stationRank(info, markets, inLineup)};
       auto add = [&](const std::string& key) { index.byKey[key].push_back(item); };
       if (info.core) {
         add("core:" + *info.core);
-        continue;
-      }
-      if (info.category != LineupCategory::sports && info.category != LineupCategory::local &&
-          info.category != LineupCategory::spanish) {
         continue;
       }
       if (info.category == LineupCategory::local) {
@@ -455,7 +456,7 @@ NetworkSources networkSources(const std::vector<SportsGame>& games, const Channe
         source.channelID = item.id;
         source.kind = team ? EventSource::Kind::team
                            : (item.inLineup ? EventSource::Kind::lineup : EventSource::Kind::guide);
-        source.spanish = item.spanish;
+        source.lang = item.lang;
         source.detail = team ? (item.inLineup ? teamLineupDetail : teamDetail) : stationDetail(item.rank);
         source.rank = item.rank;
         sources.push_back(std::move(source));

@@ -3,6 +3,7 @@
 // Back in each, the lists themselves, the pointer and a Siri Remote swipe.
 #include <doctest.h>
 
+#include <string>
 #include <vector>
 
 #include "core/input/player_rail.hpp"
@@ -19,15 +20,20 @@ Grid edge(int origin = 1, int count = 6) { return {true, false, false, origin, c
 
 }  // namespace
 
-TEST_CASE("player rail: the lists, with All Channels only when on and Live Events only with the board") {
-  CHECK(playerLists(false, true) == std::vector<Item>{Item::Lineup, Item::Favorites, Item::Recent, Item::Events});
+TEST_CASE("player rail: the lists, Search first, All Channels only when on and Live Events only with the board") {
+  CHECK(playerLists(false, true) ==
+        std::vector<Item>{Item::Search, Item::Lineup, Item::Favorites, Item::Recent, Item::Events});
   CHECK(playerLists(true, true) ==
-        std::vector<Item>{Item::Lineup, Item::Favorites, Item::Recent, Item::Events, Item::All});
+        std::vector<Item>{Item::Search, Item::Lineup, Item::Favorites, Item::Recent, Item::Events, Item::All});
   // The game schedule off in Settings: no Live Events.
-  CHECK(playerLists(false, false) == std::vector<Item>{Item::Lineup, Item::Favorites, Item::Recent});
-  CHECK(playerLists(true, false) == std::vector<Item>{Item::Lineup, Item::Favorites, Item::Recent, Item::All});
-  // Search, My Sports and Settings are the main guide's, never here.
-  for (Item i : playerLists(true, true)) CHECK(isSection(i));
+  CHECK(playerLists(false, false) == std::vector<Item>{Item::Search, Item::Lineup, Item::Favorites, Item::Recent});
+  CHECK(playerLists(true, false) ==
+        std::vector<Item>{Item::Search, Item::Lineup, Item::Favorites, Item::Recent, Item::All});
+  // Search at the top, as in the main guide's rail (Build 132), with its
+  // title; My Sports and Settings are the main guide's, never here.
+  CHECK(items(false).front() == Item::Search);
+  CHECK(std::string(title(playerLists(false, true).front())) == "Search");
+  for (Item i : playerLists(true, true)) CHECK((isSection(i) || i == Item::Search));
 }
 
 TEST_CASE("player rail: Left opens the column only at the first show at Now") {
@@ -163,7 +169,7 @@ TEST_CASE("player rail: a list picked in the lists opens its column") {
   // A click on a list.
   n.openLists();
   CHECK(n.mode() == Mode::Menu);
-  CHECK(n.pickList(4).item == Item::All);
+  CHECK(n.pickList(5).item == Item::All);
 }
 
 TEST_CASE("player rail: Recent has no neighborhoods, so Left opens the lists") {
@@ -230,4 +236,169 @@ TEST_CASE("player rail: one Siri Remote swipe moves one neighborhood, and stops 
   CHECK(n.key(Key::Down, edge()).what == Do::Scroll);
   CHECK(n.key(Key::Down, edge()).what == Do::Scroll);
   CHECK(n.index() == 2);
+}
+
+// Search in the player (Build 132): the lists' first item.
+namespace {
+
+// The lists opened from the column of `list` (focus on that list).
+PlayerNav listsOpen(Item list = Item::Lineup, bool all = false) {
+  PlayerNav n(list);
+  n.setLists(playerLists(all, true));
+  n.key(Key::Left, edge(1, 4));
+  n.key(Key::Left, edge());
+  return n;
+}
+
+}  // namespace
+
+TEST_CASE("player search: OK on Search in the lists turns the card into search, on its keyboard") {
+  PlayerNav n = listsOpen();
+  CHECK(n.mode() == Mode::Menu);
+  CHECK(n.lists()[static_cast<size_t>(n.listFocus())] == Item::Lineup);
+  CHECK(n.key(Key::Up, edge()).what == Do::None);
+  CHECK(n.lists()[static_cast<size_t>(n.listFocus())] == Item::Search);
+  CHECK(n.key(Key::Up, edge()).what == Do::None);  // the top
+  PlayerStep s = n.key(Key::Ok, edge());
+  CHECK(s.what == Do::Search);
+  CHECK(s.item == Item::Search);
+  CHECK(n.search());
+  CHECK_FALSE(n.results());
+  CHECK(n.mode() == Mode::Content);
+  CHECK(n.list() == Item::Search);  // the lists' bar marks it
+  CHECK(n.before() == Item::Lineup);
+  // Right opens it as OK does, and so does a click.
+  PlayerNav r = listsOpen(Item::Favorites);
+  r.key(Key::Up, edge());
+  r.key(Key::Up, edge());
+  CHECK(r.key(Key::Right, edge()).what == Do::Search);
+  CHECK(r.before() == Item::Favorites);
+  PlayerNav c = listsOpen();
+  CHECK(c.pickList(0).what == Do::Search);
+  CHECK(c.search());
+}
+
+TEST_CASE("player search: every key but Back is the keyboard's or the results'") {
+  PlayerNav n = listsOpen();
+  n.pickList(0);
+  for (Key k : {Key::Up, Key::Down, Key::Left, Key::Right, Key::Ok, Key::Red, Key::PlayPause})
+    CHECK(n.key(k, edge()).what == Do::Grid);
+  CHECK(n.mode() == Mode::Content);
+  CHECK(n.search());
+}
+
+TEST_CASE("player search: Right to the results only with some; Left back to the keyboard") {
+  PlayerNav n = listsOpen();
+  n.pickList(0);
+  CHECK(n.toResults(false).what == Do::None);  // nothing to the right
+  CHECK_FALSE(n.results());
+  CHECK(n.toKeyboard().what == Do::None);  // already there
+  CHECK(n.toResults(true).what == Do::Results);
+  CHECK(n.results());
+  CHECK(n.toResults(true).what == Do::None);  // already there
+  CHECK(n.toKeyboard().what == Do::Keyboard);
+  CHECK_FALSE(n.results());
+  // Not in search: neither.
+  PlayerNav g;
+  CHECK(g.toResults(true).what == Do::None);
+  CHECK(g.toKeyboard().what == Do::None);
+  CHECK_FALSE(g.results());
+}
+
+TEST_CASE("player search: Back goes results, keyboard, the lists, then the grid as it was, then closes") {
+  PlayerNav n = listsOpen(Item::Favorites);
+  n.pickList(0);
+  n.toResults(true);
+  // Results: the keyboard.
+  CHECK(n.key(Key::Back, edge()).what == Do::Keyboard);
+  CHECK(n.search());
+  CHECK_FALSE(n.results());
+  // Keyboard: the lists, on Search, over the search.
+  CHECK(n.key(Key::Back, edge()).what == Do::None);
+  CHECK(n.mode() == Mode::Menu);
+  CHECK(n.search());
+  CHECK_FALSE(n.fromColumn());
+  CHECK(n.lists()[static_cast<size_t>(n.listFocus())] == Item::Search);
+  // The lists: the grid of the list before search, as it was.
+  PlayerStep s = n.key(Key::Back, edge());
+  CHECK(s.what == Do::Leave);
+  CHECK(s.item == Item::Favorites);
+  CHECK_FALSE(n.search());
+  CHECK(n.mode() == Mode::Content);
+  CHECK(n.list() == Item::Favorites);
+  // The grid: Back closes the guide, as before.
+  CHECK(n.key(Key::Back, {false, false, false, 0, 4}).what == Do::Close);
+}
+
+TEST_CASE("player search: the lists over search: Search again comes back, another list leaves it") {
+  PlayerNav n = listsOpen();
+  n.pickList(0);
+  n.key(Key::Back, edge());  // the lists
+  CHECK(n.mode() == Mode::Menu);
+  // OK on Search: the keyboard again (the list before it is kept).
+  CHECK(n.key(Key::Ok, edge()).what == Do::Search);
+  CHECK(n.search());
+  CHECK(n.before() == Item::Lineup);
+  // Another list: opened as from any list; search is over.
+  n.key(Key::Back, edge());
+  n.key(Key::Down, edge());
+  n.key(Key::Down, edge());
+  PlayerStep s = n.key(Key::Ok, edge());
+  CHECK(s.what == Do::Open);
+  CHECK(s.item == Item::Favorites);
+  CHECK_FALSE(n.search());
+  // The pointer: a click on the dimmed card beside the lists is Back.
+  PlayerNav p = listsOpen();
+  p.pickList(0);
+  p.openLists();
+  CHECK(p.mode() == Mode::Menu);
+  CHECK(p.closeLists().what == Do::Leave);
+  CHECK_FALSE(p.search());
+}
+
+TEST_CASE("player search: the keyboard's left edge and \"Lists\" open the lists, from the results too") {
+  PlayerNav n = listsOpen();
+  n.pickList(0);
+  CHECK(n.openLists().what == Do::None);
+  CHECK(n.mode() == Mode::Menu);
+  CHECK(n.search());
+  n.key(Key::Ok, edge());
+  n.toResults(true);
+  // "Lists" clicked in the results: the lists; Search again: the keyboard.
+  n.openLists();
+  CHECK(n.mode() == Mode::Menu);
+  CHECK_FALSE(n.results());
+  CHECK(n.key(Key::Ok, edge()).what == Do::Search);
+  CHECK_FALSE(n.results());
+}
+
+TEST_CASE("player search: a swipe that crossed the keyboard's edge stops at the lists") {
+  PlayerNav n = listsOpen();
+  n.pickList(0);
+  n.openLists(21);  // the swipe that crossed
+  CHECK(n.key(Key::Down, edge(), 21).what == Do::None);
+  CHECK(n.lists()[static_cast<size_t>(n.listFocus())] == Item::Search);
+  // The next swipe moves one list.
+  CHECK(n.key(Key::Down, edge(), 22).what == Do::None);
+  CHECK(n.lists()[static_cast<size_t>(n.listFocus())] == Item::Lineup);
+}
+
+TEST_CASE("player search: opened without the lists (the games rail picked it)") {
+  PlayerNav n(Item::Lineup);
+  PlayerStep s = n.openSearch();
+  CHECK(s.what == Do::Search);
+  CHECK(n.search());
+  CHECK(n.mode() == Mode::Content);
+  CHECK(n.before() == Item::Lineup);
+  n.key(Key::Back, edge());
+  CHECK(n.mode() == Mode::Menu);
+  CHECK(n.key(Key::Back, edge()).what == Do::Leave);
+  CHECK(n.list() == Item::Lineup);
+  // The games rail's own lists have Search too: picked there, it says so
+  // (the rail opens the guide in the player on search).
+  PlayerNav games(Item::Events);
+  games.setLists(playerLists(false, true));
+  games.openColumn(0, 3);
+  games.openLists();
+  CHECK(games.pickList(0).what == Do::Search);
 }

@@ -249,8 +249,9 @@ TEST_CASE("F1 channels: dedicated ones, yours first, a few English and others") 
     CHECK(s.kind == EventSource::Kind::team);
     CHECK(s.detail == "F1 channel");
   }
-  CHECK(sources[5].spanish);
-  CHECK_FALSE(sources[1].spanish);
+  CHECK(sources[5].spanish());
+  CHECK_FALSE(sources[1].spanish());
+  CHECK(sources[1].lang == "en");
   // An entry in the "Other" group hides with it.
   CHECK(f1ChannelSources(entries, info, {"Other"}, "Other", {}).size() == 7);
 

@@ -9,7 +9,8 @@
 // picture shows; the column widens it while it's open. Built from the
 // board's rows as the board screen shows them (Build 119: Show on the
 // board), with the row of the game on screen kept: indices into the board,
-// never a copy of it, and no requests of its own.
+// never a copy of it, and no requests of its own. Search, the lists' first
+// (Build 132), opens the guide in the player on search.
 #include <algorithm>
 
 #include "app/app.hpp"
@@ -233,7 +234,16 @@ class EventGuide : public Screen {
       case Do::Grid:
       case Do::None:
       case Do::Digits:
-      case Do::Now: break;
+      case Do::Now:
+      case Do::Results:
+      case Do::Keyboard:
+      case Do::Leave: break;
+      case Do::Search:
+        // Search, the lists' first (Build 132): the guide in the player as
+        // search, as the other lists open it.
+        app_.nav().pop();
+        app_.nav().push(makeMiniGuide(app_, rail::Item::Search));
+        return;
       case Do::Column: place_ = {rowIndex_, focusedTile() ? focusedTile()->id : std::string(), scroll_}; break;
       // The games follow the column; on the sport it opened on, as they were.
       case Do::Scroll:

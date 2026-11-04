@@ -41,6 +41,7 @@
 #include "core/sources/emby.hpp"
 #include "core/sources/m3u.hpp"
 #include "core/sources/xtream.hpp"
+#include "core/sports/brands.hpp"
 #include "core/util/gunzip.hpp"
 #include "core/util/json.hpp"
 #include "core/util/json_doc.hpp"
@@ -2787,9 +2788,33 @@ void Store::runProviderGuide() {
     bool insecure = false;
     std::vector<Channel> channels;
     const guide::provider::Saved* saved = nullptr;
+    // Build 132: those read for Live Events only.
+    std::unordered_set<std::string> eventsOnly;
   };
   std::vector<Job> jobs;
   std::set<std::string> countries = m.prefs.guideCountries();
+  // Build 132: other countries' sports channels (not in a hidden group) are
+  // read too, for Live Events only; told by their row, once per row.
+  std::unordered_map<std::string, bool> sportsRows;
+  std::unordered_set<std::string>* eventsOnly = nullptr;  // the job's
+  auto forEvents = [&m, &sportsRows, &eventsOnly](const Channel& c) {
+    if (m.hiddenGroups.count(c.group.value_or(kOtherGroup))) return false;
+    auto entry = m.catalog->entryOf.find(c.id);
+    if (entry == m.catalog->entryOf.end()) return false;
+    auto [row, fresh] = sportsRows.emplace(entry->second, false);
+    if (fresh) {
+      auto at = m.entryInfo.find(entry->second);
+      if (at != m.entryInfo.end()) {
+        const EntryInfo& info = m.catalog->entries[at->second];
+        row->second = info.kind == catalog::ChannelKind::channel && info.market && info.closed.empty() &&
+                      (info.category == catalog::LineupCategory::international ||
+                       info.category == catalog::LineupCategory::sports) &&
+                      sports::brands::isSportsBrand(info.name);
+      }
+    }
+    if (row->second && eventsOnly) eventsOnly->insert(c.id);
+    return row->second;
+  };
   for (const sources::Account& a : m.accounts) {
     if (!hasGuideFile(a)) continue;
     Job j;
@@ -2804,12 +2829,14 @@ void Store::runProviderGuide() {
     j.sourceId = a.sourceId();
     j.name = redact(a.displayName);
     j.key = guide::provider::cacheKey("default", j.sourceId);
+    eventsOnly = &j.eventsOnly;
     for (const Channel& c : *m.channels) {
       if (c.serverId != j.sourceId) continue;
       auto t = m.catalog->traits.find(c.id);
       if (t != m.catalog->traits.end() && t->second.familyKey) continue;
-      if (guide::provider::inScope(c, countries)) j.channels.push_back(c);
+      if (guide::provider::inScope(c, countries, forEvents)) j.channels.push_back(c);
     }
+    eventsOnly = nullptr;
     if (j.channels.empty()) continue;
     auto saved = m.providerSaved.find(j.key);
     const guide::provider::Saved* s = saved == m.providerSaved.end() ? nullptr : &saved->second;
@@ -2888,7 +2915,7 @@ void Store::runProviderGuide() {
             out.bytes = static_cast<int64_t>(r.bytes);
             return out;
           };
-          guide::provider::Outcome o = guide::provider::build(j.channels, time::now(), read);
+          guide::provider::Outcome o = guide::provider::build(j.channels, time::now(), read, nullptr, &j.eventsOnly);
           if (o.kind == guide::provider::Outcome::Kind::built) {
             // Not saved (no room): the guide is used from memory all the same.
             writeFileStreaming(

@@ -20,6 +20,10 @@ namespace theme = ui::theme;
 
 bool watchEvent(App& app, const std::string& id, const std::string& entryOrChannel = "") {
   Playback& p = app.playback();
+  // Already watching full screen (the details opened from the player's
+  // search, Build 132): the player switches in place, no second player
+  // (the guide over it closes itself).
+  bool watching = p.active() && p.full();
   bool ok = entryOrChannel.empty() ? p.tune(id, app.store().eventFlipList(id))
                                    : p.tuneEventVia(id, entryOrChannel, app.store().eventFlipList(id));
   if (!ok) {
@@ -27,7 +31,7 @@ bool watchEvent(App& app, const std::string& id, const std::string& entryOrChann
     return false;
   }
   p.setFull();
-  app.nav().push(makePlayer(app));
+  if (!watching) app.nav().push(makePlayer(app));
   return true;
 }
 

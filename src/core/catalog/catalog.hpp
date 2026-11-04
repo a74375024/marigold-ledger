@@ -59,6 +59,14 @@ std::string groupOf(const Channel& channel);
 // prefix), nullopt when it isn't marked.
 std::optional<std::string> markedCountry(const Channel& channel);
 
+// The language a market's channels are in ("US" -> "en", "US-ES" -> "es",
+// "MX" -> "es", "AE" -> "ar"): the map of directory and reference languages
+// to markets read the other way, plus the countries it doesn't list. Empty
+// for a market whose channels are in several languages ("IN", "CA", "BE",
+// "CH") or that stands for two places ("AR": Arabic channel groups and
+// Argentina).
+std::string marketLanguage(std::string_view market);
+
 // How far a build has got, read from another thread ("Building your
 // lineup"): the pass, and how many of its items are done.
 struct BuildProgress {

@@ -5,7 +5,8 @@
 namespace marigold::rail {
 
 std::vector<Item> playerLists(bool allChannels, bool liveEvents) {
-  std::vector<Item> out = {Item::Lineup, Item::Favorites, Item::Recent};
+  // Search first, as in the main guide's rail (Build 132).
+  std::vector<Item> out = {Item::Search, Item::Lineup, Item::Favorites, Item::Recent};
   if (liveEvents) out.push_back(Item::Events);
   if (allChannels) out.push_back(Item::All);
   return out;
@@ -28,9 +29,46 @@ PlayerStep PlayerNav::of(const Step& s) {
   return {Do::None, s.index, s.item};
 }
 
+PlayerStep PlayerNav::picked(PlayerStep s) {
+  if (s.what != PlayerStep::Do::Open) return s;
+  if (s.item == Item::Search) return openSearch();
+  // Another list: the screen opens it (search is over).
+  search_ = results_ = false;
+  return s;
+}
+
+PlayerStep PlayerNav::openSearch() {
+  if (!search_) before_ = nav_.section();
+  search_ = true;
+  results_ = false;
+  fromColumn_ = false;
+  nav_.close();
+  nav_.setSection(Item::Search);
+  return {PlayerStep::Do::Search, 0, Item::Search};
+}
+
+PlayerStep PlayerNav::toResults(bool any) {
+  if (!search_ || nav_.mode() != Mode::Content || results_ || !any) return {PlayerStep::Do::None};
+  results_ = true;
+  return {PlayerStep::Do::Results, 0, Item::Search};
+}
+
+PlayerStep PlayerNav::toKeyboard() {
+  if (!search_ || nav_.mode() != Mode::Content || !results_) return {PlayerStep::Do::None};
+  results_ = false;
+  return {PlayerStep::Do::Keyboard, 0, Item::Search};
+}
+
 PlayerStep PlayerNav::key(Key k, const Grid& g, uint32_t glide) {
   using Do = PlayerStep::Do;
   Mode m = nav_.mode();
+  if (m == Mode::Content && search_) {
+    // Search: Back goes results -> keyboard -> the lists; every other key
+    // is the keyboard's or the results' own.
+    if (k != Key::Back) return {Do::Grid};
+    if (results_) return toKeyboard();
+    return openLists();
+  }
   if (m == Mode::Content) {
     if (k == Key::Back) {
       if (g.digits) return {Do::Digits};
@@ -54,7 +92,7 @@ PlayerStep PlayerNav::key(Key k, const Grid& g, uint32_t glide) {
   if (m == Mode::Menu) {
     if (k == Key::Back) return closeLists();
     if (k == Key::Left) return {Do::None};
-    return of(nav_.key(k));
+    return picked(of(nav_.key(k)));
   }
   // The column: Left opens the lists over the grid put back as it was.
   if (k == Key::Left) return openLists();
@@ -72,9 +110,12 @@ PlayerStep PlayerNav::openColumn(int origin, int count) {
   return {nav_.mode() == Mode::Column ? PlayerStep::Do::Column : PlayerStep::Do::None, nav_.origin(), list()};
 }
 
-PlayerStep PlayerNav::openLists() {
+PlayerStep PlayerNav::openLists(uint32_t glide) {
   Mode m = nav_.mode();
   if (m == Mode::Menu) return {PlayerStep::Do::None};
+  // A swipe that crossed the keyboard's edge goes no further.
+  if (glide) glide_ = glide;
+  results_ = false;
   fromColumn_ = m == Mode::Column;
   if (fromColumn_) return of(nav_.key(Key::Left));  // Restore, and the lists
   nav_.openMenu();
@@ -86,11 +127,19 @@ PlayerStep PlayerNav::clickColumn(int i) { return of(nav_.clickColumn(i)); }
 PlayerStep PlayerNav::pickList(int i) {
   const std::vector<Item>& items = nav_.items();
   if (nav_.mode() != Mode::Menu || items.empty()) return {PlayerStep::Do::None};
-  return of(nav_.pick(items[static_cast<size_t>(std::clamp(i, 0, static_cast<int>(items.size()) - 1))]));
+  return picked(of(nav_.pick(items[static_cast<size_t>(std::clamp(i, 0, static_cast<int>(items.size()) - 1))])));
 }
 
 PlayerStep PlayerNav::closeLists() {
   if (nav_.mode() != Mode::Menu) return {PlayerStep::Do::None};
+  if (search_) {
+    // Over search: the grid of the list before it, as it was (Back there
+    // closes the guide; OK on Search comes back to the keyboard).
+    search_ = results_ = false;
+    nav_.setSection(before_);
+    nav_.close();
+    return {PlayerStep::Do::Leave, 0, before_};
+  }
   // Back to the column it came from, on the neighborhood it opened on (the
   // grid is already back there); a list without one: the grid.
   if (fromColumn_) return openColumn(nav_.origin(), nav_.count());

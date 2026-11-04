@@ -185,6 +185,15 @@ std::string playerGuide(const RemoteKeys& k, PlayerGuide place, bool column, boo
   return {};
 }
 
+std::string playerSearch(const RemoteKeys& k, bool inResults, bool any, bool watch) {
+  const char* dot = " \xc2\xb7 ";
+  std::string ok = k.clickpad ? "Click" : "OK";
+  if (!inResults)
+    return ok + " type" + (any ? std::string(dot) + kRight + " results" : std::string()) + dot + "Back: lists";
+  return std::string(kUp) + kDown + " results" + dot + ok + (watch ? " watch here" : " details") + dot + kLeft +
+         " keyboard" + dot + "Back: keyboard";
+}
+
 std::vector<Tip> gettingAround(const RemoteKeys& k) {
   std::string ok = k.clickpad ? "Click" : "OK";
   std::vector<Tip> tips = {

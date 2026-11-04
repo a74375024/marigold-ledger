@@ -113,6 +113,21 @@ class Grid {
   GlideStop glide_;
 };
 
+// OK on the keyboard (the Search screen's and the player's, Build 132):
+// what the focused key does to `query`. A letter or digit is added; Space
+// only after a word; ⌫ Delete drops one whole character (UTF-8 from the
+// system keyboard); Clear empties the field and goes back to the letters;
+// the mode key flips the page (the focus stays on it); Speak opens the
+// TV's keyboard (the screen's to do).
+struct Press {
+  enum class Do { None, Text, Speak } what = Do::None;
+  std::string query;   // Text: the new query
+  bool typed = false;  // Text: a key's character was added (not Delete, Clear or Space)
+};
+Press press(Grid& grid, const std::string& query);
+// `s` without its last character, whole.
+std::string dropLast(const std::string& s);
+
 // Pointer targets, for the screen's hit ids: each key of a page once
 // (Space's cells are one), numbered from 0: the letters by cell (row * 6 +
 // col), the keypad's from 30 (row * 3 + col), the wide keys from 50. A

@@ -354,3 +354,48 @@ TEST_CASE("hints: Search on LG, Fire TV and Apple TV") {
   CHECK(hidden.keys[0].label == "Watch channel 2061");
   CHECK(hidden.right == "Doesn't tune by itself \xc2\xb7 Back: Cancel");
 }
+
+TEST_CASE("search keys: OK on a key, shared by Search and the player's search") {
+  using search_keys::Press;
+  Grid g;
+  // A letter is added.
+  g.set(Grid::keyFor(Page::Letters, 'p'));
+  Press p = search_keys::press(g, "pu");
+  CHECK(p.what == Press::Do::Text);
+  CHECK(p.query == "pup");
+  CHECK(p.typed);
+  // Space only after a word.
+  g.set(Grid::keyFor(Page::Letters, ' '));
+  CHECK(search_keys::press(g, "").what == Press::Do::None);
+  CHECK(search_keys::press(g, "pulse ").what == Press::Do::None);
+  p = search_keys::press(g, "pulse");
+  CHECK(p.query == "pulse ");
+  CHECK_FALSE(p.typed);
+  // Delete: one whole character; nothing on an empty field.
+  g.set(wide(search_keys::Wide::Delete));
+  CHECK(search_keys::press(g, "").what == Press::Do::None);
+  CHECK(search_keys::press(g, "abc").query == "ab");
+  CHECK(search_keys::press(g, "caf\xc3\xa9").query == "caf");
+  CHECK(search_keys::dropLast("a\xe2\x80\x9d") == "a");
+  CHECK(search_keys::dropLast("").empty());
+  // The mode key flips the page and keeps the focus; a digit stays on 123.
+  g.set(wide(search_keys::Wide::Mode));
+  CHECK(search_keys::press(g, "x").what == Press::Do::None);
+  CHECK(g.page() == Page::Digits);
+  CHECK(g.onMode());
+  g.set(Grid::keyFor(Page::Digits, '2'));
+  CHECK(search_keys::press(g, "sn").query == "sn2");
+  CHECK(g.page() == Page::Digits);
+  // Clear: an empty field, the letters again.
+  g.set(wide(search_keys::Wide::Clear));
+  p = search_keys::press(g, "sn2");
+  CHECK(p.what == Press::Do::Text);
+  CHECK(p.query.empty());
+  CHECK(g.page() == Page::Letters);
+  // Speak: the TV's keyboard, the query as it is.
+  Grid s(true);
+  s.set({Area::Speak, 0, 0});
+  p = search_keys::press(s, "pul");
+  CHECK(p.what == Press::Do::Speak);
+  CHECK(p.query == "pul");
+}

@@ -430,7 +430,9 @@ json::Value toJson(const EventSource& s) {
   json::Value v = json::Value::object();
   v.set("channelID", s.channelID);
   v.set("kind", static_cast<int>(s.kind));
-  v.set("spanish", s.spanish);
+  // "spanish" as older builds read it; "lang" when known.
+  v.set("spanish", s.spanish());
+  if (!s.lang.empty()) v.set("lang", s.lang);
   v.set("detail", s.detail);
   setOpt(v, "rank", s.rank);
   return v;
@@ -442,7 +444,8 @@ std::optional<EventSource> sourceFromJson(const json::Value& v) {
   EventSource s;
   s.channelID = v["channelID"].asString();
   s.kind = static_cast<EventSource::Kind>(kind);
-  s.spanish = v["spanish"].asBool();
+  // Saved before Build 132: "spanish" only.
+  s.lang = v["lang"].isString() ? v["lang"].asString() : v["spanish"].asBool() ? std::string("es") : std::string();
   s.detail = v["detail"].asString();
   s.rank = optInt(v["rank"]);
   return s;

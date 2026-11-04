@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "app/store/store.hpp"
@@ -84,6 +85,12 @@ class Playback : public engine::Session {
   engine::views::Tab pickedTab() const { return pickedTab_; }
   const std::vector<std::string>& pickedFlip() const { return pickedFlip_; }
 
+  // The player's search (Build 132): what was typed there last, for
+  // reopening it while the player stays open (the player clears it as it
+  // closes).
+  void setPlayerQuery(std::string q) { playerQuery_ = std::move(q); }
+  const std::string& playerQuery() const { return playerQuery_; }
+
  private:
   Playback(App& app, std::shared_ptr<engine::Subtitles> subtitles);
   gfx::Rect window() const;
@@ -108,6 +115,7 @@ class Playback : public engine::Session {
   bool placing_ = false;
   engine::views::Tab pickedTab_ = engine::views::Tab::Lineup;
   std::vector<std::string> pickedFlip_;
+  std::string playerQuery_;
 };
 
 }  // namespace marigold::app

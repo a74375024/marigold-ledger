@@ -16,6 +16,14 @@
 // A Siri Remote swipe (KeyEvent::glide) moves one step in the column or
 // the lists, and a swipe that walked the grid to its left edge stops
 // there: the next one opens the column.
+//
+// Search (Build 132) is the first of the lists, as in the main guide's
+// rail. OK on it turns the card into search: the keyboard, then the
+// results (Right at the keyboard's right edge). Back goes results ->
+// keyboard -> the lists; Left at the keyboard's left edge (or "◀ Lists")
+// opens the lists too. The lists' Back over search goes to the grid of the
+// list that was on before it, as it was (Back there closes the guide), and
+// OK on Search there comes back to the keyboard.
 #pragma once
 
 #include <cstdint>
@@ -27,9 +35,9 @@
 
 namespace marigold::rail {
 
-// The lists, top to bottom: My Lineup, Favorites, Recent, Live Events
-// (while the game schedule is on in Settings) and All Channels (while its
-// tab is on).
+// The lists, top to bottom: Search, My Lineup, Favorites, Recent, Live
+// Events (while the game schedule is on in Settings) and All Channels
+// (while its tab is on).
 std::vector<Item> playerLists(bool allChannels, bool liveEvents);
 
 // The grid when a key comes: the screen's own state.
@@ -54,6 +62,11 @@ struct PlayerStep {
     Digits,   // Back: the typed number goes
     Now,      // Back at a later time: Now again
     Close,    // Back with nothing left: the guide closes
+    // Search (Build 132).
+    Search,    // the card is search, the focus on its keyboard (Search picked)
+    Results,   // the focus went to the results
+    Keyboard,  // the focus went back to the keyboard
+    Leave,     // search closed: the grid of `item` (the list before it), as it was
   } what = Do::Grid;
   int index = 0;
   Item item = Item::Lineup;
@@ -77,8 +90,9 @@ class PlayerNav {
   // A list opened from the lists: its column on `origin` (the playing
   // channel's neighborhood); Back there goes to the grid.
   PlayerStep openColumn(int origin, int count);
-  // The column's "◀ Lists" clicked: as Left in the column.
-  PlayerStep openLists();
+  // The column's "◀ Lists" clicked: as Left in the column. In search,
+  // the keyboard's left edge (`glide`: the swipe that got there stops).
+  PlayerStep openLists(uint32_t glide = 0);
   // The pointer: a click on a neighborhood (the return rule, as OK), a
   // list (as OK), the dimmed card beside the lists (as Back).
   PlayerStep clickColumn(int i);
@@ -86,6 +100,20 @@ class PlayerNav {
   PlayerStep closeLists();
   // Back to the grid as it is (a click on it, a number, a page key).
   void close() { nav_.close(); }
+
+  // Search (Build 132). The card is search (the lists may be open over it)
+  // and the focus is in its results (else on its keyboard).
+  bool search() const { return search_; }
+  bool results() const { return results_; }
+  // Search opened without the lists (the games rail's lists picked it).
+  PlayerStep openSearch();
+  // In search, Right at the keyboard's right edge (or a result clicked):
+  // the results, when there are any.
+  PlayerStep toResults(bool any);
+  // In search, Left at the results' left edge (or a key clicked).
+  PlayerStep toKeyboard();
+  // The list the grid shows under search (Leave goes back to it).
+  Item before() const { return before_; }
 
   int origin() const { return nav_.origin(); }
   int index() const { return nav_.index(); }
@@ -97,9 +125,13 @@ class PlayerNav {
 
  private:
   static PlayerStep of(const Step& s);
+  // A list picked in the lists: Search opens search; another leaves it.
+  PlayerStep picked(PlayerStep s);
 
   Nav nav_;
   bool fromColumn_ = false;
+  bool search_ = false, results_ = false;
+  Item before_ = Item::Lineup;
   uint32_t glide_ = 0;  // the last swipe that moved something
 };
 

@@ -616,7 +616,7 @@ TEST_CASE("Where to Watch and the details card") {
   REQUIRE(where.sections.size() == 3);
   CHECK(where.sections[0].title == "Your channels");
   CHECK(where.sections[0].items[0].name == "FOX 13 Harbor");
-  CHECK(where.sections[1].title == "Spanish");
+  CHECK(where.sections[1].title == "In Spanish");  // Build 132: a section per other language
   CHECK(where.sections[1].items.size() == 2);
   CHECK(where.sections[2].title == "Event feeds from your provider");
   CHECK(where.sections[2].items[0].detail == "Provider event channel \xC2\xB7 1080p");
