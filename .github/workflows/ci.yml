@@ -273,11 +273,12 @@ jobs:
 
   # The Apple TV app: the host tests again with Apple's compiler, an unsigned
   # .ipa for a signing service to install, and a start in the tvOS Simulator.
-  # On an Intel Mac: GitHub's Apple Silicon ones are short ("capacity
-  # constraints", jobs never picked up). The app itself is built for the
-  # Apple TV's arm64 either way.
+  # On an Apple Silicon Mac (Build 133): the Intel ones stopped picking the
+  # job up (Builds 131-132 cancelled after 15 minutes without a runner).
+  # The scripts work on either; the app is built for the Apple TV's arm64
+  # and the Simulator's slice matches the Mac.
   tvos:
-    runs-on: macos-15-intel
+    runs-on: macos-15
     env:
       MARIGOLD_REQUIRE_CHANNEL_DIRECTORY: "1"  # cmake/channel-directory.cmake
     needs: [hygiene, host, wikidata]
