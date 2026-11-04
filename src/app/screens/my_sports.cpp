@@ -158,6 +158,9 @@ class MySportsSetup : public Screen {
       if (!keep.empty())
         for (size_t i = 0; i < teams_.size(); ++i)
           if (teams_[i].id == keep) focus_ = static_cast<int>(i);
+      // A tile focused that the new list doesn't have: the last one, or the
+      // rail when the list is empty (focus is never on nothing).
+      if (focus_ >= static_cast<int>(teams_.size())) focus_ = teams_.empty() ? kRail : static_cast<int>(teams_.size()) - 1;
       return true;
     }
     // Looking up the teams: the spinner moves every 125 ms, asleep in between.
@@ -181,7 +184,7 @@ class MySportsSetup : public Screen {
     } else if (step_ == 2 && id >= kHitTile && id - kHitTile < static_cast<int>(teams_.size())) {
       focus_ = id - kHitTile;
     } else if (step_ == 2 && id >= kHitTab && id < kHitTab + 10) {
-      int tab = id - kHitTab;
+      int tab = railFirst_ + (id - kHitTab);
       focus_ = kRail;
       if (tab != tab_ && tab < static_cast<int>(teamLeagues().size())) {
         tab_ = tab;
@@ -643,25 +646,36 @@ class MySportsSetup : public Screen {
     float y = kTop + 170;
     ui::label(c, "YOUR LEAGUES", kLeft + 6, y, Weight::Bold, 16, theme::white(0.5f));
     y += 32;
-    for (size_t i = 0; i < leagues.size(); ++i) {
-      const sports::League* l = sports::leagueByShort(leagues[i]);
-      std::string t = l ? l->shortName : leagues[i];
+    // As many leagues as fit above the reminders row and the buttons; the
+    // list scrolls so the selected one is always drawn (Build 129: with a
+    // dozen picks the rest were left out and Down moved focus through
+    // leagues nobody could see).
+    int rows = std::clamp(static_cast<int>((bottom() - 250 - y) / 70) + 1, 1, 10);
+    int count = static_cast<int>(leagues.size());
+    if (tab_ < railFirst_) railFirst_ = tab_;
+    if (tab_ >= railFirst_ + rows) railFirst_ = tab_ - rows + 1;
+    railFirst_ = std::clamp(railFirst_, 0, std::max(0, count - rows));
+    if (railFirst_ > 0) ui::label(c, "\xe2\x96\xb2", kLeft + kRailW - 30, y - 30, Weight::Bold, 16, theme::white(0.5f));
+    for (int i = railFirst_; i < count && i < railFirst_ + rows; ++i) {
+      const sports::League* l = sports::leagueByShort(leagues[static_cast<size_t>(i)]);
+      std::string t = l ? l->shortName : leagues[static_cast<size_t>(i)];
       Rect r{kLeft, y, kRailW, 60};
-      c.hit(r, kHitTab + static_cast<int>(std::min<size_t>(i, 9)));
-      bool sel = static_cast<int>(i) == tab_;
+      c.hit(r, kHitTab + (i - railFirst_));
+      bool sel = i == tab_;
       bool f = sel && focus_ == kRail;
       c.g.fill(r, f ? theme::white() : sel ? theme::white(0.2f) : theme::white(0.07f), 16);
       Color ink = f ? theme::black() : theme::white();
       ui::labelIn(c, t, {r.x + 22, r.y, r.w - 90, r.h}, Weight::Bold, 23, ink);
-      int count = static_cast<int>(std::count_if(draft_.teams.begin(), draft_.teams.end(), [&](const std::string& k) {
-        return k.rfind(leagues[i] + "|", 0) == 0;
+      const std::string& prefix = leagues[static_cast<size_t>(i)];
+      int picks = static_cast<int>(std::count_if(draft_.teams.begin(), draft_.teams.end(), [&](const std::string& k) {
+        return k.rfind(prefix + "|", 0) == 0;
       }));
-      if (count > 0)
-        ui::labelIn(c, std::to_string(count), {r.x, r.y, r.w - 22, r.h}, Weight::Medium, 19,
+      if (picks > 0)
+        ui::labelIn(c, std::to_string(picks), {r.x, r.y, r.w - 22, r.h}, Weight::Medium, 19,
                     f ? theme::black(0.6f) : theme::white(0.6f), Align::Right);
       y += 70;
-      if (y > bottom() - 250) break;
     }
+    if (railFirst_ + rows < count) ui::label(c, "\xe2\x96\xbc", kLeft + kRailW - 30, y - 8, Weight::Bold, 16, theme::white(0.5f));
     if (onboarding_) {
       y += 14;
       Rect row{kLeft, y, kRailW, 84};
@@ -816,6 +830,7 @@ class MySportsSetup : public Screen {
   wake::Due wake_;
   wake::Steps spinner_;
   float scroll_ = 0, teamScroll_ = 0;
+  int railFirst_ = 0;  // the first league drawn in the teams step's rail
 };
 
 }  // namespace

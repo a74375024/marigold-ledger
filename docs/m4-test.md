@@ -1169,3 +1169,13 @@ While a game plays, its Sources (the player's Sources pill, or Menu) is Where to
 | Player | OK on a live game, then Back | Full screen on the same stream; back, it shrinks into the large preview |
 | Sources ticked | Watch a game with two or more sources, open Sources | The source playing ticked with "Playing now"; the others with an empty check |
 | Switch | OK on another source | "Opening…", then "Playing now" with the tick on it; the panel stays open; Back closes it to the same player (one Back to the board, not two) |
+
+## Build 129 — My Sports teams: the league list scrolls
+
+With many leagues picked (Build 127's defaults pick about a dozen), the teams step's rail drew only the first six and Down moved focus through the rest unseen, so focus seemed to vanish on the way to Continue. The rail now scrolls with the selected league, with ▲ / ▼ when more are above or below, and pointer clicks pick the league under the pointer. A tile focused that a fresh team list doesn't have moves to the last tile (or the rail).
+
+| Area | How to check | Pass |
+|---|---|---|
+| Down to Continue | First-run setup with the default sports, teams step: Down from the first league to the end | Each league in turn is highlighted, the list moving up as needed; then "Remind me before my teams play", then Continue; focus is always visible |
+| Up again | Up from Continue to the first league | The same in reverse, ▲ gone at the top |
+| Pointer | Point at and click leagues after scrolling (LG) | The league under the pointer opens |
