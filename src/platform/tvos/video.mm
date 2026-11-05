@@ -407,7 +407,8 @@ NSArray<NSString*>* optionsFor(const std::string& headers) {
 void place(gfx::Rect r) {
 #if TARGET_OS_OSX
   // The window scales the app's 1920x1080 to its size (main.mm).
-  double x = r.x, y = r.y, w = std::max(1.0f, r.w), h = std::max(1.0f, r.h);
+  double x = static_cast<double>(r.x), y = static_cast<double>(r.y);
+  double w = static_cast<double>(std::max(1.0f, r.w)), h = static_cast<double>(std::max(1.0f, r.h));
   tvos::onMain([x, y, w, h] { tvos::placeVideo(x, y, w, h); });
 #else
   CGRect frame = CGRectMake(static_cast<CGFloat>(r.x), static_cast<CGFloat>(r.y),
