@@ -234,4 +234,27 @@ struct BoardMade {
 };
 BoardMade board(const BoardInput& in);
 
+// Build 142: the line under Live Events' title while its scores catch up
+// (as the guide's "Filling in missing listings…"): a spinner and "Updating
+// scores…" while this open's round still has a stale league of a game
+// around now to ask; "Live scores paused until tomorrow" or "Live scores
+// unavailable right now" for a few seconds after the open when they can't
+// come; nothing when the scores are fresh, off, or no game is around now.
+constexpr uint32_t kScoresNoteMs = 8000;
+using engine::ScoresLine;  // events_model.hpp
+struct ScoresLineInput {
+  bool shown = false;     // Live Events on screen with its board (no placeholders)
+  bool scoresOn = true;   // the "Show scores" setting
+  bool checked = true;    // this open's scores round is over (Inputs::scoresChecked)
+  // The leagues of games around now (live or about to start, not final)
+  // on the board: one the poller will still ask this round (stale), one
+  // that can't answer now (failing or refused), the day's requests used up.
+  bool staleAround = false;
+  bool unavailableAround = false;
+  bool capped = false;
+  bool anyAround = false;
+  uint32_t sinceOpenMs = 0;
+};
+ScoresLine scoresLine(const ScoresLineInput& in);
+
 }  // namespace marigold::engine::events_build

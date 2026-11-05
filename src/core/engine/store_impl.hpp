@@ -150,6 +150,13 @@ struct EventsState {
   events_build::MadeFrom madeFrom;
   bool holding = false, freshNote = false, holdCapped = false;
   uint32_t holdSinceMs = 0;
+  // Build 142: when Live Events last opened (its scores line's few
+  // seconds), and the leagues of the board's games around now (by board
+  // version, again every 30 s).
+  uint32_t openedMs = 0;
+  mutable std::set<std::string> aroundLeagues;
+  mutable uint64_t aroundVersion = 0;
+  mutable time::Seconds aroundAt = 0;
   events_build::Hold boardHold;
   int heldMost = 0, oldLiveMost = 0;
   // Build 123: the leagues of the games the last board left out for their

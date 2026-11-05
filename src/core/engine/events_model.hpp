@@ -283,4 +283,12 @@ struct GameBanner {
   std::string channelName, channelLogo;
 };
 
+// Build 142: the line under Live Events' title while its scores catch up
+// (events_build::scoresLine, Store::eventsScoresLine).
+struct ScoresLine {
+  enum class Mark : uint8_t { None, Busy, Paused };
+  Mark mark = Mark::None;
+  const char* text = nullptr;  // null: no line
+};
+
 }  // namespace marigold::engine

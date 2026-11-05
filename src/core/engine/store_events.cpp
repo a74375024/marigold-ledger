@@ -21,6 +21,7 @@
 #include "core/sports/game_banner.hpp"
 #include "core/sports/languages.hpp"
 #include "core/sports/leagues.hpp"
+#include "core/sports/refusals.hpp"
 #include "core/sports/my_sports.hpp"
 #include "core/sports/network_map.hpp"
 #include "core/sports/special_feeds.hpp"
@@ -425,7 +426,7 @@ void Store::eventsArrive(time::Seconds away) {
   // Not kept: placeholders until the whole board is in (boardFlags()).
   e.wholeFirst = !keep;
   e.holdCapped = false;
-  e.holdSinceMs = host_.ms();
+  e.holdSinceMs = e.openedMs = host_.ms();
   e.heldMost = e.oldLiveMost = 0;
   if (!keep) e.lastFingerprint.clear();  // worked out again, even with nothing new
   // Build 141: a kept board made from these games shows at once, however
@@ -440,6 +441,38 @@ void Store::eventsArrive(time::Seconds away) {
   if (ss::listingsNeedRead(e.listingsAt, 0, 0, now)) e.listingsAt.reset();
   e.nextCheckMs = 0;
   e.boardDirty = true;
+}
+
+ScoresLine Store::eventsScoresLine(bool shown) const {
+  const EventsState& e = impl_->ev;
+  events_build::ScoresLineInput in;
+  in.shown = shown && eventsOpen_ > 0;
+  in.scoresOn = settings_.showScores;
+  if (!in.shown || !in.scoresOn || !events_) return events_build::scoresLine(in);
+  time::Seconds now = time::now();
+  if (e.aroundVersion != events_->version || now - e.aroundAt >= 30 || now < e.aroundAt) {
+    e.aroundLeagues.clear();
+    for (const EventRow& row : events_->rows)
+      for (const EventGroup& group : row.groups)
+        for (const EventTile& t : group.tiles)
+          if (!t.finished && !t.league.empty() && t.start > 0 && now >= t.start - sports::scores::kLeadBeforeStart &&
+              now <= t.start + sports::scores::kWindowAfterStart)
+            e.aroundLeagues.insert(t.league);
+    e.aroundVersion = events_->version;
+    e.aroundAt = now;
+  }
+  in.anyAround = !e.aroundLeagues.empty();
+  in.checked = eventsInputs().scoresChecked;
+  sports::scores::Awaited a = e.scores.awaited(now);
+  in.capped = a.capped;
+  for (const std::string& league : e.aroundLeagues) {
+    const sports::League* l = sports::leagueByShort(league);
+    if (!l) continue;  // no scoreboard: goes by the clock
+    if (a.failing.count(league) || a.refused.count(sports::refusals::sourceOf(*l))) in.unavailableAround = true;
+    else if (a.from(league)) in.staleAround = true;
+  }
+  in.sinceOpenMs = host_.ms() - e.openedMs;
+  return events_build::scoresLine(in);
 }
 
 events_build::Inputs Store::eventsInputs() const {
@@ -1313,6 +1346,20 @@ Hold holdFor(const Inputs& in, time::Seconds now, const time::Zone& zone) {
                (in.scheduleComing || in.made.scheduleAt != in.scheduleAt);
   h.scores = !in.scoresChecked && in.scoresAwaited;
   return h;
+}
+
+ScoresLine scoresLine(const ScoresLineInput& in) {
+  ScoresLine out;
+  if (!in.shown || !in.scoresOn || !in.anyAround) return out;
+  bool early = in.sinceOpenMs < kScoresNoteMs;
+  if (in.capped) {
+    if (early) out = {ScoresLine::Mark::Paused, "Live scores paused until tomorrow"};
+    return out;
+  }
+  if (!in.checked && in.staleAround) return {ScoresLine::Mark::Busy, "Updating scores\xe2\x80\xa6"};
+  if (in.unavailableAround && !in.staleAround && early)
+    out = {ScoresLine::Mark::Paused, "Live scores unavailable right now"};
+  return out;
 }
 
 EventsBoard::Stage loadStage(const Loading& l) {

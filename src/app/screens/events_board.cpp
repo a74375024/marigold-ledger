@@ -55,6 +55,7 @@ using ui::Color;
 using ui::Rect;
 using ui::Weight;
 using engine::views::ShownRow;
+using engine::ScoresLine;
 namespace theme = ui::theme;
 
 constexpr float kHeroX = left_rail::kRestLeft;  // the hero never moves
@@ -159,6 +160,26 @@ class EventsBoardScreen : public Screen {
       wakeFor(loadingSince_ + kLoadingAtMostMs);
     } else if (skeletonShown_) {
       pulse = true;  // their time is up: the board without them
+    }
+    // Build 142: "Updating scores…" under the title while the board's
+    // scores catch up: its spinner at its steps, and drawn again as it
+    // comes and goes; the paused note's few seconds end by themselves.
+    if (!placeholders()) {
+      ScoresLine line = app_.store().eventsScoresLine(true);
+      if (line.text != scoresShown_) {
+        scoresShown_ = line.text;
+        pulse = true;
+      }
+      if (line.mark == ScoresLine::Mark::Busy) {
+        uint32_t step = ms / wake::kSpinnerStepMs;
+        if (step != scoresStep_) pulse = true;
+        scoresStep_ = step;
+        wakeFor((step + 1) * wake::kSpinnerStepMs);
+      } else if (line.mark == ScoresLine::Mark::Paused) {
+        wakeFor(ms + 500);
+      }
+    } else {
+      scoresShown_ = nullptr;
     }
     if (promptAt_) wakeFor(promptAt_);  // My Sports is offered in a moment: asleep until then
     previewTick(ms);
@@ -322,6 +343,7 @@ class EventsBoardScreen : public Screen {
     if (noteShown()) drawNote(c);
     else drawHero(c, f);
     drawClock(c);
+    if (!noteShown()) drawScoresLine(c, f);
     // No live mark on the picture, as in the guide: live is the status's red.
     if (corner) top_bar::preview(c, app_.playback(), f->channelLogo, f->channelName, kPreview, 18, false);
     drawTop(c);
@@ -930,6 +952,32 @@ class EventsBoardScreen : public Screen {
     else openSoccerPicks(app_);
   }
 
+  // Build 142: the scores line at the top of the hero, after the
+  // competition (or the row's name), left of the clock: as the guide's
+  // "Filling in missing listings…" after the channel's section.
+  void drawScoresLine(ui::Ctx& c, const EventTile* t) {
+    if (placeholders()) return;
+    ScoresLine line = app_.store().eventsScoresLine(true);
+    if (!line.text) return;
+    float x = kHeroX;
+    if (t && !t->leagueChip.empty()) {
+      x += ui::textWidth(c, t->leagueChip, Weight::Bold, 22) + 24;
+    } else if (!t && chooseFocused()) {
+      x += ui::textWidth(c, rows()[static_cast<size_t>(row_)].row->title, Weight::Bold, 22) + 24;
+    }
+    std::string clock = ui::clock(c, c.now);
+    float right = kHeroRight - ui::textWidth(c, clock, Weight::Medium, 26) - 16;
+    if (right - x < 160) return;  // no room beside a long competition
+    const float y = 48;
+    if (line.mark == ScoresLine::Mark::Busy) {
+      ui::spinner(c, x + 10, y + 14, 10, theme::white(0.8f));
+    } else {
+      ui::labelIn(c, "!", {x, y + 2, 20, 24}, Weight::Bold, 20, theme::hex(theme::kWarning, 0.9f), Align::Center);
+    }
+    x += 30;
+    ui::label(c, line.text, x, y + 3, Weight::Regular, 18, theme::white(0.45f), right - x);
+  }
+
   // The clock at the column's top right, beside the preview (as in the guide).
   void drawClock(ui::Ctx& c) {
     std::string clock = ui::clock(c, c.now);
@@ -1190,6 +1238,8 @@ class EventsBoardScreen : public Screen {
   uint32_t wake_ = 0;  // the preview's rest ends then (wakeAt())
   bool skeletonShown_ = false;  // placeholders on screen: the pulse redraws
   bool spinnerShown_ = false;   // the loading line's spinner too: at its steps
+  const char* scoresShown_ = nullptr;  // the scores line drawn (Build 142)
+  uint32_t scoresStep_ = 0;
   uint32_t pulseStep_ = 0;
   std::function<void(rail::Item, bool)> go_;
   rail::Nav nav_;

@@ -1401,3 +1401,16 @@ Now the work starts at launch, in the background, on every TV (LG, Android TV an
 | Never used | A TV that hasn't opened Live Events in two weeks (or ever) | No schedule or score requests at launch; a first open loads as before |
 | Schedule off | Settings › Live Events › Game schedule off, relaunch | No schedule or score requests |
 | Report | Settings › Help & info › Send a report a minute after a list re-read, with Live Events closed | Renamed slots are already matched (no "not matched yet" unless the TV was busy) |
+
+## Build 142 — Live Events: "Updating scores…" while the scores catch up
+
+Since Build 141 Live Events shows its last board at once; its scores can then be a few minutes old (they're fetched in the background at most every 10 minutes) until the open's round of score requests is in, a few seconds later. Meanwhile the line at the top of the hero, after the competition (left of the clock), shows a spinner and "Updating scores…", as the guide shows "Filling in missing listings…". It goes as soon as the round is over and the tiles have their scores. It shows only when a game on the board is live or about to start (5 minutes before to 6 hours after its start, not final) and a league of such a game is about to be asked (not asked lately), with scores on in Settings. When the day's score requests are used up, "! Live scores paused until tomorrow" shows for 8 seconds after the open; when a game's score source is failing or refusing and none is being asked, "! Live scores unavailable right now" for 8 seconds. Placeholders keep their own line ("Getting live scores…").
+
+| Area | How to check | Pass |
+|---|---|---|
+| Stale scores | While a game is live, watch a channel 15 minutes, then open Live Events | The board shows at once; "Updating scores…" with a spinner at the top for a few seconds; it goes when the scores change |
+| Fresh scores | Close Live Events and open it again within a minute | No line (the scores are fresh) |
+| No games now | Open Live Events when nothing is live or starting soon | No line |
+| Scores off | Turn live scores off in Settings, open Live Events with games live | No line |
+| On a game | Focus a live tile while the line shows | The line sits after the competition ("NFL · Week 10"), left of the clock; the competition isn't covered |
+| Placeholders | First open of the day after a long sleep | The placeholders' own line as before, no second line |

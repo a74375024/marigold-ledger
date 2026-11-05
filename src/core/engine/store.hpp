@@ -366,6 +366,10 @@ class Store {
   // least one screen holds it open (board, event guide), and from launch in
   // the background at a gentle pace (Build 141).
   std::shared_ptr<const EventsBoard> events() const { return events_; }
+  // Build 142: the line under Live Events' title while the scores of the
+  // board's games around now catch up (events_build::scoresLine). `shown`:
+  // the board is on screen without placeholders.
+  ScoresLine eventsScoresLine(bool shown) const;
   void eventsOpen(bool open);
   bool isEvent(const std::string& id) const;
   const EventTile* eventTile(const std::string& id) const;
