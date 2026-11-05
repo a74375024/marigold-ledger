@@ -751,7 +751,9 @@ std::optional<std::vector<SportsGame>> parseTennisMatches(std::string_view body,
       game.start = *start;
       game.venue = court;
       game.completed = text::flag(status["completed"]) || (state && str::lower(*state) == "post");
-      game.customTitle = tennisShort(*away) + " vs " + tennisShort(*home);
+      // The draw's first-listed player first, as broadcasts list them (the
+      // home side; Build 141: was the other way round).
+      game.customTitle = tennisShort(*home) + " vs " + tennisShort(*away);
       game.tournament = tournament;
       if (!tag.empty()) game.note = str::join(tag, " \xC2\xB7 ");
       game.tennis = true;

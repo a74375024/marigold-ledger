@@ -81,7 +81,9 @@ std::optional<Hint> pickAnotherSource(const RemoteKeys& k);
 // `pointer`: what the LG pointer's clicks and wheel do), the lists, the
 // times under "Now ▼", and the games rail, its SPORTS column and the lists
 // over it. `column`: the list has neighborhoods (Recent has none, so Left
-// goes to the lists and Back there to the grid).
+// goes to the lists and Back there to the grid); over the games rail, the
+// lists came from SPORTS (else Back there goes to the games). `pointer`
+// in SPORTS too (Build 141), as in the neighborhoods.
 enum class PlayerGuide { Now, Later, Column, Lists, Times, Games, Sports, GameLists };
 std::string playerGuide(const RemoteKeys& k, PlayerGuide place, bool column = true, bool pointer = false);
 

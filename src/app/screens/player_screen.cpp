@@ -61,6 +61,12 @@ constexpr float kCardTop = 656;       // the banner's card
 constexpr float kGameCardTop = 836;   // a game's: one line of who's playing over the keys
 constexpr float kGameMark = 60;       // its logos, flags or sport icon
 constexpr float kGameText = 236;      // where its title and league line start
+// Between the two sides' marks, and after them before the title: a player
+// a side, two flags 60 wide end 12 short of kGameText. A doubles pair's
+// two flags each side are wider: the title starts that gap after them
+// (Build 141; it used to stay at kGameText, under the second pair).
+constexpr float kGameMarkGap = 8;
+constexpr float kGameTitleGap = kGameText - kLeft - 2 * kGameMark - kGameMarkGap;  // 12
 constexpr time::Seconds kGameRecheck = 30;  // which game a guide channel shows, asked again
 constexpr uint32_t kRed = 0xE5372B, kBlue = 0x3D7BFF, kGreen = 0x34C759;
 
@@ -1063,8 +1069,9 @@ class PlayerScreen : public Screen {
     if (coast) ui::coastChip(c, g->west, rx + nameW + gap, top + (logoH - 21) * 0.5f, 14);
     if (!sub.empty()) shadowed(c, sub, right - subW, top + 50, Weight::Regular, 19, theme::white(0.72f), subW + 1);
 
-    // At the left: the marks, 60 tall.
+    // At the left: the marks, 60 tall; the title after them.
     float my = top + 2;
+    float tx = kGameText;
     if (b.sides.size() == 2) {
       const EventSide& a = b.sides[0];
       const EventSide& h = b.sides[1];
@@ -1072,7 +1079,8 @@ class PlayerScreen : public Screen {
       auto hasLogo = [&](const EventSide& s) { return c.logos && !s.logoUrl.empty() && c.logos->get(s.logoUrl).id; };
       if (person(a) || person(h)) {
         float w = events_ui::mark(c, a, x, my, kGameMark);
-        events_ui::mark(c, h, x + w + 8, my, kGameMark);
+        float wh = events_ui::mark(c, h, x + w + kGameMarkGap, my, kGameMark);
+        tx = sports::banner::titleX(x, w, wh, kGameMarkGap, kGameTitleGap, kGameText);
       } else {
         // Badges overlap a little, as a pair; logos sit side by side.
         float step = hasLogo(a) || hasLogo(h) ? kGameMark + 4 : kGameMark - 12;
@@ -1089,7 +1097,6 @@ class PlayerScreen : public Screen {
     }
 
     // Who's playing, the star, the status chip; the line under them.
-    float tx = kGameText;
     float room = right - rightW - 40 - tx;
     float starW = b.favorite ? ui::textWidth(c, "\xe2\x98\x85", Weight::Bold, 30) + 12 : 0;
     float chipW = st.chip == Chip::none ? 0 : ui::textWidth(c, st.text, Weight::Bold, 16) + 16 + 16;

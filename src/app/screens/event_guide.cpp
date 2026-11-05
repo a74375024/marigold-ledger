@@ -11,6 +11,14 @@
 // board), with the row of the game on screen kept: indices into the board,
 // never a copy of it, and no requests of its own. Search, the lists' first
 // (Build 132), opens the guide in the player on search.
+//
+// Live Events picked in the lists (Build 141) opens as My Lineup and
+// Favorites do: on SPORTS, the focus there and the games following it
+// behind; OK or Right on a sport goes to its games. The board is often
+// still loading then (opening Live Events shows placeholders until a fresh
+// board is in): SPORTS waits for its first sports and opens on them, and a
+// new board keeps an open SPORTS open on the same sports (it used to close
+// it, which left the viewer in the first sport's games).
 #include <algorithm>
 
 #include "app/app.hpp"
@@ -40,7 +48,7 @@ constexpr float kLegendY = gfx::kLayoutHeight - ui::kCardInset - 42;
 constexpr float kVisible = kLegendY - 30 - kTop;  // the games' height on screen
 
 // Pointer targets (the column's and the lists' are left_rail::kHit*).
-constexpr int kHitBeside = 90, kHitLists = 91;
+constexpr int kHitBeside = 90, kHitLists = 91, kHitTopLine = 92;
 constexpr int kHitGame = 1000;  // + item
 
 bool inRange(int id, int base, int n) { return id >= base && id < base + n; }
@@ -57,22 +65,10 @@ class EventGuide : public Screen {
     const auto& s = app_.store().settings();
     nav_.setLists(rail::playerLists(s.allChannelsTab, s.scheduleEnabled));
     visible(app_.store().events());
-    // The row of the game on screen.
-    const std::string& watching = app_.playback().entry();
-    for (size_t r = 0; r < rowCount() && rowIndex_ < 0; ++r) {
-      const EventRow& row = rowAt(r);
-      if (row.families) continue;
-      for (const EventGroup& g : row.groups)
-        for (const EventTile& t : g.tiles)
-          if (t.id == watching && row.id != "live" && row.id != "teams") rowIndex_ = static_cast<int>(r);
-    }
-    if (rowIndex_ < 0) rowIndex_ = 0;
-    build();
-    for (size_t i = 0; i < items_.size(); ++i)
-      if (items_[i].tile && items_[i].tile->id == watching) focus_ = static_cast<int>(i);
-    if (focus_ < 0) move(0, 1);
-    follow();
-    if (sports) apply(nav_.openColumn(rowIndex_, static_cast<int>(rowCount())));
+    placeOnWatching();
+    // From the lists: SPORTS first, or as soon as the loading board has
+    // sports.
+    if (sports) openSports();
   }
   ~EventGuide() override { app_.store().eventsOpen(false); }
 
@@ -82,18 +78,27 @@ class EventGuide : public Screen {
 
   bool tick(uint32_t ms) override {
     if (app_.store().events()->version != board_->version) {
+      // A new board: the same sport and game found again by their ids.
       std::string keep = focusedTile() ? focusedTile()->id : std::string();
+      std::string rowId = rowIdAt(rowIndex_), originId = rowIdAt(nav_.origin()), indexId = rowIdAt(nav_.index());
+      int origin = nav_.origin(), index = nav_.index();
+      bool had = rowCount() > 0;
       visible(app_.store().events());
-      // The rows themselves changed: the rail as it is, the column closed.
-      if (nav_.mode() != rail::Mode::Content) nav_.close();
-      rowIndex_ = std::clamp(rowIndex_, 0, std::max(0, static_cast<int>(rowCount()) - 1));
-      build();
-      focus_ = -1;
-      for (size_t i = 0; i < items_.size(); ++i)
-        if (items_[i].tile && items_[i].tile->id == keep) focus_ = static_cast<int>(i);
-      if (focus_ < 0) move(0, 1);
-      follow();
-      syncSlides();
+      if (!had) {
+        // The first rows in (the board was loading): as on opening.
+        placeOnWatching();
+      } else {
+        rowIndex_ = rowOf(rowId, rowIndex_);
+        build();
+        focus_ = -1;
+        for (size_t i = 0; i < items_.size(); ++i)
+          if (items_[i].tile && items_[i].tile->id == keep) focus_ = static_cast<int>(i);
+        if (focus_ < 0) move(0, 1);
+        follow();
+      }
+      // SPORTS: opens when it was waited for, stays open on the same
+      // sports (the games following its focus), closes with no rows left.
+      apply(nav_.entries(rowOf(originId, origin), rowOf(indexId, index), static_cast<int>(rowCount()), board_->loading));
     }
     return push_.moving(ms) || lists_.moving(ms);
   }
@@ -145,8 +150,7 @@ class EventGuide : public Screen {
     float x = ui::kCardInset + 38 + kSportsW * push;
     std::string title = rowIndex_ < static_cast<int>(rowCount()) ? rowAt(static_cast<size_t>(rowIndex_)).title : "";
     float right = card.x + card.w - 40;
-    ui::labelIn(c, "LIVE EVENTS \xc2\xb7 " + upper(title), {x, kTopY, right - 220 - x, 34}, Weight::Bold, 22,
-                theme::white(0.7f));
+    drawTop(c, "LIVE EVENTS \xc2\xb7 " + upper(title), x, right - 220 - x);
     ui::labelIn(c, ui::clock(c, c.now), {right - 200, kTopY - 4, 200, 40}, Weight::Medium, 26, theme::white(0.7f),
                 Align::Right);
     if (push > 0.01f) drawSports(c, push);
@@ -154,16 +158,18 @@ class EventGuide : public Screen {
     const RemoteKeys& keys = app_.remoteKeys();
     if (mode != rail::Mode::Menu) {
       hints::PlayerGuide place = mode == rail::Mode::Column ? hints::PlayerGuide::Sports : hints::PlayerGuide::Games;
-      ui::label(c, hints::playerGuide(keys, place), ui::kCardInset + 38, kLegendY, Weight::Regular, 22,
-                theme::white(0.75f), cardW - 76);
+      ui::label(c, hints::playerGuide(keys, place, true, c.pointerActive), ui::kCardInset + 38, kLegendY,
+                Weight::Regular, 22, theme::white(0.75f), cardW - 76);
     }
     float lists = lists_.at(c.ms);
     if (lists > 0.01f) {
       int hover = c.pointerActive && inRange(pointer_, left_rail::kHitMenu, 100) ? pointer_ - left_rail::kHitMenu : -1;
-      left_rail::lists(c, card, nav_.lists(), nav_.list(), nav_.listFocus(), hover, "Back: sports", lists);
+      bool back = nav_.fromColumn();
+      left_rail::lists(c, card, nav_.lists(), nav_.list(), nav_.listFocus(), hover,
+                       back ? "Back: sports" : "Back: the games", lists);
       if (mode == rail::Mode::Menu)
-        ui::label(c, hints::playerGuide(keys, hints::PlayerGuide::GameLists), card.x + left_rail::kListsW + 40, kLegendY,
-                  Weight::Regular, 22, theme::white(0.75f), cardW - left_rail::kListsW - 80);
+        ui::label(c, hints::playerGuide(keys, hints::PlayerGuide::GameLists, back), card.x + left_rail::kListsW + 40,
+                  kLegendY, Weight::Regular, 22, theme::white(0.75f), cardW - left_rail::kListsW - 80);
     }
   }
 
@@ -173,10 +179,11 @@ class EventGuide : public Screen {
     const EventTile* tile = nullptr;
     float y = 0;
   };
-  // Where the focus was when SPORTS opened (the return rule).
+  // Where the focus was when SPORTS opened (the return rule): its sport by
+  // id too, so a new board meanwhile finds it again.
   struct Place {
     int row = 0;
-    std::string id;
+    std::string rowId, id;
     float scroll = 0;
   };
 
@@ -208,6 +215,45 @@ class EventGuide : public Screen {
       items_.push_back({l.header, l.tile, y});
       y += l.tile ? kRowH : kHeaderH;
     }
+  }
+
+  // The row of the game on screen (else the first) and that game focused,
+  // as the rail opens.
+  void placeOnWatching() {
+    const std::string& watching = app_.playback().entry();
+    rowIndex_ = -1;
+    for (size_t r = 0; r < rowCount() && rowIndex_ < 0; ++r) {
+      const EventRow& row = rowAt(r);
+      if (row.families) continue;
+      for (const EventGroup& g : row.groups)
+        for (const EventTile& t : g.tiles)
+          if (t.id == watching && row.id != "live" && row.id != "teams") rowIndex_ = static_cast<int>(r);
+    }
+    if (rowIndex_ < 0) rowIndex_ = 0;
+    build();
+    focus_ = -1;
+    scroll_ = 0;
+    for (size_t i = 0; i < items_.size(); ++i)
+      if (items_[i].tile && items_[i].tile->id == watching) focus_ = static_cast<int>(i);
+    if (focus_ < 0) move(0, 1);
+    follow();
+  }
+
+  // SPORTS, as the lists open My Lineup on its neighborhoods: on the
+  // sport of the game on screen (else the first), the focus there. A board
+  // still loading has no sports yet: it opens on the first ones in.
+  void openSports() { apply(nav_.openColumn(rowIndex_, static_cast<int>(rowCount()), board_->loading)); }
+
+  // A shown row's id ("" for none), and the shown row with `id` (else
+  // `fallback`, kept in range).
+  std::string rowIdAt(int r) const {
+    return r >= 0 && r < static_cast<int>(rowCount()) ? rowAt(static_cast<size_t>(r)).id : std::string();
+  }
+  int rowOf(const std::string& id, int fallback) const {
+    if (!id.empty())
+      for (size_t r = 0; r < rowCount(); ++r)
+        if (rowAt(r).id == id) return static_cast<int>(r);
+    return std::clamp(fallback, 0, std::max(0, static_cast<int>(rowCount()) - 1));
   }
 
   // A sport's games, from its first.
@@ -244,7 +290,9 @@ class EventGuide : public Screen {
         app_.nav().pop();
         app_.nav().push(makeMiniGuide(app_, rail::Item::Search));
         return;
-      case Do::Column: place_ = {rowIndex_, focusedTile() ? focusedTile()->id : std::string(), scroll_}; break;
+      case Do::Column:
+        place_ = {rowIndex_, rowIdAt(rowIndex_), focusedTile() ? focusedTile()->id : std::string(), scroll_};
+        break;
       // The games follow the column; on the sport it opened on, as they were.
       case Do::Scroll:
         if (s.index == nav_.origin()) restorePlace();
@@ -255,7 +303,7 @@ class EventGuide : public Screen {
       case Do::Open:
         if (s.item == rail::Item::Events) {
           // This list: its SPORTS again.
-          apply(nav_.openColumn(rowIndex_, static_cast<int>(rowCount())));
+          openSports();
           return;
         }
         // A channel list: the guide in the player, on its neighborhoods.
@@ -268,15 +316,19 @@ class EventGuide : public Screen {
   }
 
   void restorePlace() {
-    showRow(place_.row);
+    showRow(rowOf(place_.rowId, place_.row));
     for (size_t i = 0; i < items_.size(); ++i)
-      if (items_[i].tile && items_[i].tile->id == place_.id) focus_ = static_cast<int>(i);
-    scroll_ = place_.scroll;
+      if (items_[i].tile && items_[i].tile->id == place_.id) {
+        focus_ = static_cast<int>(i);
+        scroll_ = place_.scroll;
+        follow();
+      }
   }
 
   void syncSlides() {
     uint32_t ms = app_.ms();
-    push_.go(nav_.mode() == rail::Mode::Column ? 1.0f : 0.0f, ms);
+    // SPORTS waited for: the card widens already, its header showing.
+    push_.go(nav_.mode() == rail::Mode::Column || nav_.waiting() ? 1.0f : 0.0f, ms);
     lists_.go(nav_.mode() == rail::Mode::Menu ? 1.0f : 0.0f, ms);
     app_.invalidate();
   }
@@ -294,6 +346,11 @@ class EventGuide : public Screen {
       if (inRange(id, left_rail::kHitMenu, static_cast<int>(nav_.lists().size())))
         apply(nav_.pickList(id - left_rail::kHitMenu));
       else if (id == left_rail::kHitOutside) apply(nav_.closeLists());
+      return true;
+    }
+    if (id == kHitTopLine && mode == rail::Mode::Content) {
+      // The list name: as Left at a game (SPORTS, or the lists without).
+      apply(nav_.edge(rowIndex_, static_cast<int>(rowCount())));
       return true;
     }
     if (mode == rail::Mode::Column) {
@@ -316,7 +373,9 @@ class EventGuide : public Screen {
   void drawList(ui::Ctx& c, float x, float alpha) {
     const float visible = kVisible;
     if (items_.empty()) {
-      ui::label(c, "No other games you can watch in this sport.", x, kTop + 20, Weight::Medium, 22, theme::white(0.6f));
+      const char* none = board_->loading && rowCount() == 0 ? "Loading games\xe2\x80\xa6"
+                                                            : "No other games you can watch in this sport.";
+      ui::label(c, none, x, kTop + 20, Weight::Medium, 22, theme::white(0.6f));
       return;
     }
     const std::string& watching = app_.playback().entry();
@@ -364,6 +423,26 @@ class EventGuide : public Screen {
     c.g.popClip();
   }
 
+  // The top line: the list and the sport. With the pointer, a button
+  // ("◀ LIVE EVENTS · NFL") that opens SPORTS, as the guide's list name.
+  void drawTop(ui::Ctx& c, const std::string& text, float x, float maxW) {
+    if (c.pointerActive && nav_.mode() == rail::Mode::Content && !nav_.waiting()) {
+      const char* arrow = "\xe2\x97\x80";
+      float aw = ui::textWidth(c, arrow, Weight::Bold, 16);
+      float w = std::min(maxW, 16 + aw + 10 + ui::textWidth(c, text, Weight::Bold, 22) + 20);
+      Rect r{x - 16, kTopY - 8, w, 50};
+      bool on = pointer_ == kHitTopLine;
+      c.hit(r, kHitTopLine);
+      if (on) c.g.fill(r, theme::white(), 25);
+      else c.g.stroke(r, theme::white(0.35f), 25, 2);
+      Color col = on ? theme::black() : theme::white(0.85f);
+      ui::labelIn(c, arrow, {x, r.y, aw, r.h}, Weight::Bold, 16, col);
+      ui::labelIn(c, text, {x + aw + 10, r.y, w - aw - 36, r.h}, Weight::Bold, 22, col);
+    } else {
+      ui::labelIn(c, text, {x, kTopY, maxW, 34}, Weight::Bold, 22, theme::white(0.7f));
+    }
+  }
+
   // SPORTS inside the card: the guide's column, each sport and how many of
   // its games are live, with "◀ Lists" in its header.
   void drawSports(ui::Ctx& c, float alpha) {
@@ -372,8 +451,14 @@ class EventGuide : public Screen {
     for (size_t r : shown_) entries.push_back({board_->rows[r].title, board_->rows[r].live});
     int hover = c.pointerActive && inRange(pointer_, left_rail::kHitColumn, 100) ? pointer_ - left_rail::kHitColumn : -1;
     float x = ui::kCardInset + 40;
-    left_rail::column(c, "Live Events", "", entries, nav_.index(), nav_.origin(), hover, kColumnTop, kColumnFirst, alpha, x);
-    left_rail::listsButton(c, x, kColumnTop, c.pointerActive && pointer_ == kHitLists, alpha, kHitLists);
+    // Waited for: no sports yet, they are on their way.
+    bool waiting = nav_.mode() != rail::Mode::Column && nav_.waiting();
+    left_rail::column(c, "Live Events", "", entries, waiting ? -1 : nav_.index(), waiting ? -1 : nav_.origin(), hover,
+                      kColumnTop, kColumnFirst, alpha, x);
+    if (waiting)
+      ui::label(c, "Loading sports\xe2\x80\xa6", x, kColumnFirst + 14, Weight::Medium, 20, theme::white(0.5f * alpha));
+    else
+      left_rail::listsButton(c, x, kColumnTop, c.pointerActive && pointer_ == kHitLists, alpha, kHitLists);
   }
 
   // The board as the board screen shows it (Show on the board), keeping

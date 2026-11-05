@@ -14,6 +14,7 @@
 #include "core/sports/languages.hpp"
 #include "core/sports/network_map.hpp"
 #include "core/sports/profiles.hpp"
+#include "core/sports/schedule.hpp"
 #include "core/sports/text.hpp"
 #include "core/sports/titles.hpp"
 
@@ -30,13 +31,37 @@ std::vector<std::string> splitWords(const std::string& normalizedText) { return 
 
 std::string trimmed(const std::string& s) { return std::string(str::trimUnicode(s)); }
 
-EventSource providerSource(const std::string& feed, const std::string& lang) {
+// Build 141: with the slot's own time when it gives a day (a day-guessed
+// clock time isn't known to be that day's).
+EventSource providerSource(const ProviderEvent& event, const std::string& feed) {
   EventSource s;
   s.channelID = feed;
   s.kind = EventSource::Kind::provider;
-  s.lang = lang;
+  s.lang = event.langOf(feed);
   s.detail = kProviderDetail;
+  if (event.start && !event.guessed) s.from = event.start;
   return s;
+}
+
+// Build 141: a guide listing's start and end on the channel's source. Of
+// two listings of one game on a channel (a morning window, an afternoon
+// one), the one not over by `now` that starts first (on now, else next);
+// when both are over, the later.
+void noteWindow(EventSource& s, Seconds start, Seconds end, Seconds now) {
+  if (s.from && s.until) {
+    bool open = end > now, wasOpen = *s.until > now;
+    bool better = open != wasOpen ? open : open ? start < *s.from : end > *s.until;
+    if (!better) return;
+  }
+  s.from = start;
+  s.until = end;
+}
+
+EventSource* findSource(std::vector<EventSource>& list, const std::string& id) {
+  for (EventSource& s : list) {
+    if (s.channelID == id) return &s;
+  }
+  return nullptr;
 }
 
 bool containsSource(const std::vector<EventSource>& list, const std::string& id) {
@@ -45,7 +70,7 @@ bool containsSource(const std::vector<EventSource>& list, const std::string& id)
 
 void addFeeds(SportsEvent& value, const ProviderEvent& event) {
   for (const std::string& feed : event.feeds) {
-    if (!containsSource(value.sources, feed)) value.sources.push_back(providerSource(feed, event.langOf(feed)));
+    if (!containsSource(value.sources, feed)) value.sources.push_back(providerSource(event, feed));
   }
 }
 
@@ -77,7 +102,7 @@ SportsEvent plainEvent(const ProviderEvent& event) {
   e.league = event.league;
   e.leagueShort = shortLeague(event.league);
   e.start = event.start;
-  for (const std::string& feed : event.feeds) e.sources.push_back(providerSource(feed, event.langOf(feed)));
+  for (const std::string& feed : event.feeds) e.sources.push_back(providerSource(event, feed));
   e.family = event.family;
   e.boards = event.boards;
   e.highSchool = event.highSchool;
@@ -554,6 +579,9 @@ std::optional<BuildResult> build(const BuildInput& in) {
   lap("0 index");
   std::vector<std::optional<SportsEvent>> byGame(gameCount);
   std::vector<std::optional<std::string>> firstProviderID(gameCount);
+  // Build 141: tennis feeds naming the home side first (+1) or the away
+  // side first (-1), by game: the tile lists the players as they do.
+  std::vector<int> homeNamedFirst(gameCount, 0);
   auto entry = [&](size_t gameIndex) -> SportsEvent {
     if (byGame[gameIndex]) return *byGame[gameIndex];
     const SportsGame& game = games[gameIndex];
@@ -638,7 +666,7 @@ std::optional<BuildResult> build(const BuildInput& in) {
         bool main = has(str::lower(event.title), "main broadcast");
         for (const std::string& feed : event.feeds) {
           if (containsSource(value.sources, feed)) continue;
-          EventSource source = providerSource(feed, event.langOf(feed));
+          EventSource source = providerSource(event, feed);
           auto at = std::find_if(value.sources.begin(), value.sources.end(),
                                  [](const EventSource& s) { return s.kind == EventSource::Kind::provider; });
           if (main && at != value.sources.end()) {
@@ -660,7 +688,7 @@ std::optional<BuildResult> build(const BuildInput& in) {
         stats.filtered += 1;
         SportsEvent value = entry(t);
         for (const std::string& feed : event.feeds) {
-          if (!containsSource(value.sources, feed)) value.sources.push_back(providerSource(feed, event.langOf(feed)));
+          if (!containsSource(value.sources, feed)) value.sources.push_back(providerSource(event, feed));
         }
         if (!value.family) value.family = event.family;
         byGame[t] = std::move(value);
@@ -1087,6 +1115,9 @@ std::optional<BuildResult> build(const BuildInput& in) {
     stats.matchedEvents += 1;
     SportsEvent value = entry(g);
     addFeeds(value, event);
+    if (games[g].isTennis()) {
+      if (auto first = sideNamedFirst(event.title, games[g])) homeNamedFirst[g] += *first == 0 ? 1 : -1;
+    }
     if (!value.family) value.family = event.family;
     // A game listed by its day only: the time from its first feed with one.
     if (games[g].isDayOnly() && value.start == games[g].start && event.start && !event.guessed &&
@@ -1229,7 +1260,10 @@ std::optional<BuildResult> build(const BuildInput& in) {
         stats.matchedListings += 1;
         SportsEvent value = entry(g);
         if (!value.listingEnd || listing.end > *value.listingEnd) value.listingEnd = listing.end;
-        if (!containsSource(value.sources, listing.entryID)) {
+        if (EventSource* known = findSource(value.sources, listing.entryID)) {
+          // A channel airing the game's network: now known when it does.
+          if (known->kind != EventSource::Kind::provider) noteWindow(*known, listing.start, listing.end, now);
+        } else {
           int rank = listing.abroad ? station_rank::abroad
                                     : listing.rank.value_or(listing.inLineup ? station_rank::lineup
                                                                              : station_rank::elsewhere);
@@ -1239,6 +1273,7 @@ std::optional<BuildResult> build(const BuildInput& in) {
           source.lang = listing.lang;
           source.detail = stationDetail(rank);
           source.rank = rank;
+          noteWindow(source, listing.start, listing.end, now);
           value.sources.push_back(std::move(source));
         }
         byGame[g] = std::move(value);
@@ -1272,6 +1307,7 @@ std::optional<BuildResult> build(const BuildInput& in) {
         source.lang = listing->lang;
         source.detail = kCoverageDetail;
         source.rank = listing->rank.value_or(listing->inLineup ? station_rank::lineup : station_rank::elsewhere);
+        noteWindow(source, listing->start, listing->end, now);
         value.sources.push_back(std::move(source));
         byGame[g] = std::move(value);
       }
@@ -1665,6 +1701,10 @@ std::optional<BuildResult> build(const BuildInput& in) {
     if (used.count(id)) id = firstProviderID[i] ? *firstProviderID[i] : value.id;
     if (used.count(id)) id = value.id;
     if (!used.insert(id).second) continue;
+    if (game.isTennis() && homeNamedFirst[i] < 0) {
+      value.awayFirst = true;
+      value.title = schedule::tennisShort(game.away) + " vs " + schedule::tennisShort(game.home);
+    }
     result.push_back(value.withId(id));
   }
   lap("3 assemble");
@@ -2239,6 +2279,21 @@ std::vector<std::string> teamVariants(const SportsTeam& team, bool college) {
     if (text::count(v) >= 3 && !genericWords().count(v) && seen.insert(v).second) out.push_back(v);
   }
   return out;
+}
+
+std::optional<int> sideNamedFirst(std::string_view title, const SportsGame& game) {
+  const std::string text = normalized(title);
+  auto at = [&](const SportsTeam& team) {
+    std::optional<size_t> first;
+    for (const std::string& v : teamVariants(team, false)) {
+      size_t p = text.find(" " + v + " ");
+      if (p != std::string::npos && (!first || p < *first)) first = p;
+    }
+    return first;
+  };
+  auto home = at(game.home), away = at(game.away);
+  if (!home || !away || *home == *away) return std::nullopt;
+  return *home < *away ? 0 : 1;
 }
 
 const std::map<std::string, std::set<std::string>>& sportFamilies() {

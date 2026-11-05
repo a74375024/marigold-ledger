@@ -178,11 +178,17 @@ std::string playerGuide(const RemoteKeys& k, PlayerGuide place, bool column, boo
     case PlayerGuide::Lists:
     case PlayerGuide::GameLists:
       return std::string(kUp) + kDown + " lists" + dot + ok + " or " + kRight + " open" + dot +
-             (place == PlayerGuide::GameLists ? "Back: sports" : column ? "Back: neighborhoods" : "Back: the grid");
+             (place == PlayerGuide::GameLists ? (column ? "Back: sports" : "Back: the games")
+              : column                        ? "Back: neighborhoods"
+                                              : "Back: the grid");
     case PlayerGuide::Times: return std::string(kUp) + kDown + " times" + dot + ok + " go" + dot + "Back: the grid";
     case PlayerGuide::Games:
       return std::string(kLeft) + " Sports" + dot + kUp + kDown + " games" + dot + ok + " switch" + dot + "Back closes";
-    case PlayerGuide::Sports: return ok + " or " + kRight + " its games" + dot + "Back: Stay" + dot + kLeft + " Lists";
+    case PlayerGuide::Sports:
+      if (pointer)
+        return std::string("Click: its games") + dot + "Wheel: walk" + dot + "Click a game: close" + dot +
+               "Click beside the guide: close it";
+      return ok + " or " + kRight + " its games" + dot + "Back: Stay" + dot + kLeft + " Lists";
   }
   return {};
 }

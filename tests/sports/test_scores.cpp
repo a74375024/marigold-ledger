@@ -245,6 +245,64 @@ TEST_CASE("polling: only while looking, only leagues with a game on, once a minu
   CHECK_FALSE(off2.start(Holder::board, false));
 }
 
+TEST_CASE("polling in the background (Build 141): while watching too, at its own pace, within its share of the day") {
+  Seconds kickoff = utc(2026, 10, 25, 17, 0);
+  SportsGame nflGame = game("NFL", "NFL", "401001", team("1", "Harbor City Gulls"), team("2", "Team Alpha"), kickoff);
+  Seconds now = kickoff + 600;
+  LiveScores scores;
+  CHECK(scores.start(Holder::background, true));  // a first round now
+  CHECK(scores.holds(Holder::background));
+  // A channel playing: the background still looks, once per round...
+  RoundInput watching = roundAt(now, {nflGame});
+  watching.watching = true;
+  scores.beginRound(watching);
+  REQUIRE(scores.nextRequest(now));
+  scores.onResponse(200, nflLive("401001"), now);
+  CHECK_FALSE(scores.nextRequest(now));
+  CHECK(scores.status("NFL|401001")->phase == LivePhase::live);
+  // ...and the next round no sooner than kBackgroundEvery, live game or not.
+  CHECK(scores.waitSeconds() == kBackgroundEvery);
+  // Live Events opened (nothing playing over it): the board's own pace.
+  CHECK_FALSE(scores.start(Holder::board, true));  // already polling
+  scores.beginRound(roundAt(now + 60, {nflGame}));
+  REQUIRE(scores.nextRequest(now + 60));
+  scores.onResponse(200, nflLive("401001"), now + 60);
+  CHECK_FALSE(scores.nextRequest(now + 60));
+  CHECK(scores.waitSeconds() == kLiveInterval);
+  // A channel played over the board: the background's pace again.
+  watching.now = now + 120;
+  scores.beginRound(watching);
+  REQUIRE(scores.nextRequest(now + 120));
+  scores.onResponse(200, nflLive("401001"), now + 120);
+  CHECK_FALSE(scores.nextRequest(now + 120));
+  CHECK(scores.waitSeconds() == kBackgroundEvery);
+  // Closed: the background goes on.
+  CHECK_FALSE(scores.stop(Holder::board));
+  CHECK(scores.looking());
+  CHECK(scores.stop(Holder::background));
+  CHECK_FALSE(scores.looking());
+
+  // Without the background, the board under a playing channel asks nothing (as before).
+  LiveScores board;
+  board.start(Holder::board, true);
+  RoundInput under = roundAt(now, {nflGame});
+  under.watching = true;
+  board.beginRound(under);
+  CHECK_FALSE(board.nextRequest(now));
+  CHECK(board.waitSeconds() == kWatchingWait);
+
+  // Half of the day's requests used: the background stops for the day; the
+  // board on screen still has the rest.
+  LiveScores half(LiveScores::DailyCount{"2026-10-25", kBackgroundDailyCap});
+  half.start(Holder::background, true);
+  half.beginRound(roundAt(now, {nflGame}));
+  CHECK_FALSE(half.nextRequest(now));
+  CHECK(half.waitSeconds() == kBackgroundEvery);
+  half.start(Holder::board, true);
+  half.beginRound(roundAt(now, {nflGame}));
+  CHECK(half.nextRequest(now));
+}
+
 TEST_CASE("polling: failures back off, several leagues share the pace, the daily cap") {
   Seconds now = utc(2026, 10, 25, 17, 30);
   std::vector<SportsGame> games = {

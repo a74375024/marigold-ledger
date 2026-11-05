@@ -54,4 +54,17 @@ std::string line(const SportsEvent& event, const std::string& tag, const time::Z
 // Empty for none (the channel keeps its usual banner).
 std::string onChannel(const board::Board& board, const std::vector<std::string>& entryIDs, Seconds now);
 
+// The marks at the banner's left (Build 141), `size` tall: a player's
+// flag in a `size` square, a doubles pair's two flags in squares of
+// flagSize() `kPairGap` apart, a country code or a badge `size` wide.
+// markWidth(): the width a side with `flags` flags takes.
+constexpr float kPairGap = 4;
+float flagSize(size_t flags, float size);
+float markWidth(size_t flags, float size);
+// Where the title starts: at `minX`, or further right when the two sides'
+// marks (`a` and `b` wide, from `x`, `between` apart) reach past it, then
+// `gap` after them. A doubles pair's two flags are wider than one: the
+// title moves right by as much, with the singles' gap.
+float titleX(float x, float a, float b, float between, float gap, float minX);
+
 }  // namespace marigold::sports::banner

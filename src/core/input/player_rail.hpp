@@ -17,6 +17,12 @@
 // the lists, and a swipe that walked the grid to its left edge stops
 // there: the next one opens the column.
 //
+// Live Events (Build 141) opens as My Lineup and Favorites do: on its
+// SPORTS column, the focus there, the games following it behind. Its board
+// may still be loading when it is picked (no sports yet): the column then
+// waits and opens on the first sports to come in (entries()), and a new
+// board keeps an open column open, on the same sports.
+//
 // Search (Build 132) is the first of the lists, as in the main guide's
 // rail. OK on it turns the card into search: the keyboard, then the
 // results (Right at the keyboard's right edge). Back goes results ->
@@ -88,8 +94,21 @@ class PlayerNav {
   // Left at the edge without the key: the pointer's list name.
   PlayerStep edge(int origin, int count);
   // A list opened from the lists: its column on `origin` (the playing
-  // channel's neighborhood); Back there goes to the grid.
-  PlayerStep openColumn(int origin, int count);
+  // channel's neighborhood); Back there goes to the grid. `wait`: the list
+  // is still coming in (Live Events' board loading): with no entries yet
+  // the column opens when they come (entries()), unless a key took the
+  // viewer elsewhere first.
+  PlayerStep openColumn(int origin, int count, bool wait = false);
+  // The column's entries changed (Live Events' sports on a new board): the
+  // one it opened on and the one focused found again at `origin` and
+  // `index` of `count`. A column waited for opens (Column, on `origin`);
+  // an open one stays open, the content following its focus (Scroll); a
+  // column whose entries all went closes (Restore), and waits for them
+  // again while more are `coming`. The lists over the column keep it for
+  // their Back.
+  PlayerStep entries(int origin, int index, int count, bool coming);
+  // A column waited for (openColumn's `wait`).
+  bool waiting() const { return waiting_; }
   // The column's "◀ Lists" clicked: as Left in the column. In search,
   // the keyboard's left edge (`glide`: the swipe that got there stops).
   PlayerStep openLists(uint32_t glide = 0);
@@ -99,7 +118,10 @@ class PlayerNav {
   PlayerStep pickList(int i);
   PlayerStep closeLists();
   // Back to the grid as it is (a click on it, a number, a page key).
-  void close() { nav_.close(); }
+  void close() {
+    waiting_ = false;
+    nav_.close();
+  }
 
   // Search (Build 132). The card is search (the lists may be open over it)
   // and the focus is in its results (else on its keyboard).
@@ -125,11 +147,13 @@ class PlayerNav {
 
  private:
   static PlayerStep of(const Step& s);
+  PlayerStep step(Key k, const Grid& g, uint32_t glide);
   // A list picked in the lists: Search opens search; another leaves it.
   PlayerStep picked(PlayerStep s);
 
   Nav nav_;
   bool fromColumn_ = false;
+  bool waiting_ = false;  // a column asked for before its list had entries
   bool search_ = false, results_ = false;
   Item before_ = Item::Lineup;
   uint32_t glide_ = 0;  // the last swipe that moved something

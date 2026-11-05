@@ -67,6 +67,17 @@ void Nav::openColumn(int origin, int count, bool fromMenu) {
   mode_ = Mode::Column;
 }
 
+void Nav::resetColumn(int origin, int index, int count) {
+  if (count <= 0) {
+    count_ = origin_ = index_ = 0;
+    if (mode_ == Mode::Column) mode_ = Mode::Content;
+    return;
+  }
+  count_ = count;
+  origin_ = std::clamp(origin, 0, count - 1);
+  index_ = std::clamp(index, 0, count - 1);
+}
+
 void Nav::openMenu() {
   mode_ = Mode::Menu;
   menuFocus_ = indexOf(section_);

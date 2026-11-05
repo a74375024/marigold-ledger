@@ -204,3 +204,34 @@ TEST_CASE("left rail: a neighborhood picked in the column scrolls to the top of 
   CHECK(topScroll(200, 500, visible) == 0);
   CHECK(topScroll(-10, content, visible) == 0);
 }
+
+TEST_CASE("left rail: the column's entries change under it (Build 141)") {
+  Nav n;
+  n.openColumn(1, 4);
+  n.key(Key::Down);
+  REQUIRE(n.index() == 2);
+  // A new board with a row added above: the same two found again.
+  n.resetColumn(2, 3, 5);
+  CHECK(n.mode() == Mode::Column);
+  CHECK(n.origin() == 2);
+  CHECK(n.index() == 3);
+  CHECK(n.count() == 5);
+  // The return rule follows: back to the one it opened on.
+  n.key(Key::Up);
+  CHECK(n.key(Key::Ok).what == Do::Restore);
+  // Out of range: kept in it.
+  n.openColumn(0, 6);
+  n.resetColumn(9, 7, 3);
+  CHECK(n.origin() == 2);
+  CHECK(n.index() == 2);
+  // Nothing left: the column closes.
+  n.resetColumn(0, 0, 0);
+  CHECK(n.mode() == Mode::Content);
+  CHECK(n.count() == 0);
+  // The menu stays open.
+  n.openColumn(1, 4);
+  n.key(Key::Left);
+  REQUIRE(n.mode() == Mode::Menu);
+  n.resetColumn(0, 0, 2);
+  CHECK(n.mode() == Mode::Menu);
+}

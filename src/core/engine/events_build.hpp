@@ -68,6 +68,12 @@ static_assert(kHoldAtMostMs < kPlaceholdersAtMostMs, "the whole board comes befo
 // app asleep, and Live Events is opened again on waking.
 constexpr time::Seconds kAsleepFor = 120;
 bool listFresh(time::Seconds fetchedAt, time::Seconds now);
+// Build 141: on opening, a board matched from a channel list read this
+// session within this long shows at once (a re-read then comes in place);
+// older, or from the list saved last session, it waits as above. The list
+// is read again every half hour, but not while a channel plays full screen.
+constexpr time::Seconds kListKeptFor = 3 * 3600;
+bool listKept(time::Seconds fetchedAt, time::Seconds now);
 bool scheduleCurrent(time::Seconds fetchedAt, time::Seconds now, const time::Zone& zone);
 
 // When what the games were matched from was fetched (0: not this session,

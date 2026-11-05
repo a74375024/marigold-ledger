@@ -362,8 +362,9 @@ class Store {
   void buildLineup(catalog::LineupPrefs draft);
   static std::string marketName(const std::string& code);
 
-  // Live Events. The board snapshot; scores refresh only while at least one
-  // screen holds it open (board, event guide).
+  // Live Events. The board snapshot; scores refresh at full pace while at
+  // least one screen holds it open (board, event guide), and from launch in
+  // the background at a gentle pace (Build 141).
   std::shared_ptr<const EventsBoard> events() const { return events_; }
   void eventsOpen(bool open);
   bool isEvent(const std::string& id) const;
@@ -657,8 +658,12 @@ class Store {
   void noteEventsTiming(uint32_t ms, std::chrono::steady_clock::time_point start);
   void pumpSchedule(uint32_t ms, bool background = false);
   // Live Events closed: the day's schedule fetched in the background once
-  // the channels are in, while nothing else needs the TV (Build 125).
-  void scheduleInBackground(uint32_t ms);
+  // the channels are in, while nothing else needs the TV (Build 125); Build
+  // 141: from launch, a channel playing full screen or not, with the scores
+  // at the background's pace. True when the games may be matched and a
+  // board made from them now (Live Events used, the list not loading, no
+  // guide being built).
+  bool eventsInBackground(uint32_t ms);
   void pumpScores(uint32_t ms);
   void saveEvents();
   void saveSchedule();

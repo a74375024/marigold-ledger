@@ -315,6 +315,10 @@ std::vector<std::string> teamVariants(const SportsTeam& team, bool college);
 // The first team never matches it, nor it the first team. nullopt for a
 // first team.
 std::optional<std::pair<std::string, std::string>> squadOf(std::string_view teamName);
+// Which of a game's sides `title` names first: 0 the home side, 1 the away
+// side; nullopt unless it names both ("Shelton, Ben vs Rinderknech,
+// Arthur": the side Shelton is on).
+std::optional<int> sideNamedFirst(std::string_view title, const SportsGame& game);
 // A sport named without its level ("Football: ...") covers its pro and
 // college leagues.
 const std::map<std::string, std::set<std::string>>& sportFamilies();

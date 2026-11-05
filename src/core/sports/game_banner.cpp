@@ -1,6 +1,7 @@
 #include "core/sports/game_banner.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 #include "core/sports/profiles.hpp"
 #include "core/util/strings.hpp"
@@ -102,6 +103,17 @@ std::string onChannel(const board::Board& board, const std::vector<std::string>&
     }
   }
   return best ? best->id : std::string();
+}
+
+float flagSize(size_t flags, float size) { return flags >= 2 ? std::round(size * 0.62f) : size; }
+
+float markWidth(size_t flags, float size) {
+  if (flags < 2) return size;
+  return 2 * flagSize(flags, size) + kPairGap;
+}
+
+float titleX(float x, float a, float b, float between, float gap, float minX) {
+  return std::max(minX, x + a + between + b + gap);
 }
 
 }  // namespace marigold::sports::banner

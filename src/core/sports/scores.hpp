@@ -6,8 +6,12 @@
 // its clock, and the score and situation.
 //
 // Kept gentle on the source (the request budget is part of the design):
-// - only while the board or the event guide is on screen, never in the
-//   background or while watching (unless the event guide is open);
+// - at full pace only while the board or the event guide is on screen
+//   (not while watching, unless the event guide is open);
+// - Build 141: from launch, in the background (Live Events closed, or a
+//   channel playing over it), a round at most every kBackgroundEvery and
+//   only while under kBackgroundDailyCap of the day's requests, so the board
+//   opens with the day's finals and the leagues' turns already known;
 // - only leagues with a game in its window, one request at a time;
 // - once a minute per league while a game is live (every 2 minutes with
 //   scores off, or for a large scoreboard); every 2 minutes around a start;
@@ -80,6 +84,11 @@ constexpr Seconds kIdleWait = 300;
 constexpr Seconds kWatchingWait = 60;
 constexpr Seconds kCappedWait = 1800;
 constexpr Seconds kMinimumWait = 15;
+// Build 141: the background's rounds (Holder::background): one at most this
+// often, and none once this many of the day's requests are used (the rest
+// are kept for Live Events on screen).
+constexpr Seconds kBackgroundEvery = 600;
+constexpr int kBackgroundDailyCap = kDailyCap / 2;
 constexpr size_t kLargeScoreboardBytes = 700'000;
 // Failed requests back a league off.
 constexpr Seconds kBackoff[] = {120, 300, 900, 1800};
@@ -99,9 +108,10 @@ sources::Request scoreboardRequest(const League& league, std::string_view day);
 
 // MARK: Polling
 
-// Who's looking: the board (Live Events on screen) or the in-player event
-// guide. Polling runs while anyone is.
-enum class Holder { board, guide };
+// Who's looking: the board (Live Events on screen), the in-player event
+// guide, or (Build 141) the background from launch, at its own pace.
+// Polling runs while anyone is.
+enum class Holder { board, guide, background };
 
 // Whether a score can still come for a game of a league (Build 123): the
 // league is known, its next look is due (one asked lately has answered,
@@ -157,14 +167,16 @@ class LiveScores {
   LiveScores() = default;
   explicit LiveScores(DailyCount daily) : daily_(std::move(daily)) {}
 
-  // Live Events (or the guide) opened. True when the caller should start a
-  // round now: polling wasn't running, or the guide opened while it was (it
-  // looks now instead of after the current wait; due times still apply).
+  // Live Events (or the guide, or the background) opened. True when the
+  // caller should start a round now: polling wasn't running, or the guide
+  // opened while it was (it looks now instead of after the current wait;
+  // due times still apply).
   bool start(Holder holder, bool scheduleEnabled);
   // Closed: true when nobody is looking any more (stop the loop and drop
   // any round in progress with cancelRound()).
   bool stop(Holder holder);
   bool looking() const { return !holders_.empty(); }
+  bool holds(Holder holder) const { return holders_.count(holder) > 0; }
   // The scores setting changed: the next poll uses the new pace.
   void settingsChanged() { revision_ += 1; }
 
@@ -246,6 +258,8 @@ class LiveScores {
     bool ok = false;
     size_t bytes = 0;
     bool awaiting = false;
+    // At the background's pace (nobody looking on screen).
+    bool background = false;
   };
   std::optional<Round> round_;
   Seconds lastWait_ = kIdleWait;

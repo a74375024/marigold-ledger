@@ -335,8 +335,8 @@ float mark(ui::Ctx& c, const EventSide& s, float x, float y, float size) {
   if (!s.flags.empty()) {
     // Each flag at its own shape in its square.
     bool pair = s.flags.size() >= 2;
-    float each = pair ? std::round(size * 0.62f) : size, gap = pair ? 4.0f : 0.0f;
     size_t n = pair ? 2 : 1;
+    float each = sports::banner::flagSize(n, size), gap = pair ? sports::banner::kPairGap : 0.0f;
     std::vector<logos::Texture> tex(n);
     bool loaded = true;
     for (size_t i = 0; i < n; ++i) {
@@ -355,7 +355,7 @@ float mark(ui::Ctx& c, const EventSide& s, float x, float y, float size) {
           ui::labelIn(c, s.country, blank, Weight::Bold, static_cast<int>(size * 0.3f), theme::white(), Align::Center);
       }
     }
-    return each * static_cast<float>(n) + gap * static_cast<float>(n - 1);
+    return sports::banner::markWidth(n, size);
   }
   if (!s.country.empty()) {
     Rect r{x, y + size * 0.17f, size, size * 0.66f};

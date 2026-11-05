@@ -184,11 +184,16 @@ struct EventSource {
   // 2 home market, 3 your other markets, 4 anywhere else, 5 a sports
   // channel from another country (Build 132). nil = not ranked.
   std::optional<int> rank;
+  // Build 141: when it shows the event, when known: a provider slot's own
+  // time (from only), a guide listing's start and end. A channel airing
+  // the event's network, a team's channel or a slot with no time: unknown.
+  std::optional<Seconds> from;
+  std::optional<Seconds> until;
 
   bool spanish() const { return lang == "es"; }
   bool operator==(const EventSource& o) const {
     return channelID == o.channelID && kind == o.kind && lang == o.lang &&
-           detail == o.detail && rank == o.rank;
+           detail == o.detail && rank == o.rank && from == o.from && until == o.until;
   }
   bool operator!=(const EventSource& o) const { return !(*this == o); }
 };
@@ -226,6 +231,11 @@ struct SportsEvent {
   // innings break), or for the day (stumps: not live until it resumes).
   std::optional<std::string> pause;
   bool dayOver = false;
+  // Build 141: a tennis match whose feeds name the schedule's second
+  // (away) side first, most of those naming both: the tile lists the
+  // players in that order, as the broadcast does. Otherwise the draw's
+  // first-listed player (the schedule's home side) is first.
+  bool awayFirst = false;
 
   enum class State : uint8_t { upcoming, live, mayHaveEnded, finished, postponed, unknownTime };
 

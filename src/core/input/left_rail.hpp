@@ -72,6 +72,11 @@ class Nav {
   void leftEdge(int origin, int count);
   // The column, opened on `origin`. `fromMenu`: Back returns to the menu.
   void openColumn(int origin, int count, bool fromMenu = false);
+  // The column's entries changed under it (Live Events' sports on a new
+  // board, Build 141): the one it opened on and the one focused, found
+  // again at `origin` and `index` of `count`; open or not as it was. With
+  // no entries left an open column closes.
+  void resetColumn(int origin, int index, int count);
   // The menu, focus on the current section (Back with nothing to undo).
   void openMenu();
   // Back to the content as it is (a page key, a number, a click on the grid).

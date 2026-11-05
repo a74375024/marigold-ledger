@@ -402,3 +402,146 @@ TEST_CASE("player search: opened without the lists (the games rail picked it)") 
   games.openLists();
   CHECK(games.pickList(0).what == Do::Search);
 }
+
+TEST_CASE("player rail: Live Events picked in the lists opens on its sports, as My Lineup on its neighborhoods") {
+  // Build 141. The lists, Live Events: the games rail opens its column on
+  // the sports, the focus there, the games following it behind; OK goes to
+  // a sport's games; Back to the games as they were.
+  PlayerNav n(Item::Events);
+  n.setLists(playerLists(false, true));
+  CHECK(n.openColumn(0, 6, true).what == Do::Column);
+  CHECK(n.mode() == Mode::Column);
+  CHECK_FALSE(n.waiting());
+  CHECK(n.key(Key::Down, edge(0, 6)).what == Do::Scroll);
+  PlayerStep s = n.key(Key::Ok, edge(0, 6));
+  CHECK(s.what == Do::Top);
+  CHECK(s.index == 1);
+  CHECK(n.mode() == Mode::Content);
+  n.openColumn(0, 6, true);
+  CHECK(n.key(Key::Back, edge(0, 6)).what == Do::Restore);
+  CHECK(n.mode() == Mode::Content);
+}
+
+TEST_CASE("player rail: Live Events' board still loading: its sports open as soon as they come") {
+  PlayerNav n(Item::Events);
+  n.setLists(playerLists(false, true));
+  // No sports yet: the column waits (the games rail shows it loading).
+  CHECK(n.openColumn(0, 0, true).what == Do::None);
+  CHECK(n.mode() == Mode::Content);
+  CHECK(n.waiting());
+  // Placeholders again, still nothing: still waiting. Up and Down on the
+  // empty games keep it waiting.
+  CHECK(n.entries(0, 0, 0, true).what == Do::None);
+  CHECK(n.key(Key::Down, {true, false, false, 0, 0}).what == Do::Grid);
+  CHECK(n.waiting());
+  // The first board: the column opens on the sport it was given, the
+  // focus there; the screen keeps the games' place for the return rule.
+  PlayerStep s = n.entries(2, 2, 7, true);
+  CHECK(s.what == Do::Column);
+  CHECK(s.index == 2);
+  CHECK(n.mode() == Mode::Column);
+  CHECK(n.origin() == 2);
+  CHECK(n.index() == 2);
+  CHECK(n.count() == 7);
+  CHECK_FALSE(n.waiting());
+  // The board finished with no sports: the games as they are, no column.
+  PlayerNav e(Item::Events);
+  e.openColumn(0, 0, true);
+  CHECK(e.entries(0, 0, 0, false).what == Do::None);
+  CHECK_FALSE(e.waiting());
+  CHECK(e.entries(0, 0, 3, false).what == Do::None);
+  CHECK(e.mode() == Mode::Content);
+}
+
+TEST_CASE("player rail: a key elsewhere while the sports load cancels the wait") {
+  // Left: the lists (no sports to open), and the first board doesn't pull
+  // the viewer out of them.
+  PlayerNav n(Item::Events);
+  n.setLists(playerLists(false, true));
+  n.openColumn(0, 0, true);
+  CHECK(n.key(Key::Left, {true, false, false, 0, 0}).what == Do::None);
+  CHECK(n.mode() == Mode::Menu);
+  CHECK_FALSE(n.waiting());
+  CHECK(n.entries(0, 0, 5, false).what == Do::None);
+  CHECK(n.mode() == Mode::Menu);
+  // Back: the games (the lists didn't come from the column).
+  CHECK(n.closeLists().what == Do::None);
+  CHECK(n.mode() == Mode::Content);
+  // Back on the games: the guide closes.
+  PlayerNav b(Item::Events);
+  b.openColumn(0, 0, true);
+  CHECK(b.key(Key::Back, {true, false, false, 0, 0}).what == Do::Close);
+  CHECK_FALSE(b.waiting());
+  // A click on the games (close()), the pointer's list name (edge()).
+  PlayerNav c(Item::Events);
+  c.openColumn(0, 0, true);
+  c.close();
+  CHECK_FALSE(c.waiting());
+  c.openColumn(0, 0, true);
+  c.edge(0, 0);
+  CHECK_FALSE(c.waiting());
+  // Without `wait` (an empty Favorites), nothing waits.
+  PlayerNav f(Item::Favorites);
+  CHECK(f.openColumn(0, 0).what == Do::None);
+  CHECK_FALSE(f.waiting());
+  CHECK(f.entries(0, 0, 4, false).what == Do::None);
+  CHECK(f.mode() == Mode::Content);
+}
+
+TEST_CASE("player rail: a new board keeps the open sports column open, on the same sports") {
+  PlayerNav n(Item::Events);
+  n.setLists(playerLists(false, true));
+  n.openColumn(1, 5, true);
+  n.key(Key::Down, edge(1, 5));
+  REQUIRE(n.index() == 2);
+  // A Live now row came in above: the screen finds the two sports again.
+  PlayerStep s = n.entries(2, 3, 6, true);
+  CHECK(s.what == Do::Scroll);
+  CHECK(s.index == 3);
+  CHECK(n.mode() == Mode::Column);
+  CHECK(n.origin() == 2);
+  CHECK(n.index() == 3);
+  CHECK(n.count() == 6);
+  // The return rule holds across it.
+  n.key(Key::Up, edge(2, 6));
+  CHECK(n.key(Key::Ok, edge(2, 6)).what == Do::Restore);
+  // The games, not the column: a new board changes nothing here.
+  CHECK(n.entries(0, 0, 4, false).what == Do::None);
+  CHECK(n.mode() == Mode::Content);
+  // Every sport went (placeholders again, the TV woke): the games as they
+  // were, and the column back with the sports.
+  n.openColumn(1, 5);
+  s = n.entries(0, 0, 0, true);
+  CHECK(s.what == Do::Restore);
+  CHECK(n.mode() == Mode::Content);
+  CHECK(n.waiting());
+  CHECK(n.entries(1, 1, 4, false).what == Do::Column);
+  CHECK(n.mode() == Mode::Column);
+}
+
+TEST_CASE("player rail: the lists over the sports keep the column for their Back across a new board") {
+  PlayerNav n(Item::Events);
+  n.setLists(playerLists(false, true));
+  n.openColumn(1, 5);
+  CHECK(n.key(Key::Left, edge(1, 5)).what == Do::Restore);
+  REQUIRE(n.mode() == Mode::Menu);
+  REQUIRE(n.fromColumn());
+  CHECK(n.entries(3, 3, 7, false).what == Do::None);
+  CHECK(n.mode() == Mode::Menu);
+  // Back: the column, on the sport it opened on, found again.
+  PlayerStep s = n.closeLists();
+  CHECK(s.what == Do::Column);
+  CHECK(n.origin() == 3);
+  CHECK(n.count() == 7);
+  // The sports all went while the lists were open: Back goes to the games.
+  n.key(Key::Left, edge(3, 7));
+  n.entries(0, 0, 0, true);
+  CHECK_FALSE(n.fromColumn());
+  CHECK(n.closeLists().what == Do::None);
+  CHECK(n.mode() == Mode::Content);
+  // Search under the lists: a new board is nothing to it.
+  PlayerNav q(Item::Events);
+  q.openSearch();
+  CHECK(q.entries(0, 0, 5, false).what == Do::None);
+  CHECK(q.search());
+}

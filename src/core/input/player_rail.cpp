@@ -38,6 +38,7 @@ PlayerStep PlayerNav::picked(PlayerStep s) {
 }
 
 PlayerStep PlayerNav::openSearch() {
+  waiting_ = false;
   if (!search_) before_ = nav_.section();
   search_ = true;
   results_ = false;
@@ -60,6 +61,14 @@ PlayerStep PlayerNav::toKeyboard() {
 }
 
 PlayerStep PlayerNav::key(Key k, const Grid& g, uint32_t glide) {
+  PlayerStep s = step(k, g, glide);
+  // A column waited for: the content's own keys (nothing there to move to
+  // yet) keep it waiting; anything else is the viewer's way elsewhere.
+  if (s.what != PlayerStep::Do::Grid || nav_.mode() != Mode::Content) waiting_ = false;
+  return s;
+}
+
+PlayerStep PlayerNav::step(Key k, const Grid& g, uint32_t glide) {
   using Do = PlayerStep::Do;
   Mode m = nav_.mode();
   if (m == Mode::Content && search_) {
@@ -100,19 +109,49 @@ PlayerStep PlayerNav::key(Key k, const Grid& g, uint32_t glide) {
 }
 
 PlayerStep PlayerNav::edge(int origin, int count) {
+  waiting_ = false;
   nav_.leftEdge(origin, count);
   fromColumn_ = false;
   return {nav_.mode() == Mode::Column ? PlayerStep::Do::Column : PlayerStep::Do::None, nav_.origin(), list()};
 }
 
-PlayerStep PlayerNav::openColumn(int origin, int count) {
+PlayerStep PlayerNav::openColumn(int origin, int count, bool wait) {
   nav_.openColumn(origin, count);
+  waiting_ = wait && count <= 0;
   return {nav_.mode() == Mode::Column ? PlayerStep::Do::Column : PlayerStep::Do::None, nav_.origin(), list()};
+}
+
+PlayerStep PlayerNav::entries(int origin, int index, int count, bool coming) {
+  using Do = PlayerStep::Do;
+  Mode m = nav_.mode();
+  if (search_) return {Do::None};
+  if (m == Mode::Content) {
+    if (!waiting_) return {Do::None};
+    if (count > 0) return openColumn(origin, count);  // the first entries in: the column opens on them
+    waiting_ = coming;  // nothing came: the content as it is
+    return {Do::None};
+  }
+  if (m == Mode::Column) {
+    nav_.resetColumn(origin, index, count);
+    if (count > 0) return {Do::Scroll, nav_.index(), list()};
+    // Every entry went (placeholders again): the content, the column back
+    // with the entries.
+    waiting_ = coming;
+    return {Do::Restore, 0, list()};
+  }
+  // The lists: their Back goes to the column as it is now (to the content
+  // when it has nothing left).
+  if (fromColumn_) {
+    nav_.resetColumn(origin, index, count);
+    if (count <= 0) fromColumn_ = false;
+  }
+  return {Do::None};
 }
 
 PlayerStep PlayerNav::openLists(uint32_t glide) {
   Mode m = nav_.mode();
   if (m == Mode::Menu) return {PlayerStep::Do::None};
+  waiting_ = false;
   // A swipe that crossed the keyboard's edge goes no further.
   if (glide) glide_ = glide;
   results_ = false;

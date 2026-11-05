@@ -3,7 +3,8 @@
 // launch (once the channels are in), with Live Events closed, so opening it
 // finds today's games already in. Never with the schedule off, never before
 // Live Events was used, never while the TV is busy (a channel starting, a
-// key just pressed).
+// key just pressed). Build 141: within seconds of the channels, and while
+// a channel plays full screen too (tests/engine/test_events_ready.cpp).
 #include <doctest.h>
 
 #include <string>
@@ -77,9 +78,11 @@ TEST_CASE("engine: the day's schedule comes in the background after launch; Live
   savedYesterday(tv);
   answerScoreboards(tv);
   Store store(tv.host());
-  REQUIRE(fake::addPlaylist(store, tv).empty());
-  // Not at once: the channels first, then a while.
+  // Not before the channels are in.
   CHECK(scoreboardAsked(tv) == 0);
+  REQUIRE(fake::addPlaylist(store, tv).empty());
+  // Build 141: then within seconds (was 20 s).
+  CHECK(scoreboardAsked(tv) > 0);
   seconds(store, tv, 90);
   CHECK(scoreboardAsked(tv) > 10);
   // Saved: fetched today.
@@ -103,7 +106,8 @@ TEST_CASE("engine: the day's schedule comes in the background after launch; Live
   store.eventsOpen(false);
 }
 
-TEST_CASE("engine: no background schedule when it's off, before Live Events was used, or while the TV is busy") {
+TEST_CASE("engine: no background schedule when it's off, before Live Events was used, or while the TV is busy; "
+          "watching full screen doesn't stop it") {
   SUBCASE("off") {
     fake::Tv tv;
     tv.pool.answer(fake::kPlaylist, playlist());
@@ -148,12 +152,13 @@ TEST_CASE("engine: no background schedule when it's off, before Live Events was 
     marigold::engine::Host host = tv.host();
     host.playingFull = [&full] { return full; };
     Store store(host);
+    // The outside listings wait for real while watching; not this test's.
+    Settings s = store.settings();
+    s.fillMissingListings = false;
+    store.setSettings(s);
     REQUIRE(fake::addPlaylist(store, tv).empty());
+    // Build 141: fetched while watching (was: only once back in the guide).
     seconds(store, tv, 90);
-    CHECK(scoreboardAsked(tv) == 0);
-    // Back to the guide: it goes on.
-    full = false;
-    seconds(store, tv, 10);
     CHECK(scoreboardAsked(tv) > 0);
   }
 }

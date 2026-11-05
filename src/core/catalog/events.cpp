@@ -89,6 +89,14 @@ std::optional<Zone> serviceZone(std::string_view service) {
   }
   std::string lower = str::lowerAscii(s);
   if (lower == "vg" || lower == "vgtv") return Zone::named("Europe/Oslo");
+  // Build 141: the tennis service (":Tennis  13", "Fils, Arthur vs Fritz,
+  // Taylor @ Nov 5 19:00 PM - ATP Paris") writes Central European time,
+  // whatever the tournament: its Paris night sessions at 19:00 and 20:30
+  // are the schedule's 18:00 and 19:30 UTC, and its Chennai and Hong Kong
+  // matches are an hour ahead of their UTC starts too. Read as Eastern
+  // they were six hours late (a doubles watched at 6-4 4-4 at 8:36 AM
+  // Pacific was listed for 12:55 PM).
+  if (lower == "tennis") return Zone::named("Europe/Paris");
   return std::nullopt;
 }
 
@@ -369,7 +377,8 @@ ParsedEvent parseEventDetailed(std::string_view input, Seconds now,
   // A service tail naming its country (":Viaplay DK  03", ":VG  01") says
   // which clock the slot's time is on, AM/PM included.
   std::optional<Zone> slotZone;
-  if (auto tail = rx::first("\\s:\\s?([A-Za-z][\\w+ ]{0,24}?)\\s+\\d{1,3}\\s*$", title)) {
+  // Build 141: a slot that is nothing but the tail (":Golf  02") is empty.
+  if (auto tail = rx::first("(?:^|\\s):\\s?([A-Za-z][\\w+ ]{0,24}?)\\s+\\d{1,3}\\s*$", title)) {
     slotZone = serviceZone(tail->group(1));
     title.erase(tail->begin, tail->end - tail->begin);
   }

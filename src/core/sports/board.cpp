@@ -12,6 +12,7 @@
 #include "core/sports/matcher.hpp"
 #include "core/sports/player_photos.hpp"
 #include "core/sports/profiles.hpp"
+#include "core/sports/schedule.hpp"
 #include "core/sports/text.hpp"
 #include "core/sports/titles.hpp"
 
@@ -84,6 +85,39 @@ std::optional<LivePhase> phaseOf(const SportsEvent& part, const scores::Statuses
 }
 
 bool isLivePhase(std::optional<LivePhase> p) { return p == LivePhase::live || p == LivePhase::delayed; }
+
+// Whether a game's home side is shown first: as its sport writes it (home
+// first in soccer, away first in American sports); a tennis match as its
+// broadcast lists the players (Build 141): the feeds' order when they name
+// both, else the draw's first-listed player, the schedule's home side.
+bool homeShownFirst(const SportsEvent& e) {
+  const SportsGame& g = *e.game;
+  return g.isTennis() ? !e.awayFirst : g.homeFirst;
+}
+
+// A game's title in the order its sides show ("Shelton vs Rinderknech").
+std::string gameTitle(const SportsEvent& e) {
+  const SportsGame& g = *e.game;
+  if (!g.isTennis() || g.cardKey) return title(g);
+  bool homeFirst = homeShownFirst(e);
+  return schedule::tennisShort(homeFirst ? g.home : g.away) + " vs " + schedule::tennisShort(homeFirst ? g.away : g.home);
+}
+
+// Build 141: a tile under way that nothing shows yet is "later", at the time
+// its first way to watch starts: a golf tournament's round is played from
+// early morning, its coverage is a few hours of it (the World Wide
+// Technology Championship in play at 8:45 AM Pacific, its feeds at noon,
+// 12:40 and 1 PM). Not a game the live scoreboard says is being played: a
+// feed's time is then the one that's off (a tennis match watched at 6-4 4-4
+// while its only slot, read in the wrong zone, put it hours later).
+SportsEvent offAir(SportsEvent e, Seconds onAt) {
+  e.start = onAt;
+  e.live = LivePhase::pre;
+  e.pause.reset();
+  e.dayOver = false;
+  e.suspended = false;
+  return e;
+}
 
 // A race weekend: the session on now, else the next one not over (by its
 // status, else its usual length), else the last.
@@ -545,10 +579,11 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
     place.subtitle = event.game->venue;
   } else if (event.game) {
     const SportsGame& game = *event.game;
-    place.top = game.homeFirst ? game.home : game.away;
-    place.bottom = game.homeFirst ? game.away : game.home;
+    const bool homeFirst = homeShownFirst(event);
+    place.top = homeFirst ? game.home : game.away;
+    place.bottom = homeFirst ? game.away : game.home;
     if (!game.cardKey && !game.isTennis()) place.homeIsTop = game.homeFirst;
-    std::string full = game.customTitle.value_or(event.title);
+    std::string full = game.isTennis() ? gameTitle(event) : game.customTitle.value_or(event.title);
     place.title = std::string(str::trimUnicode(text::components(full, ":").front()));
   } else {
     titles::Title read = readTitle(in, event.title, event.league);
@@ -678,8 +713,10 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
     if (game.isTennis()) {
       // Games per set; the match has no single score.
       if (showsScores && s.phase != LivePhase::pre) {
-        place.topSets = s.awaySets.value_or(std::vector<std::string>{});
-        place.bottomSets = s.homeSets.value_or(std::vector<std::string>{});
+        // The sets follow the players (Build 141).
+        const bool homeTop = homeShownFirst(event);
+        place.topSets = (homeTop ? s.homeSets : s.awaySets).value_or(std::vector<std::string>{});
+        place.bottomSets = (homeTop ? s.awaySets : s.homeSets).value_or(std::vector<std::string>{});
       }
     } else if (showsScores && s.phase != LivePhase::pre) {
       bool topIsHome = game.homeFirst;
@@ -1043,6 +1080,27 @@ Tile makeTile(const SportsEvent& event, const Place& place, const std::string& r
 
 }  // namespace
 
+// MARK: On air
+
+std::optional<Seconds> onAirFrom(const SportsEvent& event, Seconds now) {
+  // A golf tournament's channels (its networks') air a few hours of a day's
+  // play: only a guide listing says when.
+  const bool golf = event.game && event.game->isGolf();
+  std::optional<Seconds> first;
+  for (const EventSource& s : event.sources) {
+    if (!s.from) {
+      if (golf && s.kind != EventSource::Kind::provider) continue;
+      return std::nullopt;  // may be showing it
+    }
+    if (*s.from <= now) {
+      if (!s.until || now < *s.until) return std::nullopt;  // on now
+      continue;                                              // over
+    }
+    if (!first || *s.from < *first) first = s.from;
+  }
+  return first;
+}
+
 // MARK: Names
 
 std::string shortName(const SportsTeam& team, bool soccer) {
@@ -1237,6 +1295,11 @@ Board build(const Input& in) {
         copy.pause = status->second.pause;
         copy.dayOver = status->second.dayOver;
       }
+    }
+    // Live only when on air (Build 141).
+    bool played = isLivePhase(copy.live) && !(copy.game && copy.game->isGolf());
+    if (!played && copy.state(now) == State::live) {
+      if (auto onAt = onAirFrom(copy, now)) copy = offAir(std::move(copy), *onAt);
     }
     withLive.push_back(std::move(copy));
   }
@@ -1723,8 +1786,9 @@ Board build(const Input& in) {
     h.leagueLine = str::join(leagueParts, kWideDot);
     if (hero->game) {
       const SportsGame& g = *hero->game;
-      h.badges.push_back(sideLine(g.homeFirst ? g.home : g.away, g.homeFirst, false, std::nullopt, std::nullopt, false, {}, false));
-      h.badges.push_back(sideLine(g.homeFirst ? g.away : g.home, g.homeFirst, false, std::nullopt, std::nullopt, false, {}, false));
+      const bool homeFirst = homeShownFirst(*hero);
+      h.badges.push_back(sideLine(homeFirst ? g.home : g.away, g.homeFirst, false, std::nullopt, std::nullopt, false, {}, false));
+      h.badges.push_back(sideLine(homeFirst ? g.away : g.home, g.homeFirst, false, std::nullopt, std::nullopt, false, {}, false));
     } else if (hero->teams && hero->teams->size() == 2) {
       for (const SportsTeam& t : *hero->teams) h.badges.push_back(sideLine(t, true, false, std::nullopt, std::nullopt, false, {}, false));
     }
@@ -1734,7 +1798,7 @@ Board build(const Input& in) {
       h.title = shortName(*place.top, soccer) + " " + *place.topScore + "  \xE2\x80\x93  " + *place.bottomScore + " " +
                 shortName(*place.bottom, soccer);
     } else {
-      h.title = hero->game ? title(*hero->game) : hero->title;
+      h.title = hero->game ? gameTitle(*hero) : hero->title;
     }
     State state = stateOf(*hero);
     switch (state) {
@@ -2107,10 +2171,11 @@ DetailCard detailCard(const SportsEvent& event, Seconds now, const time::Zone& z
   card.leagueLine = leagueLine(event);
   if (event.game) {
     const SportsGame& g = *event.game;
-    card.badges.push_back(sideLine(g.homeFirst ? g.home : g.away, g.homeFirst, false, std::nullopt, std::nullopt, false, {}, false));
-    card.badges.push_back(sideLine(g.homeFirst ? g.away : g.home, g.homeFirst, false, std::nullopt, std::nullopt, false, {}, false));
+    const bool homeFirst = homeShownFirst(event);
+    card.badges.push_back(sideLine(homeFirst ? g.home : g.away, g.homeFirst, false, std::nullopt, std::nullopt, false, {}, false));
+    card.badges.push_back(sideLine(homeFirst ? g.away : g.home, g.homeFirst, false, std::nullopt, std::nullopt, false, {}, false));
   }
-  card.title = event.game ? title(*event.game) : event.title;
+  card.title = event.game ? gameTitle(event) : event.title;
   std::vector<std::string> parts;
   if (event.start) {
     int days = text::dayDifference(now, *event.start, zone);

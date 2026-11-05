@@ -144,6 +144,11 @@ TEST_CASE("hints: the guide in the player, per remote and place") {
   CHECK(playerGuide(lg, PlayerGuide::Lists).find("Back: neighborhoods") != std::string::npos);
   CHECK(playerGuide(lg, PlayerGuide::Lists, false).find("Back: the grid") != std::string::npos);
   CHECK(playerGuide(lg, PlayerGuide::GameLists).find("Back: sports") != std::string::npos);
+  // Build 141: the lists over the games without SPORTS go back to the
+  // games; SPORTS with the pointer says what clicks and the wheel do.
+  CHECK(playerGuide(lg, PlayerGuide::GameLists, false).find("Back: the games") != std::string::npos);
+  CHECK(playerGuide(lg, PlayerGuide::Sports, true, true).rfind("Click: its games" + dot + "Wheel: walk", 0) == 0);
+  CHECK(playerGuide(lg, PlayerGuide::Sports) == "OK or \xe2\x96\xb6 its games" + dot + "Back: Stay" + dot + "\xe2\x97\x80 Lists");
   CHECK(playerGuide(lg, PlayerGuide::Games).rfind("\xe2\x97\x80 Sports", 0) == 0);
   // No number keys: no "123"; the Siri Remote clicks.
   CHECK(playerGuide(RemoteKeys::fireTv(), PlayerGuide::Now).find("123") == std::string::npos);

@@ -107,7 +107,7 @@ bool LiveStatus::operator==(const LiveStatus& o) const {
 bool SportsEvent::operator==(const SportsEvent& o) const {
   return id == o.id && sources == o.sources && game == o.game && listingEnd == o.listingEnd &&
          teams == o.teams && feedsEndedAt == o.feedsEndedAt && moreStations == o.moreStations &&
-         live == o.live;
+         live == o.live && awayFirst == o.awayFirst;
 }
 
 SportsEvent SportsEvent::withId(const std::string& newID) const {
@@ -125,6 +125,7 @@ SportsEvent SportsEvent::withId(const std::string& newID) const {
   copy.teams = teams;
   copy.feedsEndedAt = feedsEndedAt;
   copy.moreStations = moreStations;
+  copy.awayFirst = awayFirst;
   return copy;
 }
 
@@ -435,6 +436,8 @@ json::Value toJson(const EventSource& s) {
   if (!s.lang.empty()) v.set("lang", s.lang);
   v.set("detail", s.detail);
   setOpt(v, "rank", s.rank);
+  setOpt(v, "from", s.from);
+  setOpt(v, "until", s.until);
   return v;
 }
 
@@ -448,6 +451,8 @@ std::optional<EventSource> sourceFromJson(const json::Value& v) {
   s.lang = v["lang"].isString() ? v["lang"].asString() : v["spanish"].asBool() ? std::string("es") : std::string();
   s.detail = v["detail"].asString();
   s.rank = optInt(v["rank"]);
+  s.from = optSeconds(v["from"]);
+  s.until = optSeconds(v["until"]);
   return s;
 }
 
@@ -472,6 +477,7 @@ json::Value toJson(const SportsEvent& e) {
   setOpt(v, "feedsEndedAt", e.feedsEndedAt);
   setOpt(v, "moreStations", e.moreStations);
   if (e.live) v.set("live", rawValue(*e.live));
+  if (e.awayFirst) v.set("awayFirst", true);
   return v;
 }
 
@@ -507,6 +513,7 @@ std::optional<SportsEvent> eventFromJson(const json::Value& v) {
   e.feedsEndedAt = optSeconds(v["feedsEndedAt"]);
   e.moreStations = optInt(v["moreStations"]);
   if (v["live"].isString()) e.live = livePhaseFromRaw(v["live"].asString());
+  e.awayFirst = v["awayFirst"].asBool();
   return e;
 }
 

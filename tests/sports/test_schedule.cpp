@@ -284,7 +284,8 @@ TEST_CASE("tennis: matches between players and pairs, round and place tag") {
   REQUIRE(matches->size() == 2);
   const SportsGame& sf = (*matches)[0];
   CHECK(sf.id == "ATP|80|1");
-  CHECK(sf.customTitle == "Racket vs Player");
+  // The draw's first-listed player (home) first, as broadcasts list them.
+  CHECK(sf.customTitle == "Player vs Racket");
   CHECK(sf.note == "Harbor Open \xC2\xB7 SF");
   CHECK(sf.venue == "Center Court");
   CHECK(sf.home.rank == 3);

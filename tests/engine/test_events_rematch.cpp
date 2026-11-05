@@ -3,7 +3,8 @@
 // STREAMING NOW" becomes "NEXT | Team A - Team B | ... | 8K EXCLUSIVE");
 // Live Events matches again only when it's open. A report made meanwhile
 // says a slot is new or renamed since the last match instead of "no tile
-// took it", and opening Live Events matches it. And with Live Events open,
+// took it", and opening Live Events matches it (Build 141: so does the
+// background, once nothing else needs the TV). And with Live Events open,
 // the guide's listings read again every 10 minutes are matched again only
 // when they changed (or anything else did).
 #include <doctest.h>
@@ -75,12 +76,17 @@ bool logSays(const std::vector<std::string>& lines, const std::string& text) {
 
 }  // namespace
 
-TEST_CASE("engine: slots renamed while Live Events is closed: the report says so, opening matches them") {
+TEST_CASE("engine: slots renamed while Live Events is closed: the report says so until they are matched") {
   fake::Tv tv;
   std::vector<std::string> slots = {slot(1, "LIVE | Harbor City Owls - Valley Hawks"),
                                     slot(2, "NO EVENT STREAMING NOW -"), slot(3, "NO EVENT STREAMING NOW -")};
   tv.pool.answer(fake::kPlaylist, playlist(slots));
-  Store store(tv.host());
+  // Build 141: closed, a new list is matched in the background as soon as
+  // nothing else needs the TV; a key held down keeps it busy meanwhile.
+  bool busy = false;
+  marigold::engine::Host host = tv.host();
+  host.idle = [&busy] { return !busy; };
+  Store store(host);
   REQUIRE(fake::addPlaylist(store, tv).empty());
   store.eventsOpen(true);
   for (int i = 0; i < 4; ++i) fake::settle(store, tv);
@@ -96,6 +102,7 @@ TEST_CASE("engine: slots renamed while Live Events is closed: the report says so
   slots[2] = slot(3, "NEXT | Ridge Rams - Bayview Otters");
   slots[0] = slot(1, "NEXT | Summit Elk - Canyon Foxes");
   tv.pool.answer(fake::kPlaylist, playlist(slots));
+  busy = true;
   store.refreshAll();
   fake::settle(store, tv);
   csv = report(store, tv);
@@ -109,7 +116,19 @@ TEST_CASE("engine: slots renamed while Live Events is closed: the report says so
     CHECK(str::endsWith(line, ",\"not matched yet\""));
   }
 
-  // Opened: matched, and the report says what became of them.
+  // The TV free again (Live Events still closed): matched in the
+  // background, and the report says what became of them.
+  busy = false;
+  fake::settle(store, tv);
+  csv = report(store, tv);
+  for (const char* game : {"Lakeside Pines", "Ridge Rams", "Summit Elk"}) {
+    std::string line = lineWith(csv, game);
+    INFO(line);
+    CHECK(line.find("since Live Events last matched") == std::string::npos);
+    CHECK(line.find("no tile took it") == std::string::npos);
+    CHECK(line.find("given no reason by matching") == std::string::npos);
+  }
+  // Opened: the same.
   store.eventsOpen(true);
   for (int i = 0; i < 4; ++i) fake::settle(store, tv);
   csv = report(store, tv);
@@ -117,7 +136,6 @@ TEST_CASE("engine: slots renamed while Live Events is closed: the report says so
     std::string line = lineWith(csv, game);
     INFO(line);
     CHECK(line.find("since Live Events last matched") == std::string::npos);
-    CHECK(line.find("no tile took it") == std::string::npos);
     CHECK(line.find("given no reason by matching") == std::string::npos);
   }
   store.eventsOpen(false);

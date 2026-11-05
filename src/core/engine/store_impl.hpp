@@ -75,6 +75,8 @@ struct EventsState {
   std::shared_ptr<const sports::matcher::SlotsSeen> slotsSeen;
   bool rebuilding = false;
   uint32_t nextCheckMs = 0;
+  // The channel list's revision last looked at (a new one is matched at once).
+  int matchedCatalog = -1;
   bool restoredTried = false, restoring = false;  // the saved list is read on a worker
   bool launchPass = false;  // it's in: the next tick rebuilds and makes the board, open or not
   // Opened with games too old to show (events_build::keptBoardShows): boards
@@ -93,8 +95,9 @@ struct EventsState {
   bool scheduleBusy = false;
   uint32_t scheduleAt = 0;   // send the pending schedule request at
   std::optional<sports::schedule::Schedule::Pending> schedulePending;
-  // The day's schedule in the background (Build 125): looked at from this
-  // time on (0: the channels aren't in yet), and next at.
+  // The day's schedule in the background (Build 125; Build 141 the scores
+  // and the games too): looked at from this time on (0: the channels aren't
+  // in yet), and the schedule next at.
   uint32_t scheduleBackgroundFrom = 0;
   uint32_t scheduleBackgroundCheck = 0;
   bool scoresBusy = false;

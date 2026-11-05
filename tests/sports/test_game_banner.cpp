@@ -190,3 +190,29 @@ TEST_CASE("game banner: studio shows, whip-arounds, finished and postponed games
   untimed.start.reset();
   CHECK(banner::onChannel(boardOf({untimed}), {"e|sn"}, kKickoff).empty());
 }
+
+TEST_CASE("game banner: the title starts after a doubles pair's flags (Build 141)") {
+  // The player's banner: marks 60 tall from x 96, 8 apart; the title at
+  // 236 for a player a side (12 after the second flag).
+  const float x = 96, size = 60, between = 8, gap = 12, minX = 236;
+  CHECK(banner::flagSize(1, size) == doctest::Approx(60));
+  CHECK(banner::flagSize(2, size) == doctest::Approx(37));
+  CHECK(banner::markWidth(0, size) == doctest::Approx(60));  // a country code or a badge
+  CHECK(banner::markWidth(1, size) == doctest::Approx(60));
+  CHECK(banner::markWidth(2, size) == doctest::Approx(78));  // 37 + 4 + 37
+  CHECK(banner::markWidth(3, size) == doctest::Approx(78));  // never more than a pair
+  // Singles: unchanged, at 236.
+  float singles = banner::titleX(x, banner::markWidth(1, size), banner::markWidth(1, size), between, gap, minX);
+  CHECK(singles == doctest::Approx(236));
+  // Doubles: the second pair's flags end at 96 + 78 + 8 + 78 = 260 (past
+  // 236, where the title used to sit over them); the title 12 after.
+  float pair = banner::markWidth(2, size);
+  float doubles = banner::titleX(x, pair, pair, between, gap, minX);
+  CHECK(x + pair + between + pair == doctest::Approx(260));
+  CHECK(doubles == doctest::Approx(272));
+  CHECK(doubles - (x + pair + between + pair) == doctest::Approx(singles - (x + 60 + between + 60)));
+  // A pair on one side only.
+  CHECK(banner::titleX(x, banner::markWidth(1, size), pair, between, gap, minX) == doctest::Approx(254));
+  // Narrower marks never pull the title left of 236.
+  CHECK(banner::titleX(x, 40, 40, between, gap, minX) == doctest::Approx(236));
+}

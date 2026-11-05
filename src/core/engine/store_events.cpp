@@ -1,9 +1,11 @@
 // Live Events in the store (the "Sports events" parts of LiveTVStore in
-// tvOS): the schedule and live scores, asked for only while a Live Events
-// screen is open; the rebuild that matches games to channels and provider
-// feeds, and the board made from it, each on a worker from a snapshot and
-// put in by the tick (events_build.hpp); feeds for a game in automatic
-// backup order, starting on the source used last time (6 hours); reminders.
+// tvOS): the schedule and live scores, at full pace while a Live Events
+// screen is open and (Build 141) from launch in the background at a gentle
+// one; the rebuild that matches games to channels and provider feeds, and
+// the board made from it (kept up while closed too, Build 141), each on a
+// worker from a snapshot and put in by the tick (events_build.hpp); feeds
+// for a game in automatic backup order, starting on the source used last
+// time (6 hours); reminders.
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -117,14 +119,18 @@ constexpr uint32_t kBoardGapMs = 1500;
 constexpr uint32_t kTimingLogMs = 60000;
 // The day's schedule in the background: this long after the channels are
 // in, then looked at again this often (a new day while the app runs).
-constexpr uint32_t kScheduleBackgroundAfterMs = 20000;
+// Build 141: a few seconds after launch (was 20 s), video playing or not.
+constexpr uint32_t kScheduleBackgroundAfterMs = 5000;
 constexpr uint32_t kScheduleBackgroundCheckMs = 5 * 60000;
+// Build 141: Live Events closed, its games are looked at this often (matched
+// again only when something changed, or at the half hour), so an open finds
+// a board made from fresh inputs.
+constexpr uint32_t kReadyCheckMs = 60000;
+// ...and the board kept made again from the clock at least this often, so
+// the one an open shows at once is minutes old at most.
+constexpr time::Seconds kReadyBoardEvery = 5 * 60;
 
 using Clock = std::chrono::steady_clock;
-
-// Shown on opening without waiting for a board made now (its clock texts
-// are a minute at most behind, as between the board's own refreshes).
-constexpr time::Seconds kBoardShownFor = 60;
 
 // Which lineup a copy or the whip-around list was made from: its revision
 // and size (a reset empties it without a new revision).
@@ -387,9 +393,13 @@ void Store::eventsArrive(time::Seconds away) {
   // schedule if due: then what is coming is known.
   liveEventsOpened();
   time::Seconds now = time::now();
+  // The day's fetch first (Build 141): a look-up of newly seen sports or
+  // the day's calendars started before it was a fetch of their own that
+  // left the schedule yesterday's, so the next open waited for the day's
+  // fetch again. Begun during the day's fetch, it follows it (recheck).
+  e.schedule.refreshIfNeeded(scheduleContext());
   if (sports::noteSportFeeds(e.seen, e.seenCheckedAt, impl_->catalog->events, now))
     e.schedule.leaguesChanged(scheduleContext());
-  e.schedule.refreshIfNeeded(scheduleContext());
   // Games worked out over 15 minutes ago (or another day), from a channel
   // list or a schedule a newer one is coming for, or kept through a long
   // sleep never show: placeholders, and boards leave out what old inputs
@@ -398,8 +408,11 @@ void Store::eventsArrive(time::Seconds away) {
   e.checkedSinceOpen = false;
   e.noteBoard = true;
   events_build::Hold old = events_build::holdFor(eventsInputs(), now, host_.zone());
+  // Build 141: a channel list read this session within kListKeptFor holds
+  // nothing up: the board shows at once and takes the re-read in place.
+  bool listOld = old.list && !events_build::listKept(e.madeFrom.listAt, now);
   bool keep = !e.events->empty() && away < events_build::kKeptBoardFor &&
-              events_build::keptBoardShows(e.eventsBuiltAt, now, host_.zone()) && !old.list && !old.schedule;
+              events_build::keptBoardShows(e.eventsBuiltAt, now, host_.zone()) && !listOld && !old.schedule;
   std::string what = away ? "woke after " + ageText(away) : std::string("opened");
   if (e.events->empty() || !e.eventsBuiltAt) {
     e.logNotes.push_back(what + "; no board yet");
@@ -415,7 +428,12 @@ void Store::eventsArrive(time::Seconds away) {
   e.holdSinceMs = host_.ms();
   e.heldMost = e.oldLiveMost = 0;
   if (!keep) e.lastFingerprint.clear();  // worked out again, even with nothing new
-  if (!keep || now - e.boardMadeAt > kBoardShownFor || e.boardSerial != e.eventsSerial) showPlaceholders();
+  // Build 141: a kept board made from these games shows at once, however
+  // long ago it was made (kept up while closed); it is made again from the
+  // clock straight away (boardDirty below). Placeholders only when it isn't
+  // kept, or none was made from these games.
+  bool shown = keep && e.boardSerial == e.eventsSerial && !events_->rows.empty();
+  if (!shown) showPlaceholders();
   // Scores: a round for this look, now (each league still at its own pace).
   ++e.lookSerial;
   if (!e.scoresRound) e.scoresAt = host_.ms();
@@ -457,7 +475,7 @@ void Store::pumpSchedule(uint32_t ms, bool background) {
       MLOG_I("events", "schedule: today's games in");
       ++e.scheduleRevision;
       e.nextCheckMs = 0;
-      if (eventsOpen_ > 0 && !e.scoresRound) e.scoresAt = ms;
+      if (e.scores.looking() && !e.scoresRound) e.scoresAt = ms;
       saveSchedule();
     }
     if (!e.schedulePending) {
@@ -466,7 +484,7 @@ void Store::pumpSchedule(uint32_t ms, bool background) {
         ++e.scheduleRevision;
         e.nextCheckMs = 0;
         // Its games around now are looked at in a round of their own.
-        if (eventsOpen_ > 0 && !e.scoresRound) e.scoresAt = ms;
+        if (e.scores.looking() && !e.scoresRound) e.scoresAt = ms;
         if (done->recheck) e.schedule.leaguesChanged(scheduleContext());
         saveEvents();
         releaseRosters();
@@ -497,30 +515,56 @@ void Store::pumpSchedule(uint32_t ms, bool background) {
   });
 }
 
-void Store::scheduleInBackground(uint32_t ms) {
+bool Store::eventsInBackground(uint32_t ms) {
   Impl& m = *impl_;
   EventsState& e = m.ev;
-  if (!settings_.scheduleEnabled || m.channels->empty() || status_.phase != StoreStatus::Phase::Ready) return;
-  // Nothing else needs the TV: the list isn't loading or sorting, no key
-  // pressed this moment, no channel starting (host idle) and nothing playing
-  // full screen (a weak TV's decoder and relay come first; opening Live
-  // Events still fetches at once).
-  bool quiet = !m.loading && *m.foregroundJobs == 0 && (!host_.idle || host_.idle()) && !host_.playingFull();
+  if (m.channels->empty() || status_.phase != StoreStatus::Phase::Ready) return false;
+  time::Seconds now = time::now();
+  // Only on a TV that uses Live Events: a schedule fetched in the last two
+  // weeks, or Live Events opened in this run (a first open fetches as before).
+  bool used = e.schedule.usedLately(now) || m.eventsUsedAt != 0;
+  bool enabled = settings_.scheduleEnabled;
+  // Build 141: the scores from launch too, at the background's pace
+  // (sports::scores::kBackgroundEvery, kBackgroundDailyCap).
+  namespace sc = sports::scores;
+  if (used && enabled && !e.scores.holds(sc::Holder::background)) {
+    if (e.scores.start(sc::Holder::background, true) && !e.scoresRound) e.scoresAt = ms;
+  } else if (!(used && enabled) && e.scores.holds(sc::Holder::background) && e.scores.stop(sc::Holder::background)) {
+    e.scoresRound = false;
+    e.scoresPending.reset();
+  }
   if (!e.scheduleBackgroundFrom) {
-    // Shortly after the first frame and the channel list.
+    // Shortly after the first frame and the channels.
     e.scheduleBackgroundFrom = std::max<uint32_t>(1, ms + kScheduleBackgroundAfterMs);
-    return;
+    return false;
   }
-  if (!quiet || ms < e.scheduleBackgroundFrom) return;
-  if (e.schedule.busy()) {
-    pumpSchedule(ms, true);
-    return;
+  // Nothing else needs the TV this moment: no foreground job (the saved
+  // list read, the channel sort: they hold a lot of memory), no key pressed
+  // lately and no channel starting (host idle). Build 141: a channel playing
+  // full screen no longer stops it (Build 125's rule, so the first open
+  // after watching fetched and waited): the requests are small, spaced and
+  // read on a worker, and the matching and the board run on a worker behind
+  // anything on screen.
+  bool quiet = *m.foregroundJobs == 0 && (!host_.idle || host_.idle());
+  if (!quiet || ms < e.scheduleBackgroundFrom) return false;
+  if (enabled && used) {
+    if (e.schedule.busy()) {
+      pumpSchedule(ms, true);
+    } else if (ms >= e.scheduleBackgroundCheck) {
+      e.scheduleBackgroundCheck = ms + kScheduleBackgroundCheckMs;
+      if (e.schedule.refreshIfNeeded(scheduleContext())) MLOG_I("events", "schedule: the day's fetch in the background");
+    }
+    // Sports newly seen among the feeds (every 6 hours, once the whole list
+    // is in): looked up now rather than when Live Events opens. During the
+    // day's fetch it follows it.
+    if (!m.loading && !m.partial && sports::noteSportFeeds(e.seen, e.seenCheckedAt, m.catalog->events, now))
+      e.schedule.leaguesChanged(scheduleContext());
   }
-  if (ms < e.scheduleBackgroundCheck) return;
-  e.scheduleBackgroundCheck = ms + kScheduleBackgroundCheckMs;
-  // Only on a TV that uses Live Events; a first open fetches as before.
-  if (!e.schedule.usedLately(time::now())) return;
-  if (e.schedule.refreshIfNeeded(scheduleContext())) MLOG_I("events", "schedule: the day's fetch in the background");
+  if (e.scores.looking()) pumpScores(ms);
+  // The games matched and a board made from them while closed, once the
+  // channel list isn't loading and no guide is being built (on a TV with
+  // little memory, one big job at a time).
+  return used && !m.loading && !m.providerRunning && !m.outsideRunning;
 }
 
 void Store::pumpScores(uint32_t ms) {
@@ -564,13 +608,29 @@ void Store::pumpScores(uint32_t ms) {
   }
   sports::scores::LiveScores::Request send = std::move(*req);
   e.scoresBusy = true;
-  auto body = std::make_shared<std::string>();
+  // Build 141: read on the worker (a scoreboard can be most of a
+  // megabyte, and rounds now run while a channel plays): the UI loop only
+  // merges what it says.
+  struct Parsed {
+    sports::scores::Statuses statuses;
+    size_t bytes = 0;
+  };
+  auto parsed = std::make_shared<Parsed>();
   http::Request q = toHttp(send.request, "events.scores");
-  q.afterTransfer = [body](http::Response& r) { body->swap(r.body); };
-  host_.pool.submit(std::move(q), [this, body](http::Response&& r) {
+  q.afterTransfer = [parsed, league = send.league](http::Response& r) {
+    if (r.status == 200) {
+      parsed->bytes = r.body.size();
+      parsed->statuses = sports::scores::statuses(r.body, league);
+    }
+    r.body.clear();
+  };
+  if (eventsOpen_ <= 0) q.priority = http::Priority::Background;
+  host_.pool.submit(std::move(q), [this, parsed](http::Response&& r) {
     EventsState& ev = impl_->ev;
     ev.scoresBusy = false;
-    ev.scores.onResponse(r.status, *body, time::now(), r.retryAfterS);
+    time::Seconds at = time::now();
+    if (r.status == 200) ev.scores.onParsed(true, parsed->bytes, std::move(parsed->statuses), at);
+    else ev.scores.onResponse(r.status, {}, at, r.retryAfterS);
     if (ev.scores.revision() != ev.statusesRevision) ev.boardStale = true;
   });
 }
@@ -706,6 +766,9 @@ void Store::rebuildEvents() {
   if (!readListings && sameElse) {
     e.checkedSinceOpen = true;  // nothing new to build from
     e.madeFrom = from;          // the same inputs, fetched again
+    // Build 141: worked out as of now (a rebuild would make the same), so
+    // a board kept up while closed shows at once on opening.
+    e.eventsBuiltAt = std::max(e.eventsBuiltAt, now);
     return;
   }
   e.lastFingerprint = key;
@@ -793,6 +856,7 @@ void Store::rebuildEvents() {
                     if (made->unchanged) {
                       ev.checkedSinceOpen = true;
                       ev.madeFrom = from;
+                      ev.eventsBuiltAt = std::max(ev.eventsBuiltAt, now);  // as above
                       ev.logNotes.push_back("guide listings read again: the same, nothing new to match (" +
                                             std::to_string(static_cast<int>(made->prepMs)) + " ms)");
                       return;
@@ -833,7 +897,9 @@ void Store::rebuildEvents() {
                     ev.timing.rebuildMax = std::max(ev.timing.rebuildMax, made->prepMs + made->matchMs + made->saveMs);
                     ev.timing.uiMax = std::max(ev.timing.uiMax, events_build::msSince(start));
                   },
-                  http::Priority::Normal);
+                  // Closed (Build 141, kept up in the background): behind
+                  // anything on screen.
+                  eventsOpen_ > 0 ? http::Priority::Normal : http::Priority::Background);
 }
 
 // ------------------------------------------------------------ board
@@ -1095,7 +1161,7 @@ void Store::startBoard(uint32_t ms) {
                     ev.channelIndexOf = in->channels;
                     ev.boardDone = made;  // put in by the tick
                   },
-                  eventsOpen_ > 0 ? http::Priority::Visible : http::Priority::Normal);
+                  eventsOpen_ > 0 ? http::Priority::Visible : http::Priority::Background);
 }
 
 void Store::putBoard() {
@@ -1228,6 +1294,10 @@ bool listFresh(time::Seconds fetchedAt, time::Seconds now) {
   return fetchedAt > 0 && now >= fetchedAt && now - fetchedAt < kListFreshFor;
 }
 
+bool listKept(time::Seconds fetchedAt, time::Seconds now) {
+  return fetchedAt > 0 && now >= fetchedAt && now - fetchedAt < kListKeptFor;
+}
+
 bool scheduleCurrent(time::Seconds fetchedAt, time::Seconds now, const time::Zone& zone) {
   if (fetchedAt <= 0 || now < fetchedAt || now - fetchedAt >= sports::schedule::kFreshFor) return false;
   time::Civil a = zone.toLocal(fetchedAt), b = zone.toLocal(now);
@@ -1332,10 +1402,14 @@ void Store::eventsTick(uint32_t ms) {
   time::Seconds wall = time::now();
   uint32_t gapMs = ms >= e.lastTickMs ? ms - e.lastTickMs : 0;
   time::Seconds away = std::max<time::Seconds>(wall - e.lastTickAt, static_cast<time::Seconds>(gapMs / 1000));
-  bool woke = e.lastTickAt && eventsOpen_ > 0 && away >= events_build::kAsleepFor;
+  bool slept = e.lastTickAt && away >= events_build::kAsleepFor;
+  bool woke = slept && eventsOpen_ > 0;
   e.lastTickAt = wall;
   e.lastTickMs = ms;
   if (woke) eventsArrive(away);
+  // Closed (Build 141): on waking, the schedule (a new day?) and the games
+  // are looked at straight away rather than at their next turn.
+  if (slept && !woke) e.scheduleBackgroundCheck = e.nextCheckMs = 0;
   // Reminders: checked every 15 s anywhere in the app.
   if (ms >= e.nextReminderMs) {
     e.nextReminderMs = ms + sports::Reminders::kCheckSeconds * 1000u;
@@ -1360,15 +1434,22 @@ void Store::eventsTick(uint32_t ms) {
     it = e.retired.erase(it);
     host_.pool.post([old]() mutable { old.reset(); }, nullptr, http::Priority::Background);
   }
-  // Closed: the day's schedule in the background (Build 125).
-  if (eventsOpen_ <= 0) scheduleInBackground(ms);
-  // Closed: only the launch's first pass (the saved list in, a rebuild and a
-  // board from it).
-  if (eventsOpen_ <= 0 && !e.events->empty() && !e.launchPass) return;
+  // Closed: the day's schedule (Build 125) and, Build 141, the scores and
+  // the games in the background from launch, so opening finds them in.
+  const bool closed = eventsOpen_ <= 0;
+  bool ready = closed && eventsInBackground(ms);
+  // Closed: the launch's first pass (the saved list in, a rebuild and a
+  // board from it), then the games kept up while nothing else needs the TV.
+  if (closed && !e.events->empty() && !e.launchPass && !ready) return;
   if (m.channels->empty()) return;
-  if (eventsOpen_ > 0) {
+  if (!closed) {
     pumpSchedule(ms);
     pumpScores(ms);
+  }
+  // A new channel list (renamed slots) is matched at once, open or not.
+  if (e.matchedCatalog != m.catalogRevision) {
+    e.matchedCatalog = m.catalogRevision;
+    e.nextCheckMs = std::min(e.nextCheckMs, ms);
   }
   if (!e.restoredTried) {
     // The list saved last time, read on a worker: shown until the rebuild.
@@ -1443,7 +1524,7 @@ void Store::eventsTick(uint32_t ms) {
     }
   }
   if (ms >= e.nextCheckMs) {
-    e.nextCheckMs = ms + kCheckMs;
+    e.nextCheckMs = ms + (closed ? kReadyCheckMs : kCheckMs);
     rebuildEvents();
   }
   // Loading since the open ends once the channel list, the schedule and a
@@ -1478,6 +1559,14 @@ void Store::eventsTick(uint32_t ms) {
   }
   // Games too old to show (an open on old ones) wait to be worked out again.
   bool fresh = e.eventsBuiltAt >= e.freshAfter;
+  if (closed) {
+    // Closed: a board for games newly worked out (or a change of
+    // settings), and from the clock every few minutes; scores wait for the
+    // next open, which makes it again at once.
+    bool old = !events_->rows.empty() && time::now() - e.boardMadeAt >= kReadyBoardEvery;
+    if (fresh && !e.boardBusy && (e.boardDirty || e.boardSerial != e.eventsSerial || old)) startBoard(ms);
+    return;
+  }
   if (fresh && !e.boardBusy && (e.boardDirty || (e.boardStale && ms - e.boardStartMs >= kBoardGapMs))) startBoard(ms);
 }
 

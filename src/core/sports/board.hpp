@@ -33,6 +33,18 @@
 
 namespace marigold::sports::board {
 
+// MARK: On air (Build 141)
+
+// When none of an event's ways to watch shows it now but some will later:
+// the first of those times (a provider slot's own time, a guide listing's
+// start). nullopt when one is on now, or may be (no time known for it;
+// for a golf tournament, only its feeds and listings count, not the
+// channels of its networks), or none is to come. A tile under way that
+// isn't on air is "later" at that time, unless the live scoreboard says
+// the game itself is being played (not a golf round: its coverage is a
+// part of the day's play).
+std::optional<Seconds> onAirFrom(const SportsEvent& event, Seconds now);
+
 // MARK: Names
 
 // "Rams" for "Los Angeles Rams", "Red Sox", "Man City" (a short name), a

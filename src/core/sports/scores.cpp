@@ -544,12 +544,17 @@ void LiveScores::beginRound(const RoundInput& input) {
   round_.reset();
   zone_ = input.zone;
   const Seconds now = input.now;
-  // Nothing while a channel is playing, unless the in-player guide is open.
-  if (input.watching && !holders_.count(Holder::guide)) {
+  // On screen: the guide, or the board with nothing playing over it. A
+  // channel playing (and nobody on screen): only the background looks, at
+  // its own pace.
+  bool onScreen = holders_.count(Holder::guide) || (holders_.count(Holder::board) && !input.watching);
+  bool background = !onScreen && holders_.count(Holder::background);
+  if (!onScreen && !background) {
     lastWait_ = kWatchingWait;
     return;
   }
   Round r;
+  r.background = background;
   r.games = input.games;
   r.showsScores = input.showsScores;
   for (const SportsGame& game : input.games) {
@@ -568,7 +573,7 @@ void LiveScores::beginRound(const RoundInput& input) {
   }
   if (r.windows.empty()) {
     // No schedule yet (Live Events just opened): look again soon.
-    lastWait_ = input.games.empty() ? kMinimumWait : kIdleWait;
+    lastWait_ = input.games.empty() ? kMinimumWait : background ? kBackgroundEvery : kIdleWait;
     return;
   }
   recent_.erase(std::remove_if(recent_.begin(), recent_.end(), [&](Seconds t) { return now - t > 3600; }),
@@ -586,7 +591,7 @@ std::optional<LiveScores::Request> LiveScores::nextRequest(Seconds now) {
     if (!r.inLeague) {
       if (r.nextIndex >= r.order.size()) {
         r.over = true;
-        lastWait_ = r.soonest;
+        lastWait_ = r.background ? std::max(r.soonest, kBackgroundEvery) : r.soonest;
         return std::nullopt;
       }
       const std::string& shortName = r.order[r.nextIndex];
@@ -602,6 +607,12 @@ std::optional<LiveScores::Request> LiveScores::nextRequest(Seconds now) {
       std::string source = refusals::sourceOf(*league);
       auto refused = refusedUntil_.find(source);
       if (refused != refusedUntil_.end() && refused->second > now) continue;
+      // The background leaves the rest of the day's requests to the screen.
+      if (r.background && requestsToday(now, zone_) >= kBackgroundDailyCap) {
+        r.over = true;
+        lastWait_ = kBackgroundEvery;
+        return std::nullopt;
+      }
       if (!takeRequest(now)) {
         cappedNoted_ = true;  // daily cap reached: paused until tomorrow
         r.over = true;
