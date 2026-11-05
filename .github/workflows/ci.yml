@@ -279,6 +279,7 @@ jobs:
   # and the Simulator's slice matches the Mac.
   tvos:
     runs-on: macos-15
+    timeout-minutes: 90
     env:
       MARIGOLD_REQUIRE_CHANNEL_DIRECTORY: "1"  # cmake/channel-directory.cmake
     needs: [hygiene, host, wikidata]
@@ -301,18 +302,22 @@ jobs:
             channeldir-v6-
           fail-on-cache-miss: true
       - name: Host tests with Apple clang
+        # Compiles at most one per core: these Macs have 3 cores and 7 GB,
+        # and an uncapped build ran ~100 compilers at once and crawled for
+        # an hour (Build 133). The step stops itself rather than wait 6 hours.
+        timeout-minutes: 45
         env:
           ASAN_OPTIONS: halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
           cmake -S . -B build-host -DCMAKE_BUILD_TYPE=Debug -DMARIGOLD_SANITIZE="address,undefined"
-          cmake --build build-host --parallel
+          cmake --build build-host --parallel "$(sysctl -n hw.ncpu)"
           ctest --test-dir build-host --output-on-failure
       - name: Build marigold-preview (Live Events from a channel report)
         run: |
           cmake -S . -B build-preview -DCMAKE_BUILD_TYPE=Release -DMARIGOLD_BUILD_TESTS=OFF \
             -DCMAKE_OSX_ARCHITECTURES=arm64
-          cmake --build build-preview --target marigold-preview --parallel
+          cmake --build build-preview --target marigold-preview --parallel "$(sysctl -n hw.ncpu)"
           mkdir -p marigold-preview-mac
           cp build-preview/tools/preview/marigold-preview tools/preview/README.md marigold-preview-mac/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
