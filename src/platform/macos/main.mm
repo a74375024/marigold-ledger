@@ -13,6 +13,7 @@
 #import <VLCKit/VLCKit.h>
 #include <os/log.h>
 #include <signal.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <atomic>
@@ -48,7 +49,7 @@ constexpr double kRightClickHold = 0.8;
 constexpr double kQuitWait = 4.0;
 
 std::atomic<bool> gAppRunning{false};
-bool gTerminating = false;  // main thread
+bool gTerminating = false;  // main thread: the app thread was asked to quit
 bool gLogStderr = false;    // set before the app thread starts
 
 os_log_t logger() {
@@ -91,11 +92,9 @@ void appThread(std::string assetDir, std::string dataDir) {
   MLOG_I("app", "app thread done (%d)", code);
   log::close();
   gAppRunning = false;
-  // Quitting from the app (or after an error): the Mac app goes too.
-  marigold::tvos::onMain([] {
-    if (gTerminating) [NSApp replyToApplicationShouldTerminate:YES];
-    else [NSApp terminate:nil];
-  });
+  // Done (⌘Q, the window closed, the app's own quit or an error): the Mac
+  // app goes too.
+  marigold::tvos::onMain([] { [NSApp terminate:nil]; });
 }
 
 marigold::platform::Event keyEvent(marigold::Key key, bool down, bool repeat) {
@@ -623,16 +622,26 @@ static NSWindow* gWindow;
   return YES;
 }
 
-// The app thread stops the video and saves first.
+// The app thread stops the video and saves first; then it asks again
+// (appThread) and the app quits. Not NSTerminateLater: while AppKit waits for
+// that reply it runs only its modal run loop mode, where the main queue the
+// app thread needs (to stop the video) isn't served, and the quit hung
+// (Build 139's smoke test).
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender {
-  if (!gAppRunning || gTerminating) return NSTerminateNow;
-  gTerminating = true;
-  sendEvent(marigold::platform::Event::Type::Quit);
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(kQuitWait * NSEC_PER_SEC)),
-                 dispatch_get_main_queue(), ^{
-                   if (gAppRunning) [NSApp replyToApplicationShouldTerminate:YES];
-                 });
-  return NSTerminateLater;
+  if (!gAppRunning) return NSTerminateNow;
+  if (!gTerminating) {
+    gTerminating = true;
+    sendEvent(marigold::platform::Event::Type::Quit);
+    // An app thread that doesn't finish in time doesn't keep the app open.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(kQuitWait * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+                     if (gAppRunning) {
+                       MLOG_W("app", "the app thread didn't finish in time: quitting anyway");
+                       _exit(0);
+                     }
+                   });
+  }
+  return NSTerminateCancel;
 }
 
 - (void)applicationDidBecomeActive:(NSNotification*)notification {
