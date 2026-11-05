@@ -24,6 +24,9 @@
 #include <ucontext.h>
 #define MARIGOLD_CRASH_FRAMES 1
 #endif
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
 #if __has_include(<cxxabi.h>)
 #include <cxxabi.h>
 #define MARIGOLD_CRASH_CXXABI 1
@@ -45,7 +48,9 @@ namespace {
 constexpr int kSignals[] = {SIGSEGV, SIGBUS, SIGABRT, SIGILL, SIGFPE};
 constexpr int kSignalCount = static_cast<int>(std::size(kSignals));
 constexpr size_t kNoteMax = 64 * 1024;  // crash.txt, at most
+#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
 constexpr size_t kAltStackBytes = 64 * 1024;
+#endif
 #if defined(MARIGOLD_CRASH_FRAMES)
 constexpr int kFrames = 48;  // a few KB of lines
 uintptr_t gBase = 0;         // where the executable is loaded (its frames' offsets are from here)
@@ -342,7 +347,9 @@ void install() {
   dl_iterate_phdr(firstObject, nullptr);
 #endif
   // Its own stack: a stack overflow still gets its note (this thread's; the
-  // workers' handlers run on their own stacks).
+  // workers' handlers run on their own stacks). Not on Apple TV, where
+  // sigaltstack() is unavailable: a stack overflow there leaves no note.
+#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
   size_t stackBytes = std::max<size_t>(kAltStackBytes, static_cast<size_t>(SIGSTKSZ));
   static char* altStack = new char[stackBytes];
   stack_t ss;
@@ -350,6 +357,7 @@ void install() {
   ss.ss_sp = altStack;
   ss.ss_size = stackBytes;
   sigaltstack(&ss, nullptr);
+#endif
 
   struct sigaction sa;
   std::memset(&sa, 0, sizeof sa);
