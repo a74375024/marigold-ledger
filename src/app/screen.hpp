@@ -43,6 +43,9 @@ class Screen {
   virtual void pointerGone() {}
   // The system keyboard sent the whole field value (or closed).
   virtual void text(const std::string& /*value*/, bool /*closed*/, bool /*confirmed*/) {}
+  // A computer's keyboard typed a character ("\b": delete). True when the
+  // screen took it as text (Search); otherwise it acts as its key, if any.
+  virtual bool typed(const std::string& /*ch*/) { return false; }
   // Called on the top screen once per loop; true when it needs drawing:
   // while animating (the app then draws every frame instead of waiting for
   // events), or once as something on it changes by itself.

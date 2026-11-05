@@ -44,8 +44,8 @@ rail::PlayerStep none() { return {Do::None}; }
 PlayerSearch::PlayerSearch(App& app, rail::PlayerNav& nav) : app_(app), nav_(nav) {
   RemoteKeys platform = app_.window().remoteKeys();
   // 🎤 Speak where the Search screen has it: the TV's keyboard takes
-  // dictation (LG, Android TV, Apple TV), not Fire TV.
-  grid_.setSpeak(app_.window().keyboardAvailable() && !(platform == RemoteKeys::fireTv()));
+  // dictation (LG, Android TV, Apple TV), not Fire TV nor a Mac (it types).
+  grid_.setSpeak(app_.window().keyboardAvailable() && !(platform == RemoteKeys::fireTv()) && !platform.typing);
   appleTv_ = platform.clickpad;
 }
 
@@ -326,6 +326,26 @@ bool PlayerSearch::click(int id, rail::PlayerStep& step) {
     return true;
   }
   return false;  // a key or a result: the hover focused it, OK acts on it
+}
+
+rail::PlayerStep PlayerSearch::typed(const std::string& ch, bool& took) {
+  took = false;
+  if (ch.empty()) return none();
+  if (ch == "\b") {
+    // Nothing to delete: delete is Back.
+    if (query_.empty()) return none();
+    size_t n = query_.size() - 1;
+    while (n > 0 && (static_cast<unsigned char>(query_[n]) & 0xC0) == 0x80) --n;
+    setQuery(query_.substr(0, n));
+  } else {
+    if (static_cast<unsigned char>(ch[0]) < 0x20) return none();
+    // Space with nothing typed is play/pause.
+    if (ch == " " && query_.empty()) return none();
+    setQuery(query_ + ch);
+  }
+  took = true;
+  pointer_ = 0;
+  return inResults() ? nav_.toKeyboard() : none();
 }
 
 void PlayerSearch::text(const std::string& value, bool closed) {

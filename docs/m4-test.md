@@ -1321,3 +1321,21 @@ A slot listing several games ("A vs B • C vs D (A vs B)") names the one on now
 | Your school | Follow a small college's soccer team from its tile | Its games are in the Soccer row (and Your teams) |
 | Pro soccer | Only Premier League ticked | Soccer row: Premier League only, as before; college games in More events ("not in your soccer competitions") |
 | UEFA times | The report on a Champions League or Europa League night | UEFA slots saying 20:00 start at noon Pacific (3 PM Eastern), 17:45 at 9:45 AM Pacific |
+
+## Build 138 — The Mac app
+
+Marigold for macOS 12 and newer, Apple Silicon and Intel: the `marigold-mac-NN` artifact (a `.dmg`). Install and keys: `docs/mac.md`. Built from the same code as the TV apps with the Apple TV's backends (Metal, Core Text, VLC); the window scales the 1920x1080 picture to its size. A computer's keyboard types straight into Search (the main Search and the in-player guide's), and Search on a Mac has no 🎤 Speak key; on the TVs nothing changes.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Install | Open the .dmg, drag to Applications, open; allow it in Privacy & Security | Marigold opens in a window with the setup's first screen |
+| Setup | Go through setup with the keyboard (arrows, Return, Esc), type an account's server, user name and password (paste works) | Each field shows what you type; Return goes to the next; the guide fills as on the TV |
+| Window | Resize the window, make it tall and narrow, then wide | The picture keeps its shape with black bars; nothing is cut off |
+| Full screen | ⌘F (or the green button), quit, open again | Full screen, and it opens full screen again; Esc on the guide leaves it |
+| Trackpad | Move the pointer over the guide, click a channel, two-finger scroll, two-finger click a channel | Hover highlights; a click opens it; scroll moves the list; the two-finger click opens its actions |
+| Playback | Play a few channels and a game; Space; Page Up / Page Down | Picture and sound; Space pauses and plays; channels change |
+| Search | Open Search and type a team's name; Delete; Down and Return on a result | Letters appear as typed; Delete removes one; the result plays |
+| In-player guide | While watching, open the guide, go to Search, type | The letters go into its field |
+| Sleep | Leave a channel playing 15 minutes without touching the Mac | The display stays on |
+| Minimize | ⌘M while playing, then reopen from the Dock | The video stops while minimized and the channel starts again |
+| Quit | ⌘Q while playing, reopen | Quits at once; accounts, My Lineup and settings are as they were |

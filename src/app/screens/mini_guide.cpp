@@ -159,6 +159,15 @@ class MiniGuide : public Screen {
     if (nav_.search()) search_.text(value, closed);
   }
 
+  // A Mac's keyboard types into search (not while the lists are open over it).
+  bool typed(const std::string& ch) override {
+    if (!nav_.search() || nav_.mode() == rail::Mode::Menu) return false;
+    bool took = false;
+    rail::PlayerStep s = search_.typed(ch, took);
+    if (took) apply(s);
+    return took;
+  }
+
   bool key(const KeyEvent& e) override {
     settleSlides(app_.ms());
     // A key that isn't a click: where the pointer last was no longer counts.

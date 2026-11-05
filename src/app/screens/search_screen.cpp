@@ -119,8 +119,9 @@ class SearchScreen : public Screen {
     nav_.setItems(rail::items(app_.store().settings().allChannelsTab));
     RemoteKeys platform = app_.window().remoteKeys();
     // 🎤 Speak where the system keyboard takes dictation: LG, Android TV and
-    // Apple TV (not Fire TV, until Amazon's keyboard is known to take it).
-    grid_.setSpeak(app_.window().keyboardAvailable() && !(platform == RemoteKeys::fireTv()));
+    // Apple TV (not Fire TV, until Amazon's keyboard is known to take it; not
+    // a Mac, whose keyboard types into the field itself).
+    grid_.setSpeak(app_.window().keyboardAvailable() && !(platform == RemoteKeys::fireTv()) && !platform.typing);
     appleTv_ = platform.clickpad;
     // The guide's channel preview doesn't carry over.
     Playback& p = app_.playback();
@@ -999,6 +1000,44 @@ class SearchScreen : public Screen {
     stopPreview();
     // What changed while focus was in the results shows now.
     search(!live_.showsDue());
+  }
+
+  // ---------------------------------------------------------------- typing
+
+  // A computer's keyboard: letters go into the field, digits as the number
+  // keys do, delete takes the last character off. Space with nothing typed
+  // and delete with nothing to delete are the keys they stand for.
+  bool typed(const std::string& ch) override {
+    if (ch.empty() || nav_.mode() != rail::Mode::Content) return false;
+    if (ch == "\b") {
+      if (!digits_.empty()) {
+        digits_.pop_back();
+        if (digits_.empty()) leaveDigits();
+        layout();
+        return true;
+      }
+      if (query_.empty()) return false;
+      std::string q = query_;
+      // One character, however many bytes it is.
+      size_t n = q.size() - 1;
+      while (n > 0 && (static_cast<unsigned char>(q[n]) & 0xC0) == 0x80) --n;
+      q.erase(n);
+      focusKeyboard();
+      setQuery(q);
+      return true;
+    }
+    if (ch.size() == 1 && ch[0] >= '0' && ch[0] <= '9') {
+      digit(ch[0] - '0');
+      return true;
+    }
+    if (static_cast<unsigned char>(ch[0]) < 0x20) return false;
+    if (ch == " " && query_.empty() && digits_.empty()) return false;
+    // Digits typed as a channel number start the text ("49" then "e": "49e").
+    std::string q = digits_ + query_ + ch;
+    digits_.clear();
+    focusKeyboard();
+    setQuery(q);
+    return true;
   }
 
   // ---------------------------------------------------------------- digits

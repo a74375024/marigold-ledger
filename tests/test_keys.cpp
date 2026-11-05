@@ -113,3 +113,36 @@ TEST_CASE("keys: Apple TV press types") {
   CHECK_FALSE(k.menu);
   CHECK_FALSE(k.colour);
 }
+
+TEST_CASE("keys: a Mac's keyboard") {
+  using marigold::keyFromMac;
+  using marigold::keyFromMacChar;
+  CHECK(keyFromMac(0x7E) == Key::Up);
+  CHECK(keyFromMac(0x7D) == Key::Down);
+  CHECK(keyFromMac(0x7B) == Key::Left);
+  CHECK(keyFromMac(0x7C) == Key::Right);
+  CHECK(keyFromMac(0x24) == Key::Ok);  // return
+  CHECK(keyFromMac(0x4C) == Key::Ok);  // enter
+  CHECK(keyFromMac(0x35) == Key::Back);
+  CHECK(keyFromMac(0x74) == Key::ChannelUp);
+  CHECK(keyFromMac(0x79) == Key::ChannelDown);
+  CHECK(keyFromMac(0x00) == Key::Unknown);  // A types instead
+  CHECK(keyFromMac(0x31) == Key::Unknown);  // space types instead
+  // Typed characters nothing took as text.
+  CHECK(keyFromMacChar("7") == Key::Digit7);
+  CHECK(keyFromMacChar("0") == Key::Digit0);
+  CHECK(keyFromMacChar(" ") == Key::PlayPause);
+  CHECK(keyFromMacChar("\b") == Key::Back);
+  CHECK(keyFromMacChar("i") == Key::Info);
+  CHECK(keyFromMacChar("C") == Key::Captions);
+  CHECK(keyFromMacChar("x") == Key::Unknown);
+  CHECK(keyFromMacChar("\xc3\xa9") == Key::Unknown);  // é
+  CHECK(keyFromMacChar("") == Key::Unknown);
+  marigold::RemoteKeys k = marigold::RemoteKeys::mac();
+  CHECK(k.playPause);
+  CHECK(k.digits);
+  CHECK(k.typing);
+  CHECK_FALSE(k.clickpad);
+  CHECK_FALSE(k.colour);
+  CHECK_FALSE(k == marigold::RemoteKeys::appleTv());
+}

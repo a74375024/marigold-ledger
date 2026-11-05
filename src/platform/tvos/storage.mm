@@ -4,8 +4,16 @@
 // (engine::fileKind: Keep) is also kept in the defaults, from where a file
 // the system deleted comes back. Passwords and tokens (Secret) go in the
 // Keychain. Everything else is rebuilt from the sources, as on a first start.
+//
+// The Mac keeps everything in Application Support/Marigold/data (main.mm),
+// which the system never empties, so nothing goes in the defaults. Secrets
+// are private files there (only your user can read them), as on Android:
+// the Mac app isn't signed by a developer, so each new build would be a
+// stranger to the Keychain items the last one made, and macOS would ask for
+// your Mac's password to let it read them.
 #include "platform/storage.hpp"
 
+#include <TargetConditionals.h>
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
 #include <sys/stat.h>
@@ -23,6 +31,11 @@ namespace {
 // Well under the defaults' limit (a warning at 512 KB, the app ends at 1 MB).
 constexpr NSUInteger kKeepBudget = 384u * 1024u;
 NSString* const kService = @"org.marigold.app";
+#if TARGET_OS_OSX
+constexpr bool kSystemStores = false;  // the Keychain and the defaults
+#else
+constexpr bool kSystemStores = true;
+#endif
 
 NSString* keyFor(const std::string& name) { return [@"file." stringByAppendingString:@(name.c_str())]; }
 
@@ -96,13 +109,13 @@ std::string Storage::path(const std::string& name) const {
 
 std::optional<std::string> Storage::read(const std::string& name) const {
   engine::FileKind kind = engine::fileKind(name);
-  if (kind == engine::FileKind::Secret) {
+  if (kind == engine::FileKind::Secret && kSystemStores) {
     if (auto v = keychainRead(name)) return v;
   }
   if (!dir_.empty()) {
     if (auto v = files::read(path(name))) return v;
   }
-  if (kind != engine::FileKind::Keep) return std::nullopt;
+  if (kind != engine::FileKind::Keep || !kSystemStores) return std::nullopt;
   NSData* kept = [NSUserDefaults.standardUserDefaults dataForKey:keyFor(name)];
   if (!kept) return std::nullopt;
   std::string v = stringOf(kept);
@@ -114,15 +127,16 @@ std::optional<std::string> Storage::read(const std::string& name) const {
 
 bool Storage::write(const std::string& name, const std::string& content, bool secret) {
   engine::FileKind kind = engine::fileKind(name);
-  if (kind == engine::FileKind::Secret || secret) {
+  if ((kind == engine::FileKind::Secret || secret) && kSystemStores) {
     if (keychainWrite(name, content)) {
       if (!dir_.empty()) unlink(path(name).c_str());
       return true;
     }
     return !dir_.empty() && files::writeAtomic(path(name), content, true);
   }
+  if (kind == engine::FileKind::Secret || secret) return !dir_.empty() && files::writeAtomic(path(name), content, true);
   bool ok = !dir_.empty() && files::writeAtomic(path(name), content, false);
-  if (kind == engine::FileKind::Keep) {
+  if (kind == engine::FileKind::Keep && kSystemStores) {
     NSString* key = keyFor(name);
     if (keptBytes(key) + content.size() <= kKeepBudget) {
       [NSUserDefaults.standardUserDefaults setObject:dataOf(content) forKey:key];
@@ -136,8 +150,10 @@ bool Storage::write(const std::string& name, const std::string& content, bool se
 }
 
 bool Storage::remove(const std::string& name) {
-  keychainRemove(name);
-  [NSUserDefaults.standardUserDefaults removeObjectForKey:keyFor(name)];
+  if (kSystemStores) {
+    keychainRemove(name);
+    [NSUserDefaults.standardUserDefaults removeObjectForKey:keyFor(name)];
+  }
   return !dir_.empty() && unlink(path(name).c_str()) == 0;
 }
 

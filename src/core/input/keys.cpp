@@ -138,6 +138,36 @@ Key keyFromTvos(int pressType) {
   }
 }
 
+Key keyFromMac(int keyCode) {
+  switch (keyCode) {
+    case 0x7E: return Key::Up;           // kVK_UpArrow
+    case 0x7D: return Key::Down;         // kVK_DownArrow
+    case 0x7B: return Key::Left;         // kVK_LeftArrow
+    case 0x7C: return Key::Right;        // kVK_RightArrow
+    case 0x24: return Key::Ok;           // kVK_Return
+    case 0x4C: return Key::Ok;           // kVK_ANSI_KeypadEnter
+    case 0x35: return Key::Back;         // kVK_Escape
+    case 0x74: return Key::ChannelUp;    // kVK_PageUp
+    case 0x79: return Key::ChannelDown;  // kVK_PageDown
+    default: return Key::Unknown;
+  }
+}
+
+Key keyFromMacChar(const std::string& typed) {
+  if (typed.size() != 1) return Key::Unknown;
+  char c = typed[0];
+  if (c >= '0' && c <= '9') return static_cast<Key>(static_cast<int>(Key::Digit0) + (c - '0'));
+  switch (c) {
+    case ' ': return Key::PlayPause;
+    case '\b': return Key::Back;
+    case 'i':
+    case 'I': return Key::Info;
+    case 'c':
+    case 'C': return Key::Captions;
+    default: return Key::Unknown;
+  }
+}
+
 bool RemoteKeys::saw(Key key) {
   bool* has = nullptr;
   switch (key) {
@@ -178,6 +208,12 @@ RemoteKeys RemoteKeys::fireTv() {
 RemoteKeys RemoteKeys::appleTv() {
   RemoteKeys k;
   k.playPause = k.clickpad = true;
+  return k;
+}
+
+RemoteKeys RemoteKeys::mac() {
+  RemoteKeys k;
+  k.playPause = k.digits = k.typing = true;
   return k;
 }
 

@@ -58,6 +58,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "tvOS")
   add_subdirectory(src/platform/tvos)
 endif()
 
+# The Mac app (tools/build-mac.sh builds it).
+option(MARIGOLD_MAC_APP "Build the Mac app" OFF)
+if(MARIGOLD_MAC_APP)
+  add_subdirectory(src/platform/macos)
+endif()
+
 if(MARIGOLD_BUILD_PREVIEW)
   add_subdirectory(tools/preview)
   add_subdirectory(tools/wikidata)

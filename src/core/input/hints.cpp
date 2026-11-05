@@ -95,6 +95,8 @@ Bar search(const RemoteKeys& k, SearchPlace place, bool results, const SearchDig
   if (k.colour) b.keys.push_back(colour(Colour::Red, "Clear text"));
   if (k.digits) b.keys.push_back(cap("0\xe2\x80\x93" "9", "Channel"));
   if (place == SearchPlace::Keyboard || place == SearchPlace::Keypad) {
+    // A computer's keyboard types straight into the field.
+    if (k.typing) b.keys.insert(b.keys.begin(), cap("A\xe2\x80\x93Z", "Type to search"));
     // The Siri Remote: the ring or a swipe moves, only the centre click
     // types; Play/Pause changes the page, as on Apple's keyboard.
     if (k.clickpad)

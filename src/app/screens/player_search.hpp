@@ -64,6 +64,9 @@ class PlayerSearch {
   bool click(int id, rail::PlayerStep& step);
   // The TV's keyboard (🎤 Speak) sent its text.
   void text(const std::string& value, bool closed);
+  // A computer's keyboard typed `ch` ("\b": delete). `took` when it went
+  // into the field; then what the rail does next.
+  rail::PlayerStep typed(const std::string& ch, bool& took);
   // Back from a details card: a reminder may show on a row.
   void shown() { labelsDirty_ = true; }
 

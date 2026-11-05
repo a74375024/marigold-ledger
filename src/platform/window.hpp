@@ -28,6 +28,8 @@ struct Event {
     Wheel,        // wheel: +1 up, -1 down
     Text,         // the system keyboard's field value
     Swallowed,    // a key the open system keyboard uses
+    Char,         // a computer's keyboard typed `text` ("\b": delete); `key`
+                  // is what it does where nothing takes it as text
   };
   Type type = Type::None;
   Key key = Key::Unknown;

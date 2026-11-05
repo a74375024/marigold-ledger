@@ -131,6 +131,25 @@ void App::handle(const platform::Event& e) {
     return;
   }
   if (e.type == Type::Swallowed) return;
+  if (e.type == Type::Char) {
+    // The Mac's keyboard: Search takes letters (and digits, space, delete)
+    // as text; elsewhere they are the keys they stand for.
+    Screen* top = nav_.top();
+    if (top && !store_->dueReminder() && top->typed(e.text)) {
+      dirty_ = true;
+      lastKeyMs_ = ms_;
+      if (pointer_.key(window_.ticks())) pointerAway();
+      hideArrow();
+      return;
+    }
+    if (e.key == Key::Unknown) return;
+    platform::Event k = e;
+    k.type = Type::KeyDown;
+    handle(k);
+    k.type = Type::KeyUp;
+    handle(k);
+    return;
+  }
 
   switch (e.type) {
     case Type::Quit:

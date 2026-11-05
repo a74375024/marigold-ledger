@@ -9,6 +9,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace marigold {
 
@@ -47,6 +48,14 @@ Key keyFromAndroid(int keycode);
 // `pressType` is UIPressType's raw value (the Siri Remote's clickpad
 // directions and click, Back, play/pause; a TV remote's page keys over HDMI).
 Key keyFromTvos(int pressType);
+// `keyCode` is a Mac keyboard's virtual key code (kVK_*): the arrows,
+// return and enter (OK), esc (Back), page up and down (CH + and CH -). The
+// keys that type (letters, digits, space, delete) come as characters
+// instead (keyFromMacChar), so Search can take them.
+Key keyFromMac(int keyCode);
+// What a typed character does where nothing takes it as text: a digit, space
+// (play/pause), delete (Back, sent as "\b"), i (Info) and c (captions).
+Key keyFromMacChar(const std::string& typed);
 
 // The keys a remote has beyond the D-pad, OK and Back, which every remote
 // has. Screens offer only these in their key hints, so a Fire TV remote
@@ -60,15 +69,18 @@ struct RemoteKeys {
   bool channel = false;    // CH + / CH -
   // The Siri Remote: a clickpad that is clicked (not an OK key) and swiped.
   bool clickpad = false;
+  // A computer's keyboard (the Mac): letters type straight into Search.
+  bool typing = false;
   // A key just pressed: this remote has it, so it is offered from now on.
   // True when that is news.
   bool saw(Key key);
   static RemoteKeys lg();      // the LG remote: all of them
   static RemoteKeys fireTv();  // menu, play/pause, rewind and fast forward
   static RemoteKeys appleTv();  // the Siri Remote: play/pause
+  static RemoteKeys mac();      // a Mac's keyboard: space (play/pause), digits, typing
   bool operator==(const RemoteKeys& o) const {
     return colour == o.colour && menu == o.menu && playPause == o.playPause && seek == o.seek && digits == o.digits &&
-           channel == o.channel && clickpad == o.clickpad;
+           channel == o.channel && clickpad == o.clickpad && typing == o.typing;
   }
 };
 

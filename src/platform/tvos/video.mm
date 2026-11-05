@@ -1,12 +1,21 @@
-// tvOS: the video player is VLC (TVVLCKit), drawing into the video view under
-// the UI. It plays what Apple's own player can't: continuous MPEG-TS over
-// HTTP, MPEG-2 and MP2, as well as HLS. VLC lives on the main thread; a timer
-// there keeps a snapshot of its state that state() reads, as on Android.
+// tvOS and macOS: the video player is VLC (TVVLCKit; VLCKit on the Mac),
+// drawing into the video view under the UI. It plays what Apple's own player
+// can't: continuous MPEG-TS over HTTP, MPEG-2 and MP2, as well as HLS. VLC
+// lives on the main thread; a timer there keeps a snapshot of its state that
+// state() reads, as on Android.
 #include "platform/video.hpp"
 
+#include <TargetConditionals.h>
 #import <AVFoundation/AVFoundation.h>
+#if TARGET_OS_OSX
+#import <AppKit/AppKit.h>
+#import <IOKit/pwr_mgt/IOPMLib.h>
+#import <MediaAccessibility/MediaAccessibility.h>
+#import <VLCKit/VLCKit.h>
+#else
 #import <TVVLCKit/TVVLCKit.h>
 #import <UIKit/UIKit.h>
+#endif
 #import <VideoToolbox/VideoToolbox.h>
 
 #include <algorithm>
@@ -122,6 +131,23 @@ bool sizeText(VLCMediaPlayer* p, int size) {
 // VLC's audio output only exists once the stream plays).
 bool gMuted = false;  // guarded by gMu
 
+// No screen saver or display sleep over a picture. Main thread.
+void keepAwake(bool on) {
+#if TARGET_OS_OSX
+  static IOPMAssertionID assertion = 0;
+  if (on && !assertion) {
+    if (IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep, kIOPMAssertionLevelOn,
+                                    CFSTR("Playing live TV"), &assertion) != kIOReturnSuccess)
+      assertion = 0;
+  } else if (!on && assertion) {
+    IOPMAssertionRelease(assertion);
+    assertion = 0;
+  }
+#else
+  UIApplication.sharedApplication.idleTimerDisabled = on ? YES : NO;
+#endif
+}
+
 }  // namespace
 
 // VLC's own errors, in the app's log (redacted: they can name the link).
@@ -156,7 +182,9 @@ bool gMuted = false;  // guarded by gMu
     self.player = [[VLCMediaPlayer alloc] init];
     self.player.delegate = self;
     self.player.drawable = marigold::tvos::videoView();
+#if !TARGET_OS_OSX
     [AVAudioSession.sharedInstance setCategory:AVAudioSessionCategoryPlayback error:nil];
+#endif
   }
   return self;
 }
@@ -197,7 +225,7 @@ bool gMuted = false;  // guarded by gMu
   }
   self.player.media = media;
   marigold::tvos::videoView().hidden = NO;
-  UIApplication.sharedApplication.idleTimerDisabled = YES;  // no screen saver over a picture
+  keepAwake(true);
   [self.player play];
   __weak MGPlayer* weakSelf = self;
   self.timer = [NSTimer scheduledTimerWithTimeInterval:0.25
@@ -213,7 +241,7 @@ bool gMuted = false;  // guarded by gMu
   [self.player stop];
   self.player.media = nil;
   marigold::tvos::videoView().hidden = YES;
-  UIApplication.sharedApplication.idleTimerDisabled = NO;
+  keepAwake(false);
   std::lock_guard<std::mutex> lock(gMu);
   gState = Snapshot{};
 }
@@ -377,9 +405,15 @@ NSArray<NSString*>* optionsFor(const std::string& headers) {
 }
 
 void place(gfx::Rect r) {
+#if TARGET_OS_OSX
+  // The window scales the app's 1920x1080 to its size (main.mm).
+  double x = r.x, y = r.y, w = std::max(1.0f, r.w), h = std::max(1.0f, r.h);
+  tvos::onMain([x, y, w, h] { tvos::placeVideo(x, y, w, h); });
+#else
   CGRect frame = CGRectMake(static_cast<CGFloat>(r.x), static_cast<CGFloat>(r.y),
                             static_cast<CGFloat>(std::max(1.0f, r.w)), static_cast<CGFloat>(std::max(1.0f, r.h)));
   tvos::onMain([frame] { tvos::videoView().frame = frame; });
+#endif
 }
 
 }  // namespace
@@ -479,7 +513,16 @@ std::vector<std::string> Video::textLines(uint64_t* version) const {
 
 bool Video::drawsText() { return true; }
 
+#if TARGET_OS_OSX
+// System Settings > Accessibility > Captions: "Prefer closed captions and SDH".
+int Video::systemCaptions() {
+  return MACaptionAppearanceGetDisplayType(kMACaptionAppearanceDomainUser) == kMACaptionAppearanceDisplayTypeAlwaysOn
+             ? 1
+             : 0;
+}
+#else
 int Video::systemCaptions() { return UIAccessibilityIsClosedCaptioningEnabled() ? 1 : 0; }
+#endif
 
 void Video::setTextStyle(int size, int look) {
   std::lock_guard<std::mutex> lock(gMu);
