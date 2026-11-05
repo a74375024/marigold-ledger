@@ -1,6 +1,8 @@
 #include "core/catalog/core_channels.hpp"
 
 #include <algorithm>
+#include <string>
+#include <unordered_set>
 
 namespace marigold::catalog {
 
@@ -42,6 +44,8 @@ const std::vector<CoreChannel>& coreChannels() {
       {"Tennis Channel", LineupCategory::sports, {"tennis channel", "tennis"}},
       {"CBS Sports Network", LineupCategory::sports, {"cbs sports network", "cbssn", "cbs sports"}},
       {"beIN Sports", LineupCategory::sports, {"bein sports", "bein sports usa"}},
+      // Marigold (Build 143): back since 2025, and in the schedule again.
+      {"NBCSN", LineupCategory::sports, {"nbcsn", "nbc sports network", "nbc sn"}},
       {"TNT", LineupCategory::entertainment, {"tnt", "tnt east"}},
       {"TBS", LineupCategory::entertainment, {"tbs", "tbs east"}},
       {"truTV", LineupCategory::entertainment, {"trutv", "tru tv"}},
@@ -214,6 +218,62 @@ bool startsWithWords(const std::string& key, const std::string& prefix) {
 }
 
 }  // namespace
+
+bool proTeamChannel(std::string_view name) {
+  // clang-format off
+  static const std::unordered_set<std::string> kTeams = {
+      // NBA
+      "atlanta hawks", "boston celtics", "brooklyn nets", "charlotte hornets", "chicago bulls",
+      "cleveland cavaliers", "dallas mavericks", "denver nuggets", "detroit pistons",
+      "golden state warriors", "houston rockets", "indiana pacers", "la clippers",
+      "los angeles clippers", "los angeles lakers", "memphis grizzlies", "miami heat",
+      "milwaukee bucks", "minnesota timberwolves", "new orleans pelicans", "new york knicks",
+      "oklahoma city thunder", "orlando magic", "philadelphia 76ers", "phoenix suns",
+      "portland trail blazers", "sacramento kings", "san antonio spurs", "toronto raptors",
+      "utah jazz", "washington wizards",
+      // WNBA
+      "atlanta dream", "chicago sky", "connecticut sun", "dallas wings", "golden state valkyries",
+      "indiana fever", "las vegas aces", "los angeles sparks", "minnesota lynx", "new york liberty",
+      "phoenix mercury", "portland fire", "seattle storm", "toronto tempo", "washington mystics",
+      // NHL
+      "anaheim ducks", "boston bruins", "buffalo sabres", "calgary flames", "carolina hurricanes",
+      "chicago blackhawks", "colorado avalanche", "columbus blue jackets", "dallas stars",
+      "detroit red wings", "edmonton oilers", "florida panthers", "los angeles kings",
+      "minnesota wild", "montreal canadiens", "nashville predators", "new jersey devils",
+      "new york islanders", "new york rangers", "ottawa senators", "philadelphia flyers",
+      "pittsburgh penguins", "san jose sharks", "seattle kraken", "st louis blues",
+      "tampa bay lightning", "toronto maple leafs", "utah mammoth", "utah hockey club",
+      "vancouver canucks", "vegas golden knights", "washington capitals", "winnipeg jets",
+      // MLB
+      "arizona diamondbacks", "athletics", "oakland athletics", "atlanta braves", "baltimore orioles",
+      "boston red sox", "chicago cubs", "chicago white sox", "cincinnati reds", "cleveland guardians",
+      "colorado rockies", "detroit tigers", "houston astros", "kansas city royals",
+      "los angeles angels", "los angeles dodgers", "miami marlins", "milwaukee brewers",
+      "minnesota twins", "new york mets", "new york yankees", "philadelphia phillies",
+      "pittsburgh pirates", "san diego padres", "san francisco giants", "seattle mariners",
+      "st louis cardinals", "tampa bay rays", "texas rangers", "toronto blue jays",
+      "washington nationals",
+      // NFL
+      "arizona cardinals", "atlanta falcons", "baltimore ravens", "buffalo bills",
+      "carolina panthers", "chicago bears", "cincinnati bengals", "cleveland browns",
+      "dallas cowboys", "denver broncos", "detroit lions", "green bay packers", "houston texans",
+      "indianapolis colts", "jacksonville jaguars", "kansas city chiefs", "las vegas raiders",
+      "los angeles chargers", "los angeles rams", "miami dolphins", "minnesota vikings",
+      "new england patriots", "new orleans saints", "new york giants", "new york jets",
+      "philadelphia eagles", "pittsburgh steelers", "san francisco 49ers", "seattle seahawks",
+      "tampa bay buccaneers", "tennessee titans", "washington commanders",
+  };
+  // clang-format on
+  std::string key = wordsKey(name);
+  // "NBA Miami Heat", "MLB LOS ANGELES ANGELS", "WNBA NEW YORK LIBERTY".
+  for (const char* league : {"nba ", "wnba ", "nhl ", "mlb ", "nfl "}) {
+    if (key.rfind(league, 0) == 0) {
+      key.erase(0, std::char_traits<char>::length(league));
+      break;
+    }
+  }
+  return kTeams.count(key) > 0;
+}
 
 std::optional<std::vector<std::string>> regionalChannelPlaces(std::string_view name) {
   struct Channel {

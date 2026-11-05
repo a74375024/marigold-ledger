@@ -736,8 +736,10 @@ RebuildMade rebuild(RebuildJob& job) {
     made.listingsDigest = ss::listingsDigest(in.listings, in.now);
   }
   if (job.previous) in.previous = *job.previous;
+  // Build 143: event slots named after a network too ("NCAAF 01: ESPN").
   in.channelIndex = sports::network_map::channelIndex(lineup.lineupIDs, lineup.lineupEntries, lineup.browseEntries,
-                                                      lineup.entries, infos, {}, in.rosters, job.markets);
+                                                      lineup.entries, infos, {}, in.rosters, job.markets,
+                                                      in.sharedTraits ? in.sharedTraits.get() : &in.traits);
   // F1 sessions are also on the F1 channels, while the schedule has one.
   if (job.f1) {
     if (!job.f1Sources)
@@ -900,6 +902,9 @@ void Store::rebuildEvents() {
                     }
                     if (!made->result) return;
                     if (made->matched) ev.matchedFeeds = made->matched;
+                    ev.unknownBroadcasters = std::make_shared<const report::UnknownBroadcasters>(
+                        report::unknownBroadcasters(made->result->sources.unknown,
+                                                    made->result->sources.unknownLeagues));
                     ev.lastSaved = made->lastSaved;
                     ev.slotsSeen = std::move(made->result->slotsSeen);
                     // The last list is freed on a worker (unless a board job still reads it).
@@ -1387,11 +1392,13 @@ void Store::buildLiveEventsReport(std::function<void(std::shared_ptr<std::string
     std::map<std::string, std::string> starts;
     std::set<std::string> failing;
     bool wrestling = false;
+    std::shared_ptr<const report::UnknownBroadcasters> unknown;
     time::Seconds now = 0;
     time::Zone zone = time::Zone::device();
   };
   auto job = std::make_shared<Job>();
   job->catalog = m.catalog;
+  job->unknown = e.unknownBroadcasters;
   job->events = e.events;
   job->hidden = e.hidden;
   job->matched = e.matchedFeeds ? e.matchedFeeds
@@ -1421,6 +1428,7 @@ void Store::buildLiveEventsReport(std::function<void(std::shared_ptr<std::string
         };
         in.groupFails = [job](const std::string& f) { return job->failing.count(f) > 0; };
         in.proWrestlingOn = job->wrestling;
+        in.unknownBroadcasters = job->unknown.get();
         in.now = job->now;
         in.zone = job->zone;
         *out = report::liveEventsCsv(in);

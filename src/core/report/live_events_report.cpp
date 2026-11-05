@@ -179,6 +179,39 @@ std::string liveEventsCsv(const LiveEventsReportInput& in) {
     }
     out += "\n";
   }
+  // Build 143: the schedule's broadcaster names no channel could be found
+  // for because the app doesn't know them (streaming services left out).
+  if (in.unknownBroadcasters) {
+    for (const UnknownBroadcaster& u : *in.unknownBroadcasters) {
+      std::vector<std::string> cells = {"Broadcaster names not recognised", "", u.name, "",
+                                        str::join(u.leagues, " | "), "", "not recognised",
+                                        std::to_string(u.games) + (u.games == 1 ? " game" : " games"),
+                                        "", "", "", ""};
+      for (size_t i = 0; i < cells.size(); ++i) {
+        if (i) out += ",";
+        out += csvCell(redact(cells[i]));
+      }
+      out += "\n";
+    }
+  }
+  return out;
+}
+
+UnknownBroadcasters unknownBroadcasters(const std::map<std::string, int>& games,
+                                        const std::map<std::string, std::set<std::string>>& leagues) {
+  UnknownBroadcasters out;
+  out.reserve(games.size());
+  for (const auto& [name, count] : games) {
+    UnknownBroadcaster u;
+    u.name = name;
+    u.games = count;
+    auto l = leagues.find(name);
+    if (l != leagues.end()) u.leagues.assign(l->second.begin(), l->second.end());
+    out.push_back(std::move(u));
+  }
+  std::stable_sort(out.begin(), out.end(), [](const UnknownBroadcaster& a, const UnknownBroadcaster& b) {
+    return a.games > b.games;
+  });
   return out;
 }
 

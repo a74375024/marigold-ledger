@@ -15,7 +15,10 @@
 // scheduled game ("on the schedule"), was left out as a leftover
 // ("leftover"), or no schedule has it ("no schedule"); empty for a slot
 // not read as an event. Build 136: "not matched yet" for a slot new or
-// renamed since Live Events last matched (`matched`).
+// renamed since Live Events last matched (`matched`). Build 143: at the end,
+// a row for each broadcaster name the schedule gave that the app doesn't
+// know (group "Broadcaster names not recognised", slot the name, sport its
+// leagues, reason how many games), streaming services left out.
 // For checking why something odd is (or isn't) on the board.
 //
 // No stream links, logins or server addresses: slot names and titles only,
@@ -37,6 +40,22 @@
 #include "core/util/time.hpp"
 
 namespace marigold::report {
+
+// Build 143: a broadcaster name the schedule gave this week that is no
+// network, station or streaming service the app knows: how many games, in
+// which leagues ("NHL", "MLB").
+struct UnknownBroadcaster {
+  std::string name;
+  int games = 0;
+  std::vector<std::string> leagues;
+  bool operator==(const UnknownBroadcaster& o) const {
+    return name == o.name && games == o.games && leagues == o.leagues;
+  }
+};
+using UnknownBroadcasters = std::vector<UnknownBroadcaster>;
+// SourceStats::unknown and unknownLeagues as rows, most games first.
+UnknownBroadcasters unknownBroadcasters(const std::map<std::string, int>& games,
+                                        const std::map<std::string, std::set<std::string>>& leagues);
 
 struct LiveEventsReportInput {
   const catalog::CatalogResult* catalog = nullptr;
@@ -60,6 +79,9 @@ struct LiveEventsReportInput {
   std::function<bool(const std::string& familyKey)> groupFails;
   // Pro wrestling is left out of the board before it's built unless picked.
   bool proWrestlingOn = false;
+  // Build 143: broadcaster names not recognised (a row each at the end,
+  // group "Broadcaster names not recognised").
+  const UnknownBroadcasters* unknownBroadcasters = nullptr;
   time::Seconds now = 0;
   time::Zone zone = time::Zone::device();
 };

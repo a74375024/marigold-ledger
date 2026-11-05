@@ -793,9 +793,92 @@ std::vector<SportsGame> keeping(const std::vector<SportsGame>& games, Seconds cu
   return out;
 }
 
-// A golf tournament as its round on now (or next): the event's date is the
-// first day, so round N is N-1 days later, from 07:00 US Eastern (the
-// scoreboard's status says when it is really on).
+// MARK: Golf
+
+namespace {
+
+// A tee time as the scoreboard writes it ("Wed Nov 04 23:39:00 PST 2026"),
+// in UTC; nullopt for anything else.
+std::optional<Seconds> teeTime(std::string_view value) {
+  if (value.size() < 24 || value.size() > 32 || value[3] != ' ') return std::nullopt;
+  std::vector<std::string_view> parts = str::split(value, ' ');
+  if (parts.size() != 6 || parts[3].size() != 8 || parts[3][2] != ':') return std::nullopt;
+  static const char* const kMonths[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+  int month = 0;
+  for (int i = 0; i < 12; ++i) {
+    if (parts[1] == kMonths[i]) month = i + 1;
+  }
+  static const std::pair<const char*, int> kZones[] = {{"UTC", 0},  {"GMT", 0},  {"EST", -5}, {"EDT", -4},
+                                                       {"CST", -6}, {"CDT", -5}, {"MST", -7}, {"MDT", -6},
+                                                       {"PST", -8}, {"PDT", -7}};
+  std::optional<int> offset;
+  for (const auto& [zone, hours] : kZones) {
+    if (parts[4] == zone) offset = hours;
+  }
+  auto day = text::toInt(parts[2]), year = text::toInt(parts[5]);
+  auto hour = text::toInt(parts[3].substr(0, 2)), minute = text::toInt(parts[3].substr(3, 2));
+  if (!month || !offset || !day || !year || !hour || !minute) return std::nullopt;
+  time::Civil clock{*year, month, *day, *hour, *minute, 0};
+  // The clock is US Eastern under a Pacific label: at 21:19 UTC on 5
+  // November the World Wide Technology Championship's "14:44 PST" groups
+  // had played five holes (an Eastern 19:44 UTC tee time, not 22:44), and
+  // read so the Abu Dhabi and Japan rounds start at 07:20 and 09:00 there.
+  if (*offset == -8 || (*offset == -7 && parts[4] == "PDT")) return time::Zone::usEastern().fromLocal(clock);
+  return time::Zone::utc().fromLocal(clock) - Seconds{*offset} * 3600;
+}
+
+// Where a tournament is played, from its name: minutes from UTC (standard
+// time). Only for a round's usual start when no tee time is out yet.
+std::optional<int> golfPlaceOffset(const std::string& normalizedName) {
+  static const std::pair<const char*, int> kPlaces[] = {
+      {" japan ", 540},        {" korea ", 540},        {" korean ", 540},       {" china ", 480},
+      {" shanghai ", 480},     {" shenzhen ", 480},     {" hong kong ", 480},    {" singapore ", 480},
+      {" malaysia ", 480},     {" maybank ", 480},      {" taiwan ", 480},       {" philippines ", 480},
+      {" thailand ", 420},     {" vietnam ", 420},      {" india ", 330},        {" indian ", 330},
+      {" abu dhabi ", 240},    {" dubai ", 240},        {" dp world tour championship ", 240},
+      {" mauritius ", 240},    {" qatar ", 180},        {" saudi ", 180},        {" bahrain ", 180},
+      {" kenya ", 180},        {" south africa ", 120}, {" south african ", 120}, {" joburg ", 120},
+      {" dunhill ", 120},      {" nedbank ", 120},      {" australia ", 600},    {" australian ", 600},
+      {" new zealand ", 720},  {" hawaii ", -600},      {" sony open ", -600},   {" sentry ", -600},
+      {" mexico ", -360},      {" bermuda ", -240},     {" puerto rico ", -240}, {" dominican ", -240},
+      {" bahamas ", -300},     {" scottish ", 0},       {" scotland ", 0},       {" irish ", 0},
+      {" ireland ", 0},        {" english ", 0},        {" british ", 0},        {" wales ", 0},
+      {" portugal ", 0},       {" spain ", 60},         {" spanish ", 60},       {" andalucia ", 60},
+      {" italian ", 60},       {" italy ", 60},         {" french ", 60},        {" france ", 60},
+      {" german ", 60},        {" dutch ", 60},         {" danish ", 60},        {" denmark ", 60},
+      {" swedish ", 60},       {" scandinavian ", 60},  {" czech ", 60},         {" austrian ", 60},
+      {" swiss ", 60},         {" european masters ", 60}, {" belgian ", 60}};
+  for (const auto& [words, minutes] : kPlaces) {
+    if (normalizedName.find(words) != std::string::npos) return minutes;
+  }
+  return std::nullopt;
+}
+
+// From the last group's tee time to its finish.
+constexpr Seconds kTeeToFinish = 5 * 3600;
+
+}  // namespace
+
+int golfRounds(const json::Value& event) {
+  auto first = text::date(text::text(event["date"]));
+  auto last = text::date(text::text(event["endDate"]));
+  if (!first || !last || *last < *first) return 4;
+  return std::min(5, std::max(1, static_cast<int>((*last - *first + 43'200) / 86'400) + 1));
+}
+
+void golfRoundOn(SportsGame& game, Seconds now) {
+  if (!game.isGolf() || !game.end || *game.end <= game.start) return;
+  const Seconds length = lengthOf(game.league, &game);
+  // Two hours past a round's usual finish, the next one (the last stays).
+  while (game.start + 86'400 < *game.end && now > game.start + length + 2 * 3600) game.start += 86'400;
+}
+
+// A golf tournament as its round on now (or next, once the day's is done):
+// from its first tee time to the last group's finish (the round's tee times
+// on the scoreboard, else another round's a day apart, else 07:00 where it's
+// played). `end` is the last round's finish; `completed` only once the
+// final round is (each round's "Play Complete" isn't the end).
 std::optional<std::vector<SportsGame>> parseGolfTournaments(std::string_view body, const League& league) {
   std::vector<SportsGame> games;
   bool found = parse::forEachEvent(body, [&](const json::Value& event) {
@@ -808,8 +891,59 @@ std::optional<std::vector<SportsGame>> parseGolfTournaments(std::string_view bod
     std::string state = str::lower(text::text(status["type"]["state"]).value_or(""));
     std::string statusName = str::upper(text::text(status["type"]["name"]).value_or(""));
     if (statusName.find("CANCEL") != std::string::npos) return;
+    const int rounds = golfRounds(event);
     int round = 1;
     if (auto period = text::text(status["period"])) round = std::max(1, text::toInt(*period).value_or(1));
+    round = std::min(round, rounds);
+    const bool over = text::flag(status["type"]["completed"]) || state == "post";
+    const bool final = statusName.find("FINAL") != std::string::npos || (over && round >= rounds);
+    if (!final && over) round += 1;
+    // Each round's tee times, earliest and latest.
+    std::map<int, std::pair<Seconds, Seconds>> tees;
+    for (const json::Value& competitor : competition["competitors"].items()) {
+      for (const json::Value& line : competitor["linescores"].items()) {
+        auto period = text::toInt(text::text(line["period"]).value_or(""));
+        if (!period) continue;
+        for (const json::Value& category : line["statistics"]["categories"].items()) {
+          for (const json::Value& stat : category["stats"].items()) {
+            const json::Value& shown = stat["displayValue"];
+            if (!shown.isString()) continue;
+            auto at = teeTime(shown.asString());
+            if (!at) continue;
+            auto it = tees.find(*period);
+            if (it == tees.end()) {
+              tees.emplace(*period, std::make_pair(*at, *at));
+            } else {
+              it->second.first = std::min(it->second.first, *at);
+              it->second.second = std::max(it->second.second, *at);
+            }
+          }
+        }
+      }
+    }
+    Seconds start = 0, length = 11 * 3600;
+    std::optional<int> known;
+    for (const auto& item : tees) {
+      if (!known || std::abs(item.first - round) < std::abs(*known - round)) known = item.first;
+    }
+    if (known) {
+      const auto& window = tees.at(*known);
+      start = window.first + Seconds{round - *known} * 86'400;
+      length = std::min<Seconds>(14 * 3600, std::max<Seconds>(6 * 3600, window.second - window.first + kTeeToFinish));
+    } else {
+      // No tee time out yet: 07:00 where it's played; a US tour's at home in
+      // US Eastern, the DP World Tour's in Central Europe.
+      time::Civil day = time::Zone::utc().toLocal(*first + Seconds{round - 1} * 86'400);
+      day.hour = 7;
+      day.minute = day.second = 0;
+      if (auto offset = golfPlaceOffset(matcher::normalized(*name))) {
+        start = time::Zone::utc().fromLocal(day) - Seconds{*offset} * 60;
+      } else if (league.shortName == "DPWT") {
+        start = time::Zone::utc().fromLocal(day) - 3600;
+      } else {
+        start = time::Zone::usEastern().fromLocal(day);
+      }
+    }
     SportsTeam side;
     side.id = "g" + *id;
     side.name = *name;
@@ -820,10 +954,10 @@ std::optional<std::vector<SportsGame>> parseGolfTournaments(std::string_view bod
     game.homeFirst = profile(league.group).homeFirst;
     game.home = side;
     game.away = side;
-    Seconds day = *first - *first % 86'400;
-    game.start = day + (round - 1) * 86'400 + 11 * 3600;
+    game.start = start;
+    game.end = start + Seconds{rounds - round} * 86'400 + length;
     game.networks = parse::networks(competition);
-    game.completed = text::flag(status["type"]["completed"]) || state == "post";
+    game.completed = final;
     game.customTitle = *name;
     game.note = text::text(event["shortName"]).value_or(*name);
     game.golf = true;
@@ -1270,6 +1404,8 @@ std::vector<SportsGame> Schedule::gamesOf(const std::vector<League>& active, con
   for (SportsGame& g : keeping(saved_.games, now - kSavedFor)) {
     if (!shorts.count(g.leagueShort)) continue;
     if (g.leagueShort == kSoccerAll && elsewhere.count(eventOf(g.id))) continue;
+    // Build 143: a golf tournament as its round on now (or next).
+    if (g.isGolf()) golfRoundOn(g, now);
     out.push_back(std::move(g));
   }
   // The other calendars' games of the competitions looked up.

@@ -7,6 +7,7 @@
 // names) instead of comparing every title with every game.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -54,12 +55,19 @@ struct GuideListing {
   // Build 132: a sports channel from a country you didn't pick (brands.hpp):
   // a way to watch the game it names, ranked last, two at most per game.
   bool abroad = false;
+  // Build 143: a tour's or racing series' own programme, or a fight night's
+  // (seriesOf: "golf|PGA", "race|F1", "fight|UFC"): the tournament in play,
+  // the sessions or the card's part on during it, whatever channel it's on.
+  std::string series;
+  // Shown again: the channel's guide marks its live airings and not this
+  // one. Not a way to watch the event live.
+  bool replay = false;
 
   bool operator==(const GuideListing& o) const {
     return entryID == o.entryID && inLineup == o.inLineup && lang == o.lang &&
            title == o.title && start == o.start && end == o.end && detail == o.detail &&
            venue == o.venue && city == o.city && rank == o.rank && tennisCoverage == o.tennisCoverage &&
-           cricket == o.cricket && abroad == o.abroad;
+           cricket == o.cricket && abroad == o.abroad && series == o.series && replay == o.replay;
   }
   bool operator!=(const GuideListing& o) const { return !(*this == o); }
 };
@@ -77,6 +85,17 @@ bool isGenericSportsTitle(std::string_view title);
 // Cricket", "LIVE Test Cricket", "Live: ODI". Not highlights, replays or
 // shows ("Cricket Live", "Cricket Highlights").
 bool isLiveCricket(std::string_view title);
+
+// Build 143: the tour, racing series or fight promotion whose own programme
+// a guide title (and its subtitle) is: "golf|PGA" ("PGA Tour Golf", "Live DP
+// World Tour Golf" -> DPWT, "Golf: Ladies PGA" -> LPGA), "golf|MAJOR" ("The
+// Masters": the tournament of that name on any tour), "golf|" ("Golf" with a
+// subtitle naming the tournament), "race|F1" ("Live F1: Sao Paulo GP
+// Qualifying", "F1: Rennen"), "race|NASCAR", "race|MOTOGP", "race|WEC",
+// "race|SC", "race|IRL", "fight|UFC" ("Live UFC Fight Night"), "fight|PFL".
+// "" for anything else: highlights, studio shows, replays, classics, other
+// classes ("Moto2", "NASCAR Xfinity").
+std::string seriesOf(std::string_view title, const std::optional<std::string>& subtitle);
 
 // The scheduled cricket match (a game index) a cricket channel's live
 // listing shows: the one in play during it whose format and match number
@@ -168,6 +187,8 @@ struct Stats {
   int describedListings = 0;
   // A cricket channel's live match joined to the match in play.
   int cricketListings = 0;
+  // Build 143: a tour's or series' own programme joined to its event.
+  int seriesListings = 0;
   int trimmedStations = 0;
   // Build 132: other countries' sports channels past the two a game keeps.
   int abroadDropped = 0;
@@ -302,12 +323,29 @@ std::string matchupKey(std::string_view title);
 // Two sides: "A vs B", "A v B", "A @ B", "A at B", "A - B" (after a
 // "Network:" style prefix).
 bool looksLikeGame(std::string_view title);
+// Build 143: "Napoli - Lazio", "AEK Atene - Real Madrid", "Omonia FC x SL
+// Benfica": two short sides around one dash or " x ". A game only when its
+// sides name a scheduled game's teams (the matcher checks).
+bool pairedTitle(std::string_view title);
 // Lower-case words separated by single spaces, padded with spaces so
 // whole-word checks are a plain find(" word ").
 std::string normalized(std::string_view text);
 // Ways a team is written: full name, short names, the nickname (last word
 // or two); the place name only for college teams ("Utah").
 std::vector<std::string> teamVariants(const SportsTeam& team, bool college);
+// Build 143: weaker ways than `strong` (its teamVariants), counted only
+// where no other team of the sport has them (sideNames): the alias table
+// read the other way ("Ole Miss": "mississippi"); other spellings ("mount
+// saint mary", "saint peters", "n e c"); a club without its initials or
+// year ("Riga FC": "riga"; "Portland Thorns FC": "portland thorns",
+// "thorns"); a school without its bracketed state ("Centenary (LA)") or
+// "University" ("Grace University").
+std::vector<std::string> weakerVariants(const SportsTeam& team, bool college, const std::vector<std::string>& strong);
+// A game between colleges (any sport's college league).
+bool collegeGameOf(const SportsGame& game);
+// Each game's two sides' names (home, away): teamVariants and the
+// weakerVariants no other team of that sport shares.
+std::vector<std::array<std::vector<std::string>, 2>> sideNames(const std::vector<SportsGame>& games);
 // A side that isn't a country's or a club's first team, read from the end
 // of its name: "New Zealand A" -> ("new zealand", "a"), "India U19" ->
 // ("india", "u19"), "Australia Women" -> ("australia", "women"), "Prime
@@ -407,8 +445,9 @@ class TeamIndex {
     int length() const { return end - start; }
   };
   // `game`: the team's game (a game index), else nullptr (a plain list).
+  // `names`: its names when known (sideNames), else teamVariants.
   void add(const SportsTeam& team, int slot, int side, bool college, bool abbreviations,
-           const SportsGame* game = nullptr);
+           const SportsGame* game = nullptr, const std::vector<std::string>* names = nullptr);
   std::vector<Hit> hits(std::string_view title, const Filter& allowed, const Filter& allowLoose,
                         std::set<std::string>* written) const;
 

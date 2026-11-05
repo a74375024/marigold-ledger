@@ -114,7 +114,15 @@ struct FightCards {
 std::optional<FightCards> parseFightCards(std::string_view body, const League& league);
 // One game per session of each race weekend in the current listing.
 std::optional<std::vector<SportsGame>> parseRaceWeekends(std::string_view body, const League& league);
+// A golf tournament as its round on now (or next): from the round's first
+// tee time to the last group's finish; `end` is the final round's finish
+// (Build 143), and it's completed only once that round is.
 std::optional<std::vector<SportsGame>> parseGolfTournaments(std::string_view body, const League& league);
+// A golf event's rounds, from its first and last days (4 when not given).
+int golfRounds(const json::Value& event);
+// A golf tournament moved on to the round on at `now` (or next): a round
+// two hours past its usual finish is followed by the next one.
+void golfRoundOn(SportsGame& game, Seconds now);
 // One game per match of the tournaments in the listing.
 std::optional<std::vector<SportsGame>> parseTennisMatches(std::string_view body, const League& league);
 

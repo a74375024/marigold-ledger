@@ -327,6 +327,8 @@ LineupCategory categoryFor(std::string_view lower, std::string_view group,
                    "screenpix", "paramount\\+"});
   static const std::string kMusic = alternation({"mtv", "mtv2", "cmt", "bet jams", "music", "vevo",
                                                  "stingray", "revolt", "axs", "palladia", "fuse"});
+  static const std::string kLeagueGroups = alternation({"nba", "wnba", "nhl", "mlb", "nfl", "ncaaf", "ncaab"});
+  static const std::string kWnba = alternation({"wnba"});
 
   if (contains(group, "radio") || rx::test(kRadio, lower)) return LineupCategory::radio;
   if (country && *country != "US") return LineupCategory::international;
@@ -339,6 +341,12 @@ LineupCategory categoryFor(std::string_view lower, std::string_view group,
   if (rx::test(kSpanish, lower)) return LineupCategory::spanish;
   if (rx::test(kNews, lower)) return LineupCategory::news;
   if (contains(group, "sport") || rx::test(kSports, lower)) return LineupCategory::sports;
+  // Marigold (Build 143): a team's channel in a league's group ("US| NHL
+  // TEAM PPV": "US: BOSTON BRUINS"; "US| WNBA TEAM PPV") and the WNBA by name
+  // ("\bnba\b" isn't in "wnba").
+  if (contains(group, "team ppv") || rx::test(kLeagueGroups, group) || rx::test(kWnba, lower)) {
+    return LineupCategory::sports;
+  }
   if (rx::test(kKids, lower)) return LineupCategory::kids;
   if (rx::test(kMovies, lower)) return LineupCategory::movies;
   if (rx::test(kMusic, lower)) return LineupCategory::music;
@@ -888,11 +896,20 @@ EventsResult buildEvents(const std::vector<Channel>& channels,
     };
     std::stable_sort(sorted.begin(), sorted.end(),
                      [&](const Channel* a, const Channel* b) { return numberOf(a) < numberOf(b); });
-    std::optional<std::string> market;
+    std::optional<std::string> market, clock;
     for (const Channel* c : sorted) {
       const ChannelTraits* t = traitOf(c);
       if (t && t->market) {
         market = t->market;
+        break;
+      }
+    }
+    // The clock a feed with no country of its own is read on: its family's
+    // first country (Build 143: never a language tag's market).
+    for (const Channel* c : sorted) {
+      const ChannelTraits* t = traitOf(c);
+      if (t && (t->country || t->market)) {
+        clock = t->country ? t->country : t->market;
         break;
       }
     }
@@ -910,8 +927,8 @@ EventsResult buildEvents(const std::vector<Channel>& channels,
       }
       named += 1;
       // A feed's own country says how to read its times; else its family's.
-      ParsedEvent parsed =
-          parseEventDetailed(*t->eventText, now, ownMarket ? ownMarket : t->market ? t->market : market);
+      std::optional<std::string> feedClock = ownMarket ? ownMarket : slotMarket(*t);
+      ParsedEvent parsed = parseEventDetailed(*t->eventText, now, feedClock ? feedClock : clock);
       if (parsed.title.empty()) continue;
       if (parsed.start && now - *parsed.start > 8 * 3600) continue;       // long over
       if (parsed.start && *parsed.start - now > 6 * 24 * 3600) continue;  // stale or far off
@@ -1171,8 +1188,13 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
   // BRAVO (WEST)") or by the core network's name ("HBO 2" is HBO Hits).
   const reference::Channel* refChannel = nullptr;
   const reference::Feed* refFeed = nullptr;
+  // Marigold (Build 143): the reference data has MSG Sportsnet (formerly
+  // MSG+) as another name of MSG Network; they're two networks (Devils and
+  // Islanders; Knicks and Rangers), so it isn't asked about MSG Sportsnet.
+  static const std::string kNotOneChannel = "\\bmsg ?(sportsnet|sn|plus|\\+)";
   if (context.reference && (kind == ChannelKind::channel || kind == ChannelKind::fast) && !familyKey &&
-      (!country || *country == "US") && !rx::test("\\((?!WEST\\))[KW][A-Z]{2,3}(-[A-Z0-9]+)?\\)", display)) {
+      (!country || *country == "US") && !rx::test("\\((?!WEST\\))[KW][A-Z]{2,3}(-[A-Z0-9]+)?\\)", display) &&
+      !(contains(lower, "msg") && rx::test(kNotOneChannel, lower))) {
     reference::Match m = context.reference->match(display);
     if (!m.channel) {
       if (auto rest = text::firstGroup("^(?:NBC|ABC|CBS|FOX)\\s+(.{3,})$", display, 1)) {
@@ -1330,7 +1352,9 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
         category = LineupCategory::spanish;
       } else if (core) {
         category = core->category;
-      } else if (regionalSportsPlaces(display)) {
+      } else if (regionalSportsPlaces(display) || proTeamChannel(display)) {
+        // Marigold (Build 143): a pro team's own channel ("AT&T: ATLANTA
+        // BRAVES") is a sports channel, wherever the provider files it.
         category = LineupCategory::sports;
       } else if (callsign || (str::startsWith(scope, "regional") && stationLike())) {
         category = LineupCategory::local;
@@ -1502,6 +1526,21 @@ ChannelKind kindFor(std::string_view name, std::string_view lower, std::string_v
   return ChannelKind::channel;
 }
 
+namespace {
+
+// Call signs that are words, or part of a place's name: one written alone
+// in a name with no network word and no channel number is the word.
+bool wordLikeSign(const std::string& sign, const std::string& upperName) {
+  static const std::unordered_set<std::string> kWords = {
+      "KING", "KONG", "KISS", "WILD", "WIND", "WAVE", "WOOD", "WOLF", "WISH", "WINE", "WORD", "WORK",
+      "WALL", "WARM", "WEEK", "WISE", "KIDS", "KNOW", "WALK", "WHAT", "WHEN", "WITH", "WILL", "WORLD"};
+  if (!kWords.count(sign)) return false;
+  if (rx::test("(?<![A-Z0-9.])\\d{1,2}(\\.\\d)?(?![A-Z0-9])", upperName)) return false;
+  return !networkWord(upperName).has_value();
+}
+
+}  // namespace
+
 std::vector<CallsignCandidate> callsignCandidates(std::string_view name, bool allowShort) {
   std::string up = str::upper(name);
   std::vector<CallsignCandidate> found;
@@ -1517,6 +1556,10 @@ std::vector<CallsignCandidate> callsignCandidates(std::string_view name, bool al
     if (!(sign.size() == 4 || inParens || m.has(2) || allowShort)) continue;
     // "NBC BRAVO (WEST)": a coast, not a station.
     if (sign == "WEST") continue;
+    // Marigold (Build 143): a sign that is also a word ("KING OF THE HILL",
+    // "HONG KONG FIGHT CLUB") only with a network word or a channel number
+    // ("KING 5", "SEATTLE, WA KONG IND 16"), in parentheses or with a suffix.
+    if (!inParens && !m.has(2) && wordLikeSign(sign, up)) continue;
     bool seen = std::any_of(found.begin(), found.end(),
                             [&](const CallsignCandidate& c) { return c.sign == sign; });
     if (!seen) found.push_back({sign, inParens});

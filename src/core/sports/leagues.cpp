@@ -241,7 +241,11 @@ const std::vector<League>& golfLeagues() {
     return std::vector<League>{tour("golf/pga", "PGA", "PGA Tour", {"pga tour"}),
                                tour("golf/lpga", "LPGA", "LPGA Tour", {"lpga"}),
                                tour("golf/liv", "LIV", "LIV Golf", {"liv golf"}),
-                               tour("golf/eur", "DPWT", "DP World Tour", {"dp world", "european tour"})};
+                               tour("golf/eur", "DPWT", "DP World Tour", {"dp world", "european tour"}),
+                               // Build 143: the seniors' and the second tour.
+                               tour("golf/champions-tour", "CHAMP", "PGA Tour Champions",
+                                    {"pga tour champions", "champions tour"}),
+                               tour("golf/ntw", "KFT", "Korn Ferry Tour", {"korn ferry"})};
   }();
   return kGolf;
 }

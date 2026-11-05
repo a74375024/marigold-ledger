@@ -379,7 +379,11 @@ Statuses golfStatuses(std::string_view body, const League& league) {
     if (live.phase == LivePhase::pre && text::flag(type["completed"])) live.phase = LivePhase::final;
     live.suspended = suspended;
     std::string roundText = "Round " + std::to_string(round);
-    if (name.find("PLAY_COMPLETE") != std::string::npos) {
+    // Build 143: the final round's "Play Complete" is the end.
+    if (name.find("PLAY_COMPLETE") != std::string::npos && round >= schedule::golfRounds(event)) {
+      live.phase = LivePhase::final;
+      live.detail = "Final";
+    } else if (name.find("PLAY_COMPLETE") != std::string::npos) {
       // The round is over for the day: the next one is still to come.
       live.phase = LivePhase::pre;
       live.detail = roundText + " done";

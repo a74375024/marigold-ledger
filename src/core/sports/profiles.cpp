@@ -248,7 +248,15 @@ time::Seconds overrunOf(std::string_view league, const SportsGame* game) {
 
 time::Seconds lengthOf(std::string_view league, const SportsGame* game) {
   const Profile& p = profile(league, game ? std::string_view(game->leagueShort) : std::string_view());
-  if (p.parts == Parts::GolfRound && game && game->isGolf()) return p.longLength;
+  if (p.parts == Parts::GolfRound && game && game->isGolf()) {
+    // Build 143: a round from its first tee time to the last group's finish
+    // (`end` is the last round's finish, whole days later).
+    if (game->end && *game->end > game->start) {
+      time::Seconds round = (*game->end - game->start) % 86'400;
+      if (round >= 3600) return round;
+    }
+    return p.longLength;
+  }
   if (p.parts == Parts::CricketMatch && game) {
     if (game->end && *game->end - game->start >= 86'400) return *game->end - game->start + 8 * 3600;  // a day's play past the last day's start
     if (game->matchFormat == std::optional<std::string>("ODI")) return 8 * 3600;

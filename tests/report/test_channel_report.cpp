@@ -236,9 +236,9 @@ Fixture sample() {
 
 TEST_CASE("channel report: header") {
   const auto& columns = channelReportColumns();
-  CHECK(columns.size() == 46);
+  CHECK(columns.size() == 47);
   CHECK(columns.front() == "number");
-  CHECK(columns.back() == "row_id");
+  CHECK(columns.back() == "next_titles");
   std::string csv = channelReportCSV(ChannelReportInput());
   CHECK(csv ==
         "number,name,group,tags,hidden_group,favorite,callsign_in_name,station_lookup,match_key,"
@@ -249,7 +249,7 @@ TEST_CASE("channel report: header") {
         "provider_guide_genre_tagged_next_3h,now_genres,now_subtitle,now_description,"
         "outside_listings_end,now_start,outside_built_at,provider_built_at,outside_described_next_3h,"
         "provider_guide_described_next_3h,logo_sources,logo_status,directory_id,directory_match,"
-        "row_id\n");
+        "row_id,next_titles\n");
 }
 
 TEST_CASE("channel report: one row per channel with the Swift rules") {
@@ -258,7 +258,7 @@ TEST_CASE("channel report: one row per channel with the Swift rules") {
   std::string csv = channelReportCSV(f.input());
   auto rows = parseCsv(csv);
   REQUIRE(rows.size() == 6);
-  for (const auto& r : rows) CHECK(r.size() == 46);
+  for (const auto& r : rows) CHECK(r.size() == 47);
   CHECK(csv.back() == '\n');
 
   auto nbc = rowFor(rows, "US: NBC 4 WNBC");
@@ -479,4 +479,26 @@ TEST_CASE("channel report: provider guide covers the window") {
   CHECK(covers({raw(kLow + 179, 10)}, kStart));
   CHECK_FALSE(covers({raw(kLow + 180, 10)}, kStart));
   CHECK_FALSE(covers({}, kStart));
+}
+
+TEST_CASE("channel report: a sports channel's next titles (Build 143)") {
+  Fixture f = sample();
+  f.channels.push_back(channel("xt:a|20", "xt:a", "US: Harbor Sports HD", std::string("US Sports")));
+  ChannelTraits s;
+  s.category = LineupCategory::sports;
+  s.kind = ChannelKind::channel;
+  s.market = std::string("US");
+  f.catalog.traits["xt:a|20"] = s;
+  f.programs["xt:a|20"] = {
+      program("pg|xt:a|20|1", kStart, kStart + 1800, "Pregame"),  // on now: not "next"
+      program("pg|xt:a|20|2", kStart + 1800, kStart + 9000, "NHL Hockey"),
+      program("pg|xt:a|20|3", kStart + 9000, kStart + 10800, "Postgame"),
+      program("pg|xt:a|20|4", kStart + 10800, kStart + 14400, "Highlights"),
+      program("pg|xt:a|20|5", kStart + 14400, kStart + 18000, "Late Show"),
+  };
+  auto rows = parseCsv(channelReportCSV(f.input()));
+  CHECK(rowFor(rows, "US: Harbor Sports HD")["next_titles"] ==
+        "18:30 NHL Hockey | 20:30 Postgame | 21:00 Highlights");
+  // Only sports channels.
+  CHECK(rowFor(rows, "US: NBC 4 WNBC")["next_titles"] == "");
 }

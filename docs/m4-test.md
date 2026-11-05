@@ -1414,3 +1414,85 @@ Since Build 141 Live Events shows its last board at once; its scores can then be
 | Scores off | Turn live scores off in Settings, open Live Events with games live | No line |
 | On a game | Focus a live tile while the line shows | The line sits after the competition ("NFL · Week 10"), left of the clock; the competition isn't covered |
 | Placeholders | First open of the day after a long sleep | The placeholders' own line as before, no second line |
+
+## Build 143 — Live Events: team names, guide titles and clocks matched more often
+
+The Apple TV export of Nov 5 had provider slots and guide titles naming a scheduled game that Live Events didn't recognise, so they were left out ("not on the schedule") or went to no tile. Now:
+
+- **Clubs as other feeds write them.** A club's name without its initials or founding year counts ("Riga" for Riga FC, "Le Havre" for Le Havre AC, "New York City" for New York City FC, "Iberia" for Iberia 1999), and so does its nickname ("Thorns" for Portland Thorns FC), but only when no other team of that sport this week has that name. A hyphenated name run together counts ("AraratArmenia", "SintTruiden"); underscores are spaces ("New_York_City"); initials with stops count ("N.E.C."). Other countries' names: Crvena zvezda / Röda Stjärnan (Red Star Belgrade), Copenhagen / Köpenhamn / København, Köln (FC Cologne), Inter, Stade Brestois, Sporting KC, Iberia Tbilisi, Sky Italia's AEK Atene, Bayern Monaco, Magonza, and Ferencvárosi, Barça, Atleti. Liga MX clubs by the nicknames US Spanish-language TV uses: Chivas, Xolos, Rayados, Tuzos, Diablos Rojos, Gallos Blancos, Rojinegros, La Máquina.
+- **Schools as guides write them.** "Saint" and "St." are the same ("Mount Saint Mary"), "Saint Peters" is Saint Peter's, a school without "University" or "College" ("Grace") or without its state in brackets ("Centenary", "Union") counts when no other school of that sport has the name, and the short-name table works both ways ("Mississippi" is Ole Miss, "Southern Mississippi", "Miami (Ohio)", "Texas-San Antonio"). The weaker names are checked against every team of the sport: on this week's games (2,925 teams in 23 schedules) none is shared by two teams that didn't already share a name.
+- **Two schools' games an hour apart.** "Iowa State vs. UCF" at 6 PM (volleyball) and at 7 PM (women's soccer), with no sport in the title, was left out as ambiguous. Now the game at the slot's time goes (within 15 minutes, the other game 45 minutes or more away); at the very same time, on ESPN+ (which names the away team first), the game whose away team the title names first.
+- **Any apostrophe.** "NCAA Men`s Basketball:" and "Women’s" read as College Basketball, not "Other".
+- **European guide titles.** "Napoli - Lazio", "AEK Atene - Real Madrid" and Portuguese "Omonia FC x SL Benfica" on a sports channel (or in a sports slot) are read as a game when both sides are a scheduled game's teams; any other dashed title stays what it was. Competition titles ("Premier League", "LALIGA EA SPORTS", "Bundesliga", "Serie A", "UEFA Europa League", "Liga MX", "Fußball", "Calcio", "EFL", volleyball, softball) are sports titles whose description is read for the venue or the teams, and venues are read in German, Italian, French and Spanish ("Aus der … in …", "Dallo … di …", "Depuis le … à …", "Desde el … en …"). Previews, summaries and replays in those languages (Previa, Resumen, Repetición, Zusammenfassung, Sintesi, Résumé…) are left out like the English ones.
+- **French feeds' clock.** "Montréal vs. Vancouver (French)" was read on Paris time (5:25 AM instead of 11:25 AM Pacific) and hidden as a replay: a language tag no longer sets a slot's clock; the channel's country does.
+- **Brands as the provider writes them.** "SPORTSN ET", "EURO SPORT 1", "TNT SPORT 1", Ligue 1+, Canal+ Live / Premier League / Ligue 1, RMC Sport, Sky Calcio, M. Liga de Campeones and M. LaLiga, LaLigaTV Hypermotion, Fox Sports MX / ARG, Viaplay, Ziggo Sport, ESPN (Netherlands, New Zealand), Blue Sport, MySports, Sport1, Sportdigital, Eleven, TVP Sport and Polsat Sport are other countries' sports channels whose guides Live Events reads.
+- **Tennis.** "Hongkong" is Hong Kong ("WTA: Kvartfinaler, Hongkong").
+
+On the export (both builds run side by side): 1,539 → 1,595 slots matched to a scheduled game, "not on the schedule" 1,058 → 1,020 (Soccer 125 → 109), 34 more UEFA Europa / Conference League slots on their games' tiles; of the export's European guide titles, 112 → 135 of 140 name their game. Matching got faster: team names are read without the regular expression when plain ASCII (the team index 74 → 54 ms, a week's titles 121 → 75 ms on a desktop; the rebuild's longest 696 → 575 ms).
+
+| Area | How to check | Pass |
+|---|---|---|
+| NYCFC | Report on an MLS weekend with Apple's "D.C. vs. New_York_City" slots | On the "D.C. United vs New York City FC" tile, English and Spanish |
+| French feed | Same report, "Montréal vs. Vancouver (French)" | Starts at the game's time (11:25 AM Pacific), on the game's tile |
+| UEFA | Thursday's Europa / Conference League slots (Viaplay, Disney+, Play+, Stan) | "Riga v Jablonec", "SintTruiden v Brann", "N.E.C. vs AC Omonia", "FC Köpenhamn - Iberia Tbilisi", "Röda Stjärnan - Inter Escaldes" on their games' tiles |
+| Liga MX | A Liga MX weekend on Univision / TUDN | "Chivas vs. León", "Necaxa vs. Xolos" on the games' tiles |
+| Two sports | ESPN+ "Iowa State vs. UCF" at 6 PM and 7 PM | The 6 PM slot on the volleyball tile, the 7 PM one on the soccer tile |
+| Apostrophes | "NCAA Men`s Basketball: …" slots | Sport "College Basketball" in the report |
+| Guide titles | A Sky Italia / DAZN channel showing "Napoli - Lazio" | The channel among the game's ways to watch; a "News - Weather" listing on it adds nothing |
+| Schools | "Grace vs. Southern Utah", "Binghamton vs Saint Peters", "Southern Mississippi vs James Madison" | On their games' tiles |
+| No new mix-ups | A busy college Saturday | No slot on another game of the same teams' names; two schools both called "Union" still need their state |
+| Brands | Channel report, other countries' sports channels | "SPORTSN ET", "EURO SPORT", "TNT SPORT", "LIGUE 1+" channels read for Live Events |
+| Tennis | "WTA: Kvartfinaler, Hongkong" slot | On that day's Hong Kong matches |
+| Speed (LG) | Open Live Events on the LG with the full list (developer log) | "rebuildMax" no higher than Build 142's |
+
+## Build 143 — Live Events: golf, racing, cricket and fight-night coverage
+
+Event sports get their ways to watch from the guide and from more provider feeds.
+
+- **Golf rounds.** A tournament's tile is the round on now, from its first tee time to the last group's finish (about 11 hours, read from the scoreboard's tee times; before they're out, 07:00 where it's played, from its name: Japan, Abu Dhabi, Mexico…, else 07:00 US Eastern for the US tours and Central Europe for the DP World Tour). It was 07:00 Eastern every day, wherever the tournament was. When a round's play is complete the tile moves to the next round ("Later", at its time) instead of ending; it ends after the final round. The scoreboard's tee times are Eastern clock times under a Pacific label (the groups at "14:44 PST" had played five holes by 21:19 UTC); they're read as Eastern. PGA Tour Champions and the Korn Ferry Tour are tours too.
+- **Golf programmes on any channel.** "PGA Tour Golf", "LPGA Tour Golf", "Golf: Ladies PGA", "(Live) DP World Tour Golf", "LIV Golf", "PGA Tour Champions Golf", "Korn Ferry Tour Golf", a major by its name ("The Masters"), or "Golf" with the tournament in the subtitle: the tour's tournament in play then (the one the title names; with two of the tour's events on, the televised one), with the listing's own start and end, on Golf Channel, NBC, CBS, Sky Sports Golf or anywhere. "Golf Central", "Live From", highlights, classics, flashbacks and encores aren't the round. A listing the channel's guide doesn't mark live when it marks its live airings is a replay: not a way to watch.
+- **Live only when on air** (Build 141) works with the real round: the tile is live while a feed or a listing shows the round, else "Later" at the next one's start.
+- **Golf feeds** for a later day of the tournament ("World Wide Technology Championship: Day 2", "LPGA TOTO JAPAN CLASSIC" at 03:00 CET, "Toto Japan Classic vs 2. kierros") join the tournament's tile instead of being left out as unscheduled or "over".
+- **Racing.** NASCAR's own race names ("NASCAR Cup Series at Miami") and its finale ("Championship Race") join the race; MotoGP, WEC and Supercars feeds join their sessions by the series' name and the session they name or their time ("MotoGP: Qatar GP vs Fri Training 1", "Race: 6 Hours of Monza WEC 2026"). The guide's programmes ("Live F1: Sao Paulo GP Qualifying", "F1: Rennen", "Live MotoGP: … - Sprint", "Live WEC: 6 Hours of Monza", "NASCAR Cup Series Racing") go to the sessions on during them, by the session words of several languages (Practice, Training, Libres, Essais, Qualifying, Qualifiche, Hyperpole, Sprint, Race, Rennen, Gara, Carrera, Course). Moto2, Moto3, F1 Academy and NASCAR's other series aren't the main class.
+- **Cricket.** A Test's listing on its second or later day ("Bangladesh vs West Indies, 2nd Test, Day 2") is a way to watch it (it was only on the first two hours of the first day).
+- **Fight nights.** "Live UFC Fight Night" (no fighters named) goes to that night's card, the prelims or the main card by its time.
+
+Measured with the preview on the 5 November channel report (golf, motorsport, fighting and cricket picked; schedules fetched at 3:15 PM Pacific): golf feeds on the board with their tournament 2 → 10 and 12 more read as no known sport ("WORLD WIDE TECHNOLOGY CHAMPIONSHIP · DAY 1", "TOTO Japan Classic @ Nov 6 3:00 AM"); golf feeds left out 9 → 1. The World Wide Technology Championship's tile is LIVE, "ends ~4:44" PM with 13 feeds (was "Likely over, started 3:00" AM with 2); the TOTO Japan Classic's is round 2 at 4:00 PM with 9 feeds (its feeds were "over" or unscheduled); Abu Dhabi's round 2 is "Later" at 7:19 PM (was over). With the clock at 6:00 and 9:00 AM the World Wide Technology Championship is "Later today, 12:00 PM" (its feeds start then), at 1:00 PM LIVE. The MotoGP practice feed joins Qatar GP; the six WEC feeds join their sessions (the weekend shows once its session on has a way to watch). The guide listings were checked with made-up listings for the week's events (the report has no guide).
+
+| Area | How to check | Pass |
+|---|---|---|
+| Golf round times | Open Live Events during a tournament in Japan or the Middle East | The tile's round starts around 07:00–09:00 local time there, not 07:00 Eastern |
+| Between rounds | Open Live Events after a round's play is complete | The tournament is "Later" at the next round's time, with its leaders; not "Ended" |
+| Final round | After the last round | The tile ends ("Final") |
+| Golf listings | With Golf Channel's guide showing "PGA Tour Golf" | Golf Channel is a way to watch the tournament, from the listing's start; the tile is live only while it (or a feed) is on |
+| Golf shows | "Golf Central", "PGA Tour Highlights" in the guide | Not a way to watch the tournament |
+| Racing listings | Sky Sports F1's "Live F1: … Qualifying" | On the qualifying session's tile; a replay after the session isn't |
+| NASCAR | A provider feed "NASCAR Cup Series at …" | On the race's tile, not its own |
+| MotoGP / WEC feeds | "MotoGP: Qatar GP Free Practice 1", "WEC: 6 Hours of Monza Free Practice 1" | On that session's tile |
+| Moto2 | A Moto2 feed or listing | Not on the MotoGP tile |
+| Test cricket | A Test's "Day 2" listing | On the match's tile all day |
+| Fight night | "Live UFC Fight Night" in the guide | On the card's main card tile (the prelims listing on the prelims) |
+
+## Build 143 — Live Events: every network the schedule names; your team, Spanish and local channels
+
+A tile lists your channels airing the game's networks. Many broadcaster names the schedule writes weren't read, so those games had no channel. Now one table (built once, looked up by letters and digits only) knows them: "Golf Chnl", NBCSN (a core network again), ION, the NBC Sports regionals as the schedule shortens them ("NBC Sports Phil", "NBC Sports BA +", "NBCSCA+", "NBC Sports BO"), MSG's networks apart (MSG Network: Knicks, Rangers; MSG Sportsnet, formerly MSG+: Devils, Islanders; MSGB: Sabres; MSG2/MS2), "Marquee Sports Net", MASN, SNY, YES (also "FOX SPORTS YES HD"), SportsTime Ohio, ABTV, Midco Sports Net, the FanDuel abbreviations ("FanDuel SN IN / WI / WIX / OK / DET / DET Ext / OH / MW"), and in Spanish ESPN Deportes, Universo, "Tele" (Telemundo), "UniMás", Fox Deportes, TUDN, Galavisión and beIN en Español. Local stations by their brand ("Utah 16" KUPX, "The Spot - MTN" WXPX, "Vegas 34" KMCC, CW33, PeachtreeTV, Atlanta News First, "CW PIX 11" WPIX, "Fox 5 New York") or by a call sign anywhere in the name ("KTVD-TV (My20)", "KUSA-TV (9NEWS)", "ALT2/KTVD", "KCTV5", "Fox 5 WTTG", "KFMB 8.1 (CBS)", "WTHR Channel 13"). A few names are a station only with the team: "Fox4" (Stars: KDFW, Chiefs: WDAF), "My27" (Stars: KDFI), "NBC 10" (Phillies: WCAU), "Scripps Sports" (Golden Knights: KMCC). Streaming services and team apps (ESPN+, Peacock, Prime Video, "Cardinals.TV", "Thunder App", B1G+, ACCNX…) are streaming, not unknown.
+
+Fixed wrong matches: "FanDuel Sports Network South West" and "FOX SPORTS MID WEST" were read as West; West (Kings, Angels) and SoCal / Prime Ticket (Clippers, Ducks) were one network; "MSG SPORTSNET" and "MSG PLUS" were filed as MSG Network; "KING OF THE HILL" and "HONG KONG FIGHT CLUB" were read as the stations KING and KONG (the Kraken's tiles showed the show's name): a call sign that is also a word needs a network word or a channel number with it. A pro team's channel is never a college side's of the same place ("MLB SAN FRANCISCO GIANTS" on a San Francisco Dons volleyball game, "BALLY SPORTS ARIZONA" on a college soccer game).
+
+Your channels: NHL and WNBA team channels ("US| NHL TEAM PPV", "WNBA TEAM PPV", the "AT&T: <TEAM>" channels) are sports channels now, so they're on their teams' games. Spanish stations (Telemundo, Univision, UniMás) are found by network and call sign like local ones, and the US channels in Spanish are read for Live Events whether or not that list is picked, ranked after English ones. TNT, TBS, truTV and USA Network's guide listings confirm games too. Big Ten Network's alternates and overflows back it up: when several Big Ten games are on at once, each tile lists Big Ten Network and its alternates as likely ("Several games on this network at once") and the guide listings say which. Event slots named after a network ("NCAAF 01: ESPN", "NCAAF 04: ABC") are a backup of it for that league's games.
+
+Reports: the Live Events report ends with the broadcaster names not recognised this week (group "Broadcaster names not recognised": the name, its leagues, how many games; streaming left out). The channel report has a last column, "next_titles": a sports channel's next three programmes ("19:00 NHL Hockey | 21:30 Postgame | 22:00 Highlights").
+
+| Area | How to check | Pass |
+|---|---|---|
+| NHL team channels | Live Events, NHL row, a game of a team you have a channel of ("US: BOSTON BRUINS", "AT&T: BOSTON BRUINS") | The team's channel is under Your channels ("Team channel") |
+| NBA / MLB team channels | Same for an NBA game ("AT&T: ATLANTA HAWKS", "NBA: ATLANTA HAWKS") | The team's channel, as before or now |
+| Regional networks | A Flyers, Devils or Islanders, Sharks game | NBC Sports Philadelphia / MSG Sportsnet / NBC Sports Bay Area under Your channels |
+| Local stations | A Mammoth game ("Utah 16"), a Lightning game ("The Spot - MTN") | The station (KUPX, WXPX) under Your channels |
+| Kraken | A Kraken game on KONG | The station shows as KONG, never "HONG KONG FIGHT CLUB"; KING never shows as "KING OF THE HILL" |
+| Kings / Clippers | A Kings game on FanDuel SN West, a Clippers game on FanDuel SN SoCal | The West channel (FOX SPORTS WEST / Prime Sports West) for the Kings; Prime Ticket / SoCal for the Clippers |
+| Spanish | A Premier League game on Universo, a LaLiga game on ESPN Deportes | NBC Universo / ESPN Deportes under "In Spanish", after the English ones |
+| Big Ten | A Saturday with several Big Ten games at once | Each tile: Big Ten Network and its alternates as likely; a guide listing makes one certain |
+| College soccer | A college soccer game (Arizona, Pittsburgh, Houston) | No MLB / NHL team channel, no FanDuel channel of that place |
+| Unknown names | Send a Live Events report | Last rows "Broadcaster names not recognised" with names, leagues and game counts; no ESPN+, Peacock or team apps |
+| Next titles | Send a channel report | "next_titles" filled for sports channels (three titles with times), empty for others |

@@ -17,30 +17,54 @@ const std::vector<Brand>& all() {
       {" sky sports golf ", "golf", "en"},
       {" sky sports tennis ", "tennis", "en"},
       {" sky sports ", "multi", "en", " sky sports news "},
-      // 1-4 in the UK; Argentina's and Chile's are in Spanish (their country says).
+      // 1-4 in the UK; Argentina's and Chile's are in Spanish (their country
+      // says). Build 143: also as the provider writes it, "TNT SPORT 1".
       {" tnt sports ", "multi", ""},
+      {" tnt sport ", "multi", ""},
       {" premier sports ", "multi", "en"},
       {" laliga tv ", "soccer", ""},
-      // Spain.
+      {" laligatv ", "soccer", ""},
+      // Spain ("M+ LaLiga", "M. LaLiga", "M.LIGA CAMPEONES 2").
       {" m plus laliga ", "soccer", "es"},
+      {" m laliga ", "soccer", "es"},
       {" movistar laliga ", "soccer", "es"},
       {" m plus liga de campeones ", "soccer", "es"},
+      {" m liga de campeones ", "soccer", "es"},
+      {" m liga campeones ", "soccer", "es"},
+      {" m plus liga ", "soccer", "es"},
       {" movistar liga de campeones ", "soccer", "es"},
       {" movistar deportes ", "multi", "es"},
+      {" m plus deportes ", "multi", "es"},
       {" dazn ", "multi", ""},
       // Germany, Austria, Italy, New Zealand.
       {" sky sport nz ", "multi", "en"},
       {" sky sport bundesliga ", "soccer", "de"},
       {" sky sport calcio ", "soccer", "it"},
+      {" sky calcio ", "soccer", "it"},
       {" sky sport ", "multi", "", " sky sport news | sky sport 24 "},
       {" magenta sport ", "multi", "de"},
       {" servus tv ", "multi", "de"},
       {" servustv ", "multi", "de"},
+      {" sportdigital ", "soccer", "de"},
+      // Switzerland (German and French feeds: the country says).
+      {" blue sport ", "multi", ""},
+      {" mysports ", "multi", ""},
       // France (Canal+ Sport is Poland's too).
       {" canal plus foot ", "soccer", "fr"},
       {" canal plus sport ", "multi", ""},
       {" canal plus f 1 ", "motorsport", "fr"},
       {" canal plus top 14 ", "rugby", "fr"},
+      {" canal plus live ", "multi", "fr"},
+      {" canal plus premier league ", "soccer", "fr"},
+      {" canal plus ligue 1 ", "soccer", "fr"},
+      {" ligue 1 plus ", "soccer", "fr"},
+      {" rmc sport ", "multi", "fr"},
+      // Poland.
+      {" polsat sport ", "multi", "pl"},
+      {" tvp sport ", "multi", "pl"},
+      // The Netherlands and the north.
+      {" ziggo sport ", "multi", "nl"},
+      {" viaplay ", "multi", ""},
       // The Middle East, France, Turkey, Spain, Asia: one brand, many languages.
       {" bein sports ", "multi", ""},
       {" bein sport ", "multi", ""},
@@ -54,9 +78,16 @@ const std::vector<Brand>& all() {
       {" tudn ", "soccer", "es"},
       {" azteca deportes ", "multi", "es"},
       {" tyc sports ", "multi", "es"},
-      // Canada.
+      // Mexico's and Argentina's Fox Sports ("FOX SPORTS 2 MX", "FOX SPORTS
+      // PREMIUM ARG"): in Spanish.
+      {" fox sports # mx ", "multi", "es"},
+      {" fox sports mx ", "multi", "es"},
+      {" fox sports # arg ", "multi", "es"},
+      {" fox sports premium ", "multi", "es"},
+      // Canada (Build 143: also "SPORTSN ET", as the provider writes it).
       {" tsn ", "multi", "en"},
       {" sportsnet ", "multi", "en"},
+      {" sportsn et ", "multi", "en"},
       {" rds ", "multi", "fr"},
       {" tva sports ", "multi", "fr"},
       // The Gulf.
@@ -73,9 +104,16 @@ const std::vector<Brand>& all() {
       {" a sports ", "cricket", ""},
       {" fox cricket ", "cricket", "en"},
       {" supersport ", "multi", "en"},
-      // Europe-wide and tennis.
+      // Europe-wide and tennis ("EURO SPORT 1" as the provider writes it).
       {" eurosport ", "multi", ""},
+      {" euro sport ", "multi", ""},
+      {" eleven sports ", "multi", ""},
+      {" eleven ", "multi", ""},
       {" tennis channel ", "tennis", "en"},
+      // Build 143, last: ESPN abroad (the Netherlands' "ESPN 2", "SKY NZ
+      // ESPN"), Germany's Sport1; their country says the language.
+      {" espn ", "multi", ""},
+      {" sport 1 ", "multi", ""},
   };
   return kBrands;
 }

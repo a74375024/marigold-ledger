@@ -3,7 +3,8 @@
 // device. One row per raw channel: what it is (number, name, group, tags,
 // call sign, kind, market...), what the server's guide has, which outside
 // listing matched and how, what the provider's full guide says, and what is
-// on now.
+// on now. Build 143: a sports channel's next three programmes (start time
+// and title, "next_titles"), so a report shows what its guide calls games.
 //
 // No stream links, logins, tokens or server addresses: the inputs carry none
 // (channel ids and guide ids never hold a login), and every cell still goes

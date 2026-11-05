@@ -74,18 +74,32 @@ std::optional<std::string> callsignInName(std::string_view name);
 // "KJZZ" from "KJZZ", "KJZZ-TV", "kjzz-dt" or "KUNP 16": a station call sign.
 std::optional<std::string> callsign(std::string_view name);
 // Stations the schedule names by their brand instead of a call sign
-// ("Arizona's Family CBS5" -> "KPHO").
+// ("Arizona's Family CBS5" -> "KPHO", "Utah 16" -> "KUPX").
 std::optional<std::string> stationBrand(std::string_view name);
+// A name's letters and digits, lower-cased, "+" as "plus", accents and
+// quality words dropped ("UniMás HD" -> "unimas"): how the broadcaster
+// table (Build 143) reads names.
+std::string folded(std::string_view name);
 }  // namespace regional
 
 namespace network_map {
 
 // "core:FS1" / "net:FOX" / "rsn:fd-sun" / "call:KJZZ" for a network name in
-// the schedule, or nullopt (streaming services).
+// the schedule, or nullopt (streaming services, unknown names). Build 143:
+// one broadcaster table first ("Golf Chnl", "MSGSN", "FanDuel SN WI",
+// "Utah 16", "Tele"), then the rules, then a call sign anywhere in the name
+// ("KTVD-TV (My20)", "Fox 5 WTTG").
 std::optional<std::string> networkKey(std::string_view name);
+// A streaming service or team app the schedule names ("ESPN+", "Peacock",
+// "Cardinals.TV", "Thunder App"): no channel of yours carries it, and the
+// unknown-names report leaves it out.
+bool streamingName(std::string_view name);
 
 // Your channels by what they carry: "core:FS1", "net:FOX", "rsn:fd-sun",
-// "call:KJZZ", "team:NBA|14", "card:ufc|main".
+// "call:KJZZ", "team:NBA|14", "card:ufc|main". Build 143: "alt:core:Big Ten
+// Network" a network's alternate channels and event slots ("BIG TEN NETWORK
+// OVERFLOW 2", "NCAAF 10: BIG TEN NETWORK ALT"), "backup:core:ESPN" event
+// slots named after the network ("NCAAF 01: ESPN").
 struct ChannelIndex {
   struct Item {
     std::string id;
@@ -101,6 +115,8 @@ struct ChannelIndex {
   int callsigns = 0;
   int teamChannels = 0;
   int fightChannels = 0;
+  int alternates = 0;
+  int slotCopies = 0;
 
   std::string summary() const;
 };
@@ -108,13 +124,16 @@ struct ChannelIndex {
 // `lineup`: My Lineup's entry ids; `lineupEntries`, `browse` and `all` are
 // entry channels (id = entry id, group = provider group). From `all`, only
 // sports channels of unknown country count (they aren't in the browse
-// list). Entries in a hidden group are skipped.
+// list), and (Build 143) the US channels in Spanish. Entries in a hidden
+// group are skipped. `slots` (the catalog's traits, by raw channel id): the
+// event slots named after a network.
 ChannelIndex channelIndex(const std::set<std::string>& lineup, const std::vector<Channel>& lineupEntries,
                           const std::vector<Channel>& browse, const std::vector<Channel>& all,
                           const std::unordered_map<std::string, catalog::EntryInfo>& entryInfo,
                           const std::set<std::string>& hidden,
                           const std::vector<matcher::RosterLeague>& rosters,
-                          const StationMarkets& markets);
+                          const StationMarkets& markets,
+                          const std::unordered_map<std::string, catalog::ChannelTraits>* slots = nullptr);
 
 // What the schedule's broadcaster names found among your channels.
 struct SourceStats {
@@ -124,8 +143,12 @@ struct SourceStats {
   int team = 0;
   int fightCards = 0;
   int split = 0;
-  // Broadcaster names that aren't a known network or station.
+  // Broadcaster names that aren't a known network, station or streaming
+  // service (games each), and the leagues they were named for.
   std::map<std::string, int> unknown;
+  std::map<std::string, std::set<std::string>> unknownLeagues;
+  // Streaming services and team apps (no channel; Build 143).
+  std::map<std::string, int> streaming;
   // Known networks none of your channels carry.
   std::map<std::string, int> missing;
 

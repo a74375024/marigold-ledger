@@ -49,6 +49,11 @@ std::optional<std::vector<std::string>> regionalSportsPlaces(std::string_view na
 // -> honolulu). "?" when the area isn't in the name ("Spectrum News 1" is
 // a different channel in each of its cities).
 std::optional<std::vector<std::string>> regionalChannelPlaces(std::string_view name);
+// Marigold (Build 143): a pro team's own channel, by the team's full name
+// ("AT&T: BOSTON BRUINS", "WNBA NEW YORK LIBERTY", "NBA Miami Heat"): the
+// NBA, WNBA, NHL, MLB and NFL teams. The whole name only ("Boston Bruins
+// Classics" isn't one).
+bool proTeamChannel(std::string_view name);
 // One alternation, longest first ("new york" before "york"), group 1.
 const std::string& regionPattern();
 

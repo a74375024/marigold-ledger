@@ -129,6 +129,24 @@ const Program* current(const std::vector<Program>* list, time::Seconds now) {
   return nullptr;
 }
 
+// Build 143: the next three programmes' titles after the one on now, with
+// their start times ("19:00 NHL Hockey | 21:30 Postgame"), titles only.
+std::string nextTitles(const std::vector<Program>* list, time::Seconds now, const time::Zone& zone) {
+  if (!list) return "";
+  std::string out;
+  int taken = 0;
+  for (const Program& p : *list) {
+    if (p.start <= now || p.title.empty()) continue;
+    time::Civil c = zone.toLocal(p.start);
+    char at[8];
+    std::snprintf(at, sizeof at, "%02d:%02d", c.hour % 100, c.minute % 100);
+    if (taken) out += " | ";
+    out += std::string(at) + " " + prefixChars(p.title, 60);
+    if (++taken == 3) break;
+  }
+  return out;
+}
+
 std::string providerGuideNote(const Channel& channel, bool isXtream,
                               const catalog::ChannelTraits* trait,
                               const ChannelReportInput& in) {
@@ -206,7 +224,7 @@ const std::vector<std::string>& channelReportColumns() {
       "now_subtitle", "now_description", "outside_listings_end",
       "now_start", "outside_built_at", "provider_built_at",
       "outside_described_next_3h", "provider_guide_described_next_3h", "logo_sources", "logo_status",
-      "directory_id", "directory_match", "row_id"};
+      "directory_id", "directory_match", "row_id", "next_titles"};
   return kColumns;
 }
 
@@ -399,6 +417,10 @@ std::string channelReportCSV(const ChannelReportInput& in,
         cell(directoryMatch),
         // The lineup row it's in ("e|r:..." a reference channel, "e|cs:..." a station).
         cell(entryId ? *entryId : empty),
+        // Build 143: a sports channel's next programmes (what its guide calls games).
+        cell(trait && trait->category == catalog::LineupCategory::sports && trait->kind == catalog::ChannelKind::channel
+                 ? nextTitles(findShared(in.programs, channel.id), in.now, in.zone)
+                 : empty),
     };
     out += str::join(row, ",");
     out += '\n';

@@ -26,7 +26,7 @@ TEST_CASE("regional network keys under their many names") {
   CHECK(regional::key("Spectrum SportsNet Dodgers") == "snla");
   CHECK(regional::key("Spectrum Sports Net Lakers") == "spectrum");
   CHECK(regional::key("YES") == "yes");
-  CHECK(regional::key("MSG+") == "msg2");
+  CHECK(regional::key("MSG+") == "msgsn");  // MSG Sportsnet (Build 143)
   CHECK(regional::key("MLB.TV") == std::nullopt);
   CHECK(regional::key("Bally Sports") == std::nullopt);  // no region
   CHECK(regional::key("Harbor News") == std::nullopt);
@@ -198,7 +198,7 @@ TEST_CASE("channel index and each game's channels") {
   CHECK(nhl[0].channelID == "e|kjzz");
   CHECK(nhl[0].detail == "Your local station");
   CHECK(mapped.stats.unknown.at("Unknown Net") == 1);
-  CHECK(mapped.stats.unknown.at("NBA League Pass") == 1);
+  CHECK(mapped.stats.streaming.at("NBA League Pass") == 1);  // not an unknown name (Build 143)
   // Spanish stations are marked so.
   const auto& mls = mapped.sources.at("MLS|4");
   REQUIRE(mls.size() == 1);

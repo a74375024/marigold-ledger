@@ -23,6 +23,9 @@
 //                                   to the next half hour, then 11 minutes
 //                                   (the guide's listings read again): the
 //                                   Live Events log of each step on stderr
+//   MARIGOLD_PREVIEW_AT=2026-11-05T14:00:00Z  the engine's clock set to that
+//                                   time (schedules and scores are still
+//                                   today's): tiles' sources and states then
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -377,6 +380,16 @@ int main(int argc, char** argv) {
   if (argc < 2) {
     std::fprintf(stderr, "usage: marigold-preview channel-report.csv [page.html]\n");
     return 2;
+  }
+  if (const char* at = std::getenv("MARIGOLD_PREVIEW_AT")) {
+    // "2026-11-05T14:00:00Z": the clock moved to then.
+    int y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0;
+    if (std::sscanf(at, "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &s) == 6) {
+      time::advanceForTests(time::Zone::utc().fromLocal({y, mo, d, h, mi, s}) - time::now());
+    } else {
+      std::fprintf(stderr, "MARIGOLD_PREVIEW_AT: not a time (2026-11-05T14:00:00Z)\n");
+      return 2;
+    }
   }
   std::string csvPath = argv[1];
   auto text = readFile(csvPath);

@@ -72,6 +72,23 @@ TEST_CASE("listing channels: sports, local and Spanish ones you have, ranked") {
   CHECK(list[2].rank == station_rank::elsewhere);
 }
 
+TEST_CASE("listing channels (Build 143): Spanish ones not picked, and TNT, TBS, truTV, USA Network") {
+  std::unordered_map<std::string, EntryInfo> infos;
+  infos["e|tmo"] = info("e|tmo", "Telemundo 39 (KHBR)", LineupCategory::spanish, std::string("KHBR"),
+                        std::string("US-ES"));
+  infos["e|tnt"] = info("e|tnt", "TNT", LineupCategory::entertainment);
+  infos["e|tnt"].core = std::string("TNT");
+  infos["e|amc"] = info("e|amc", "AMC", LineupCategory::entertainment);
+  infos["e|amc"].core = std::string("AMC");
+  infos["e|show"] = info("e|show", "Harbor Shows", LineupCategory::entertainment);
+  auto list = listingChannels({}, {"e|tnt", "e|amc", "e|show"}, infos, StationMarkets());
+  REQUIRE(list.size() == 2);
+  CHECK(list[0].id == "e|tmo");  // in Spanish, not in the browse list
+  CHECK(list[0].lang == "es");
+  CHECK(list[1].id == "e|tnt");
+  CHECK_FALSE(list[1].sportsChannel);
+}
+
 TEST_CASE("a programme as a game listing: two sides, or a sports title with a venue") {
   ListingChannel ch{"e|fox13", true, "en", station_rank::lineupHome};
   Seconds s = utc(2026, 10, 25, 17, 0), e = s + 3 * 3600;

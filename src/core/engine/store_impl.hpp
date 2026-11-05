@@ -26,6 +26,7 @@
 #include "core/guide/outside.hpp"
 #include "core/guide/provider.hpp"
 #include "core/logos/logos.hpp"
+#include "core/report/live_events_report.hpp"
 #include "core/model/channel.hpp"
 #include "core/sources/account.hpp"
 #include "core/sources/emby.hpp"
@@ -68,6 +69,9 @@ struct EventsState {
   // (report::matchedFeeds; the report tells slots renamed since).
   uint64_t listingsDigest = 0;
   std::shared_ptr<const std::vector<std::pair<uint64_t, uint64_t>>> matchedFeeds;
+  // Build 143: the schedule's broadcaster names the last rebuild didn't
+  // know (games each, and their leagues), for the Live Events report.
+  std::shared_ptr<const report::UnknownBroadcasters> unknownBroadcasters;
   int scheduleRevision = 0;
   std::string lastFingerprint, lastSaved;
   // Build 125: the day-guessed slots seen (read with the saved list, noted

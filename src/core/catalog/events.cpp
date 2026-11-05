@@ -325,6 +325,10 @@ std::optional<std::string> slotMarket(const ChannelTraits& traits) {
   if (traits.familyKey) {
     if (auto market = familyMarket(*traits.familyKey)) return market;
   }
+  // Build 143: the clock is the channel's country's. A language tag ("US|
+  // ... Montréal vs. Vancouver (French)") makes the market French, not the
+  // time Paris time: read so, a 14:25 kickoff was 05:25 Pacific.
+  if (traits.country) return traits.country;
   return traits.market;
 }
 
@@ -735,9 +739,15 @@ std::string eventKey(std::string_view title, const std::optional<Seconds>& start
 }
 
 std::string leagueFor(std::string_view family, std::string_view group, std::string_view title) {
-  std::string titleText = str::lower(title);
+  // Build 143: "Men`s" and "Men’s" are "Men's" ("NCAA Men`s Basketball: ...").
+  auto apostrophes = [](std::string s) {
+    if (s.find('`') != std::string::npos) std::replace(s.begin(), s.end(), '`', '\'');
+    if (s.find("\xE2\x80\x99") != std::string::npos) s = str::replaceAll(s, "\xE2\x80\x99", "'");
+    return s;
+  };
+  std::string titleText = apostrophes(str::lower(title));
   std::string all =
-      str::lower(std::string(family) + " " + std::string(group) + " " + std::string(title));
+      apostrophes(str::lower(std::string(family) + " " + std::string(group) + " " + std::string(title)));
   auto has = [&](std::string_view w) { return text::hasWord(all, w); };
   // Pro wrestling first (shown in Live Events only when My Sports says so):
   // "Wrestling: WWE NXT" is entertainment, not the sport.

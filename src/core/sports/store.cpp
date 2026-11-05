@@ -51,11 +51,18 @@ std::vector<ListingChannel> listingChannels(const std::set<std::string>& lineup,
   // country too (they're not in the browse list).
   std::set<std::string> candidates = lineup;
   candidates.insert(browseIDs.begin(), browseIDs.end());
+  // Build 143: and the US channels in Spanish, picked or not (ranked after
+  // English ones by their language).
   for (const auto& [id, info] : entryInfo) {
-    if (!info.market && info.category == LineupCategory::sports && info.kind == catalog::ChannelKind::channel) {
+    if (info.kind != catalog::ChannelKind::channel) continue;
+    if ((!info.market && info.category == LineupCategory::sports) ||
+        (info.market == std::string("US-ES") && info.category == LineupCategory::spanish && info.closed.empty())) {
       candidates.insert(id);
     }
   }
+  // Build 143: entertainment networks that carry games (TNT, TBS, truTV,
+  // USA Network): their listings confirm a game too.
+  static const std::set<std::string> kCarrySports = {"TNT", "TBS", "truTV", "USA Network"};
   std::vector<ListingChannel> out;
   for (const std::string& id : candidates) {
     auto found = entryInfo.find(id);
@@ -65,8 +72,9 @@ std::vector<ListingChannel> listingChannels(const std::set<std::string>& lineup,
     // "international"; a sports brand among them is read too.
     bool brand = info.category == LineupCategory::international && info.kind == catalog::ChannelKind::channel &&
                  brands::isSportsBrand(info.name);
+    bool carriesSports = info.core && kCarrySports.count(*info.core) > 0;
     if (info.category != LineupCategory::sports && info.category != LineupCategory::local &&
-        info.category != LineupCategory::spanish && !brand) {
+        info.category != LineupCategory::spanish && !brand && !carriesSports) {
       continue;
     }
     ListingChannel channel;
@@ -120,6 +128,9 @@ std::optional<matcher::GuideListing> listingFor(const ListingChannel& channel, c
   listing.start = start;
   listing.end = end;
   listing.rank = channel.rank;
+  // Build 143: a tour's or series' own programme ("PGA Tour Golf", "Live
+  // F1: Sao Paulo GP Qualifying", "Live UFC Fight Night"), on any channel.
+  listing.series = matcher::seriesOf(rawTitle, subtitle);
   if (matcher::looksLikeGame(title)) return listing;
   if (channel.sportsChannel && matcher::namesTennisEvent(title)) {
     // "Center Court Live" / "Vienna-ATP & Basel-ATP Semifinals": matched
@@ -145,6 +156,11 @@ std::optional<matcher::GuideListing> listingFor(const ListingChannel& channel, c
     }
     return listing;
   }
+  if (!listing.series.empty()) return listing;
+  // Build 143: "Napoli - Lazio", "Omonia FC x SL Benfica" on a sports
+  // channel or in a sports slot: a game when its two sides are a scheduled
+  // game's teams (the matcher's title check).
+  if ((channel.sportsChannel || channel.abroad || sports) && matcher::pairedTitle(title)) return listing;
   return std::nullopt;
 }
 
@@ -155,12 +171,42 @@ ExtractedListings extractListings(const std::vector<ListingInput>& channels, Sec
   for (const ListingInput& input : channels) {
     if (!input.programs && !input.outside && !input.provider) continue;
     Seconds guideEnd = low;
+    // Build 143: whether this channel's guide marks its live airings (worked
+    // out once, for its first tour or series programme): then one it doesn't
+    // mark is shown again.
+    std::optional<bool> marksLive;
+    auto marking = [&]() {
+      if (marksLive) return *marksLive;
+      marksLive = false;
+      if (input.programs) {
+        for (const Program& program : *input.programs) {
+          if (program.isLive) {
+            marksLive = true;
+            break;
+          }
+        }
+      }
+      for (const auto* raw : {input.outside, input.provider}) {
+        if (!raw || *marksLive) continue;
+        for (const guide::RawProgram& item : *raw) {
+          if (item.f & 16) {
+            marksLive = true;
+            break;
+          }
+        }
+      }
+      return *marksLive;
+    };
+    auto noteReplay = [&](matcher::GuideListing& listing, bool live) {
+      if (!listing.series.empty() && !live && marking()) listing.replay = true;
+    };
     if (input.programs) {
       for (const Program& program : *input.programs) {
         if (program.end <= low || program.start >= high) continue;
         guideEnd = std::max(guideEnd, program.end);
         if (auto listing = listingFor(input.channel, program.title, program.episodeTitle, program.overview,
                                       (program.genres & kGenreSports) != 0, program.start, program.end)) {
+          noteReplay(*listing, program.isLive);
           out.listings.push_back(std::move(*listing));
         }
       }
@@ -176,6 +222,7 @@ ExtractedListings extractListings(const std::vector<ListingInput>& channels, Sec
         Seconds start = Seconds{item.s} * 60;
         Seconds end = Seconds{item.s + item.m} * 60;
         if (auto listing = listingFor(input.channel, item.t, item.st, item.d, (item.f & 2) != 0, start, end)) {
+          noteReplay(*listing, (item.f & 16) != 0);
           out.listings.push_back(std::move(*listing));
           out.ahead += 1;
         }
@@ -355,7 +402,9 @@ uint64_t listingsDigest(const std::vector<matcher::GuideListing>& listings, Seco
     text(l.venue);
     text(l.city);
     mix(l.rank ? static_cast<uint64_t>(*l.rank) + 1 : 0);
-    mix((l.inLineup ? 1u : 0u) | (l.tennisCoverage ? 2u : 0u) | (l.cricket ? 4u : 0u) | (l.abroad ? 8u : 0u));
+    mix((l.inLineup ? 1u : 0u) | (l.tennisCoverage ? 2u : 0u) | (l.cricket ? 4u : 0u) | (l.abroad ? 8u : 0u) |
+        (l.replay ? 16u : 0u));
+    mix(str::fnv1a64(l.series));
   }
   return h;
 }
