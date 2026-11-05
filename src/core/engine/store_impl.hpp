@@ -16,6 +16,7 @@
 
 #include "core/engine/store.hpp"
 #include "core/engine/events_build.hpp"
+#include "core/engine/quality.hpp"
 #include "core/engine/search_build.hpp"
 #include "core/catalog/catalog.hpp"
 #include "core/catalog/lineup.hpp"
@@ -62,6 +63,11 @@ struct EventsState {
   std::vector<sports::matcher::GuideListing> listings;
   std::optional<time::Seconds> listingsAt;
   int listingsRevision = 0;
+  // Build 136: sports::store::listingsDigest() of the listings last matched
+  // (0: none yet), and the feeds that match was given with their titles
+  // (report::matchedFeeds; the report tells slots renamed since).
+  uint64_t listingsDigest = 0;
+  std::shared_ptr<const std::vector<std::pair<uint64_t, uint64_t>>> matchedFeeds;
   int scheduleRevision = 0;
   std::string lastFingerprint, lastSaved;
   // Build 125: the day-guessed slots seen (read with the saved list, noted
@@ -277,6 +283,15 @@ struct Store::Impl {
   // direct version that failed lately lets a server one that played lead.
   std::map<std::string, time::Seconds> failedAt;
   std::set<std::string> quickStartRefused;  // server ids (Settings::embyQuickStart)
+  // Build 136: the last picture measured on each raw channel (pictures.json,
+  // its own file: written only when a measurement changes).
+  quality::Memory pictures;
+  struct PicturesWriter {
+    std::mutex mu, fileMu;
+    std::string pending;
+    uint64_t seq = 0, pendingSeq = 0, written = 0;
+  };
+  std::shared_ptr<PicturesWriter> picturesWriter = std::make_shared<PicturesWriter>();
   std::set<std::string> captionChannels;    // feed channel ids whose stream had captions
   std::set<std::string> hiddenGroups;  // provider groups left out of All Channels
   catalog::LineupPrefs prefs;

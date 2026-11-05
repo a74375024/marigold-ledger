@@ -108,6 +108,20 @@ std::string liveEventsCsv(const LiveEventsReportInput& in) {
         auto w = in.hidden->find(slot.id);
         if (w != in.hidden->end()) hiddenWhy = &w->second;
       }
+      // Build 136: what the last rebuild was given for this slot: nothing
+      // (new since, or nothing matched this session), or another title
+      // (renamed since: its tile and reason are the old name's).
+      bool unseen = false, renamed = false;
+      if (in.matched) {
+        uint64_t key = str::fnv1a64(slot.id);
+        auto at = std::lower_bound(in.matched->begin(), in.matched->end(), std::make_pair(key, uint64_t{0}));
+        unseen = at == in.matched->end() || at->first != key;
+        renamed = !unseen && at->second != str::fnv1a64(e.title);
+      }
+      if (renamed) {
+        built = tileOf.end();
+        hiddenWhy = nullptr;
+      }
       result = "left out";
       if (built != tileOf.end()) {
         const sports::SportsEvent& s = *built->second;
@@ -140,12 +154,18 @@ std::string liveEventsCsv(const LiveEventsReportInput& in) {
         }
       } else if (hiddenWhy) {
         reason = *hiddenWhy;
+      } else if (unseen || renamed) {
+        // The channel list was read again after Live Events last matched
+        // (closed meanwhile): opening Live Events matches it.
+        reason = "new or renamed since Live Events last matched (it matches again when opened)";
       } else {
-        reason = "no tile took it (no sport or matchup recognised)";
+        // Every feed matching drops says why (matcher::Stats::hidden).
+        reason = "matched, yet on no tile and given no reason by matching";
       }
       // Build 125: whether it went to a scheduled game (tiles come from the
       // schedule), was left out as a leftover, or has no schedule.
-      if (built != tileOf.end() && built->second->game) schedule = "on the schedule";
+      if ((unseen || renamed) && built == tileOf.end() && !hiddenWhy) schedule = "not matched yet";
+      else if (built != tileOf.end() && built->second->game) schedule = "on the schedule";
       else if (hiddenWhy && hiddenWhy->find("leftover") != std::string::npos) schedule = "leftover";
       else schedule = "no schedule";
     }
@@ -159,6 +179,16 @@ std::string liveEventsCsv(const LiveEventsReportInput& in) {
     }
     out += "\n";
   }
+  return out;
+}
+
+std::vector<std::pair<uint64_t, uint64_t>> matchedFeeds(const std::vector<catalog::LiveEvent>& events) {
+  std::vector<std::pair<uint64_t, uint64_t>> out;
+  for (const catalog::LiveEvent& e : events) {
+    uint64_t title = str::fnv1a64(e.title);
+    for (const std::string& feed : e.feeds) out.emplace_back(str::fnv1a64(feed), title);
+  }
+  std::sort(out.begin(), out.end());
   return out;
 }
 

@@ -245,7 +245,8 @@ std::string collegeKey(std::string_view leagueShort) {
   static const std::map<std::string, std::string, std::less<>> kKeys = {
       {"FCS", "NCAAF"},     {"D2/D3", "NCAAF"},   {"D2MBB", "NCAAM"},   {"D3MBB", "NCAAM"},
       {"D2WBB", "NCAAW"},   {"D3WBB", "NCAAW"},   {"D2WVB", "NCAAWV"},  {"D3WVB", "NCAAWV"},
-      {"D3MHK", "NCAAMH"},  {"D3WHK", "NCAAWH"},  {"D2FH", "NCAAFH"},   {"D3FH", "NCAAFH"}};
+      {"D3MHK", "NCAAMH"},  {"D3WHK", "NCAAWH"},  {"D2FH", "NCAAFH"},   {"D3FH", "NCAAFH"},
+      {"D2MSO", "NCAAMS"},  {"D3MSO", "NCAAMS"},  {"D2WSO", "NCAAWS"},  {"D3WSO", "NCAAWS"}};
   auto it = kKeys.find(leagueShort);
   return it == kKeys.end() ? std::string(leagueShort) : it->second;
 }
@@ -255,15 +256,43 @@ bool isCollegeLeague(std::string_view leagueShort) {
   return l && !l->soccer && (l->college() || l->everyGame);
 }
 
+namespace {
+
+// A Division I game in the all-soccer listing: its competition (the game's
+// note, schedule.cpp) is "NCAAM Soccer" or "NCAAW Soccer". 'm', 'w' or 0.
+char divisionOneSoccer(const SportsGame& game) {
+  if (game.leagueShort != kSoccerAll || !game.tournament) return 0;
+  std::string t = str::lower(str::trim(*game.tournament));
+  if (t == "ncaam soccer") return 'm';
+  if (t == "ncaaw soccer") return 'w';
+  return 0;
+}
+
+}  // namespace
+
+bool isCollegeSoccer(const SportsGame& game) {
+  if (divisionOneSoccer(game)) return true;
+  const League* l = leagueByShort(game.leagueShort);
+  return l && l->soccer && l->ncaaPage;
+}
+
+bool isCollegeGame(const SportsGame& game) { return isCollegeLeague(game.leagueShort) || isCollegeSoccer(game); }
+
+std::string collegeKeyOf(const SportsGame& game) {
+  if (char side = divisionOneSoccer(game)) return side == 'w' ? "NCAAWS" : "NCAAMS";
+  return collegeKey(game.leagueShort);
+}
+
 CollegePick collegePick(const MySportsPrefs& prefs, std::string_view leagueShort) {
   auto it = prefs.college.find(collegeKey(leagueShort));
   return it == prefs.college.end() ? CollegePick() : it->second;
 }
 
 bool inCollegeRow(const MySportsPrefs& prefs, const SportsGame& game) {
-  CollegePick pick = collegePick(prefs, game.leagueShort);
+  std::string key = collegeKeyOf(game);
+  auto found = prefs.college.find(key);
+  CollegePick pick = found == prefs.college.end() ? CollegePick() : found->second;
   if (pick.everyGame) return true;
-  std::string key = collegeKey(game.leagueShort);
   for (const SportsTeam* side : {&game.home, &game.away}) {
     if (pick.top25 && side->rank && *side->rank >= 1 && *side->rank <= 25) return true;
     if (side->conference && contains(pick.conferences, *side->conference)) return true;

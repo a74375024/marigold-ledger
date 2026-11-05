@@ -35,6 +35,7 @@ class Playback;
 struct Build {
   std::string version, build;
   std::string system;  // "webOS 6", "Android 9 (API 28)"
+  std::string device;  // the device's maker and model, where the system says
 };
 
 class App {

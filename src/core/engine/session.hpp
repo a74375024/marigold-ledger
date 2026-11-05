@@ -27,6 +27,7 @@
 
 #include "core/engine/host.hpp"
 #include "core/engine/model.hpp"
+#include "core/engine/quality.hpp"
 #include "core/media/picture.hpp"
 #include "core/playback/recovery.hpp"
 #include "core/report/log_journal.hpp"
@@ -219,6 +220,9 @@ class Session {
   // A "memory" line in the log: the app's memory now, after `what` ("channels
   // sorted"; empty for the regular reading every few minutes).
   void logMemory(std::string_view what = {});
+  // The run's first line ("launch": build, version, system; see
+  // report::launchDetail), so exports from several builds can be told apart.
+  void logLaunch(std::string_view detail);
   // A line about the stream playing ("captions", "in the stream"), for the
   // app's parts of playback.
   void logNote(std::string_view event, std::string_view detail = {}) { logEvent(event, detail); }
@@ -252,6 +256,8 @@ class Session {
   bool noPicture_ = false;
   std::string noPictureMessage_;
   bool factsLogged_ = false;  // the picture's facts are in the log (this attempt)
+  // ... and its picture, until it has played long enough to remember.
+  std::optional<quality::Picture> measured_;
   std::set<std::string> quickTried_;  // Emby quick starts tried this tune
   std::string quickPending_;          // a quick start not yet shown a picture
   uint32_t tunedAt_ = 0;

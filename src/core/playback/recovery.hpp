@@ -36,7 +36,9 @@
 // buffering. When no feed shows a picture but the sound plays, the sound
 // plays on and the viewer is asked (NoPicture). A source the relay keeps
 // reopening (sourceClosed: 3 short connections around the picture, none of
-// them long) is a failed start too: no retries, the next feed.
+// them long) is a failed start too: no retries, the next feed. So is a
+// placeholder clip (the same number of bytes on every connection): it looks
+// like a picture but isn't the channel.
 //
 // No timers or threads: every input takes a monotonic time in ms and returns
 // the actions to perform now; tick() returns the ones that fell due. The
@@ -105,10 +107,23 @@ inline constexpr int kNoFrameRetries = 1;
 // A source that keeps closing (the LG relay reopens it each time): this many
 // connections with data that lasted under kShortConnectionMs, closed within
 // kFlapWindowMs of the picture, and none that lasted kLongConnectionMs.
+// Marigold (Build 136): 8 s, not 5: the playback log's closing sources
+// held each connection 4-7 s, so the check never counted enough of them.
 inline constexpr int kFlapConnections = 3;
-inline constexpr Ms kShortConnectionMs = 5000;
+inline constexpr Ms kShortConnectionMs = 8000;
 inline constexpr Ms kFlapWindowMs = 15000;
 inline constexpr Ms kLongConnectionMs = 10000;
+// Marigold (Build 136): a provider's placeholder ("slate") is a short clip
+// served as the stream: every connection delivers the same file (to the
+// byte) and closes, and the relay reopens it. It plays as a real picture,
+// so the picture check only notices after kStaticMs (never on a channel).
+// kSlateRepeats closes in a row of the same size (within kSlateToleranceBytes,
+// or kSlateTolerancePermille of it), each at least kSlateMinBytes and
+// shorter than kLongConnectionMs, are a slate: the next feed at once.
+inline constexpr int kSlateRepeats = 2;
+inline constexpr int64_t kSlateMinBytes = 1 << 20;
+inline constexpr int64_t kSlateToleranceBytes = 8 * 1024;
+inline constexpr int64_t kSlateTolerancePermille = 1;
 // A stream that ended after only short connections never played: one
 // connection this long earns it the reconnects of a stream that played.
 inline constexpr Ms kPlayedRunMs = 30000;
@@ -300,6 +315,7 @@ class Recovery {
   void failedNoRetry(Ms now, const std::string& reason, const std::string& why, bool picture, Actions& out);
   void noPictureAnywhere(Ms now, Actions& out);
   bool keepsClosing(Ms now) const;
+  bool repeatsClip() const;
   bool allowRecovery(Ms now);
   void giveUp(const std::string& message, Actions& out);
   void markTried(size_t feed);

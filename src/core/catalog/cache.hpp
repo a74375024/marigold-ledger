@@ -35,7 +35,9 @@ namespace marigold::catalog::cache {
 //     loops, overflow feeds, multi-language news beside an English copy.
 // 13: a darts event's boards are one event; feeds' times in their own country.
 // 14: reference data decides rows, names and sections where it knows them.
-constexpr int kVersion = 14;
+// 15: "... Sports", numbered ESPNs and conference channels are sports; a
+//     city in parentheses finds its station; Universal Kids shut down.
+constexpr int kVersion = 15;
 // The oldest version still read, to show until this version sorts the list
 // again (after an app update the guide opens on the old list).
 constexpr int kOldestShown = 9;

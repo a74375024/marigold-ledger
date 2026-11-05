@@ -152,6 +152,11 @@ struct RebuildJob {
   bool readListings = false;
   catalog::ProgramLists programs;
   std::vector<sports::matcher::GuideListing> listings;
+  // Build 136: read again with nothing else changed since the last match
+  // (`sameElse`): listings whose digest (store::listingsDigest) is the last
+  // read's aren't matched again.
+  bool sameElse = false;
+  uint64_t listingsDigest = 0;
   // F1 channels: made again when `f1` and none are given.
   bool f1 = false;
   std::optional<std::vector<sports::EventSource>> f1Sources;
@@ -164,7 +169,11 @@ struct RebuildJob {
 struct RebuildMade {
   std::optional<sports::store::RebuildResult> result;  // nullopt: stopped
   std::optional<std::vector<sports::matcher::GuideListing>> listings;  // read again
+  uint64_t listingsDigest = 0;                                         // theirs
+  bool unchanged = false;  // read again, the same, nothing else new: not matched (no result)
   std::optional<std::vector<sports::EventSource>> f1Sources;           // made again
+  // The feeds matched and their titles (report::matchedFeeds), with a result.
+  std::shared_ptr<const std::vector<std::pair<uint64_t, uint64_t>>> matched;
   std::string lastSaved;
   bool saved = false;
   double prepMs = 0, matchMs = 0, saveMs = 0;

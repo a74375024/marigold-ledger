@@ -2,6 +2,7 @@
 // app thread once per process, and it runs the same app::run as the TV's
 // main.cpp. When the app ends (Exit), Java finishes the activity.
 #include <android/log.h>
+#include <sys/system_properties.h>
 
 #include <string>
 #include <thread>
@@ -31,6 +32,19 @@ void logcat(marigold::log::Level level, const std::string& line) {
   __android_log_write(priority, "marigold", line.c_str());
 }
 
+// The device's maker and model ("NVIDIA SHIELD Android TV"), for the
+// playback log's launch line.
+std::string deviceName() {
+  auto property = [](const char* name) {
+    char value[PROP_VALUE_MAX] = {0};
+    __system_property_get(name, value);
+    return std::string(value);
+  };
+  std::string maker = property("ro.product.manufacturer"), model = property("ro.product.model");
+  if (maker.empty() || model.compare(0, maker.size(), maker) == 0) return model;
+  return model.empty() ? maker : maker + " " + model;
+}
+
 void appThread(std::string assetDir, std::string filesDir) {
   using namespace marigold;
   log::setMirror(logcat);
@@ -48,6 +62,7 @@ void appThread(std::string assetDir, std::string filesDir) {
       build.version = MARIGOLD_VERSION;
       build.build = MARIGOLD_BUILD;
       build.system = window.runtime();
+      build.device = deviceName();
       platform::Video video;
       code = app::run(window, storage, video, assetDir, std::move(build));
     }

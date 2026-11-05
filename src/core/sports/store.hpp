@@ -157,6 +157,16 @@ struct Fingerprint {
   size_t schools = 0;
 };
 std::string fingerprint(const Fingerprint& f, Seconds now);
+// Build 136: the listings read again every kListingsStale (Live Events
+// open) were a new listings revision, so a rebuild, every time (on the LG,
+// ~7 s of matching, often to the same result). Their digest: when it's the
+// last read's and nothing else in the fingerprint changed, the match is
+// skipped. It covers the listings every read within fingerprint()'s half
+// hour has (ending after its end minus kListingsBefore, starting before its
+// start plus kListingsAhead); the few at the window's two ends come and go
+// as the clock moves, like the games around them, and are matched at the
+// next half hour.
+uint64_t listingsDigest(const std::vector<matcher::GuideListing>& listings, Seconds now);
 
 struct RebuildInput {
   std::vector<SportsGame> games;
@@ -257,7 +267,11 @@ std::vector<std::string> eventBackupFeeds(const std::string& id, const std::vect
 using Reliability = std::function<double(const std::string& channelID)>;
 // Keeps the given order unless a source is clearly worse (by over 0.25).
 std::vector<std::string> orderedByReliability(const std::vector<std::string>& ids, const Reliability& reliability);
-// Provider feeds best first: quality (0 SD .. 3 UHD), then reliability.
+// Provider feeds best first. Marigold (Build 136): reliability first (in
+// steps of a tenth, so near-equal records tie), then quality (0 SD .. 3 UHD),
+// then the given order; a sharp picture that doesn't start is no use. Only
+// orders feeds among themselves: never above a channel, nor across the
+// language groups eventCandidates makes.
 std::vector<std::string> bestFeeds(const std::vector<std::string>& ids,
                                    const std::function<int(const std::string&)>& quality,
                                    const Reliability& reliability);
@@ -266,6 +280,12 @@ std::vector<std::string> bestFeeds(const std::vector<std::string>& ids,
 std::vector<std::string> baseVersions(const std::string& id, const catalog::EntryInfo* info,
                                       const std::optional<std::string>& pinned, const Reliability& reliability,
                                       const std::function<bool(const std::string&)>& exists);
+// Marigold (Build 136): direct versions (Xtream, M3U: a picture in about
+// 2.5 s) ahead of server-opened ones (Emby / Jellyfin: about 10 s, and
+// often none), whatever their sources' records; the first `keep` (the
+// pinned or last played version) stay first. Stable within each kind.
+void directVersionsFirst(std::vector<std::string>& list, size_t keep,
+                         const std::function<bool(const std::string&)>& serverOpened);
 // Marigold: `last` (a server-opened version that played last) moves to the
 // front of the server-opened versions, behind every direct one.
 void leadServerVersions(std::vector<std::string>& list, const std::string& last,

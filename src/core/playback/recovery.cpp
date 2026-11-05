@@ -387,7 +387,19 @@ Actions Recovery::sourceClosed(Ms now, Ms lasted, int64_t bytes, bool reopened) 
     detail += "; the relay gave up on it";
   }
   log(out, "relay", detail);
-  if (listening_ || keptClosing_ || !reopened || !keepsClosing(now)) return out;
+  if (listening_ || keptClosing_) return out;
+  if (repeatsClip()) {
+    // A placeholder clip served over and over: it never turns into the
+    // channel, however long it plays. On a channel with one version this is
+    // the "stopped working" card, not a loop.
+    keptClosing_ = true;
+    log(out, "placeholder clip",
+        std::to_string(closed_.size()) + " connections of " + kilobytes(bytes) + " each in " +
+            lastedText(now - handedAt_));
+    failedNoRetry(now, "the source only sends a placeholder clip", "placeholder clip", false, out);
+    return out;
+  }
+  if (!reopened || !keepsClosing(now)) return out;
   keptClosing_ = true;
   log(out, "source keeps closing",
       std::to_string(closed_.size() + 1) + " connections in " + lastedText(now - handedAt_));
@@ -405,6 +417,22 @@ bool Recovery::keepsClosing(Ms now) const {
     if (c.bytes > 0 && c.lasted < kShortConnectionMs && c.at <= horizon) ++shortOnes;
   }
   return shortOnes >= kFlapConnections;
+}
+
+// The last kSlateRepeats connections delivered the same sizeable file and
+// none of them lasted: a placeholder clip, not a live stream (whose
+// connections differ in size with their length and the picture).
+bool Recovery::repeatsClip() const {
+  if (closed_.size() < static_cast<size_t>(kSlateRepeats)) return false;
+  const Closed& last = closed_.back();
+  for (size_t i = closed_.size() - static_cast<size_t>(kSlateRepeats); i < closed_.size(); ++i) {
+    const Closed& c = closed_[i];
+    if (c.bytes < kSlateMinBytes || c.lasted >= kLongConnectionMs) return false;
+    int64_t diff = c.bytes > last.bytes ? c.bytes - last.bytes : last.bytes - c.bytes;
+    int64_t tolerance = std::max(kSlateToleranceBytes, std::max(c.bytes, last.bytes) * kSlateTolerancePermille / 1000);
+    if (diff > tolerance) return false;
+  }
+  return true;
 }
 
 Actions Recovery::tick(Ms now) {

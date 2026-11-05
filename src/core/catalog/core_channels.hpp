@@ -23,11 +23,16 @@ struct CoreChannel {
   std::string name;
   LineupCategory category;
   std::vector<std::string> aliases;
+  // Marigold (Build 136): when it shut down ("2025-03-06"), for one the
+  // reference data doesn't list yet: it isn't suggested any more (it can
+  // still be found and added while a provider carries it).
+  std::string closed = {};
 };
 
 struct CoreHit {
   std::string name;
   LineupCategory category;
+  std::string closed = {};
 };
 
 const std::vector<CoreChannel>& coreChannels();

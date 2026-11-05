@@ -100,7 +100,7 @@ const std::vector<CoreChannel>& coreChannels() {
       {"TeenNick", LineupCategory::kids, {"teennick", "teen nick"}},
       {"Cartoon Network", LineupCategory::kids, {"cartoon network"}},
       {"Boomerang", LineupCategory::kids, {"boomerang"}},
-      {"Universal Kids", LineupCategory::kids, {"universal kids"}},
+      {"Universal Kids", LineupCategory::kids, {"universal kids"}, "2025-03-06"},
       {"Discovery Family", LineupCategory::kids, {"discovery family", "discovery family channel"}},
       {"HBO", LineupCategory::movies, {"hbo"}},
       {"HBO 2", LineupCategory::movies, {"hbo 2", "hbo2"}},
@@ -130,7 +130,7 @@ const std::unordered_map<std::string, CoreHit>& coreByAlias() {
     std::unordered_map<std::string, CoreHit> map;
     for (const CoreChannel& entry : coreChannels()) {
       for (const std::string& alias : entry.aliases)
-        map.emplace(alias, CoreHit{entry.name, entry.category});
+        map.emplace(alias, CoreHit{entry.name, entry.category, entry.closed});
     }
     return map;
   }();

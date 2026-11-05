@@ -339,6 +339,27 @@ std::string fingerprint(const Fingerprint& f, Seconds now) {
          (f.enabled ? "true" : "false") + "|" + std::to_string(f.schools);
 }
 
+uint64_t listingsDigest(const std::vector<matcher::GuideListing>& listings, Seconds now) {
+  const Seconds from = now / 1800 * 1800, to = from + 1800;
+  uint64_t h = 0xcbf29ce484222325ULL;
+  auto mix = [&h](uint64_t v) { h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2); };
+  auto text = [&mix](const std::optional<std::string>& s) { mix(s ? str::fnv1a64(*s) + 1 : 0); };
+  for (const matcher::GuideListing& l : listings) {
+    if (l.end <= to - kListingsBefore || l.start >= from + kListingsAhead) continue;
+    mix(str::fnv1a64(l.entryID));
+    mix(str::fnv1a64(l.title));
+    mix(str::fnv1a64(l.lang));
+    mix(static_cast<uint64_t>(l.start));
+    mix(static_cast<uint64_t>(l.end));
+    text(l.detail);
+    text(l.venue);
+    text(l.city);
+    mix(l.rank ? static_cast<uint64_t>(*l.rank) + 1 : 0);
+    mix((l.inLineup ? 1u : 0u) | (l.tennisCoverage ? 2u : 0u) | (l.cricket ? 4u : 0u) | (l.abroad ? 8u : 0u));
+  }
+  return h;
+}
+
 std::optional<RebuildResult> rebuild(const RebuildInput& in) {
   matcher::BuildInput b;
   const auto& events = in.sharedEvents ? *in.sharedEvents : in.events;
@@ -561,12 +582,25 @@ std::vector<std::string> orderedByReliability(const std::vector<std::string>& id
 
 std::vector<std::string> bestFeeds(const std::vector<std::string>& ids, const std::function<int(const std::string&)>& quality,
                                    const Reliability& reliability) {
-  std::vector<std::pair<size_t, int>> items;
-  for (size_t i = 0; i < ids.size(); ++i) items.emplace_back(i, quality ? quality(ids[i]) : 0);
-  std::stable_sort(items.begin(), items.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
-  std::vector<std::string> byQuality;
-  for (const auto& item : items) byQuality.push_back(ids[item.first]);
-  return orderedByReliability(byQuality, reliability);
+  struct Item {
+    size_t at;
+    long tenths;
+    int quality;
+  };
+  std::vector<Item> items;
+  items.reserve(ids.size());
+  for (size_t i = 0; i < ids.size(); ++i) {
+    double r = reliability ? reliability(ids[i]) : 0.5;
+    items.push_back({i, std::lround(std::clamp(r, 0.0, 1.0) * 10.0), quality ? quality(ids[i]) : 0});
+  }
+  std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
+    if (a.tenths != b.tenths) return a.tenths > b.tenths;
+    return a.quality > b.quality;
+  });
+  std::vector<std::string> out;
+  out.reserve(items.size());
+  for (const Item& item : items) out.push_back(ids[item.at]);
+  return out;
 }
 
 std::vector<std::string> baseVersions(const std::string& id, const catalog::EntryInfo* info,
@@ -583,6 +617,13 @@ std::vector<std::string> baseVersions(const std::string& id, const catalog::Entr
     if (at != list.end() && at != list.begin()) std::rotate(list.begin(), at, at + 1);
   }
   return list;
+}
+
+void directVersionsFirst(std::vector<std::string>& list, size_t keep,
+                         const std::function<bool(const std::string&)>& serverOpened) {
+  if (!serverOpened || keep >= list.size()) return;
+  std::stable_partition(list.begin() + static_cast<std::ptrdiff_t>(keep), list.end(),
+                        [&](const std::string& id) { return !serverOpened(id); });
 }
 
 void leadServerVersions(std::vector<std::string>& list, const std::string& last,

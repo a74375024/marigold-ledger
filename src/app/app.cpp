@@ -7,6 +7,7 @@
 #include "app/playback.hpp"
 #include "app/screens/screens.hpp"
 #include "app/store/store.hpp"
+#include "core/report/playback_log.hpp"
 #include "core/util/log.hpp"
 
 namespace marigold::app {
@@ -43,6 +44,8 @@ App::App(platform::Window& window, platform::Storage& storage, gfx::Renderer& g,
   host.build = build_.build;
   store_ = std::make_unique<Store>(std::move(host));
   playback_ = std::make_unique<Playback>(*this);
+  // The run's first line in the playback log: which build on what.
+  playback_->logLaunch(report::launchDetail(build_.build, build_.version, build_.system, build_.device));
   // The previous run's crash, in the playback log Help exports (no links:
   // a signal, a build, addresses and symbols).
   if (!crash::previousSummary().empty()) playback_->logNote("previous run crashed", crash::previousSummary());

@@ -310,10 +310,15 @@ LineupCategory categoryFor(std::string_view lower, std::string_view group,
        "tnt sports", "yes network", "nesn",        "msg",         "fanduel",    "bally",
        "marquee",    "root sports", "altitude",    "nbc sports",  "olympic",    "outdoor",
        "racing",     "fight",       "ufc",         "wwe",         "dazn",       "pac 12",
-       "pac-12",     "redbull",     "red bull",    "stadium",     "draftkings", "fubo sports"});
+       "pac-12",     "redbull",     "red bull",    "stadium",     "draftkings", "fubo sports",
+       // Marigold (Build 136): "ESPN8: The Ocho", "Ryz Sports", "ACC Digital
+       // Network" were filed as entertainment: a numbered ESPN and these by
+       // name ("Sports" alone isn't enough: "Dream Sports Plus").
+       "espn ?\\d{1,2}", "the ocho", "ryz sports", "acc digital network", "accdn"});
   static const std::string kKids = alternation(
       {"disney", "nick", "nickelodeon", "nicktoons", "teennick", "cartoon", "boomerang",
-       "baby ?first", "pbs kids", "universal kids", "discovery family", "kids", "toon"});
+       "baby ?first", "pbs kids", "universal kids", "discovery family", "kids", "toon",
+       "starz ?kids"});
   static const std::string kMovies =
       alternation({"hbo",       "cinemax",     "showtime", "starz",    "encore",
                    "mgm\\+?",   "epix",        "tmc",      "movie",    "movies",
@@ -1110,6 +1115,20 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
   // feed comes from.
   std::optional<std::string> bracketCity;
   if (hasAnyOf(name, "[")) bracketCity = text::firstGroup("\\[([^\\]]{2,30})\\]", name, 1);
+  // Marigold (Build 136): "(US) (A) (Chicago) Telemundo East": a market's
+  // city in parentheses is where a network's feed comes from too, so the
+  // call-sign lookup below finds that city's station (WSNS) rather than
+  // filing it as the national feed. Only for that lookup, never a coast.
+  std::optional<std::string> parenCity;
+  if (!bracketCity && hasAnyOf(name, "(")) {
+    for (const rx::Match& m : rx::all("\\(([A-Za-z][A-Za-z .]{2,24})\\)", name)) {
+      std::string city(str::trimUnicode(m.group(1)));
+      if (marketIsWest(city).has_value()) {
+        parenCity = std::move(city);
+        break;
+      }
+    }
+  }
   // A network word in a name that isn't a national one ("FOX 5 Testville"):
   // asked up to three times below, worked out once.
   std::optional<bool> stationLikeMemo;
@@ -1197,8 +1216,8 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
     }
     // "FOX 2 LOCAL SAN FRANCISCO", "[Denver] PBS12": network + city -> the station.
     if (!callsign && stationLike() && !context.stationsByNetwork.empty()) {
-      callsign = guide::stationCallsign(bracketCity ? display + " " + *bracketCity : display,
-                                        context.stationsByNetwork);
+      const std::optional<std::string>& city = bracketCity ? bracketCity : parenCity;
+      callsign = guide::stationCallsign(city ? display + " " + *city : display, context.stationsByNetwork);
     }
     // A call sign the station has since given up ("WGCL" is WANF now).
     if (callsign && context.reference && !context.reference->station(*callsign)) {
@@ -1351,6 +1370,8 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
   }
   traits.formerKey = std::move(formerKey);
   if (refChannel) applyReference(traits, *refChannel, refFeed, core);
+  // A core network that has shut down (Universal Kids) isn't suggested.
+  if (core && !core->closed.empty() && traits.closed.empty()) traits.closed = core->closed;
   // A channel that shut down (and has no row of its own) isn't suggested.
   if (context.reference && kind == ChannelKind::channel && !traits.callsign &&
       (refChannel ? refChannel->closed : context.reference->gone(display))) {

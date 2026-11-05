@@ -322,7 +322,7 @@ TEST_CASE("event backups: a game on now on a channel lends it its feeds") {
         std::vector<std::string>{"xt|9"});
 }
 
-TEST_CASE("feed order: quality, then reliability with a 0.25 margin; pinned versions first") {
+TEST_CASE("feed order: versions by reliability with a 0.25 margin; feeds by reliability, then quality") {
   std::map<std::string, double> reliability = {{"a", 0.5}, {"b", 0.6}, {"c", 0.2}, {"d", 0.5}};
   Reliability r = [&](const std::string& id) { return reliability.at(id); };
   // Within the margin the given order holds; clearly worse moves back.
@@ -330,6 +330,18 @@ TEST_CASE("feed order: quality, then reliability with a 0.25 margin; pinned vers
   std::map<std::string, int> quality = {{"a", 1}, {"b", 3}, {"c", 3}, {"d", 0}};
   auto q = [&](const std::string& id) { return quality.at(id); };
   CHECK(bestFeeds({"a", "b", "c", "d"}, q, r) == std::vector<std::string>{"b", "a", "d", "c"});
+  // Build 136: a 4K feed that keeps failing goes behind an SD one that
+  // starts; equal records (to a tenth) fall back to quality, then the given
+  // order.
+  std::map<std::string, double> starts = {{"uhd", 0.25}, {"sd", 0.75}, {"hd", 0.5}, {"fhd", 0.52}, {"hd2", 0.5}};
+  std::map<std::string, int> sharp = {{"uhd", 3}, {"sd", 0}, {"hd", 1}, {"fhd", 2}, {"hd2", 1}};
+  Reliability rs = [&](const std::string& id) { return starts.at(id); };
+  auto qs = [&](const std::string& id) { return sharp.at(id); };
+  CHECK(bestFeeds({"uhd", "hd", "sd", "hd2", "fhd"}, qs, rs) ==
+        std::vector<std::string>{"sd", "fhd", "hd", "hd2", "uhd"});
+  // No record anywhere: quality alone, then the given order.
+  CHECK(bestFeeds({"hd", "uhd", "sd", "fhd"}, qs, nullptr) == std::vector<std::string>{"uhd", "fhd", "hd", "sd"});
+  CHECK(bestFeeds({}, qs, rs).empty());
   EntryInfo entry = info("e|1", "Channel", LineupCategory::sports, std::nullopt, std::string("US"), {"a", "b", "gone", "d"});
   auto exists = [](const std::string& id) { return id != "gone"; };
   CHECK(baseVersions("e|1", &entry, std::string("d"), r, exists) == std::vector<std::string>{"d", "a", "b"});
@@ -538,4 +550,24 @@ TEST_CASE("store: a server-opened version that played last leads only the server
   std::vector<std::string> only = {"jf:a", "jf:b"};
   leadServerVersions(only, "jf:b", server);
   CHECK(only == std::vector<std::string>{"jf:b", "jf:a"});
+}
+
+TEST_CASE("store: direct versions ahead of server-opened ones, the pinned one first") {
+  auto server = [](const std::string& id) { return id.rfind("jf:", 0) == 0; };
+  // A source's record moved a server-opened version ahead: back behind.
+  std::vector<std::string> list = {"jf:a", "xt:1", "jf:b", "xt:2"};
+  directVersionsFirst(list, 0, server);
+  CHECK(list == std::vector<std::string>{"xt:1", "xt:2", "jf:a", "jf:b"});
+  // The pinned (or last played) version keeps its place at the front.
+  list = {"jf:b", "jf:a", "xt:1", "xt:2"};
+  directVersionsFirst(list, 1, server);
+  CHECK(list == std::vector<std::string>{"jf:b", "xt:1", "xt:2", "jf:a"});
+  // One kind only, or nothing to move: unchanged.
+  std::vector<std::string> only = {"jf:b", "jf:a"};
+  directVersionsFirst(only, 0, server);
+  CHECK(only == std::vector<std::string>{"jf:b", "jf:a"});
+  std::vector<std::string> one = {"xt:1"};
+  directVersionsFirst(one, 1, server);
+  directVersionsFirst(one, 5, server);
+  CHECK(one == std::vector<std::string>{"xt:1"});
 }

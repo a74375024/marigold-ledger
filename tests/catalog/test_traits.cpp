@@ -181,6 +181,47 @@ TEST_CASE("network + city resolves to a station") {
   CHECK_FALSE(traitsFor(channel("2", "US: FOX Sports San Francisco"), context).callsign);
 }
 
+TEST_CASE("a market's city in parentheses: that city's station, not the national feed") {
+  // Build 136: "(Chicago) Telemundo East" is the Chicago station, and was
+  // filed with the national Telemundo for a viewer on the other coast.
+  std::vector<guide::Station> stations = {{"WZZZ", "TELEMUNDO", {"chicago"}, "44"}};
+  std::vector<Channel> list = {channel("1", "(US) (X) (Chicago) Telemundo East", "US Locals", "m3u:p"),
+                               channel("2", "US: Telemundo East", "US| Spanish"),
+                               channel("3", "US Telemundo (East) (X)", "US Locals", "m3u:p")};
+  CallsignContext context(list, stations);
+  ChannelTraits chicago = traitsFor(list[0], context);
+  CHECK(chicago.callsign == std::string("WZZZ"));
+  CHECK(chicago.scope == "local");
+  // The national copies stay national; "(East)" or a provider's tag is no city.
+  CHECK_FALSE(traitsFor(list[1], context).callsign);
+  CHECK_FALSE(traitsFor(list[2], context).callsign);
+  CHECK(traitsFor(list[1], context).clusterKey == traitsFor(list[2], context).clusterKey);
+  CHECK(chicago.clusterKey != traitsFor(list[1], context).clusterKey);
+  // In the build: the national entry has no Chicago member.
+  CatalogResult built = build(list, testdata::utc(2026, 11, 4, 18, 0), stations);
+  CHECK(built.entryOf.at(list[0].id) != built.entryOf.at(list[1].id));
+  CHECK(built.entryOf.at(list[1].id) == built.entryOf.at(list[2].id));
+  // A city nobody has a station for leaves the name as it was.
+  CHECK_FALSE(traitsFor(channel("4", "(US) (X) (Boston) Telemundo East"), context).callsign);
+}
+
+TEST_CASE("sports channels by their words; a shut-down core network isn't suggested") {
+  for (const char* name : {"TV: ESPN8: THE OCHO", "(US) (X) Ryz Sports", "AT&T: ACC DIGITAL NETWORK", "US: ESPN 3"}) {
+    INFO(name);
+    CHECK(traitsFor(channel("1", name, "US| TV")).category == LineupCategory::sports);
+  }
+  // Not "Sports" alone, nor ESPN run into other words.
+  CHECK(traitsFor(channel("2", "US: Dream Sports Plus", "US| TV")).category == LineupCategory::entertainment);
+  CHECK(traitsFor(channel("3", "US: Dreamespn Thing", "US| TV")).category == LineupCategory::entertainment);
+  CHECK(traitsFor(channel("4", "US: STARZKIDS WEST", "US| Premium")).category == LineupCategory::kids);
+  // Universal Kids shut down: still a row while a provider carries it, never
+  // suggested.
+  ChannelTraits gone = traitsFor(channel("5", "USA  UNIVERSAL KIDS HD", "United States"));
+  CHECK(gone.core == std::string("Universal Kids"));
+  CHECK_FALSE(gone.closed.empty());
+  CHECK(traitsFor(channel("6", "US: Nickelodeon HD")).closed.empty());
+}
+
 TEST_CASE("networkWord and virtualNumber") {
   CHECK(networkWord("US: NBC 4") == std::string("NBC"));
   CHECK(networkWord("TMO Puerto Rico") == std::string("TELEMUNDO"));

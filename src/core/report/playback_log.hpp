@@ -31,6 +31,10 @@ class PlaybackLog {
   static constexpr size_t kFieldCap = 512;
   // A memory reading's event (Session::logMemory).
   static constexpr std::string_view kMemoryEvent = "memory";
+  // Marigold (Build 136): the first line of every run (session 0): the
+  // build, version and system it runs on, so an export that spans several
+  // builds or devices can be told apart. No account or user names.
+  static constexpr std::string_view kLaunchEvent = "launch";
 
   struct Entry {
     int64_t atMs = 0;  // Unix time in milliseconds
@@ -62,6 +66,8 @@ class PlaybackLog {
   // A channel-list load timing (Swift logLoad): event "load: <event>",
   // session 0.
   void addLoad(int64_t atMs, std::string_view event, std::string_view detail);
+  // The app started (kLaunchEvent, session 0); `detail` from launchDetail().
+  void addLaunch(int64_t atMs, std::string_view detail);
   void clear();
 
   const std::deque<Entry>& entries() const { return entries_; }
@@ -108,6 +114,11 @@ class PlaybackLog {
   uint64_t revision_ = 0;
   uint64_t added_ = 0, clears_ = 0;
 };
+
+// A launch line's detail: "build 136, version 1.2.0, webOS 6, <device>"
+// (the empty parts left out; each part cut to a short length).
+std::string launchDetail(std::string_view build, std::string_view version, std::string_view system,
+                         std::string_view device = {});
 
 // "2026-10-26T14:05:09.120-04:00" (ISO 8601, milliseconds, `zone`'s offset;
 // "Z" when it is 0).

@@ -14,6 +14,15 @@
 //   MARIGOLD_PREVIEW_LOG=1          the engine's Live Events log on stderr
 //                                   (rebuild and board timings)
 //   MARIGOLD_PREVIEW_UNSCHEDULED=1  "Games without a schedule" on
+//   MARIGOLD_PREVIEW_PICKS=S:SoccerAll,UEL  My Sports set up: the default
+//                                   picks and these
+//   MARIGOLD_PREVIEW_RELIST=b.csv   before the report: Live Events closed and
+//                                   the channel list read again from another
+//                                   report of the same list (slots renamed)
+//   MARIGOLD_PREVIEW_RECHECK=1      afterwards, the engine's clock moved on
+//                                   to the next half hour, then 11 minutes
+//                                   (the guide's listings read again): the
+//                                   Live Events log of each step on stderr
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -34,6 +43,8 @@
 
 #include "core/engine/store.hpp"
 #include "core/net/http.hpp"
+#include "core/sports/my_sports.hpp"
+#include "core/util/strings.hpp"
 #include "core/util/log.hpp"
 #include "core/util/json.hpp"
 #include "core/util/time.hpp"
@@ -388,21 +399,28 @@ int main(int argc, char** argv) {
     auto it = col.find(name);
     return it != col.end() && it->second < row.size() ? row[it->second] : std::string();
   };
-  // The channels as a playlist (names and groups only: the report has no links).
-  std::string m3u = "#EXTM3U\n";
+  // The channels as a playlist (names and groups only: the report has no
+  // links); a row's link is its number, so a report of the same list with
+  // slots renamed renames them in place.
   std::set<std::string> lineupNames;
   int channels = 0;
-  for (size_t r = 1; r < rows.size(); ++r) {
-    const auto& row = rows[r];
-    std::string name = cell(row, "name");
-    if (name.empty()) continue;
-    std::string group = cell(row, "group");
-    for (char& c : group)
-      if (c == '"') c = '\'';
-    m3u += "#EXTINF:-1 group-title=\"" + group + "\"," + name + "\nhttp://preview.invalid/" +
-           std::to_string(++channels) + ".ts\n";
-    if (cell(row, "in_my_lineup") == "yes" && !cell(row, "entry").empty()) lineupNames.insert(cell(row, "entry"));
-  }
+  auto playlistOf = [&](const std::vector<std::vector<std::string>>& list) {
+    std::string m3u = "#EXTM3U\n";
+    channels = 0;
+    for (size_t r = 1; r < list.size(); ++r) {
+      const auto& row = list[r];
+      std::string name = cell(row, "name");
+      if (name.empty()) continue;
+      std::string group = cell(row, "group");
+      for (char& c : group)
+        if (c == '"') c = '\'';
+      m3u += "#EXTINF:-1 group-title=\"" + group + "\"," + name + "\nhttp://preview.invalid/" +
+             std::to_string(++channels) + ".ts\n";
+      if (cell(row, "in_my_lineup") == "yes" && !cell(row, "entry").empty()) lineupNames.insert(cell(row, "entry"));
+    }
+    return m3u;
+  };
+  std::string m3u = playlistOf(rows);
   std::fprintf(stderr, "%d channels in %s\n", channels, csvPath.c_str());
   if (std::getenv("MARIGOLD_PREVIEW_LOG")) {
     log::setMirror([](log::Level, const std::string& line) {
@@ -461,6 +479,13 @@ int main(int argc, char** argv) {
     s.boardMoreEvents = s.boardUnscheduled = true;
     store.setSettings(s);
   }
+  if (const char* picks = std::getenv("MARIGOLD_PREVIEW_PICKS")) {
+    sports::MySportsPrefs p = store.defaultMySports();
+    p.configured = true;
+    for (std::string_view id : str::split(picks, ','))
+      if (!id.empty()) p.leagues.emplace_back(id);
+    store.setMySports(p);
+  }
   store.eventsOpen(true);
   // Until the requests stop (the schedules, then a round of scores), a
   // minute and a half of the engine's time at least. The rest of the week's
@@ -510,6 +535,23 @@ int main(int argc, char** argv) {
     rowsOut.push(r);
   }
   data.set("rows", rowsOut);
+  if (const char* relist = std::getenv("MARIGOLD_PREVIEW_RELIST")) {
+    // Live Events closed, then the half-hourly read of the channel list
+    // brings this report's names (its rows in the same order): the report
+    // below is made then, as a TV makes it from Help.
+    auto again = readFile(relist);
+    auto relistRows = again ? readCsv(*again) : std::vector<std::vector<std::string>>();
+    if (relistRows.size() < 2 || relistRows[0] != rows[0]) {
+      std::fprintf(stderr, "%s isn't a report of the same columns\n", relist);
+      return 1;
+    }
+    store.eventsOpen(false);
+    settle(5);
+    requests.playlist = playlistOf(relistRows);
+    store.refreshAll();
+    settle(60);
+    std::fprintf(stderr, "Live Events closed; the list read again: %d channels from %s\n", channels, relist);
+  }
   if (const char* reportPath = std::getenv("MARIGOLD_PREVIEW_REPORT")) {
     std::shared_ptr<std::string> csv;
     bool done = false;
@@ -555,6 +597,29 @@ int main(int argc, char** argv) {
     std::string open = "xdg-open " + shellQuoted(out) + " >/dev/null 2>&1";
 #endif
     if (std::system(open.c_str()) != 0) std::fprintf(stderr, "Open %s in a browser\n", out.c_str());
+  }
+  if (std::getenv("MARIGOLD_PREVIEW_RECHECK")) {
+    // The rebuilds a TV left on Live Events makes: at the next half hour
+    // (the clock alone), then 11 minutes on (the guide's listings read again).
+    // Ticked through, 5 s a tick (not a sleep and a wake).
+    auto step = [&](const char* what, time::Seconds by) {
+      store.takeEventsLog();
+      auto from = std::chrono::steady_clock::now();
+      for (time::Seconds gone = 0; gone < by; gone += 5) {
+        time::advanceForTests(5);
+        requests.drain();
+        ms += 5000;
+        store.tick(ms);
+      }
+      settle(5);
+      long took = static_cast<long>(
+          std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - from).count());
+      std::fprintf(stderr, "recheck %s (%ld ms):\n", what, took);
+      for (const std::string& line : store.takeEventsLog()) std::fprintf(stderr, "  %s\n", line.c_str());
+    };
+    time::Seconds now = time::now();
+    step("the next half hour", 1800 - now % 1800 + 5);
+    step("11 minutes later", 11 * 60);
   }
   return 0;
 }

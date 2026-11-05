@@ -328,6 +328,22 @@ TEST_CASE("a service tail naming its country sets the slot's clock, AM/PM too") 
   CHECK(iso.title == "Basket: Team A vs Team B");
 }
 
+TEST_CASE("UEFA slots give the kickoff in UK time, 24-hour with a pm or not (Build 136)") {
+  // 21 October: the UK on BST (+1). 20:00 is the 8 PM UK kickoff, not 8 PM Eastern.
+  for (const std::optional<std::string>& market : {std::optional<std::string>(), std::optional<std::string>("US"),
+                                                   std::optional<std::string>("UK")}) {
+    auto late = parse("UEFA | 08 - Team A vs Team B 20:00pm", market);
+    CHECK(late.title == "Team A vs Team B");
+    CHECK(late.start == utc(2026, 10, 21, 19, 0));
+    CHECK(late.guessed);
+    CHECK(parse("UEFA | 11   Team C vs Team D 20:00 pm", market).start == utc(2026, 10, 21, 19, 0));
+    CHECK(parse("UEFA | 01 - Team E vs Team F 5:45pm", market).start == utc(2026, 10, 21, 16, 45));
+    CHECK(parse("UEFA | 21 - Team G vs Team H 17:45 pm", market).start == utc(2026, 10, 21, 16, 45));
+  }
+  // Other groups' "NN | 08 -" heads keep the US habit.
+  CHECK(parse("NFL | 15 - Team A at Team B 8:15pm").start == utc(2026, 10, 22, 0, 15));
+}
+
 TEST_CASE("Nordic and other European markets read their own clock") {
   CHECK(parse("Team A v Team B Oct 22 20:45", std::string("DK")).start == utc(2026, 10, 22, 18, 45));
   CHECK(parse("Team A v Team B Oct 22 20:45", std::string("FI")).start == utc(2026, 10, 22, 17, 45));

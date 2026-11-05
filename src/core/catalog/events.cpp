@@ -360,6 +360,11 @@ ParsedEvent parseEventDetailed(std::string_view input, Seconds now,
   title = rx::replace(title, "\\|\\s*8K EXCLUSIV.*$", "", true);
   title = rx::replace(title, "^\\s*live event\\s*\\d{1,3}\\s*-?\\s*", "", true);
   title = rx::replace(title, "^\\s*[A-Za-z+]{2,10}\\s+(?:event|board)\\s*\\d{1,3}\\s*:\\s+", "", true);  // "PDC event 01 : "
+  // Build 136: the UEFA slots ("UEFA | 08 - RB Leipzig vs Manchester City
+  // 20:00pm", "UEFA | 01 - Galatasaray vs Stuttgart 5:45pm") give the
+  // kickoff in UK time, whatever their group's country: 20:00 is the 8 PM
+  // GMT kickoff (21:00 CET, noon Pacific), not 8 PM Eastern.
+  const bool ukSlot = rx::test("^\\s*UEFA\\s*\\|\\s*\\d{1,3}\\b", title, true);
   title = rx::replace(title, "^\\s*[A-Za-z+]{2,10}\\s*\\|\\s*\\d{1,3}\\s*-?\\s*", "");
   // A service tail naming its country (":Viaplay DK  03", ":VG  01") says
   // which clock the slot's time is on, AM/PM included.
@@ -368,6 +373,7 @@ ParsedEvent parseEventDetailed(std::string_view input, Seconds now,
     slotZone = serviceZone(tail->group(1));
     title.erase(tail->begin, tail->end - tail->begin);
   }
+  if (!slotZone && ukSlot) slotZone = Zone::london();
 
   // Unmarked times follow the slot's or the provider's country when it has
   // one; otherwise US formats are Eastern and European formats UK time.

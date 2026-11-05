@@ -1274,3 +1274,50 @@ In the player, Sources for a game (Where to Watch with ticks) ticked the channel
 | Backup | Pick a feed that doesn't start | After it fails, the tick is on the source that plays (usually the channel), not the dead feed |
 | Watch | From the game's card, Watch, then Sources | The tick is on what plays first |
 | Channel Sources | A channel (not a game), Red key / Sources, pick Feed 2 | As in Build 134: Feed 2 ticked, "Playing now" |
+
+## Build 137 — Playback and sources: placeholder clips skipped, direct versions first, measured picture labels
+
+A provider's placeholder ("slate") clip is served as the stream: each connection delivers the same file and closes, the relay reopens it, and it plays as a real picture. The picture check only moved on after 45 s, and never on a channel. Now two connections in a row that delivered the same sizeable file (to within a few KB) move to the next source at once, with no retries; on a channel with one version the "This channel stopped working" card shows instead of the clip looping. Sources says "placeholder clip" for it. A source whose connections keep closing now counts connections of up to 8 s (was 5 s), so sources that close every 4–7 s are caught too.
+
+A channel's versions: the ones that start in about 2 s (Xtream, M3U) come before the ones opened on a server first (Emby / Jellyfin, about 10 s) even when a source's record would have moved a server one ahead, as long as a direct version hasn't failed lately. "Always start with" and the version that played last still start first. A game's event feeds are ordered by how well they have started (a feed that failed lately goes last, then the group's starts this week), and only then by picture quality; channels still come before feeds, and your languages before others.
+
+Picture labels: Sources rows, a game's Where to Watch rows and the player's status line show the picture a version actually played ("1080p · 60", "720p", "4K · 50") once it has played 20 s on this TV; otherwise what its name or group claims ("FHD", "HD", "SD", "4K", superscript tags such as ᴴᴰ, ᵁᴴᴰ, ⁶⁰ᶠᵖˢ included, "· 60" for a 50/60 fps claim); otherwise nothing. An unmarked feed no longer says "HD". Never 8K, RAW or VIP. The measurements are kept for the 2,000 channels measured last (pictures.json: ids and numbers only).
+
+Playback log: each start writes a "launch" line (build, version, system, and the device's maker and model on Android). Tune numbers go on from the highest in the saved log instead of starting at 1 again after a run that ended on a memory or load line.
+
+My Lineup: ESPN8 The Ocho, Ryz Sports and ACC Digital Network are under Sports (were Entertainment), STARZ Kids under Kids. A network's feed tagged with a market's city in parentheses ("(Chicago) Telemundo East") is that city's station, not a copy of the national feed, so it no longer joins the national entry for viewers elsewhere. Universal Kids has shut down: it is no longer suggested (still listed, and can be added, while a provider carries it). The channel list sorts once more after the update.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Placeholder clip | Tune a game feed known to show a provider's "event not started" slate, with other sources | Within about 15 s of the picture it moves to the next source ("No picture…" / backup note), not after 45 s; Sources shows "placeholder clip" on it |
+| One version | A channel with one version that serves a slate | The "This channel stopped working. The source only sends a placeholder clip." card, not a looping clip |
+| Live stream | Watch a normal channel through the app for 10 minutes | Never moved off for "placeholder clip" or "source keeps closing" |
+| Direct first | A lineup channel with both Xtream and Emby versions, Sources | Xtream versions listed first (unless one is set in "Always start with" or an Emby one played last after the Xtream ones failed) |
+| Pinned | Set "Always start with" to an Emby version, retune | It starts first |
+| Labels | Sources on a channel whose provider names have no quality word | No "HD" before the provider name; after it plays 20 s and Sources is reopened, "1080p · 60" (or what it plays) |
+| Where to Watch | A game with channels and event feeds | Measured or claimed picture in the rows' detail lines; no 8K / RAW / VIP |
+| Launch line | Help › Send a report › Playback log after a relaunch | A "launch" row with the build number and system at each start; tune numbers keep counting up |
+| Lineup | Sports section; Kids section; Telemundo for a viewer outside Chicago | ESPN8 The Ocho / Ryz Sports / ACC Digital Network in Sports; the national Telemundo's Sources have no Chicago version; Universal Kids not suggested |
+
+## Build 137 — Live Events: renamed slots reported as such; no rebuild when nothing changed; college soccer follows Top 25; UEFA slots in UK time
+
+The LG report of Oct 28 – Nov 4 had most "LIVE | … | 8K EXCLUSIVE" and "NEXT | …" slots left out with "no tile took it". Matching takes them (the same slot names, given to Build 130 and to this build, go to their games: 61 of the 67 Europa and Conference League slots on the schedule). The report was made with Live Events closed after the channel list had been read again (every half hour, Live Events open or not): the provider renames those slots in place, and Live Events matches again only when it's open. The report now says so: "new or renamed since Live Events last matched (it matches again when opened)", last column "not matched yet"; a slot renamed from one game to another no longer shows the old game's tile. Opening Live Events matches them as before. Every slot matching leaves out has its reason; the old catch-all is gone.
+
+With Live Events open, the guide's game listings are read again every 10 minutes, and each read was matched again (on the LG about 7 s each, often to the same result). Now a read that brings the same listings (those the half hour's matching can use), with nothing else new, isn't matched again; the log says "guide listings read again: the same, nothing new to match".
+
+College soccer (Divisions II and III from the NCAA's pages, Division I from the all-soccer listing) follows the college rule in the Soccer row, as the other college sports do in theirs: a game shows there when a side is ranked 1-25, is one of your schools, or every game is on for it; otherwise it's in More events ("college game without a ranked team or one you follow"). Pro soccer still follows the competitions you ticked. The Soccer row looks as before.
+
+The UEFA groups' slots ("UEFA | 08 - Team A vs Team B 20:00pm", "… 5:45pm") give UK kickoff times: 20:00 is the 8 PM UK kickoff (noon Pacific), not 8 PM Eastern (5 PM Pacific). The report's start time for them is now the kickoff's; their tiles already showed the schedule's time.
+
+A slot listing several games ("A vs B • C vs D (A vs B)") names the one on now in brackets; it goes to that game, as before (checked: every such slot in the report names one).
+
+| Area | How to check | Pass |
+|---|---|---|
+| Report, Live Events closed | Open Live Events, close it, watch a channel for over half an hour, then Settings › Help & info › Send a report | Slots renamed meanwhile say "new or renamed since Live Events last matched", last column "not matched yet"; none says "no tile took it" |
+| Report, Live Events open | Open Live Events for a minute, then send the report | Those slots are on their games' tiles (or left out with a reason) |
+| No rebuild for nothing | Leave Live Events open 20 minutes (developer log) | Every 10 minutes "guide listings read again: the same, nothing new to match" unless something changed; "rebuilt in" at the half hours and when the list, schedule or listings change |
+| Board unchanged | Leave Live Events open over a half hour while a game starts | The game turns live at its time as before |
+| College soccer | My Sports with "Every other competition" ticked, on a weekday in the fall | The Soccer row has the pro competitions and only college games with a ranked side or one of your schools; Division II/III games are in More events with the college reason |
+| Your school | Follow a small college's soccer team from its tile | Its games are in the Soccer row (and Your teams) |
+| Pro soccer | Only Premier League ticked | Soccer row: Premier League only, as before; college games in More events ("not in your soccer competitions") |
+| UEFA times | The report on a Champions League or Europa League night | UEFA slots saying 20:00 start at noon Pacific (3 PM Eastern), 17:45 at 9:45 AM Pacific |

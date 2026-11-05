@@ -152,6 +152,54 @@ TEST_CASE("the Soccer row holds the ticked competitions; the rest of what you ca
   CHECK(on(b, "more", "sev|LIGA|9"));
 }
 
+TEST_CASE("college soccer in the Soccer row follows the college rule, not the competitions (Build 136)") {
+  SportsGame epl = soccer("EPL", "1", "Harbor United", "Riverside Rovers");
+  SportsGame copa = soccer(kSoccerAll, "2", "Portugalete", "Irun");
+  copa.tournament = std::string("Copa del Rey");
+  // The small colleges' pages: unranked, and one of your schools.
+  SportsGame d3 = soccer("D3WSO", "3", "Bay College", "Point College");
+  SportsGame d2 = soccer("D2MSO", "4", "Hill College", "Glen College");
+  // Division I from the all-soccer listing: ranked 7, and unranked.
+  SportsGame rankedD1 = soccer(kSoccerAll, "5", "Ridge University", "Coast University");
+  rankedD1.tournament = std::string("NCAAW Soccer");
+  rankedD1.home.rank = 7;
+  SportsGame plainD1 = soccer(kSoccerAll, "6", "Lake University", "Brook University");
+  plainD1.tournament = std::string("NCAAM Soccer");
+  Input in = baseInput({eventOf(epl, {station("1")}), eventOf(copa, {station("2")}), eventOf(d3, {station("3")}),
+                        eventOf(d2, {station("4")}), eventOf(rankedD1, {station("5")}),
+                        eventOf(plainD1, {station("6")})});
+  in.prefs = picked({"EPL", kSoccerAllPick});
+  in.prefs.teams = {teamKey("D2MSO", d2.away.id)};
+  CHECK(isCollegeSoccer(d3));
+  CHECK(isCollegeSoccer(rankedD1));
+  CHECK_FALSE(isCollegeSoccer(copa));
+  CHECK(collegeKeyOf(d3) == "NCAAWS");
+  CHECK(collegeKeyOf(d2) == "NCAAMS");
+  CHECK(collegeKeyOf(rankedD1) == "NCAAWS");
+  CHECK(collegeKeyOf(plainD1) == "NCAAMS");
+  Board b = build(in);
+  CHECK(on(b, "sport|Soccer", "sev|EPL|1"));
+  CHECK(on(b, "sport|Soccer", "sev|SOC|2"));  // every other competition: the pros
+  CHECK(on(b, "sport|Soccer", "sev|D2MSO|4"));  // your school
+  CHECK(on(b, "sport|Soccer", "sev|SOC|5"));  // ranked
+  CHECK(on(b, "more", "sev|D3WSO|3"));
+  CHECK(on(b, "more", "sev|SOC|6"));
+  CHECK(b.moreWhy.at("sev|D3WSO|3") == "college game without a ranked team or one you follow");
+  CHECK(b.moreWhy.at("sev|SOC|6") == "college game without a ranked team or one you follow");
+  CHECK(findRow(b, "sport|Soccer")->choose == "competitions");
+  // Every game of women's college soccer.
+  in.prefs.college["NCAAWS"].everyGame = true;
+  b = build(in);
+  CHECK(on(b, "sport|Soccer", "sev|D3WSO|3"));
+  CHECK(on(b, "more", "sev|SOC|6"));
+  // Not live now either.
+  SportsGame liveD3 = soccer("D3MSO", "7", "North College", "South College", kNow - 1800);
+  in.events = {eventOf(liveD3, {station("7")})};
+  b = build(in);
+  CHECK(ids(b, "live").empty());
+  CHECK(on(b, "more", "sev|D3MSO|7"));
+}
+
 TEST_CASE("a national team's game from the all-soccer listing shows even when no channel has it") {
   SportsGame usa = soccer(kSoccerAll, "1", "United States", "Panama");
   usa.competition = std::string(kUSAPick);

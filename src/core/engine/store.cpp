@@ -139,6 +139,7 @@ constexpr const char* kSecretsFile = "accounts-secrets.json";
 constexpr const char* kSettingsFile = "settings.json";
 constexpr const char* kListsFile = "lists.json";
 constexpr const char* kLineupFile = "lineup.json";
+constexpr const char* kPicturesFile = "pictures.json";  // measured pictures (Build 136)
 constexpr const char* kM3uStreamsFile = "m3u-streams.json";  // secret
 constexpr const char* kStationsFile = "stations-v2.json";  // v2: two-city cells, MyNetworkTV
 constexpr const char* kOldLogoIndexFile = "logo-index.json";  // downloaded by builds before 89
@@ -756,6 +757,7 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
   if (auto text = st.read(kLineupFile)) {
     if (auto p = catalog::lineupPrefsFromJson(*text)) m.prefs = *p;
   }
+  if (auto text = st.read(kPicturesFile)) m.pictures = quality::Memory::fromJson(*text);
   // The saved M3U links (tens of thousands) are read on a worker once the
   // first frame is up (tick): only a tune needs them.
   for (sources::Account& a : m.accounts) {
@@ -3223,6 +3225,67 @@ std::string Store::entryOfChannel(const std::string& channelId) const {
   return it == impl_->catalog->entryOf.end() ? std::string() : it->second;
 }
 
+std::string Store::qualityText(const std::string& channelId) const {
+  const Impl& m = *impl_;
+  if (std::optional<quality::Picture> p = m.pictures.find(channelId)) {
+    std::string measured = quality::text(*p);
+    if (!measured.empty()) return measured;
+  }
+  auto ci = m.indexByID.find(channelId);
+  if (ci == m.indexByID.end()) return {};
+  const Channel& c = (*m.channels)[ci->second];
+  return quality::claimed(c.name, c.group ? std::string_view(*c.group) : std::string_view());
+}
+
+void Store::notePicture(const std::string& channelId, const quality::Picture& picture) {
+  if (impl_->pictures.remember(channelId, picture)) savePicturesLater();
+}
+
+void Store::savePicturesLater() {
+  Impl& m = *impl_;
+  std::shared_ptr<Impl::PicturesWriter> w = m.picturesWriter;
+  {
+    std::lock_guard<std::mutex> lock(w->mu);
+    w->pending = m.pictures.toJson();
+    w->pendingSeq = ++w->seq;
+  }
+  // Atomic, within the folder's budget (a full partition leaves the old
+  // file); a burst of measurements is written once or twice.
+  std::string path = host_.files.path(kPicturesFile);
+  std::shared_ptr<disk::Keeper> keeper = m.disk;
+  host_.pool.post(
+      [w, path, keeper] {
+        std::string text;
+        uint64_t seq = 0;
+        {
+          std::lock_guard<std::mutex> lock(w->mu);
+          text.swap(w->pending);
+          std::swap(seq, w->pendingSeq);
+        }
+        std::lock_guard<std::mutex> lock(w->fileMu);
+        if (seq <= w->written) return;
+        if (writeFileAtomic(path, text, false, keeper.get())) w->written = seq;
+      },
+      nullptr, http::Priority::Background);
+}
+
+double Store::feedReliability(const std::string& channelId) const {
+  // A game's provider feeds: one that failed lately (this run) goes last;
+  // else its provider group's starts this week, when there are any; else
+  // its source's record.
+  const Impl& m = *impl_;
+  time::Seconds now = time::now();
+  auto failed = m.failedAt.find(channelId);
+  if (failed != m.failedAt.end() && now - failed->second < kDirectFailedFor) return 0;
+  auto t = m.catalog->traits.find(channelId);
+  if (t != m.catalog->traits.end() && t->second.familyKey) {
+    auto g = m.groupStarts.find(*t->second.familyKey);
+    if (g != m.groupStarts.end() && now - g->second.at <= kGroupStartsFor && g->second.worked + g->second.failed > 0)
+      return static_cast<double>(g->second.worked + 1) / static_cast<double>(g->second.worked + g->second.failed + 2);
+  }
+  return reliabilityOf(channelId);
+}
+
 double Store::reliabilityOf(const std::string& channelId) const {
   const Impl& m = *impl_;
   auto t = m.catalog->traits.find(channelId);
@@ -3264,6 +3327,14 @@ std::vector<std::string> Store::versionsOf(const std::string& id) const {
   std::vector<std::string> out = sports::store::baseVersions(
       id, ei, pinned, [this](const std::string& c) { return reliabilityOf(c); },
       [&m](const std::string& c) { return m.indexByID.count(c) > 0; });
+  // Marigold (Build 136): the catalog lists direct versions first, but the
+  // record of a source can move a server-opened one ahead of them; while a
+  // direct version hasn't failed lately they stay ahead (the pinned or last
+  // played version still leads).
+  if (healthyDirect()) {
+    size_t keep = pinned && !out.empty() && out.front() == *pinned ? 1 : 0;
+    sports::store::directVersionsFirst(out, keep, [this](const std::string& c) { return serverOpened(c); });
+  }
   if (leadServer)
     sports::store::leadServerVersions(out, *leadServer, [this](const std::string& c) { return serverOpened(c); });
   lastIfUnplayable(out, pin != m.pinned.end() ? std::optional<std::string>(pin->second) : std::nullopt);
@@ -3306,13 +3377,11 @@ std::vector<Feed> Store::feedsFor(const std::vector<std::string>& members) const
     // "FHD · West feed · provider · group" (feedSummary).
     std::vector<std::string> parts;
     auto t = m.catalog->traits.find(id);
-    if (t != m.catalog->traits.end()) {
-      static const char* kQuality[] = {"SD", "HD", "FHD", "4K"};
-      int q = std::clamp(t->second.quality, 0, 3);
-      parts.push_back(kQuality[q]);
-      f.quality = kQuality[q];
-      if (t->second.isWest) parts.push_back("West feed");
-    }
+    // Build 136: the picture measured on it, else what its name or group
+    // claims; nothing for an unmarked feed (it used to say "HD").
+    f.quality = qualityText(id);
+    if (!f.quality.empty()) parts.push_back(f.quality);
+    if (t != m.catalog->traits.end() && t->second.isWest) parts.push_back("West feed");
     parts.push_back(redact(account->displayName));
     if (c.group) parts.push_back(redact(*c.group));
     f.label = str::join(parts, " \xc2\xb7 ");

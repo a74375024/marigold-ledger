@@ -630,9 +630,17 @@ RebuildMade rebuild(RebuildJob& job) {
       inputs.push_back(li);
     }
     made.listings = std::move(ss::extractListings(inputs, in.now).listings);
+    made.listingsDigest = ss::listingsDigest(*made.listings, in.now);
+    // Build 136: the same listings and nothing else new: the last match stands.
+    if (job.sameElse && made.listingsDigest == job.listingsDigest) {
+      made.unchanged = true;
+      made.prepMs = msSince(start);
+      return made;
+    }
     in.listings = *made.listings;
   } else {
     in.listings = std::move(job.listings);
+    made.listingsDigest = ss::listingsDigest(in.listings, in.now);
   }
   if (job.previous) in.previous = *job.previous;
   in.channelIndex = sports::network_map::channelIndex(lineup.lineupIDs, lineup.lineupEntries, lineup.browseEntries,
@@ -650,6 +658,9 @@ RebuildMade rebuild(RebuildJob& job) {
   made.matchMs = msSince(match);
   made.lastSaved = job.lastSaved;
   if (made.result) {
+    // For the report: which slots, by which names, this match was given.
+    made.matched = std::make_shared<const std::vector<std::pair<uint64_t, uint64_t>>>(
+        report::matchedFeeds(in.sharedEvents ? *in.sharedEvents : in.events));
     // Saved for an instant board next launch.
     Clock::time_point save = Clock::now();
     if (auto saved = ss::resultToSave(made.result->events, job.catalog->events, in.listings, true, time::now(),
@@ -682,13 +693,17 @@ void Store::rebuildEvents() {
   fp.eventsRevision = m.catalogRevision;
   fp.scheduleRevision = e.scheduleRevision;
   fp.entriesRevision = m.lineupRevision;
-  fp.listingsRevision = e.listingsRevision + (readListings ? 1 : 0);
+  fp.listingsRevision = e.listingsRevision;
   fp.languages = sports::languages::ofViewer(m.prefs.countries);
   fp.enabled = settings_.scheduleEnabled;
   fp.schools = pub.schools.size();
   std::string key = ss::fingerprint(fp, now);
   events_build::MadeFrom from{m.listFetchedAt, e.schedule.saved().fetchedAt.value_or(0)};
-  if (!readListings && key == e.lastFingerprint) {
+  // Build 136: listings read again are a new revision only when they
+  // differ (listingsDigest, on the worker); with nothing else new, the same
+  // ones aren't matched again.
+  const bool sameElse = key == e.lastFingerprint;
+  if (!readListings && sameElse) {
     e.checkedSinceOpen = true;  // nothing new to build from
     e.madeFrom = from;          // the same inputs, fetched again
     return;
@@ -734,6 +749,8 @@ void Store::rebuildEvents() {
   job->lineup = e.lineupCopy;
   job->markets = markets;
   job->readListings = readListings;
+  job->sameElse = sameElse && e.listingsDigest != 0;
+  job->listingsDigest = e.listingsDigest;
   job->hiddenGroups = m.hiddenGroups;
   if (readListings) job->programs = m.programs;  // the lists are shared, not copied
   else job->listings = e.listings;
@@ -751,21 +768,41 @@ void Store::rebuildEvents() {
   auto made = std::make_shared<events_build::RebuildMade>();
   uint64_t gen = m.generation;
   host_.pool.post([job, made] { *made = events_build::rebuild(*job); },
-                  [this, gen, made, now, f1Key, from] {
+                  [this, gen, made, now, f1Key, from, fp, key] {
                     Clock::time_point start = Clock::now();
                     EventsState& ev = impl_->ev;
                     ev.rebuilding = false;
                     if (gen != impl_->generation) return;
+                    // Build 136: the digest of the listings matched (or read
+                    // again and found the same), at this half hour.
+                    ev.listingsDigest = made->listingsDigest;
                     if (made->listings) {
-                      ev.listings = std::move(*made->listings);
                       ev.listingsAt = now;
-                      ++ev.listingsRevision;
+                      ev.listings = std::move(*made->listings);
+                      // A new revision only when they changed.
+                      if (!made->unchanged) {
+                        ++ev.listingsRevision;
+                        // Matched from them: what the next check compares with.
+                        if (ev.lastFingerprint == key) {
+                          ss::Fingerprint matched = fp;
+                          matched.listingsRevision = ev.listingsRevision;
+                          ev.lastFingerprint = ss::fingerprint(matched, now);
+                        }
+                      }
+                    }
+                    if (made->unchanged) {
+                      ev.checkedSinceOpen = true;
+                      ev.madeFrom = from;
+                      ev.logNotes.push_back("guide listings read again: the same, nothing new to match (" +
+                                            std::to_string(static_cast<int>(made->prepMs)) + " ms)");
+                      return;
                     }
                     if (made->f1Sources) {
                       ev.f1Key = f1Key;
                       ev.f1Sources = std::move(*made->f1Sources);
                     }
                     if (!made->result) return;
+                    if (made->matched) ev.matchedFeeds = made->matched;
                     ev.lastSaved = made->lastSaved;
                     ev.slotsSeen = std::move(made->result->slotsSeen);
                     // The last list is freed on a worker (unless a board job still reads it).
@@ -1227,6 +1264,8 @@ void Store::buildLiveEventsReport(std::function<void(std::shared_ptr<std::string
     std::shared_ptr<const CatalogResult> catalog;
     std::shared_ptr<const std::vector<sports::SportsEvent>> events;
     std::map<std::string, std::string> hidden;
+    // Build 136: the feeds that rebuild was given (none: no rebuild yet).
+    std::shared_ptr<const std::vector<std::pair<uint64_t, uint64_t>>> matched;
     sb::Board board;
     std::map<std::string, std::string> starts;
     std::set<std::string> failing;
@@ -1238,6 +1277,8 @@ void Store::buildLiveEventsReport(std::function<void(std::shared_ptr<std::string
   job->catalog = m.catalog;
   job->events = e.events;
   job->hidden = e.hidden;
+  job->matched = e.matchedFeeds ? e.matchedFeeds
+                                : std::make_shared<const std::vector<std::pair<uint64_t, uint64_t>>>();
   job->board = e.board;
   for (const auto& [family, g] : m.groupStarts) {
     std::string text = groupStartsText(family);
@@ -1255,6 +1296,7 @@ void Store::buildLiveEventsReport(std::function<void(std::shared_ptr<std::string
         in.catalog = job->catalog.get();
         in.events = job->events.get();
         in.hidden = &job->hidden;
+        in.matched = job->matched.get();
         in.board = &job->board;
         in.groupStarts = [job](const std::string& f) {
           auto it = job->starts.find(f);
@@ -1541,6 +1583,12 @@ WhereToWatch Store::whereToWatch(const std::string& eventId) const {
       // Its own channels: an entry's versions, not feeds() (that adds the
       // game's provider feeds as its backups, Build 135).
       ws.channels = ws.entryId.empty() ? std::vector<std::string>{ws.channelId} : versionsOf(ws.entryId);
+      // Build 136: a channel's picture (its first version's, measured or
+      // claimed); a feed's is already in its summary.
+      if (!ws.entryId.empty() && !ws.channels.empty()) {
+        std::string q = qualityText(ws.channels.front());
+        if (!q.empty()) ws.detail = ws.detail.empty() ? q : ws.detail + " \xc2\xb7 " + q;
+      }
       list.push_back(std::move(ws));
     }
     w.sections.push_back({s.title, std::move(list)});
@@ -1631,7 +1679,7 @@ std::vector<Feed> Store::eventFeeds(const std::string& eventId, const std::strin
           auto t = m.catalog->traits.find(id);
           return t == m.catalog->traits.end() ? 1 : t->second.quality;
         },
-        [this](const std::string& id) { return reliabilityOf(id); });
+        [this](const std::string& id) { return feedReliability(id); });
   };
   r.isEntry = [&m](const std::string& id) { return m.entryInfo.count(id) > 0; };
   r.languages = m.ev.board.languages;

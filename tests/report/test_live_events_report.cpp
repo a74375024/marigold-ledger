@@ -94,7 +94,10 @@ TEST_CASE("live events report: on the board, left out by matching, by the board,
         std::string::npos);
   CHECK(lineWith(csv, "CARROLLTON").find("\"1 of 4 started\"") != std::string::npos);
   CHECK(lineWith(csv, "Coast vs Bay").find("\"left out\",\"high school (off in My Sports)\"") != std::string::npos);
-  CHECK(lineWith(csv, "Jay Onrait").find("\"left out\",\"no tile took it") != std::string::npos);
+  // No list of what the rebuild was given (null): taken as matched, so a
+  // feed with no tile and no reason is matching's silence (Build 136 wording).
+  CHECK(lineWith(csv, "Jay Onrait").find("\"left out\",\"matched, yet on no tile and given no reason by matching\"") !=
+        std::string::npos);
   CHECK(lineWith(csv, "NO EVENT").find("\"not an event\",\"a placeholder or ended slot\"") != std::string::npos);
 }
 

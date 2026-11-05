@@ -24,6 +24,8 @@ constexpr const char* kLogFile = "playback-log.jsonl";
 constexpr const char* kOldLogFile = "playback-log.json";
 constexpr uint32_t kLogSaveMs = 10000;
 constexpr uint32_t kMemoryEveryMs = 5 * 60 * 1000;
+// A picture that played this long is remembered for the feed's rows.
+constexpr uint32_t kMeasuredAfterMs = 20000;
 // Watched this long, a channel becomes the one "Back to" goes to.
 constexpr uint32_t kStayedMs = 10000;
 
@@ -74,6 +76,8 @@ void Session::logMemory(std::string_view what) {
   std::string detail = what.empty() ? reading : std::string(what) + ": " + reading;
   log_.add(wallMs(), report::PlaybackLog::kMemoryEvent, 0, {}, {}, {}, detail);
 }
+
+void Session::logLaunch(std::string_view detail) { log_.addLaunch(wallMs(), detail); }
 
 void Session::saveLog(uint32_t now, bool all) {
   if (logFile_->broken()) journal_.rewrite();  // a write was lost: the whole log next
@@ -233,6 +237,7 @@ void Session::apply(const playback::Actions& actions) {
             problems_.erase(id);
           } else {
             lastFailed_ = a.feed;
+            measured_.reset();
             if (a.unplayable) store_.markUnplayable(id);
             std::string why = "no picture after " +
                               std::to_string(playback::startupTimeout(rec_.feeds()[a.feed].kind) / 1000) + " s";
@@ -270,6 +275,7 @@ void Session::playFeed(size_t index, uint64_t token) {
   if (index >= feeds_.size()) return;
   sawPicture_ = sawBuffering_ = sawFailed_ = sawEnded_ = false;
   factsLogged_ = noPicture_ = false;
+  measured_.reset();
   player_->attempt();
   const Feed& f = feeds_[index];
   MLOG_I("play", "feed %zu of %zu (%s)", index + 1, feeds_.size(), f.label.c_str());
@@ -493,6 +499,14 @@ bool Session::tick(uint32_t now) {
   if (sawPicture_ && !factsLogged_ && !s.facts.empty()) {
     factsLogged_ = true;
     logEvent("video", s.facts);
+    measured_ = quality::fromFacts(s.facts);
+  }
+  // Build 136: the picture is remembered for the feed's rows once it has
+  // played a while (a placeholder clip is caught before that).
+  if (measured_ && sawPicture_ && rec_.phase() == playback::Recovery::Phase::Playing && ready() &&
+      now - pictureAt_ >= kMeasuredAfterMs && rec_.feedIndex() < feeds_.size()) {
+    store_.notePicture(feeds_[rec_.feedIndex()].channelId, *measured_);
+    measured_.reset();
   }
   // Sound only (no feed showed a picture): its clock is what plays.
   if (sawPicture_ || rec_.listening()) apply(rec_.position(now, s.position, s.bufferEnd));

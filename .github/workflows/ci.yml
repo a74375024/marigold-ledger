@@ -45,7 +45,7 @@ jobs:
           -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
           -DMARIGOLD_SANITIZE="${{ matrix.sanitize }}"
       - name: Build
-        run: cmake --build build --parallel
+        run: cmake --build build --parallel "$(nproc)"
       - name: Test
         env:
           # TSan needs a fixed memory layout on recent kernels.
@@ -88,7 +88,7 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
           cmake -S . -B build-wiki -DCMAKE_BUILD_TYPE=Release -DMARIGOLD_BUILD_TESTS=OFF -DMARIGOLD_BUILD_PREVIEW=ON
-          cmake --build build-wiki --target marigold-wikidata --parallel
+          cmake --build build-wiki --target marigold-wikidata --parallel "$(nproc)"
           mkdir -p data
           if ./build-wiki/tools/wikidata/marigold-wikidata data/wiki-data.new.json; then
             mv data/wiki-data.new.json data/wiki-data.json
@@ -125,7 +125,7 @@ jobs:
         if: steps.dircache.outputs.cache-hit != 'true'
         run: |
           cmake -S . -B build-wiki -DCMAKE_BUILD_TYPE=Release -DMARIGOLD_BUILD_TESTS=OFF -DMARIGOLD_BUILD_PREVIEW=ON
-          cmake --build build-wiki --target marigold-channeldir --parallel
+          cmake --build build-wiki --target marigold-channeldir --parallel "$(nproc)"
           mkdir -p data
           last=()
           [ -f data/channel-directory.json ] && last=(data/channel-directory.json)

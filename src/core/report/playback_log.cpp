@@ -8,6 +8,7 @@
 #include "core/util/json.hpp"
 #include "core/util/redact.hpp"
 #include "core/util/rx.hpp"
+#include "core/util/strings.hpp"
 
 namespace marigold::report {
 namespace {
@@ -94,6 +95,28 @@ void PlaybackLog::addLoad(int64_t atMs, std::string_view event, std::string_view
   add(atMs, "load: " + std::string(event), 0, {}, {}, {}, detail);
 }
 
+void PlaybackLog::addLaunch(int64_t atMs, std::string_view detail) {
+  add(atMs, kLaunchEvent, 0, {}, {}, {}, detail);
+}
+
+std::string launchDetail(std::string_view build, std::string_view version, std::string_view system,
+                         std::string_view device) {
+  constexpr size_t kPart = 64;
+  std::string out;
+  auto part = [&out](std::string_view label, std::string_view value) {
+    std::string v = utf8Prefix(std::string(str::trim(value)), kPart);
+    if (v.empty()) return;
+    if (!out.empty()) out += ", ";
+    out += label;
+    out += v;
+  };
+  part("build ", build);
+  part("version ", version);
+  part("", system);
+  part("", device);
+  return out;
+}
+
 void PlaybackLog::clear() {
   entries_.clear();
   ++revision_;
@@ -167,8 +190,11 @@ std::string PlaybackLog::journalLine(const Entry& e) { return json::write(saved(
 
 void PlaybackLog::restored(std::deque<Entry> entries) {
   entries_ = std::move(entries);
-  // Swift: lastSession = saved.last?.session ?? 0.
-  lastSession_ = entries_.empty() ? 0 : entries_.back().session;
+  // Swift: lastSession = saved.last?.session ?? 0. Marigold (Build 136):
+  // the highest saved, so a log whose last line is a load, memory or launch
+  // line (session 0) doesn't number the next run's tunes from 1 again.
+  lastSession_ = 0;
+  for (const Entry& e : entries_) lastSession_ = std::max(lastSession_, e.session);
   ++revision_;
 }
 

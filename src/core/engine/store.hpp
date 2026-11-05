@@ -22,6 +22,7 @@
 #include "core/engine/events_model.hpp"
 #include "core/engine/host.hpp"
 #include "core/engine/model.hpp"
+#include "core/engine/quality.hpp"
 #include "core/engine/search.hpp"
 
 namespace marigold {
@@ -324,6 +325,9 @@ class Store {
   void closeStream(bool first = false);
   // Feed outcomes move reliable sources up.
   void recordFeed(const std::string& channelId, bool worked);
+  // Build 136: the picture a raw channel's stream showed (the playback
+  // log's "video" line), for its rows next time (pictures.json).
+  void notePicture(const std::string& channelId, const quality::Picture& picture);
   // An event group ("grp:us| nfhs ppv") whose feeds mostly failed to start
   // this week: its tiles go after the others. The count for the report
   // ("1 of 4 started"; "" when none this week).
@@ -613,6 +617,14 @@ class Store {
   void noteChannelsTiming(uint32_t ms);
   void publishListings();
   double reliabilityOf(const std::string& channelId) const;
+  // Build 136: a raw channel's picture for the rows: measured ("1080p · 60"),
+  // else its name's or group's claim ("FHD"), else "".
+  std::string qualityText(const std::string& channelId) const;
+  void savePicturesLater();
+  // Build 136: how likely a game's provider feed is to start (for bestFeeds):
+  // 0 when it failed lately, else its group's starts this week, else
+  // reliabilityOf.
+  double feedReliability(const std::string& channelId) const;
   std::vector<std::string> versionsOf(const std::string& id) const;
   // The version is opened on its server first (Emby / Jellyfin).
   bool serverOpened(const std::string& channelId) const;

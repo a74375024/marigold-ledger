@@ -135,18 +135,30 @@ bool isHidden(const MySportsPrefs& prefs, std::string_view id);
 // The college league whose settings a league follows: FCS and Divisions II
 // and III football follow "NCAAF", the small-college basketball pages
 // "NCAAM" / "NCAAW", volleyball's "NCAAWV", hockey's "NCAAMH" / "NCAAWH",
-// field hockey's "NCAAFH"; any other league itself.
+// field hockey's "NCAAFH"; Build 136: the small colleges' soccer pages
+// "NCAAMS" / "NCAAWS"; any other league itself.
 std::string collegeKey(std::string_view leagueShort);
 // A college league whose rows filter by CollegePick (every college league
 // but soccer's: FBS and FCS football, basketball, volleyball, hockey,
 // lacrosse, field hockey, softball, the small-college pages).
 bool isCollegeLeague(std::string_view leagueShort);
+// Build 136: a college soccer game: from the small colleges' soccer pages
+// (D2MSO, D3WSO...) or a Division I game in the all-soccer listing (its
+// competition "NCAAM Soccer" / "NCAAW Soccer"). Its row is Soccer, shared
+// with the pro competitions, but it follows the college rule
+// (inCollegeRow(), settings "NCAAMS" / "NCAAWS"), not the competitions.
+bool isCollegeSoccer(const SportsGame& game);
+// A game whose row filters by CollegePick: isCollegeLeague() or college soccer.
+bool isCollegeGame(const SportsGame& game);
+// The settings key a game follows: collegeKey() of its league; college
+// soccer's "NCAAMS" / "NCAAWS".
+std::string collegeKeyOf(const SportsGame& game);
 // The settings for a league (collegeKey()); the defaults when absent.
 CollegePick collegePick(const MySportsPrefs& prefs, std::string_view leagueShort);
 // A college game goes in its row when the settings take every game, or
 // Top 25 is on and a side is ranked 1-25, or a side's conference is
 // ticked, or a side is one of your teams ("LEAGUE|id" under the game's
-// league or its collegeKey()).
+// league or its collegeKeyOf()).
 bool inCollegeRow(const MySportsPrefs& prefs, const SportsGame& game);
 // A college row's subtitle: "Every Division I game", "Top 25, your
 // conferences and schools", "Your conferences and schools" (Top 25 off),

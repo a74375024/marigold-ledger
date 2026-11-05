@@ -184,3 +184,50 @@ TEST_CASE("engine: a channel's East and West versions are set one by one, side b
   settle(store, tv);
   CHECK(store.channelCoast(eastId) == marigold::catalog::Coast::both);
 }
+
+TEST_CASE("engine: a feed's rows say its measured picture, else its name's claim, never a default HD") {
+  fake::Tv tv;
+  mock::Provider provider(200);
+  tv.pool.answer(kPlaylist, provider.m3u());
+  std::string id, channelId;
+  {
+    Store store(tv.host());
+    REQUIRE(addPlaylist(store, tv).empty());
+    bool unmarked = false;
+    for (const auto& g : store.channels()->all) {
+      for (const marigold::engine::Feed& f : store.feeds(g.id)) {
+        // The label starts with the claim when there is one; otherwise with
+        // the provider (the mock list's unmarked "US: <network>" rows).
+        if (f.quality.empty()) {
+          unmarked = true;
+          CHECK(f.label.rfind("HD \xc2\xb7", 0) != 0);
+        } else {
+          CHECK(f.label.rfind(f.quality + " \xc2\xb7 ", 0) == 0);
+          CHECK((f.quality == "4K" || f.quality == "FHD" || f.quality == "HD" || f.quality == "SD"));
+        }
+        if (id.empty()) {
+          id = g.id;
+          channelId = f.channelId;
+        }
+      }
+    }
+    CHECK(unmarked);
+    REQUIRE_FALSE(id.empty());
+    store.notePicture(channelId, marigold::engine::quality::Picture{1080, 60, false});
+    std::vector<marigold::engine::Feed> feeds = store.feeds(id);
+    REQUIRE_FALSE(feeds.empty());
+    CHECK(feeds[0].channelId == channelId);
+    CHECK(feeds[0].quality == "1080p \xc2\xb7 60");
+    CHECK(feeds[0].label.rfind("1080p \xc2\xb7 60 \xc2\xb7 ", 0) == 0);
+    settle(store, tv);  // written on a worker
+  }
+  // The next launch remembers it (pictures.json: ids and numbers only).
+  std::optional<std::string> saved = tv.files.read("pictures.json");
+  REQUIRE(saved);
+  CHECK(saved->find("://") == std::string::npos);
+  Store again(tv.host());
+  settle(again, tv);
+  std::vector<marigold::engine::Feed> feeds = again.feeds(id);
+  REQUIRE_FALSE(feeds.empty());
+  CHECK(feeds[0].quality == "1080p \xc2\xb7 60");
+}

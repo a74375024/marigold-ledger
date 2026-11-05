@@ -1426,7 +1426,10 @@ Board build(const Input& in) {
       }
       if (!pickedIDs.count(comp) && !national) return "not in your soccer competitions";
     }
-    if (e.game && isCollegeLeague(e.game->leagueShort) && !inCollegeRow(picks, *e.game))
+    // Build 136: college soccer too (Soccer is its row, but the
+    // competitions rule above is the pros'; "Every other competition"
+    // took every Division II and III game).
+    if (e.game && isCollegeGame(*e.game) && !inCollegeRow(picks, *e.game))
       return "college game without a ranked team or one you follow";
     return "";
   };

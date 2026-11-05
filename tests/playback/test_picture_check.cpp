@@ -333,7 +333,8 @@ TEST_CASE("sources that keep closing: a relay that gave up never earned reconnec
   r.wait(20000);
   for (int i = 0; i < 6; ++i) {
     r.wait(6000);
-    r.take(r.r.sourceClosed(r.now, 6000, 1 << 20, i < 5));
+    // Sizes that differ (a live source; the same size is a placeholder clip).
+    r.take(r.r.sourceClosed(r.now, 6000, (1 << 20) + i * 40 * 1024, i < 5));
   }
   Actions a = r.take(r.r.ended(r.now));
   CHECK(logged(a, "source keeps closing"));
@@ -348,9 +349,83 @@ TEST_CASE("sources that keep closing: a relay that gave up never earned reconnec
   p.take(p.r.sourceClosed(p.now, 40000, 20 << 20, true));
   for (int i = 0; i < 3; ++i) {
     p.wait(6000);
-    p.take(p.r.sourceClosed(p.now, 6000, 1 << 20, i < 2));
+    p.take(p.r.sourceClosed(p.now, 6000, (1 << 20) + i * 40 * 1024, i < 2));
   }
   a = p.take(p.r.ended(p.now));
   CHECK(logged(a, "reconnect"));
   CHECK_FALSE(logged(a, "source keeps closing"));
+}
+
+TEST_CASE("sources that keep closing: connections of 5-7 s count as short") {
+  // The playback log's closing sources held each connection 4-7 s.
+  Rig r = started({xt("a"), xt("b")});
+  Actions a;
+  const Ms lasted[] = {6500, 4200, 4300};
+  for (int i = 0; i < 3; ++i) {
+    r.wait(lasted[i] - 1000);
+    a = r.take(r.r.sourceClosed(r.now, lasted[i], (700 + 100 * i) * 1024, true));
+  }
+  CHECK(recordedWhy(a) == "the source keeps closing");
+  r.untilOpen();
+  CHECK(r.feed == 1);
+}
+
+TEST_CASE("placeholder clip: the same bytes on two connections moves on at once") {
+  // A provider's slate: a clip of the same size on every connection, which
+  // plays as a picture (the static check would take 45 s).
+  TuneOptions game;
+  game.game = true;
+  Rig r = started({xt("a"), xt("b"), xt("c")}, game);
+  r.wait(5500);
+  Actions a = r.take(r.r.sourceClosed(r.now, 7100, 14133 * 1024, true));
+  CHECK_FALSE(has(a, Kind::RecordFeed));
+  r.wait(6300);
+  a = r.take(r.r.sourceClosed(r.now, 6300, 14133 * 1024, true));
+  CHECK(logDetail(a, "placeholder clip") == "2 connections of 14133 KB each in 11 s");
+  CHECK(recordedWhy(a) == "placeholder clip");  // Sources: "Last try …: placeholder clip"
+  CHECK_FALSE(logged(a, "reconnect"));
+  r.untilOpen();
+  CHECK(r.feed == 1);
+  CHECK(r.opens == 2);  // no retries, no reconnects
+}
+
+TEST_CASE("placeholder clip: a channel with one version stops with the not-working card") {
+  Rig r = started({xt("only")});
+  Actions a;
+  for (int i = 0; i < 2; ++i) {
+    r.wait(4500);
+    // Within a few KB of each other still counts.
+    a = r.take(r.r.sourceClosed(r.now, 4500, (14133 * 1024) + i * 3000, true));
+  }
+  CHECK(has(a, Kind::GiveUp));
+  CHECK(giveUpMessage(a) == "This channel stopped working. The source only sends a placeholder clip.");
+  CHECK_FALSE(has(a, Kind::NoPicture));
+  CHECK(r.opens == 1);
+  CHECK(r.r.phase() == Recovery::Phase::Failed);
+}
+
+TEST_CASE("placeholder clip: not live connections, small ones, nor long ones") {
+  // Sizes that differ with the connection's length: a live source.
+  Rig live = started({xt("a"), xt("b")});
+  live.wait(20000);  // past the window of the closing check
+  for (int i = 0; i < 4; ++i) {
+    live.wait(5000);
+    Actions a = live.take(live.r.sourceClosed(live.now, 5000, (2600 + 37 * i) * 1024, true));
+    CHECK_FALSE(has(a, Kind::RecordFeed));
+  }
+  // Small identical answers (an error page) are the other checks' business.
+  Rig small = started({xt("a"), xt("b")});
+  small.wait(20000);
+  for (int i = 0; i < 3; ++i) {
+    small.wait(2000);
+    Actions a = small.take(small.r.sourceClosed(small.now, 2000, 96 * 1024, true));
+    CHECK_FALSE(has(a, Kind::RecordFeed));
+  }
+  // Long connections of a similar size: a stream that played.
+  Rig longer = started({xt("a"), xt("b")});
+  for (int i = 0; i < 3; ++i) {
+    longer.wait(30000);
+    Actions a = longer.take(longer.r.sourceClosed(longer.now, 30000, 15 << 20, true));
+    CHECK_FALSE(has(a, Kind::RecordFeed));
+  }
 }

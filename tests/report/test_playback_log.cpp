@@ -149,3 +149,40 @@ TEST_CASE("playback log: saved and restored") {
   CHECK(bad.size() == 1);
   CHECK(bad.entries()[0].detail == "see <link>");
 }
+
+TEST_CASE("playback log: tune numbers go on after a run that ended on a session-0 line") {
+  PlaybackLog log;
+  log.add(kAt, "tune", log.newSession(), "US: ESPN FHD");
+  log.add(kAt + 5, "tune", log.newSession(), "US: ESPN FHD");
+  log.addLoad(kAt + 10, "channels", "12000 in 4.2 s");
+  log.add(kAt + 20, PlaybackLog::kMemoryEvent, 0, {}, {}, {}, "rss 300 MB");
+
+  std::string journal;
+  for (const PlaybackLog::Entry& e : log.entries()) journal += PlaybackLog::journalLine(e);
+  PlaybackLog back;
+  REQUIRE(back.restoreJournal(journal) == 4);
+  CHECK(back.lastSession() == 2);
+  CHECK(back.newSession() == 3);
+  PlaybackLog again;
+  REQUIRE(again.restore(log.toJson()));
+  CHECK(again.newSession() == 3);
+}
+
+TEST_CASE("playback log: a launch line names the build and what it runs on") {
+  using marigold::report::launchDetail;
+  CHECK(launchDetail("136", "1.4.0", "webOS 6") == "build 136, version 1.4.0, webOS 6");
+  CHECK(launchDetail("136", "1.4.0", "Android 9 (API 28)", "Maker Box 4K") ==
+        "build 136, version 1.4.0, Android 9 (API 28), Maker Box 4K");
+  CHECK(launchDetail("dev", "", " ", "") == "build dev");
+  CHECK(launchDetail("", "", "", std::string(300, 'x')).size() == 64);
+
+  PlaybackLog log;
+  log.addLaunch(kAt, launchDetail("136", "1.4.0", "webOS 6"));
+  REQUIRE(log.size() == 1);
+  CHECK(log.entries()[0].event == "launch");
+  CHECK(log.entries()[0].session == 0);
+  CHECK(log.csv(mtime::Zone::utc()) ==
+        "time,session,event,channel,feed,provider,detail\n"
+        "\"2026-10-26T18:05:09.120Z\",\"0\",\"launch\",\"\",\"\",\"\",\"build 136, version 1.4.0, webOS 6\"\n");
+  CHECK(log.lastSession() == 0);
+}
