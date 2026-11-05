@@ -128,6 +128,7 @@ bool Session::begin(const std::string& entryId, std::vector<Feed> feeds, const s
   hadPicture_ = false;
   backup_.reset();
   entry_ = entryId;
+  picked_.clear();
   feeds_ = std::move(feeds);
   session_ = log_.newSession();
   player_->beginTune();
@@ -156,7 +157,9 @@ bool Session::tune(const std::string& entryId, const std::vector<std::string>& f
 }
 
 bool Session::tuneEventVia(const std::string& eventId, const std::string& via, const std::vector<std::string>& flip) {
-  return begin(eventId, store_.eventFeeds(eventId, via), flip);
+  if (!begin(eventId, store_.eventFeeds(eventId, via), flip)) return false;
+  picked_ = via;
+  return true;
 }
 
 bool Session::restart(std::string_view why) {
@@ -186,6 +189,7 @@ void Session::stop() {
   player_->stop();
   store_.closeStream();
   entry_.clear();
+  picked_.clear();
   feeds_.clear();
 }
 

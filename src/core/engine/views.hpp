@@ -178,6 +178,13 @@ constexpr time::Seconds kPlaysBeforeStart = 30 * 60;
 bool startsSoonOnChannel(const EventTile& t, time::Seconds now);
 bool okPlays(const EventTile& t, time::Seconds now);
 
+// The player's Sources for a game (Where to Watch with ticks), Build 135:
+// the source playing the raw channel `playing`. The one picked (`picked`,
+// an entry or a raw feed, Session::pickedSource) while it plays; else the
+// first whose own channels (WatchSource::channels) hold it: the backup that
+// took over. Null when none does.
+const WatchSource* playingSource(const WhereToWatch& w, const std::string& playing, const std::string& picked);
+
 // Where the board's focus goes when a new board comes in under it (the
 // rows as shown, after any filter): the same game in the same row (by id);
 // that row at the same place when the game left it; the game in another

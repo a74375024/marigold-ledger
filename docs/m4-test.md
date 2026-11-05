@@ -1262,3 +1262,15 @@ Sports channels from other countries are now ways to watch too: the sports brand
 | Wording | Every Where to Watch on the board | Section titles are "Your channels", "In <language>" or "Event feeds from your provider"; no channel counts anywhere |
 | Old board | Update over Build 131 with Live Events used before | The saved board shows at once; Spanish sources still under "In Spanish"; the next refresh sorts by language |
 | Speed | `marigold.log` timing lines after a day of use | "boardMax" as before; the provider guide's update a little larger at most |
+
+## Build 135 — The game's Sources tick the source playing
+
+In the player, Sources for a game (Where to Watch with ticks) ticked the channel at the top whatever source you picked: a channel showing the game has the game's event feeds as its backups, and the tick went to the first row whose feeds held the one playing. Now the tick is on the source you picked while it plays; if it fails and a backup takes over, the tick moves to the backup that plays. A feed you pick starts first even when this TV couldn't play it lately (it is then left at once for the next one).
+
+| Area | How to check | Pass |
+|---|---|---|
+| Feed picked | A game on a channel (top of Sources) and on two or more event feeds; play it, open Sources, pick the second feed | The tick and "Opening…", then "Playing now", are on that feed, not on the channel |
+| Each pick | Pick another feed, then the channel, then a feed again | The tick follows each pick |
+| Backup | Pick a feed that doesn't start | After it fails, the tick is on the source that plays (usually the channel), not the dead feed |
+| Watch | From the game's card, Watch, then Sources | The tick is on what plays first |
+| Channel Sources | A channel (not a game), Red key / Sources, pick Feed 2 | As in Build 134: Feed 2 ticked, "Playing now" |

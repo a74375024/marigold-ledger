@@ -137,11 +137,17 @@ TEST_CASE("disk: a big write needs its size and the margin free") {
 TEST_CASE("disk: the keeper skips big writes on a nearly full partition, once logged") {
   uint64_t free = 120 * MB;
   int asked = 0;
-  disk::Keeper k("/data", [&](const std::string& dir) -> std::optional<uint64_t> {
-    CHECK(dir == "/data");
-    ++asked;
-    return free;
-  });
+  // webOS's limits (100 MB margin) whatever this test runs on: Apple and
+  // Android keep a 50 MB margin.
+  const disk::Limits webos{400 * MB, 100 * MB, 1 * MB, 4 * MB};
+  disk::Keeper k(
+      "/data",
+      [&](const std::string& dir) -> std::optional<uint64_t> {
+        CHECK(dir == "/data");
+        ++asked;
+        return free;
+      },
+      webos);
   CHECK(k.roomFor("/data/settings.json", 4096));  // small: not even looked at
   CHECK(asked == 0);
   CHECK(k.roomFor("/data/provider-a.json", 15 * MB));
@@ -330,7 +336,8 @@ TEST_CASE("disk: on a nearly full partition the provider guide is used from memo
   fake::Tv tv;
   answerHarbor(tv);
   Host host = tv.host();
-  host.freeSpace = [](const std::string&) -> std::optional<uint64_t> { return 60 * MB; };
+  // Inside every platform's margin (webOS 100 MB, elsewhere 50 MB).
+  host.freeSpace = [](const std::string&) -> std::optional<uint64_t> { return 30 * MB; };
   Store store(std::move(host));
   addHarbor(store);
   fake::settle(store, tv);

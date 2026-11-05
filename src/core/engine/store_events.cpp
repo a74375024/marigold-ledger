@@ -1538,6 +1538,9 @@ WhereToWatch Store::whereToWatch(const std::string& eventId) const {
       ws.spanish = it.spanish;  // the "ES" badge
       if (m.entryInfo.count(it.channelID)) ws.entryId = it.channelID;
       else ws.channelId = it.channelID;
+      // Its own channels: an entry's versions, not feeds() (that adds the
+      // game's provider feeds as its backups, Build 135).
+      ws.channels = ws.entryId.empty() ? std::vector<std::string>{ws.channelId} : versionsOf(ws.entryId);
       list.push_back(std::move(ws));
     }
     w.sections.push_back({s.title, std::move(list)});
@@ -1645,7 +1648,9 @@ std::vector<Feed> Store::eventFeeds(const std::string& eventId, const std::strin
     return feedsFor(members);
   }
   std::vector<std::string> candidates = plan.candidates;
-  lastIfUnplayable(candidates, std::nullopt);
+  // A feed this TV failed to play lately goes last, unless it's the one
+  // picked: the viewer's pick stays first (Build 135).
+  lastIfUnplayable(candidates, preferring);
   return feedsFor(candidates);
 }
 

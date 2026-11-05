@@ -255,6 +255,10 @@ struct WatchSource {
   std::string entryId;  // guide entry to tune, or
   std::string channelId;  // a raw event feed
   bool spanish = false;
+  // Build 135: the raw channels that are this source, for the player's
+  // tick: an entry's own versions (never the game's feeds backing it up),
+  // or the feed itself.
+  std::vector<std::string> channels;
 };
 
 struct WhereToWatch {

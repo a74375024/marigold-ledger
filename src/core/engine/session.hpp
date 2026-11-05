@@ -135,6 +135,9 @@ class Session {
   bool tuneCamera(std::vector<Feed> feeds);
   // The raw channel playing now ("" when none).
   std::string playingChannel() const;
+  // The source picked in a game's Where to Watch (tuneEventVia's `via`, an
+  // entry or a raw feed) while that tune lasts; "" otherwise.
+  const std::string& pickedSource() const { return picked_; }
   void stop();
 
   // Moves through the flip list: +1 next, -1 previous. Returns the entry.
@@ -239,6 +242,7 @@ class Session {
   Hooks hooks_;
   playback::Recovery rec_;
   std::string entry_, previous_, lastWatched_;
+  std::string picked_;  // pickedSource()
   uint32_t watchedAt_ = 0;  // when lastWatched_ began
   bool bouncing_ = false;   // this tune is previous()
   std::vector<std::string> flip_;

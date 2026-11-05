@@ -320,6 +320,20 @@ bool okPlays(const EventTile& t, time::Seconds now) {
   return (t.watchable && !t.upcoming && !t.finished) || startsSoonOnChannel(t, now);
 }
 
+const WatchSource* playingSource(const WhereToWatch& w, const std::string& playing, const std::string& picked) {
+  if (playing.empty()) return nullptr;
+  const WatchSource* first = nullptr;
+  for (const auto& section : w.sections) {
+    for (const WatchSource& s : section.second) {
+      if (std::find(s.channels.begin(), s.channels.end(), playing) == s.channels.end()) continue;
+      const std::string& via = s.entryId.empty() ? s.channelId : s.entryId;
+      if (!picked.empty() && via == picked) return &s;
+      if (!first) first = &s;
+    }
+  }
+  return first;
+}
+
 namespace {
 
 // boardFocus() over any rows: `n` of them, each one's id, tile count and

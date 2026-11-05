@@ -249,25 +249,19 @@ std::unique_ptr<Screen> makeWhereToWatch(App& app, const std::string& eventId) {
     p.title = w.title;
     // While the game plays (the player's Sources), the rows are checks like
     // a channel's Sources panel: the one playing is ticked and says so, and
-    // picking another switches in place.
+    // picking another switches in place. Build 135: the one picked while it
+    // plays, else the backup playing; never a channel because the game's
+    // feeds back it up.
     Playback& pb = app.playback();
     bool watching = pb.entry() == id;
-    std::string playing = watching ? pb.playingChannel() : std::string();
-    bool found = false;
-    auto isPlaying = [&](const WatchSource& s) {
-      if (found || playing.empty()) return false;
-      if (s.entryId.empty()) return s.channelId == playing;
-      for (const Feed& f : app.store().feeds(s.entryId))
-        if (f.channelId == playing) return true;
-      return false;
-    };
+    const WatchSource* playing =
+        watching ? engine::views::playingSource(w, pb.playingChannel(), pb.pickedSource()) : nullptr;
     for (const auto& [section, sources] : w.sections) {
       p.items.push_back(ui::PanelItem::header(section));
       for (const WatchSource& s : sources) {
         ui::PanelItem it{watching ? ui::PanelItem::Kind::Check : ui::PanelItem::Kind::Chevron, s.title};
         it.detail = s.detail;
-        if (isPlaying(s)) {
-          found = true;
+        if (&s == playing) {
           it.on = true;
           std::string now = pb.ready() ? "Playing now" : "Opening\xe2\x80\xa6";
           it.detail = s.detail.empty() ? now : now + " \xc2\xb7 " + s.detail;
