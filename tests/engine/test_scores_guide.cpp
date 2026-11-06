@@ -165,7 +165,8 @@ TEST_CASE("engine: the sport open on the board gets its scores first") {
   for (const auto& [league, url] : a.urls) start[league] = a.asked(url);
   a.run(store, 9 * 60);
   for (const auto& [league, url] : a.urls) {
-    INFO(league);
+    const std::string& name = league;  // Apple clang: no structured binding in INFO's lambda
+    INFO(name);
     CHECK(a.asked(url) - start[league] >= 2);
     CHECK(a.asked(url) - start[league] <= 4);
   }
@@ -186,7 +187,8 @@ TEST_CASE("engine: the sport open on the board gets its scores first") {
   for (const auto& [league, url] : a.urls) start[league] = a.asked(url);
   a.run(store, 9 * 60);
   for (const auto& [league, url] : a.urls) {
-    INFO(league);
+    const std::string& name = league;  // Apple clang: no structured binding in INFO's lambda
+    INFO(name);
     CHECK(a.asked(url) - start[league] >= 2);
     CHECK(a.asked(url) - start[league] <= 4);
   }
