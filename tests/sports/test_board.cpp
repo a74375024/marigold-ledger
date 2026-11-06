@@ -782,7 +782,9 @@ TEST_CASE("tennis flags and race podiums") {
   Board n = build(baseInput({eventOf(nfl, {feed("xt|n")})}));
   CHECK(tile(n, "sev|NFL|1").sides[0].flags.empty());
 
-  // A race weekend with scores on: the latest finished session's top 3.
+  // A race weekend with scores on (Build 145): the Grand Prix's top 3 once
+  // the race is over; before, no drivers at all (not a finished
+  // qualifying's, sprint's or practice's).
   auto part = [](const std::string& kind, Seconds start) {
     SportsGame g = game("F1", "Motorsport", "ev1|" + kind, team("gp", "Grand Prix Alpha"),
                         team("gp", "Grand Prix Alpha"), start);
@@ -792,21 +794,57 @@ TEST_CASE("tennis flags and race podiums") {
   };
   race_data::Saved race;
   race.sessions = {race_data::Session{11, "fp1", kNow - 26 * 3600, std::nullopt},
-                   race_data::Session{12, "qual", kNow - 3 * 3600, std::nullopt}};
+                   race_data::Session{12, "qual", kNow - 3 * 3600, std::nullopt},
+                   race_data::Session{13, "sprint", kNow - 6 * 3600, std::nullopt}};
   race.drivers = {race_data::RaceDriver{4, "DRA", "Driver Alpha", "Team Alpha", std::string("FF8000"), std::nullopt},
-                  race_data::RaceDriver{16, "DRB", "Driver Bravo", "Team Beta", std::nullopt, std::nullopt}};
+                  race_data::RaceDriver{16, "DRB", "Driver Bravo", "Team Beta", std::nullopt, std::nullopt},
+                  race_data::RaceDriver{81, "DRC", "Driver Charlie", "Team Beta", std::nullopt, std::nullopt}};
+  // Saved results of a practice, a sprint and qualifying (an older app
+  // fetched them): never on the tile.
+  race.results["11"] = {81, 4, 16};
   race.results["12"] = {16, 4};
-  Input weekend =
-      baseInput({part("fp1", kNow - 26 * 3600), part("qual", kNow - 3 * 3600), part("race", kNow + 20 * 3600)});
+  race.results["13"] = {4, 16, 81};
+  Input weekend = baseInput({part("fp1", kNow - 26 * 3600), part("sprint", kNow - 6 * 3600),
+                             part("qual", kNow - 3 * 3600), part("race", kNow + 20 * 3600)});
   weekend.podium = race_data::RaceData(race).podiumHook();
   Board w = build(weekend);
   REQUIRE(w.cards.count("card|F1|ev1"));
   const Tile& r = tile(w, "card|F1|ev1");
-  REQUIRE(r.podium.size() == 2);
-  CHECK(r.podium[0].code == "DRB");
-  CHECK(r.podium[1].color == std::string("FF8000"));
-  CHECK(r.podiumLabel == std::string("Qualifying"));
+  CHECK(r.podium.empty());
+  CHECK_FALSE(r.podiumLabel);
+  CHECK(r.parts.size() == 4);  // the timeline stays: FP1, Sprint, Quali, Race
   CHECK(w.watchableRaceWeekends == std::vector<std::string>{"card|F1|ev1"});
+  // Sprint finished alone (no qualifying yet): nothing either.
+  Input sprintOnly = baseInput({part("fp1", kNow - 26 * 3600), part("sprint", kNow - 6 * 3600),
+                                part("race", kNow + 20 * 3600)});
+  sprintOnly.podium = weekend.podium;
+  CHECK(tile(build(sprintOnly), "card|F1|ev1").podium.empty());
+
+  // The race over, its result in: its top 3, "Race".
+  const Seconds raceStart = kNow - 150 * 60;  // over by the clock 12 minutes ago
+  race.sessions.push_back(race_data::Session{14, "race", raceStart, std::nullopt});
+  race.results["14"] = {16, 4, 81};
+  Input done = baseInput({part("fp1", kNow - 50 * 3600), part("sprint", kNow - 30 * 3600),
+                          part("qual", kNow - 27 * 3600), part("race", raceStart)});
+  done.podium = race_data::RaceData(race).podiumHook();
+  done.statuses["F1|ev1|race"] = status(LivePhase::final, "Final");
+  done.finalSeen["F1|ev1|race"] = kNow - 600;
+  Board fin = build(done);
+  const Tile& over = tile(fin, "card|F1|ev1");
+  REQUIRE(over.podium.size() == 3);
+  CHECK(over.podium[0].code == "DRB");
+  CHECK(over.podium[1].color == std::string("FF8000"));
+  CHECK(over.podiumLabel == std::string("Race"));
+  // Still running by the scoreboard (whatever the data feed says): none.
+  done.statuses["F1|ev1|race"] = status(LivePhase::live, "Lap 40 of 71");
+  CHECK(tile(build(done), "card|F1|ev1").podium.empty());
+  // No status known (older than kHeldFor), the result in: the race is over.
+  done.statuses.erase("F1|ev1|race");
+  done.finalSeen.clear();
+  CHECK(tile(build(done), "card|F1|ev1").podium.size() == 3);
+  // Scores off: none.
+  done.settings.showsScores = false;
+  CHECK(tile(build(done), "card|F1|ev1").podium.empty());
   weekend.settings.showsScores = false;
   CHECK(tile(build(weekend), "card|F1|ev1").podium.empty());
 }
@@ -902,6 +940,33 @@ TEST_CASE("new sports on the board: rugby home first, a race's top three") {
   r.settings.showsScores = false;
   Board quiet = build(r);
   CHECK(tile(quiet, "sev|NASCAR|9|1").podium.empty());
+  r.settings.showsScores = true;
+  // Build 145: only once the race is final. Running (a finishing order in
+  // the status all the same): no drivers.
+  LiveStatus running = status(LivePhase::live, "Lap 150 of 267");
+  running.top3 = {"BEL", "GIB", "RED"};
+  r.statuses["NASCAR|9|1"] = running;
+  r.finalSeen.clear();
+  CHECK(tile(build(r), "sev|NASCAR|9|1").podium.empty());
+  // A final qualifying (or practice) session of the series: none either.
+  SportsGame qual = game("IRL", "Motorsport", "7|2", team("gp", "Harbor GP"), team("gp", "Harbor GP"), kNow - 2 * 3600);
+  qual.racing = true;
+  qual.cardKey = "irl|7|qual";
+  Input q = baseInput({eventOf(qual, {lineup("e|3")})});
+  q.statuses["IRL|7|2"] = done;
+  q.finalSeen["IRL|7|2"] = kNow - 600;
+  CHECK(tile(build(q), "sev|IRL|7|2").podium.empty());
+  // IndyCar's race final: its top 3.
+  SportsGame indy = game("IRL", "Motorsport", "7|3", team("gp", "Harbor GP"), team("gp", "Harbor GP"), kNow - 3 * 3600);
+  indy.racing = true;
+  indy.cardKey = "irl|7|race";
+  Input ir = baseInput({eventOf(indy, {lineup("e|4")})});
+  ir.statuses["IRL|7|3"] = done;
+  ir.finalSeen["IRL|7|3"] = kNow - 600;
+  Board ib = build(ir);
+  const Tile& it = tile(ib, "sev|IRL|7|3");
+  REQUIRE(it.podium.size() == 3);
+  CHECK(it.podiumLabel == std::string("Race"));
 }
 
 TEST_CASE("golf on the board: the leaderboard with scores on, the name without") {

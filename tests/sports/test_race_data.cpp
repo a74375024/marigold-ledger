@@ -1,9 +1,10 @@
 // Race weekend extras: the data feed's bodies (sessions, drivers, results,
-// the NASCAR driver list), driver lookups by a camera's name, a session's
+// the NASCAR driver list), driver lookups by a camera's name, the race's
 // top 3 for the podium line, and the request budget: what is due when, one
-// request at a time, the daily cap, the pause after a failure, results 10
-// minutes after a session (retried, given up after 6 tries), the weekly
-// NASCAR list, and the saved state. Drivers and teams are invented.
+// request at a time, the daily cap, the pause after a failure, the race's
+// result 10 minutes after it (retried, given up after 6 tries; Build 145:
+// no other session's), the weekly NASCAR list, and the saved state.
+// Drivers and teams are invented.
 #include "core/sports/race_data.hpp"
 #include "doctest.h"
 #include "sports/helpers.hpp"
@@ -156,55 +157,77 @@ TEST_CASE("what is due, and a pass of requests") {
   CHECK(race.due(other, false, kNow + 3 * 3600 + 1).sessions);
   CHECK(race.due(other, false, kNow + kDriversMaxAge + 1).drivers);
 
-  // Practice 1 and 2 are over (more than 10 minutes ago): their results.
+  // Practice 1 and 2 are over (more than 10 minutes ago), qualifying
+  // isn't: Build 145, no result asked (the tile shows the race's alone).
   plan = race.due(weekend, true, kNow);
-  CHECK(plan.results == std::vector<int>{9101, 9102});
-  CHECK(race.due(weekend, false, kNow).results.empty());  // scores off
-  REQUIRE(race.refreshIfNeeded(weekend, true, kNow));
-  sent = drive(race, kNow, feed);
-  REQUIRE(sent.size() == 2);
-  CHECK(sent[0].request.url == "https://api.openf1.org/v1/session_result?session_key=9101");
-  CHECK(sent[1].sessionKey == 9102);
-  CHECK(sent[0].waitMs == kRequestSpacingMs);
-  CHECK(race.saved().results.at("9101") == std::vector<int>{16, 4, 81});
-  CHECK(race.saved().results.at("9102") == std::vector<int>{16, 4, 81});
-  CHECK(race.saved().resultTries.at("9102") == 1);
-  CHECK(race.revision() == 2);
+  CHECK(plan.empty());
+  CHECK_FALSE(race.refreshIfNeeded(weekend, true, kNow));
+
+  // The next day, qualifying long over and the race 20 minutes over: the
+  // race's result alone, once (scores on).
+  Saved withRace = race.saved();
+  const Seconds raceStart = utc(2026, 10, 25, 13, 0);
+  withRace.sessions.push_back(Session{9104, "race", raceStart, raceStart + 100 * 60});
+  RaceData after(withRace);
+  const Seconds later = raceStart + 120 * 60;
+  plan = after.due(weekend, true, later);
+  CHECK_FALSE(plan.sessions);
+  CHECK_FALSE(plan.drivers);
+  CHECK(plan.results == std::vector<int>{9104});
+  CHECK(after.due(weekend, false, later).results.empty());  // scores off
+  CHECK(after.due(weekend, true, raceStart + 105 * 60).results.empty());  // 5 minutes over: not yet
+  REQUIRE(after.refreshIfNeeded(weekend, true, later));
+  sent = drive(after, later, feed);
+  REQUIRE(sent.size() == 1);
+  CHECK(sent[0].request.url == "https://api.openf1.org/v1/session_result?session_key=9104");
+  CHECK(after.saved().results.at("9104") == std::vector<int>{16, 4, 81});
+  CHECK(after.saved().results.size() == 1);  // no practice's, no qualifying's
+  CHECK(after.saved().resultTries.at("9104") == 1);
+  CHECK(after.due(weekend, true, later + 3600).empty());  // known: nothing more
 
   // The podium line.
-  auto top = race.top3("fp2", utc(2026, 10, 24, 14, 30));
+  auto top = after.top3("race", raceStart + 1800);
   REQUIRE(top);
   CHECK((*top)[0].name == "Driver B\xC3\xA9ta");
-  CHECK_FALSE(race.top3("fp2", utc(2026, 10, 24, 20, 0)));  // over 3 hours off
-  CHECK_FALSE(race.top3("qual", utc(2026, 10, 24, 21, 0)));  // no result yet
-  auto hook = race.podiumHook();
-  std::vector<board::PodiumDriver> podium = hook("fp2", utc(2026, 10, 24, 14, 0));
+  CHECK_FALSE(after.top3("race", raceStart + 4 * 3600));  // over 3 hours off
+  CHECK_FALSE(after.top3("qual", utc(2026, 10, 24, 21, 0)));  // never asked
+  CHECK_FALSE(after.top3("fp2", utc(2026, 10, 24, 14, 0)));
+  auto hook = after.podiumHook();
+  std::vector<board::PodiumDriver> podium = hook("race", raceStart);
   REQUIRE(podium.size() == 3);
   CHECK(podium[1].code == "DRA");
   CHECK(podium[1].color == std::string("F47600"));
   CHECK(podium[2].code.empty());
-  CHECK(hook("race", kNow).empty());
+  CHECK(hook("fp2", utc(2026, 10, 24, 14, 0)).empty());
 
   // Saved and read back.
-  auto back = savedFromJson(toJson(race.saved()));
+  auto back = savedFromJson(toJson(after.saved()));
   REQUIRE(back);
   RaceData again(*back);
-  CHECK(toJson(again.saved()) == toJson(race.saved()));
-  CHECK(again.top3("fp2", utc(2026, 10, 24, 14, 0))->size() == 3);
+  CHECK(toJson(again.saved()) == toJson(after.saved()));
+  CHECK(again.top3("race", raceStart)->size() == 3);
   CHECK(again.driver("Alpha")->number == 4);
   CHECK_FALSE(savedFromJson("[]"));
 }
 
-TEST_CASE("results: 10 minutes after the end, retried every 20 minutes, 6 tries, 2 a pass, 4 days") {
+TEST_CASE("results: the race's alone, 10 minutes after the end, retried every 20 minutes, 6 tries, 2 a pass, 4 days") {
   Saved saved;
   saved.sessionsAt = kNow;
   saved.driversAt = kNow;
   saved.meetingKey = 1;
   saved.driversMeeting = 1;
   saved.drivers = {RaceDriver{4, "DRA", "Driver Alpha", "Team Alpha", std::nullopt, std::nullopt}};
-  saved.sessions = {Session{1, "fp1", kNow - 2 * 3600, kNow - 3600}, Session{2, "fp2", kNow - 3600, kNow - 5 * 60},
-                    Session{3, "fp3", kNow - 5 * 86'400, std::nullopt}, Session{4, "qual", kNow - 4 * 3600, std::nullopt},
-                    Session{5, "sq", kNow - 6 * 3600, std::nullopt}};
+  // Races (several, for the timing) and, finished long ago too, sessions
+  // that aren't races: Build 145, never asked for.
+  saved.sessions = {Session{1, "race", kNow - 2 * 3600, kNow - 3600},
+                    Session{2, "race", kNow - 3600, kNow - 5 * 60},
+                    Session{3, "race", kNow - 5 * 86'400, std::nullopt},
+                    Session{4, "race", kNow - 4 * 3600, std::nullopt},
+                    Session{5, "race", kNow - 6 * 3600, std::nullopt},
+                    Session{6, "fp1", kNow - 30 * 3600, std::nullopt},
+                    Session{7, "qual", kNow - 3 * 3600, std::nullopt},
+                    Session{8, "sprint", kNow - 7 * 3600, std::nullopt},
+                    Session{9, "sq", kNow - 8 * 3600, std::nullopt}};
   RaceData race(saved);
   // fp2 ended 5 minutes ago, fp3 5 days ago: not due. Two a pass.
   CHECK(race.due({}, true, kNow).results == std::vector<int>{1, 4});

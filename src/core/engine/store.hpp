@@ -54,6 +54,9 @@ struct SportsTeam;
 namespace schedule {
 struct Context;
 }
+namespace scores {
+struct RoundInput;
+}
 }  // namespace sports
 }  // namespace marigold
 
@@ -383,7 +386,17 @@ class Store {
   // board's games around now catch up (events_build::scoresLine). `shown`:
   // the board is on screen without placeholders.
   ScoresLine eventsScoresLine(bool shown) const;
-  void eventsOpen(bool open);
+  // Which Live Events screen opens or closes: the board (and Search's
+  // games), or (Build 145) the in-player event guide, which keeps the
+  // scores at full pace over a playing channel while it's open
+  // (sports::scores::Holder::guide).
+  enum class EventsScreen { board, guide };
+  void eventsOpen(bool open, EventsScreen screen = EventsScreen::board);
+  // Build 145: what a Live Events screen is on, so its scores come first
+  // (sports::scores::RoundInput::focus): the row focused ("sport|Tennis";
+  // "" none) and, in the player's guide, what plays (an event id or a
+  // guide channel). Cheap: call it when either changes.
+  void eventsFocus(EventsScreen screen, const std::string& rowId, const std::string& playing = {});
   bool isEvent(const std::string& id) const;
   const EventTile* eventTile(const std::string& id) const;
   WhereToWatch whereToWatch(const std::string& eventId) const;
@@ -685,6 +698,12 @@ class Store {
   // guide being built).
   bool eventsInBackground(uint32_t ms);
   void pumpScores(uint32_t ms);
+  // The scores' focus (Build 145) from what the screens are on
+  // (eventsFocus) and your teams.
+  void scoresFocus(sports::scores::RoundInput& in) const;
+  // The game an entry plays: a game's own id, or the game a guide channel
+  // shows now ("" none).
+  std::string eventPlaying(const std::string& entryId, time::Seconds now) const;
   void saveEvents();
   void saveSchedule();
   sports::schedule::Context scheduleContext() const;
@@ -703,6 +722,7 @@ class Store {
   std::shared_ptr<OpenStream> openStream_;
   std::shared_ptr<const EventsBoard> events_ = std::make_shared<EventsBoard>();
   int eventsOpen_ = 0;
+  int guideOpen_ = 0;  // the in-player event guide (Build 145)
   std::optional<DueReminder> dueReminder_;
   uint32_t dueReminderAt_ = 0;
 };

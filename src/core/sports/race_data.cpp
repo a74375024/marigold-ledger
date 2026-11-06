@@ -414,6 +414,8 @@ RaceData::Plan RaceData::due(const std::vector<WantedSession>& wanted, bool resu
                  (newMeeting && *driversAge > kDriversNewMeetingAge);
   if (results) {
     for (const Session& session : saved_.sessions) {
+      // Build 145: the race's alone (the tile shows no other session's).
+      if (session.kind != "race") continue;
       std::string key = std::to_string(session.key);
       if (saved_.results.count(key)) continue;
       Seconds end = session.end.value_or(session.start + race_session::length(session.kind));

@@ -130,21 +130,49 @@ bool closeEnough(std::optional<Seconds> a, std::optional<Seconds> b) {
   return std::llabs(*a - *b) <= 90 * 60;
 }
 
-// How far a feed's time is from a game's start; none for a game listed by
-// its day only (start: that day's midnight) when the feed is that day.
-Seconds timeApart(const SportsGame& game, Seconds at) {
-  if (game.isDayOnly() && at >= game.start && at < game.start + 86'400) return 0;
-  return std::llabs(at - game.start);
-}
-
-// A placeholder time on a dated feed: before 7 in the morning US Eastern,
-// when no college game is played ("(2026-11-06 05:56:00)" for a game whose
-// time isn't set). Its day still counts.
 const time::Zone& eastern() {
   static const time::Zone kEastern = time::Zone::usEastern();
   return kEastern;
 }
 
+// Build 145: the day of a game whose time isn't set (SportsGame::timeTbd),
+// midnight to midnight US Eastern. ESPN dates such a game 05:00Z, midnight
+// Eastern of the day it's played, wherever that is: Saturday's college
+// football, and a final in Paris, Hong Kong or Chennai, alike.
+std::pair<Seconds, Seconds> tbdDay(const SportsGame& game) {
+  Seconds from = text::startOfDay(game.start, eastern());
+  return {from, text::addDays(from, 1, eastern())};
+}
+
+// How far a feed's time is from a game's start; none for a game listed by
+// its day only (start: that day's midnight) when the feed is that day. A
+// game with no time set yet is any time on its day: how far the feed is
+// from that day. Played abroad, its day starts before the Eastern one (a
+// match in Hong Kong at 11:00 is 22:00 the evening before in New York):
+// within the sport's window of it all the same.
+Seconds timeApart(const SportsGame& game, Seconds at) {
+  if (game.isDayOnly() && at >= game.start && at < game.start + 86'400) return 0;
+  if (game.isTimeTbd()) {
+    auto [from, to] = tbdDay(game);
+    return at < from ? from - at : at >= to ? at - to + 1 : 0;
+  }
+  return std::llabs(at - game.start);
+}
+
+// The latest a game may start: a game with no time set, at its day's end.
+Seconds latestStart(const SportsGame& game) { return game.isTimeTbd() ? tbdDay(game).second - 1 : game.start; }
+
+// A game at a clock time (within `slack`, any day): a game with no time
+// set, at any.
+bool atClock(const SportsGame& game, Seconds at, Seconds slack) {
+  if (game.isTimeTbd()) return true;
+  Seconds gap = std::llabs(game.start - at) % 86'400;
+  return std::min(gap, 86'400 - gap) <= slack;
+}
+
+// A placeholder time on a dated feed: before 7 in the morning US Eastern,
+// when no college game is played ("(2026-11-06 05:56:00)" for a game whose
+// time isn't set). Its day still counts.
 bool placeholderHour(Seconds at) { return eastern().toLocal(at).hour < 7; }
 
 bool sameEasternDay(Seconds a, Seconds b) {
@@ -994,7 +1022,11 @@ std::optional<BuildResult> build(const BuildInput& in) {
   auto nearestGame = [&](const ProviderEvent& event, const std::vector<int>& near) -> std::optional<int> {
     if (near.size() < 2 || !event.start) return std::nullopt;
     std::vector<std::pair<Seconds, int>> byGap;
-    for (int g : near) byGap.emplace_back(timeApart(games[static_cast<size_t>(g)], *event.start), g);
+    // (A game whose time isn't set is at no time in particular: its listed one.)
+    for (int g : near) {
+      const SportsGame& game = games[static_cast<size_t>(g)];
+      byGap.emplace_back(game.isTimeTbd() ? std::llabs(*event.start - game.start) : timeApart(game, *event.start), g);
+    }
     if (byGap.size() < 2) return std::nullopt;
     std::sort(byGap.begin(), byGap.end());
     const Seconds first = byGap.front().first, second = byGap[1].first;
@@ -1173,9 +1205,8 @@ std::optional<BuildResult> build(const BuildInput& in) {
       const Seconds slotAt = *event.start;
       std::vector<int> found = scheduledFor(index, event.title, [&](int g) {
         const SportsGame& game = games[static_cast<size_t>(g)];
-        Seconds onClock = std::llabs(game.start - slotAt) % 86'400;
-        return !game.completed && game.start > now - 6 * 3600 && game.start < now + 7 * 86'400 &&
-               std::min(onClock, 86'400 - onClock) <= 75 * 60 && sportFits(g);
+        return !game.completed && latestStart(game) > now - 6 * 3600 && game.start < now + 7 * 86'400 &&
+               atClock(game, slotAt, 75 * 60) && sportFits(g);
       });
       if (found.size() == 1) {
         stats.guessedAnySport += 1;
@@ -1201,11 +1232,14 @@ std::optional<BuildResult> build(const BuildInput& in) {
     std::optional<Seconds> nearest;
     // Tennis times are a court's order of play: no clock to learn from; nor
     // a college game with no time set, or one its feed gives a placeholder
-    // time.
+    // time; nor (Build 145) a game whose time the schedule hasn't set.
     const bool placeholder = placeholderHour(*event.start);
     for (int g : item.second) {
       const SportsGame& game = games[static_cast<size_t>(g)];
-      if (game.isTennis() || game.isDayOnly() || (placeholder && collegeGame[static_cast<size_t>(g)])) continue;
+      if (game.isTennis() || game.isDayOnly() || game.isTimeTbd() ||
+          (placeholder && collegeGame[static_cast<size_t>(g)])) {
+        continue;
+      }
       Seconds gap = *event.start - game.start;
       if (std::llabs(gap) <= 14 * 3600 && (!nearest || std::llabs(gap) < std::llabs(*nearest))) nearest = gap;
     }
@@ -1419,7 +1453,7 @@ std::optional<BuildResult> build(const BuildInput& in) {
       std::vector<int> open;
       for (int g : candidates) {
         const SportsGame& game = games[static_cast<size_t>(g)];
-        if (!game.completed && game.start > now - 6 * 3600 && game.start < now + 7 * 86'400) open.push_back(g);
+        if (!game.completed && latestStart(game) > now - 6 * 3600 && game.start < now + 7 * 86'400) open.push_back(g);
       }
       std::stable_sort(open.begin(), open.end(), [&](int a, int b) {
         return games[static_cast<size_t>(a)].start < games[static_cast<size_t>(b)].start;
@@ -1443,8 +1477,14 @@ std::optional<BuildResult> build(const BuildInput& in) {
       };
       if (event.start) {
         auto at = std::find_if(open.begin(), open.end(), [&](int g) {
-          return clockGap(games[static_cast<size_t>(g)].start, *event.start) <= 75 * 60;
+          const SportsGame& game = games[static_cast<size_t>(g)];
+          return !game.isTimeTbd() && clockGap(game.start, *event.start) <= 75 * 60;
         });
+        // Build 145: none at that clock time: a game whose time isn't set
+        // may be at it.
+        if (at == open.end()) {
+          at = std::find_if(open.begin(), open.end(), [&](int g) { return games[static_cast<size_t>(g)].isTimeTbd(); });
+        }
         if (at != open.end()) {
           chosen = *at;
         } else {
@@ -1462,7 +1502,7 @@ std::optional<BuildResult> build(const BuildInput& in) {
         if (event.guessed && !event.family.empty()) freshByFamily[familyKey] += 1;
       } else if (event.guessed && !event.family.empty() &&
                  std::any_of(candidates.begin(), candidates.end(), [&](int g) {
-                   return games[static_cast<size_t>(g)].start < startOfToday;
+                   return latestStart(games[static_cast<size_t>(g)]) < startOfToday;
                  })) {
         staleByFamily[familyKey] += 1;
       }
@@ -1508,7 +1548,7 @@ std::optional<BuildResult> build(const BuildInput& in) {
     const SportsGame& game = games[i];
     // Build 143: a match over several days (or a golf tournament) while any
     // of its days is near.
-    Seconds through = game.start;
+    Seconds through = latestStart(game);
     if (game.end && (game.isCricket() || game.isGolf()) && *game.end > game.start) {
       through = game.isCricket() ? *game.end + 8 * 3600 : *game.end;
     }
@@ -1567,7 +1607,11 @@ std::optional<BuildResult> build(const BuildInput& in) {
         if (game.isCricket() && game.end && *game.end - game.start >= 20 * 3600) {
           return cricketInPlay(game, listing.start, listing.end);
         }
-        return listing.start < game.start + 2 * 3600 && listing.end > game.start - 15 * 60;
+        if (listing.start < game.start + 2 * 3600 && listing.end > game.start - 15 * 60) return true;
+        // Build 145: a game whose time isn't set: on its day.
+        if (!game.isTimeTbd()) return false;
+        auto [from, to] = tbdDay(game);
+        return listing.start < to && listing.end > from;
       };
       auto filtered = [&](std::vector<int> list, const std::function<bool(int)>& keep) {
         std::vector<int> out;
@@ -1687,6 +1731,8 @@ std::optional<BuildResult> build(const BuildInput& in) {
         const SportsGame& game = games[g];
         bool startsDuring = game.start >= listing->start && game.start < listing->end;
         bool liveDuring = onNow && game.start < listing->start;
+        // Build 145: a match whose time isn't set: a listing on its day too.
+        if (game.isTimeTbd() && timeApart(game, listing->start) == 0) startsDuring = true;
         if (!startsDuring && !liveDuring) continue;
         SportsEvent value = entry(g);
         if (containsSource(value.sources, listing->entryID)) continue;
@@ -1948,9 +1994,8 @@ std::optional<BuildResult> build(const BuildInput& in) {
         Seconds gap = 0;
         if (guessed) {
           // Only the clock was given: the matchup's game still to come at that time.
-          Seconds apart = std::llabs(game.start - *event.start) % 86'400;
-          if (game.completed || game.start <= now - 6 * 3600 || game.start >= now + 7 * 86'400 ||
-              std::min(apart, 86'400 - apart) > 75 * 60)
+          if (game.completed || latestStart(game) <= now - 6 * 3600 || game.start >= now + 7 * 86'400 ||
+              !atClock(game, *event.start, 75 * 60))
             continue;
           gap = game.start - now;
         } else {
@@ -2367,6 +2412,46 @@ const std::vector<std::pair<const char*, const char*>>& tennisCityNames() {
   return kNames;
 }
 
+// Build 145: the one match among `matches` whose two players a
+// "Surname-Surname" in the title names ("ATP: Shelton-Paul, kvartfinale,
+// Paris", a Danish service's way). A hyphenated surname or first name
+// ("Auger-Aliassime", "Melichar-Martinez", "Jan-Lennard", "P-H") stays
+// whole: its halves aren't the surnames of a match's two sides.
+std::optional<int> hyphenedPair(std::string_view title, const std::vector<int>& matches,
+                                const std::vector<SportsGame>& games) {
+  auto letter = [&](size_t i) {
+    auto c = static_cast<unsigned char>(title[i]);
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c >= 0x80;
+  };
+  // " ben shelton " ends with " shelton ".
+  auto endsWith = [](const std::string& name, const std::string& word) {
+    return name.size() >= word.size() && name.compare(name.size() - word.size(), word.size(), word) == 0;
+  };
+  std::optional<int> found;
+  for (size_t at = title.find('-'); at != std::string_view::npos; at = title.find('-', at + 1)) {
+    if (at == 0 || at + 1 >= title.size() || !letter(at - 1) || !letter(at + 1)) continue;
+    size_t from = at, to = at + 1;
+    while (from > 0 && letter(from - 1)) --from;
+    while (to < title.size() && letter(to)) ++to;
+    // One of three or more joined ("Smith-Jones-Brown"): not a pair.
+    if ((from > 0 && title[from - 1] == '-') || (to < title.size() && title[to] == '-')) continue;
+    if (at - from < 2 || to - at - 1 < 2) continue;
+    const std::string left = normalized(title.substr(from, at - from));
+    const std::string right = normalized(title.substr(at + 1, to - at - 1));
+    for (int g : matches) {
+      const SportsGame& game = games[static_cast<size_t>(g)];
+      if (has(game.home.name, "/") || has(game.away.name, "/")) continue;  // doubles
+      const std::string home = normalized(game.home.name), away = normalized(game.away.name);
+      if (!((endsWith(home, left) && endsWith(away, right)) || (endsWith(home, right) && endsWith(away, left)))) {
+        continue;
+      }
+      if (found && *found != g) return std::nullopt;  // two: can't tell
+      found = g;
+    }
+  }
+  return found;
+}
+
 // A round or stage on its own ("Semifinals", "R16", "QF"): what a feed puts
 // where the second player would go ("Vienna vs Semifinals").
 bool isTennisRound(const std::string& normalizedText) {
@@ -2434,7 +2519,9 @@ std::vector<int> tennisTargets(std::string_view titleIn, std::string_view family
     const SportsGame& g = games[static_cast<size_t>(index)];
     if (!g.isTennis() || !g.tournament) continue;
     if (tour && g.leagueShort != *tour) continue;
-    if (g.start < from || g.start > to) continue;
+    // Build 145: a match whose time isn't set, on the feed's day too (or,
+    // without a time, today).
+    if ((g.start < from || g.start > to) && !(g.isTimeTbd() && timeApart(g, start ? *start : now) == 0)) continue;
     Candidate& c = byTournament[g.leagueShort + "|" + *g.tournament];
     if (c.name.empty()) {
       c.name = *g.tournament;
@@ -2481,6 +2568,11 @@ std::vector<int> tennisTargets(std::string_view titleIn, std::string_view family
   }
   if (!pick && tour && !level && byTournament.size() == 1) pick = &byTournament.begin()->second;
   if (!pick) return {};
+  // Build 145: a feed naming two players' surnames joined ("Shelton-Paul"):
+  // their match only.
+  if (pick->today.size() > 1 && given.find('-') != std::string::npos) {
+    if (auto match = hyphenedPair(given, pick->today, games)) return {*match};
+  }
   std::vector<int> out = pick->today;
   std::sort(out.begin(), out.end(), [&](int a, int b) {
     return games[static_cast<size_t>(a)].start < games[static_cast<size_t>(b)].start;

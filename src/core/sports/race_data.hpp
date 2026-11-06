@@ -1,6 +1,7 @@
 // Race weekend extras (RaceData.swift): F1 driver photos, numbers and team
-// colours for the cameras panel, and each finished session's top 3 for the
-// race tile (scores on), from a free F1 data feed; NASCAR driver photos and
+// colours for the cameras panel, and the race's top 3 for the race tile
+// (scores on; Build 145: the Grand Prix alone, not a sprint, qualifying or
+// practice), from a free F1 data feed; NASCAR driver photos and
 // car numbers for the in-car feeds, from the series' driver list.
 //
 // Kept to a handful of requests a race weekend (the budget is part of the
@@ -8,7 +9,7 @@
 // - the weekend's session list: once, then again only when a session the
 //   schedule has isn't in it (at most every 3 hours) or after a day;
 // - the drivers: once a weekend (or after 4 days);
-// - a session's result: once, 10 minutes after it ends (retried every 20
+// - the race's result: once, 10 minutes after it ends (retried every 20
 //   minutes, given up after 6 tries, and only within 4 days), 2 a pass;
 // - only while Live Events or the cameras panel shows an F1 weekend, one
 //   request at a time (700 ms apart), at most kDailyCap a day; a failure

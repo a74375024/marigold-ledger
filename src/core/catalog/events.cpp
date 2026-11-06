@@ -471,11 +471,26 @@ ParsedEvent parseEventDetailed(std::string_view input, Seconds now,
       removeRange(title, *f);
     }
   }
-  // (2026 10 21 19:30:55), (2026-10-22 15:00:25), "start:2026 10 17
-  // 20:25:00 stop:..." or "@ 2026-11-02 18:15:00"
+  // "start:2026-10-28 00:00:00 stop:2026-10-28 07:13:20" (Build 145): UTC,
+  // whatever the group. Every such slot fits it and not Eastern: "Brewers x
+  // Rays start:2026-10-28 00:00:00" is the 8 PM ET World Series game, the
+  // UFC prelims "start:2026-10-31 21:55:00" come before ESPN's first bout at
+  // 21:00 UTC (as Eastern they'd start after the main card), and a darts
+  // floor event "start:2026-11-05 13:00:00" is 1 PM in the UK.
+  if (!start && str::icontains(title, "start:")) {
+    if (auto f = groups("start:\\s*(\\d{4})[ -](\\d{2})[ -](\\d{2})[ T](\\d{2}):(\\d{2})(?::\\d{2})?"
+                        "(?:\\s*stop:\\s*[\\d :-]+)?",
+                        title)) {
+      auto y = num(f->p[0]), mo = num(f->p[1]), d = num(f->p[2]), h = num(f->p[3]),
+           mi = num(f->p[4]);
+      if (y && *y < 2090 && mo && d && h && mi) start = date(*y, *mo, *d, *h, *mi, Zone::utc());
+      removeRange(title, *f);
+    }
+  }
+  // (2026 10 21 19:30:55), (2026-10-22 15:00:25) or "@ 2026-11-02 18:15:00"
   if (!start) {
     if (auto f =
-            groups("(?:\\(|start:\\s*|@\\s*)(\\d{4})[ -](\\d{2})[ -](\\d{2})[ T](\\d{2}):(\\d{2})(?::"
+            groups("(?:\\(|@\\s*)(\\d{4})[ -](\\d{2})[ -](\\d{2})[ T](\\d{2}):(\\d{2})(?::"
                    "\\d{2})?\\)?(?:\\s*stop:\\s*[\\d :-]+)?",
                    title)) {
       auto y = num(f->p[0]), mo = num(f->p[1]), d = num(f->p[2]), h = num(f->p[3]),

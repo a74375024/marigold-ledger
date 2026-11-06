@@ -233,7 +233,7 @@ Actions Recovery::bufferingStarted(Ms now) {
   // Before the first picture this is just the start; startup has its own timer.
   if (!playing() || !sawFirstFrame_) return out;
   bool settling = firstFrameAt_ && now - *firstFrameAt_ < kStartupBufferingMs;
-  beginTrouble(now, "stall", kStallTimeoutMs, out, settling);
+  beginTrouble(now, "stall", kStallTimeoutMs, settling);
   return out;
 }
 
@@ -252,7 +252,7 @@ Actions Recovery::playerError(Ms now, std::string_view message) {
   std::string text = safeMessage(message.empty() ? std::string_view("playback error") : message);
   log(out, "player error", text);
   if (sawFirstFrame_) {
-    beginTrouble(now, "error: " + text, kErrorGraceMs, out);
+    beginTrouble(now, "error: " + text, kErrorGraceMs);
   } else if (cannotPlayHere(text)) {
     // No grace and no retries: this version won't play on this TV.
     startupFailed(now, "this TV can't play this version (" + text + ")", out, true);
@@ -475,13 +475,15 @@ Actions Recovery::tick(Ms now) {
     }
     // livestall.h, frozen picture: no new video. Counted from the last new
     // frame, so a stall recovers kStallTimeoutMs after the picture stopped.
-    if (now - movedAt_ >= kStallNoteDelayMs) beginTrouble(movedAt_, "stall", kStallTimeoutMs, out);
+    if (now - movedAt_ >= kStallNoteDelayMs) beginTrouble(movedAt_, "stall", kStallTimeoutMs);
   }
   if (trouble_) {
     if (!trouble_->noted && now >= trouble_->noteAt) {
       trouble_->noted = true;
-      // Start-up buffering that lasts this long is a stall after all.
-      if (trouble_->quiet) log(out, "stall", "at the start");
+      // Build 145: a stall is logged once it lasts long enough to show
+      // "Buffering…" (start-up buffering then too, as a stall after all);
+      // the engines' sub-second blips filled the log and showed nothing.
+      if (trouble_->cause == "stall") log(out, "stall", trouble_->quiet ? "at the start" : "");
       setNote("Buffering…", out);
     }
     if (now >= trouble_->deadline) {
@@ -551,13 +553,12 @@ void Recovery::playerStarted(Ms now, Actions& out) {
 // reported, the stream "ending"). Engines often get over these by
 // themselves, so wait `grace`; only if it has not started playing again by
 // then does recovery step in.
-void Recovery::beginTrouble(Ms since, std::string cause, Ms grace, Actions& out, bool quiet) {
+void Recovery::beginTrouble(Ms since, std::string cause, Ms grace, bool quiet) {
   if (trouble_) {
     // Already waiting: keep the earlier deadline, note the latest cause.
     trouble_->cause = std::move(cause);
     return;
   }
-  if (cause == "stall" && !quiet) log(out, "stall");
   Trouble t;
   t.quiet = quiet;
   t.since = since;
@@ -571,7 +572,8 @@ void Recovery::beginTrouble(Ms since, std::string cause, Ms grace, Actions& out,
 void Recovery::recoveredByItself(Ms now, Actions& out) {
   if (!trouble_) return;
   std::string detail = oneDecimal(static_cast<double>(now - trouble_->since) / 1000.0) + "s after " + trouble_->cause;
-  bool quiet = trouble_->quiet && !trouble_->noted;
+  // A stall nobody saw (gone before "Buffering…") isn't logged either.
+  bool quiet = (trouble_->quiet || trouble_->cause == "stall") && !trouble_->noted;
   trouble_.reset();
   setNote({}, out);
   if (!quiet) log(out, "recovered by itself", detail);

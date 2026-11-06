@@ -1,7 +1,8 @@
 #!/bin/bash
 # Builds the webOS binary, checks its ABI and packages the .ipk.
 #   MARIGOLD_SDK=/opt/arm-webos-linux-gnueabi_sdk-buildroot bash tools/build-webos.sh
-# MARIGOLD_BUILD_NUMBER (CI run number) becomes the patch version: 0.1.<n>.
+# The version is project()'s major.minor in CMakeLists.txt; MARIGOLD_BUILD_NUMBER
+# (CI run number) becomes the patch: 1.0.<n>.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 : "${MARIGOLD_SDK:?set MARIGOLD_SDK (bash tools/fetch-sdk.sh prints it)}"
@@ -26,7 +27,8 @@ cp LICENSE "$stage/licenses/LICENSE-GPL-3.0.txt"
 cp CREDITS.md "$stage/licenses/CREDITS.md"
 cp app/fonts/InterDisplay-OFL.txt "$stage/licenses/"
 cp vendor/qrcodegen/LICENSE "$stage/licenses/qrcodegen-MIT.txt"
-version="0.1.${MARIGOLD_BUILD_NUMBER:-0}"
+major_minor=$(sed -nE 's/^project\(marigold VERSION ([0-9]+\.[0-9]+)\.[0-9]+.*/\1/p' CMakeLists.txt)
+version="${major_minor:?no version in CMakeLists.txt}.${MARIGOLD_BUILD_NUMBER:-0}"
 python3 - "$stage/appinfo.json" "$version" <<'PY'
 import json, sys
 a = json.load(open("app/appinfo.json"))

@@ -19,6 +19,10 @@
 // board is in): SPORTS waits for its first sports and opens on them, and a
 // new board keeps an open SPORTS open on the same sports (it used to close
 // it, which left the viewer in the first sport's games).
+//
+// Build 145: while it's open the scores keep full pace over the playing
+// channel (the store's EventsScreen::guide), the sport shown and the game
+// playing first (Store::eventsFocus); closed, the background's pace.
 #include <algorithm>
 
 #include "app/app.hpp"
@@ -61,7 +65,7 @@ std::string upper(std::string s) {
 class EventGuide : public Screen {
  public:
   EventGuide(App& app, bool sports) : Screen(app), nav_(rail::Item::Events) {
-    app_.store().eventsOpen(true);
+    app_.store().eventsOpen(true, Store::EventsScreen::guide);
     const auto& s = app_.store().settings();
     nav_.setLists(rail::playerLists(s.allChannelsTab, s.scheduleEnabled));
     visible(app_.store().events());
@@ -69,14 +73,16 @@ class EventGuide : public Screen {
     // From the lists: SPORTS first, or as soon as the loading board has
     // sports.
     if (sports) openSports();
+    reportFocus();
   }
-  ~EventGuide() override { app_.store().eventsOpen(false); }
+  ~EventGuide() override { app_.store().eventsOpen(false, Store::EventsScreen::guide); }
 
   bool opaque() const override { return false; }
 
   const char* name() const override { return "event guide"; }
 
   bool tick(uint32_t ms) override {
+    reportFocus();
     if (app_.store().events()->version != board_->version) {
       // A new board: the same sport and game found again by their ids.
       std::string keep = focusedTile() ? focusedTile()->id : std::string();
@@ -186,6 +192,17 @@ class EventGuide : public Screen {
     std::string rowId, id;
     float scroll = 0;
   };
+
+  // The sport shown and what plays, to the store when they change (its
+  // scores first).
+  void reportFocus() {
+    std::string row = rowIdAt(rowIndex_);
+    const std::string& playing = app_.playback().entry();
+    if (row == reportedRow_ && playing == reportedPlaying_) return;
+    reportedRow_ = row;
+    reportedPlaying_ = playing;
+    app_.store().eventsFocus(Store::EventsScreen::guide, reportedRow_, reportedPlaying_);
+  }
 
   const EventTile* focusedTile() const {
     return focus_ >= 0 && focus_ < static_cast<int>(items_.size()) ? items_[static_cast<size_t>(focus_)].tile : nullptr;
@@ -481,6 +498,7 @@ class EventGuide : public Screen {
   Place place_;
   left_rail::Slide push_, lists_;  // SPORTS widening the card, the lists' slide
   int pointer_ = 0;  // what the pointer is on (a hit id) while it shows
+  std::string reportedRow_, reportedPlaying_;  // reportFocus()
 };
 
 }  // namespace

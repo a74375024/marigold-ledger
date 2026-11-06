@@ -300,7 +300,7 @@ class Recovery {
                  std::string_view reason, Actions& out, Ms settle = 0);
   void startNow(Ms now, size_t feed, bool reconnect, Actions& out);
   void playerStarted(Ms now, Actions& out);
-  void beginTrouble(Ms since, std::string cause, Ms grace, Actions& out, bool quiet = false);
+  void beginTrouble(Ms since, std::string cause, Ms grace, bool quiet = false);
   void recoveredByItself(Ms now, Actions& out);
   void scheduleStartupFailure(Ms now, std::string reason);
   // `retries`: at most this many retries (-1: the feed kind's); `picture`:

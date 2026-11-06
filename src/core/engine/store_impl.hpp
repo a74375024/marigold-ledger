@@ -109,6 +109,10 @@ struct EventsState {
   uint32_t scoresAt = 0;     // next request or round at
   std::optional<sports::scores::LiveScores::Request> scoresPending;
   int statusesRevision = -1;
+  // Build 145: what the screens are on (Store::eventsFocus): the board's
+  // row, and the in-player guide's row and what plays under it.
+  std::string boardRow, guideRow, guidePlaying;
+  bool focusMoved = false;  // during a round: another soon after it
 
   sports::board::Board board;
   std::set<std::string> watchableListed;  // the board's (events_build::BoardMade)

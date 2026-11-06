@@ -50,16 +50,31 @@ TEST_CASE("month day 24-hour: UK time, or the provider's zone") {
   CHECK(parse("Team A v Team B Oct 27 20:45").start == utc(2026, 10, 27, 20, 45));
 }
 
-TEST_CASE("bracketed and start: timestamps are Eastern (or the provider's zone)") {
+TEST_CASE("bracketed timestamps are Eastern (or the provider's zone); start: ones are UTC") {
   auto paren = parse("Team A vs Team B (2026 10 21 19:30:55)");
   CHECK(paren.title == "Team A vs Team B");
   CHECK(paren.start == utc(2026, 10, 21, 23, 30));
   CHECK(parse("Team A vs Team B (2026-10-22 15:00:25)").start == utc(2026, 10, 22, 19, 0));
   CHECK(parse("Team A vs Team B (2026 10 21 19:30:55)", std::string("UK")).start ==
         utc(2026, 10, 21, 18, 30));
+  // Build 145: "start:... stop:..." is UTC, whatever the group's country.
   auto range = parse("start:2026 10 17 20:25:00 stop:2026 10 17 23:00:00 | Team A vs Team B");
   CHECK(range.title == "Team A vs Team B");
-  CHECK(range.start == utc(2026, 10, 18, 0, 25));
+  CHECK(range.start == utc(2026, 10, 17, 20, 25));
+  CHECK(parse("Brewers x Rays start:2026-10-28 00:00:00 stop:2026-10-28 07:13:20", std::string("US")).start ==
+        utc(2026, 10, 28, 0, 0));  // the 8 PM ET game
+  // A UK group in summer time: UTC still, not London's clock.
+  CHECK(parse("UFC event: 1 name: Main Card start:2026-07-11 21:55:00 stop:2026-07-12 02:00:00", std::string("UK"))
+            .start == utc(2026, 7, 11, 21, 55));
+  CHECK(parse("Team A vs Team B START:2026-10-31 23:50:00").start == utc(2026, 10, 31, 23, 50));
+  CHECK_FALSE(parse("Slot start:2099-01-01 00:00:00 stop:2099-01-01 01:00:00").start);
+  // The other forms keep their readings: Eastern, the "6:00PM ET" beside it
+  // says so; Sydney for an Australian group; the service's country for "@".
+  CHECK(parse("Harbor vs. Valley Nov 06 6:00PM ET (2026-11-06 18:00:00)").start == utc(2026, 11, 6, 23, 0));
+  CHECK(parse("Harbor v Valley  League Matchweek 10 (2026-11-07 06:30:50)", std::string("AU")).start ==
+        utc(2026, 11, 6, 19, 30));
+  CHECK(parse("Harbor-Valley @ 2026-11-06 20:40:00 :Tv2Play DK  02").start == utc(2026, 11, 6, 19, 40));
+  CHECK(parse("Team A vs Team B @ 2026-11-02 18:15:00").start == utc(2026, 11, 2, 23, 15));
   // Placeholder years are not dates.
   CHECK_FALSE(parse("Slot (2099 01 01 00:00:00)").start);
 }

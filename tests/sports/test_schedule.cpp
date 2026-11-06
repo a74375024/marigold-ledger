@@ -304,6 +304,61 @@ TEST_CASE("tennis: matches between players and pairs, round and place tag") {
   CHECK(doubles.note == "Harbor Open");
 }
 
+TEST_CASE("Build 145: a game or match ESPN has no time for (timeValid false) is marked, its date kept") {
+  // Texas at LSU as ESPN lists it on 6 November: 05:00Z, midnight Eastern
+  // of the 14th, time to be set.
+  const char* body = R"JSON({"events":[
+    {"id":"401856885","date":"2026-11-14T05:00Z","competitions":[{"timeValid":false,"dateValid":true,
+     "competitors":[{"homeAway":"home","team":{"id":"99","displayName":"LSU Tigers"}},
+                    {"homeAway":"away","team":{"id":"251","displayName":"Texas Longhorns"}}],
+     "status":{"type":{"name":"STATUS_SCHEDULED"}}}]},
+    {"id":"401856886","date":"2026-11-14T17:00Z","competitions":[{"timeValid":true,
+     "competitors":[{"homeAway":"home","team":{"id":"1","displayName":"Home U"}},
+                    {"homeAway":"away","team":{"id":"2","displayName":"Away U"}}]}]},
+    {"id":"401856887","date":"2026-11-14T20:00Z","competitions":[{
+     "competitors":[{"homeAway":"home","team":{"id":"3","displayName":"Third U"}},
+                    {"homeAway":"away","team":{"id":"4","displayName":"Fourth U"}}]}]},
+    {"id":"401856888","date":"2026-11-14T20:00Z","competitions":[{"timeValid":"false",
+     "competitors":[{"homeAway":"home","team":{"id":"5","displayName":"Fifth U"}},
+                    {"homeAway":"away","team":{"id":"6","displayName":"Sixth U"}}]}]}]})JSON";
+  auto doc = parseScoreboard(body, *leagueByShort("NCAAF"));
+  REQUIRE(doc);
+  REQUIRE(doc->games.size() == 4);
+  const SportsGame& tbd = doc->games[0];
+  CHECK(tbd.isTimeTbd());
+  CHECK(tbd.start == utc(2026, 11, 14, 5, 0));  // the listed date, as is
+  CHECK_FALSE(tbd.isDayOnly());
+  CHECK_FALSE(doc->games[1].isTimeTbd());  // a time set
+  CHECK_FALSE(doc->games[1].timeTbd);
+  CHECK_FALSE(doc->games[2].isTimeTbd());  // no "timeValid" at all
+  CHECK_FALSE(doc->games[3].isTimeTbd());  // not a boolean: not read as one
+  // Saved and read back.
+  auto back = gameFromJson(toJson(tbd));
+  REQUIRE(back);
+  CHECK(back->isTimeTbd());
+  CHECK(*back == tbd);
+  SportsGame set = tbd;
+  set.timeTbd.reset();
+  CHECK(set != tbd);
+  CHECK_FALSE(gameFromJson(toJson(set))->timeTbd);
+
+  // The Paris semifinal before its time was set, and one with it.
+  const char* tennis = R"JSON({"events":[{"id":"13-2026","shortName":"Paris Masters","groupings":[{"competitions":[
+    {"id":"186504","date":"2026-11-07T05:00Z","timeValid":false,"round":{"displayName":"Semifinal"},
+     "competitors":[{"homeAway":"home","athlete":{"id":"1","displayName":"Ben Shelton"}},
+                    {"homeAway":"away","athlete":{"id":"2","displayName":"Luca Van Assche"}}]},
+    {"id":"186505","date":"2026-11-07T16:00Z","timeValid":true,"round":{"displayName":"Semifinal"},
+     "competitors":[{"homeAway":"home","athlete":{"id":"3","displayName":"Carlos Alcaraz"}},
+                    {"homeAway":"away","athlete":{"id":"4","displayName":"Casper Ruud"}}]}]}]}]})JSON";
+  auto matches = parseTennisMatches(tennis, *leagueByShort("ATP"));
+  REQUIRE(matches);
+  REQUIRE(matches->size() == 2);
+  CHECK((*matches)[0].isTimeTbd());
+  CHECK((*matches)[0].start == utc(2026, 11, 7, 5, 0));
+  CHECK((*matches)[0].customTitle == "Shelton vs Assche");  // the tile as before
+  CHECK_FALSE((*matches)[1].isTimeTbd());
+}
+
 TEST_CASE("keeping: games after the cutoff, race weekends together") {
   SportsGame early = sportsdata::game("NFL", "NFL", "1", sportsdata::team("1", "A"), sportsdata::team("2", "B"),
                                       utc(2026, 10, 20, 0, 0));

@@ -85,8 +85,8 @@ struct Profile {
   int innings = 9;        // Innings: a regulation game
 
   Tile tile = Tile::Teams;
-  bool podium = false;  // a finished session's top three on the tile (F1, from its race data)
-  bool podiumFromScores = false;  // the same from the scoreboard's finishing order (NASCAR, IndyCar)
+  bool podium = false;  // the finished race's top three on the tile (F1, from its race data; Build 145: the race alone)
+  bool podiumFromScores = false;  // the same from the scoreboard's finishing order, once final (NASCAR, IndyCar)
   std::string symbol = "other";  // icon on title-only tiles: an app/icons name
   std::string chip;  // short league chip ("NCAAF"); empty = the league upper-cased
 };

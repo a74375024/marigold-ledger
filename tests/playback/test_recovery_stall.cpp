@@ -49,9 +49,14 @@ TEST_CASE("a stall shows Buffering after 3 s and reconnects the same feed after 
   t.wait(5000);
   Ms stalled = t.now;
   Actions s = t.take(t.r.bufferingStarted(t.now));
-  CHECK(logged(s, "stall"));
-  CHECK(notes(t.until(stalled + kStallNoteDelayMs - 10)).empty());
-  CHECK(notes(t.until(stalled + kStallNoteDelayMs)) == std::vector<std::string>{"Buffering…"});
+  // Build 145: logged once it shows "Buffering…", not at the first blip.
+  CHECK_FALSE(logged(s, "stall"));
+  Actions before = t.until(stalled + kStallNoteDelayMs - 10);
+  CHECK(notes(before).empty());
+  CHECK_FALSE(logged(before, "stall"));
+  Actions shown = t.until(stalled + kStallNoteDelayMs);
+  CHECK(notes(shown) == std::vector<std::string>{"Buffering…"});
+  CHECK(logged(shown, "stall"));
   CHECK_FALSE(logged(t.until(stalled + kStallTimeoutMs - 10), "reconnect"));
   Actions r = t.until(stalled + kStallTimeoutMs);
   CHECK(notes(r) == std::vector<std::string>{"Reconnecting…"});
@@ -345,5 +350,31 @@ TEST_CASE("buffering right after the first picture is the start, not a stall") {
   v.hand();
   v.take(v.r.firstFrame(v.now));
   v.wait(5000);
-  CHECK(logged(v.take(v.r.bufferingStarted(v.now)), "stall"));
+  CHECK_FALSE(logged(v.take(v.r.bufferingStarted(v.now)), "stall"));
+  CHECK(logged(v.wait(4000), "stall"));
+}
+
+TEST_CASE("a blip shorter than Buffering… logs nothing; a longer stall logs both lines") {
+  // Build 145: the Apple TV export had 1,780 such pairs (0.0-0.5 s), 89% of
+  // the playback log.
+  Rig t;
+  t.tune({xt("a")});
+  t.untilOpen();
+  t.hand();
+  t.take(t.r.firstFrame(t.now));
+  t.wait(5000);
+  for (int i = 0; i < 20; ++i) {
+    Actions b = t.take(t.r.bufferingStarted(t.now));
+    t.wait(500);
+    Actions e = t.take(t.r.bufferingEnded(t.now));
+    CHECK_FALSE(logged(b, "stall"));
+    CHECK_FALSE(logged(e, "stall"));
+    CHECK_FALSE(logged(e, "recovered by itself"));
+    t.wait(3000);
+  }
+  t.take(t.r.bufferingStarted(t.now));
+  CHECK(logged(t.wait(kStallNoteDelayMs + 100), "stall"));
+  Actions e = t.take(t.r.bufferingEnded(t.now));
+  CHECK(logged(e, "recovered by itself"));
+  CHECK_FALSE(logged(t.wait(20000), "reconnect"));
 }

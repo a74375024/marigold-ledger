@@ -6,6 +6,8 @@ plugins {
 
 // CI passes the run number; local builds are build 1.
 def buildNumber = (System.getenv('MARIGOLD_BUILD_NUMBER') ?: '1').toInteger()
+// The version is project()'s major.minor in CMakeLists.txt, the build its patch.
+def majorMinor = (file('../../CMakeLists.txt').text =~ /project\(marigold VERSION (\d+\.\d+)\.\d+/)[0][1]
 
 android {
   namespace 'org.marigold.app'
@@ -17,7 +19,7 @@ android {
     minSdk 24          // Fire OS 6 and newer, Android TV 7+
     targetSdk 35
     versionCode buildNumber
-    versionName "0.1.${buildNumber}"
+    versionName "${majorMinor}.${buildNumber}"
     ndk {
       // Fire TV sticks run 32-bit apps even on 64-bit chips; newer boxes take
       // both. -PmarigoldAbis=x86_64 builds for an emulator.

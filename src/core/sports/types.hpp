@@ -89,6 +89,11 @@ struct SportsGame {
   // Listed by its day only, no time set yet (a small college's game): the
   // start is that day's midnight where the school is.
   std::optional<bool> dayOnly;
+  // Build 145: no time set yet on the schedule (ESPN's "timeValid": false):
+  // `start` is a placeholder, midnight US Eastern of the day it's played
+  // (05:00Z, for games in the US and abroad alike). Matching takes it as
+  // any time that day; the tile shows it as listed.
+  std::optional<bool> timeTbd;
   // Build 127: a game of the all-soccer listing: the soccer pick it belongs
   // to ("EPL", "USA", "MEX", "S:SoccerAll"), read from the listing's own
   // competition (my_sports.hpp soccerCompetition()).
@@ -99,6 +104,7 @@ struct SportsGame {
   bool isGolf() const { return golf.value_or(false); }
   bool isCricket() const { return league == "Cricket"; }
   bool isDayOnly() const { return dayOnly.value_or(false); }
+  bool isTimeTbd() const { return timeTbd.value_or(false); }
   std::string title() const;
   bool operator==(const SportsGame& o) const;
   bool operator!=(const SportsGame& o) const { return !(*this == o); }

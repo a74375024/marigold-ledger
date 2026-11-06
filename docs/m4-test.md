@@ -1537,3 +1537,70 @@ Days are counted on the TV's own calendar and time zone. Never a link, login or 
 | Renewal | Renew with the provider, wait for the next channel list read (or Reload) | The new date by itself |
 | Heads-up | Open the guide with an account in its last week | "! <name> ends in 5 days" in the status line for ~8 s; not again that day, even after a relaunch; again the next day |
 | Priority | Open the guide while "Updating your channel list…" | The update line stays; the heads-up follows after it |
+
+## Build 145 — Marigold 1.0: the release, and a quieter playback log
+
+- **1.0.** The version is 1.0.0 (the app's Help & info and the playback log's launch line; on LG and Android the package is 1.0.<build>). This version's first green build on master publishes release v1.0.0 with the four apps as direct downloads (docs/releases.md); later builds of 1.0 don't.
+- **Playback log.** A stall is logged once it lasts long enough to show "Buffering…" (3 s), and its "recovered by itself" with it. The players' sub-second buffering blips, which nobody sees, are no longer logged: on the Nov 6 Apple TV export they were 1,780 pairs, 89% of the log, so it reached back only ~18 hours. Reconnects, failed starts and the rest are logged as before.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Version | Help & info | Version 1.0.0 (build N) |
+| Release | The release page of v1.0.0 | marigold-lg-webos.ipk, marigold-android.apk, marigold-apple-tv.ipa, marigold-mac.dmg; each link downloads the file directly |
+| Latest link | `.../releases/latest/download/marigold-android.apk` | The 1.0 APK |
+| Short blips | Watch an hour of a stream that hiccups | No "stall" / "recovered by itself" lines for blips |
+| Real stall | Pull the network for 5 s, then restore | "stall" then "recovered by itself 5.0s after stall"; "Buffering…" showed |
+| Long stall | Pull it for 15 s | "stall", then "reconnect … not recovered after 10s" |
+
+## Build 145 — Live Events: games with no time yet, "start:" slot times, "Surname-Surname" tennis slots
+
+The Nov 6 export had provider slots left out or on the wrong tile for three reasons. Only which slots and listings go to which tile changes: every tile's time, row, day, order and title stay as they were.
+
+- **Games ESPN hasn't timed.** ESPN lists a game whose time isn't set with "timeValid": false and a placeholder date of 05:00 UTC, midnight Eastern of the day it's played (15 of Nov 14's top college football games, Texas at LSU on ABC among them; the Paris semifinals; the Hong Kong and Chennai finals: the same 05:00 for games abroad, on their local date). The app took the placeholder for the start, so a slot at the real time ("Shelton, Ben vs Van Assche, Luca @ Nov 7 15:00 PM - ATP Paris") was hidden as "a replay: its game is on another day". Now such a game (team sports, college and tennis matches) counts as any time on its day: a dated slot on that Eastern day is it; one outside it is measured from the day (a match in Hong Kong at 11:00 is 10 PM the evening before in New York, within tennis's 8 hours), so the next day's slot is still another day's. A day-less slot ("Missouri at Georgia 3:30PM") finds it on its day when no timed game of the two is at that clock; its placeholder never teaches a group a clock offset, never makes it "before today", and guide listings and tennis coverage on its day count. The tile still shows the game as listed. Once ESPN sets the time, everything is as before.
+- **"start:… stop:…" times are UTC.** "Brewers x Rays start:2026-10-28 00:00:00" is the 8 PM ET World Series game; "UFC FIGHT NIGHT … PRELIMS start:2026-10-31 21:55:00" comes before ESPN's first bout at 21:00 UTC (read as Eastern, the prelims started after the main card); "Players Championship 34 | Leicester … start:2026-11-05 13:00:00" is the 1 PM UK floor event. All such slots in both exports (MLB, NBA, WNBA, UFC, darts, Triller) fit UTC and not Eastern. They were read as Eastern (US groups) or UK time (UK groups, an hour off in summer); now UTC in every group. "(2026-11-06 18:00:00)" beside "6:00PM ET" stays Eastern, Stan's "(…)" stays Sydney, "@ 2026-11-06 14:00:00 :Tv2Play DK" stays the service's country.
+- **"Shelton-Paul".** "ATP: Shelton-Paul, kvartfinale, Paris @ 2026-11-06 14:00:00 :Tv2Play DK  01" went to every Paris match that day (first on the list: the doubles quarterfinal "Cash / Nakashima vs Harrison / Skupski"). A hyphenated pair is now the one match whose two players have those surnames, either order; anything else stays whole: "Auger-Aliassime", "Melichar-Martinez", "Jan-Lennard", "Herbert P-H", three names joined, "Center Court-Paris", two players of different matches. Tennis is still one tile per match.
+
+On the Nov 6 export (both builds side by side): the Shelton-Paul slot leaves the 7 other Paris tiles (Fritz vs Alcaraz, Ruud vs Borges, Assche vs Hijikata and four doubles) and stays on Shelton vs Paul; no other slot or tile changed (4,067 tiles, same titles, rows, status and order). The ten "start:" slots now read 4 to 5 hours earlier in the US groups (all long over on Nov 6). With Nov 14's untimed college games (slots renamed, the clock set to the evening before), "Texas Longhorns vs. LSU Tigers (2026-11-14 19:30:00)" and "Florida Gators vs. Kentucky Wildcats (… 12:00:00)" go to their games instead of "a replay"; the same slot a day later, and a timed game's, stay replays.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Untimed game | A slot dated on the day of a game ESPN shows with no time (a college game a week out, a tennis semifinal or final) | On the game's tile; the tile's time and place as before |
+| Next day | The same two teams' slot dated the day after | Hidden: "a replay: its game is on another day" |
+| Abroad | A Far East final with no time, its slot the evening before in the US | On the match's tile |
+| Timed later | After ESPN sets the time | A slot more than 3 h (tennis 8 h) from it is a replay again |
+| Clock offset | A group whose slots are mostly untimed games | No "+Nh" offset in the developer log for it |
+| start: | "Brewers x Rays start:2026-10-28 00:00:00" in a US group (Live Events report, "starts") | 5:00 PM Pacific Oct 27 (was 9:00 PM) |
+| start: UK | A UK group's "start:" slot in summer time | The UTC time, not an hour earlier |
+| Others | ESPN+ "(… 18:00:00)" with "6:00PM ET", Stan "(…)", Tv2Play "@ …" | Unchanged |
+| Shelton-Paul | "ATP: Shelton-Paul, kvartfinale, Paris" | Only on the Shelton vs Paul tile |
+| Whole names | "Auger-Aliassime", "Melichar-Martinez" slots, "Center Court-Paris-ATP" | As before: the day's matches |
+| Speed (LG) | Open Live Events with the full list (developer log) | "rebuildMax" no higher than Build 144's |
+
+## Build 145 — Live Events: the scores you're looking at come first; race podiums after the race
+
+**Scores in the player's Live Events column.** With a channel playing, Live Events picked in the player (the games rail and its SPORTS column) now keeps the live scores at full pace while it is open, as the board does with nothing playing: until now it counted as watching and got the background's pace (a look at most every 10 minutes, half the day's requests). Closing it goes back to the background's pace at once, so the network stays free for the picture. Watching with nothing open over the picture is unchanged. Still never a score in the player's banner.
+
+**What you're looking at goes first.** Every league with a game on used to share one pace: on a busy afternoon (17 leagues on at once) a league was asked every 8 or 9 minutes. Now the leagues of the sport the focus is on (on the board, the row; in the player, the sport shown, Tennis is ATP and WTA), of the game playing under the column, and of your teams' games on now are asked at their own pace (once a minute while live with scores shown), and the other leagues share the pace among themselves. After 120 requests in an hour the others slow down first (each at least every half hour), and what you're looking at only as much as the hour needs (tennis: every 80 s). The day's caps don't change (500 requests a day, 250 of them in the background). Rows of many sports (Live now, Your teams, More events) aren't one sport looked at. The rows and tiles, their times and their sources don't change.
+
+| Afternoon, 17 leagues, tennis live | Tennis asked every (median) | Requests 1st / 2nd / 3rd hour | Day's 500 used up |
+|---|---|---|---|
+| Board open, Tennis selected — before | 511 s | 116 / 123 / 113 | after 4.4 h |
+| Board open, Tennis selected — now | 62 s, then 82 s past the hourly pace | 177 / 131 / 128 | after 3.5 h |
+| Player's column open over a channel — before | 617 s (background) | 96 / 96 / 58 | never (stops at 250) |
+| Player's column open over a channel — now | 62 s, then 82 s | 177 / 131 / 128 | after 3.5 h |
+| Playing, nothing open — before and now | 617 s (background) | 96 / 96 / 58 | never (stops at 250) |
+
+**Race podiums after the race.** A Formula 1 weekend's tile shows the top three of the Grand Prix itself, once the race is over; before that, no drivers (not after practice, qualifying or the sprint). The results of practice, qualifying and the sprint aren't fetched any more (the drivers list for the onboard cameras still is). NASCAR and IndyCar show their top three once the race is final, never while it runs, and never a qualifying's. Everything else on these tiles (title, track, the FP1…Race timeline, status, "Onboard cameras", the sources) is as before.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Player column, full pace | Play a game, Left to open Live Events in the player, leave it open on a live game's sport for 3 minutes | Its clock / score on the rail moves about once a minute |
+| Closed | Close the column, keep watching a few minutes, open it again | Picture unaffected; on opening the scores catch up at once, then once a minute again |
+| Board, sport first | Busy afternoon, Live Events, focus on the Tennis row for 3 minutes | Tennis matches' sets update about every minute; other rows still update |
+| Many sports | Focus on Live now | Every league at the shared pace, as before |
+| Your teams | A followed team's game live, Live Events open on another row | That game's score keeps a one-minute pace |
+| Day's cap | Leave the board open all afternoon | "Live scores paused until tomorrow" no sooner than 500 requests; the background stops at 250 |
+| F1 before the race | F1 weekend tile after practice, sprint qualifying, sprint or qualifying | No drivers on the tile; title, track, FP1…Race, status, "Onboard cameras", sources as before |
+| F1 after the race | Grand Prix finished (results come about 10 minutes after the end) | The race's top three, "Race" under them |
+| NASCAR / IndyCar | Race live, then final | No drivers while live; the top three once final |
+| Banner | Watch any game | No score in the player's banner |

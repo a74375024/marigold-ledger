@@ -652,7 +652,9 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
   }
 
   // A race weekend: each session's own fill (they're days apart), the time
-  // under the current one only, and the latest finished session's top 3.
+  // under the current one only, and (Build 145) the Grand Prix's top 3 once
+  // the race itself is over: never a sprint's, qualifying's or practice's,
+  // and no drivers before.
   if (parts && !parts->empty() && parts->front().game && parts->front().game->isRacing()) {
     place.parts.clear();
     for (const SportsEvent& part : *parts) {
@@ -680,12 +682,14 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
     const SportsGame& first = *parts->front().game;
     if (showsScores && profile(first.league, first.leagueShort).podium && in.podium) {
       for (auto it = parts->rbegin(); it != parts->rend(); ++it) {
-        if (!it->start || *it->start >= now || !it->game || !it->game->cardKey) continue;
-        std::string kind = cardKind(*it);
-        std::vector<PodiumDriver> top = in.podium(kind, *it->start);
+        if (!it->start || *it->start >= now || !it->game || !it->game->cardKey || cardKind(*it) != "race") continue;
+        // Still on (or not begun, by the scoreboard): no result yet.
+        auto phase = phaseOf(*it, in.statuses);
+        if (isLivePhase(phase) || phase == LivePhase::pre || phase == LivePhase::postponed) continue;
+        std::vector<PodiumDriver> top = in.podium("race", *it->start);
         if (!top.empty()) {
           place.podium = std::move(top);
-          place.podiumLabel = race_session::name(kind);
+          place.podiumLabel = race_session::name("race");
           break;
         }
       }
@@ -702,7 +706,10 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
     if (s.phase == LivePhase::final) place.endedAt = endedAt;
     if (isLivePhase(s.phase)) place.liveProgress = clockProgress(s, game.league, game.leagueShort);
     if (showsScores && game.isGolf()) place.leaders = s.leaders;
-    if (showsScores && game.isRacing() && s.top3.size() == 3 && profile(game.league, game.leagueShort).podiumFromScores) {
+    // Build 145: the race's top 3 once it's final (not a practice's or
+    // qualifying's, not while it runs).
+    if (showsScores && game.isRacing() && s.phase == LivePhase::final && s.top3.size() == 3 &&
+        cardKind(event) == "race" && profile(game.league, game.leagueShort).podiumFromScores) {
       for (const std::string& code : s.top3) place.podium.push_back({code, std::nullopt});
       place.podiumLabel = race_session::name("race");
     }

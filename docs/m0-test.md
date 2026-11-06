@@ -1,6 +1,6 @@
 # M0: installing and checking the test build
 
-Each CI run on `master` uploads `org.marigold.app_0.1.<run>_arm.ipk` as the
+Each CI run on `master` uploads `org.marigold.app_1.0.<run>_arm.ipk` as the
 artifact `marigold-build-<run>` (kept 30 days). Releases are cut by hand as
 "Build NN".
 
@@ -11,7 +11,7 @@ Same two routes as Legacy:
 - **Developer Mode** (any webOS TV, no root):
   1. Install "Developer Mode" from the LG Content Store, sign in with an LG developer account, turn on Dev Mode and Key Server, and reboot.
   2. On a computer: `ares-setup-device` (the TV's IP, port 9922, user `prisoner`), then `ares-novacom --device tv --getkey` with the passphrase the app shows.
-  3. `ares-install --device tv org.marigold.app_0.1.<run>_arm.ipk`.
+  3. `ares-install --device tv org.marigold.app_1.0.<run>_arm.ipk`.
   4. Dev Mode expires after 50 hours unless "Extend" is pressed in the Developer Mode app.
 - **Homebrew Channel** (rooted TV): install the `.ipk` from its file installer.
   - The repository URL route needs this repo to be public.

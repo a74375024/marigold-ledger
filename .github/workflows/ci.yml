@@ -391,3 +391,41 @@ jobs:
       - name: Start it on this Mac
         timeout-minutes: 5
         run: bash tools/mac-smoke.sh build-mac/src/platform/macos/Marigold.app
+
+  # A new version (project() in CMakeLists.txt) built on master: its release,
+  # the four apps as direct downloads under the same names every time (so
+  # .../releases/latest/download/<name> always gets the newest). Later builds
+  # of the same version make none.
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: [webos, android, tvos, mac]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Release, if this version has none
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          version=$(sed -nE 's/^project\(marigold VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' CMakeLists.txt)
+          tag="v${version:?no version in CMakeLists.txt}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "$tag is released already"
+            exit 0
+          fi
+          for name in build android tvos mac; do
+            gh run download "$GITHUB_RUN_ID" -n "marigold-$name-$RUN" -D "dl/$name"
+          done
+          mkdir out
+          cp dl/build/*.ipk out/marigold-lg-webos.ipk
+          cp dl/android/*.apk out/marigold-android.apk
+          cp dl/tvos/*.ipa out/marigold-apple-tv.ipa
+          cp dl/mac/*.dmg out/marigold-mac.dmg
+          ls -l out
+          gh release create "$tag" out/* --target "$GITHUB_SHA" --title "Marigold ${version%.0}" --notes ""

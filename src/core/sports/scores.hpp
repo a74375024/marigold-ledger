@@ -7,7 +7,12 @@
 //
 // Kept gentle on the source (the request budget is part of the design):
 // - at full pace only while the board or the event guide is on screen
-//   (not while watching, unless the event guide is open);
+//   (not while watching, unless the event guide is open: Build 145, the
+//   in-player guide holds Holder::guide while it's open);
+// - Build 145: what you're looking at goes first: the leagues of the sport
+//   open on the board or in the in-player guide, of the game playing and
+//   of your teams' games (RoundInput::focus) keep their own pace, and only
+//   the others share it; past the hourly pace the others slow down first;
 // - Build 141: from launch, in the background (Live Events closed, or a
 //   channel playing over it), a round at most every kBackgroundEvery and
 //   only while under kBackgroundDailyCap of the day's requests, so the board
@@ -139,6 +144,16 @@ struct RoundInput {
   std::set<std::string> watchableListed;
   // A channel is playing (Live Events may sit under the player).
   bool watching = false;
+  // Build 145: what you're looking at (on screen only: the background's
+  // rounds leave it out). These leagues (the sport open on the board or in
+  // the in-player guide, the game playing) and the leagues of your teams'
+  // games in their window ("LEAGUE|teamID", My Sports) are polled at their
+  // own pace, not spread with the others, and don't count in the others'
+  // spread; past kHourlyPace the others slow down first.
+  struct Focus {
+    std::set<std::string> leagues;
+    std::vector<std::string> teams;
+  } focus;
   bool showsScores = kShowsScoresByDefault;
   Seconds now = 0;
   // The viewer's zone, for the daily request count.
@@ -221,12 +236,19 @@ class LiveScores {
  private:
   bool takeRequest(Seconds now);
   void endLeague(Seconds now);
+  // When a league is next due: its own pace while it's looked at (focus_).
+  Seconds dueOf(const std::string& league) const;
+  bool onScreen(bool watching) const;
 
   std::set<Holder> holders_;
   Statuses statuses_;
   std::map<std::string, Seconds> finalSeen_;
   int revision_ = 0;
   std::map<std::string, Seconds> nextDue_;
+  // Build 145: when each league is due at its own (unspread) pace, and the
+  // leagues looked at in the current round.
+  std::map<std::string, Seconds> focusDue_;
+  std::set<std::string> focus_;
   std::map<std::string, int> failures_;
   std::map<std::string, size_t> lastBytes_;
   std::map<std::string, int> missing_;
@@ -243,7 +265,10 @@ class LiveScores {
     std::vector<std::string> order;  // window keys, A-Z
     size_t nextIndex = 0;
     bool showsScores = true;
+    // The spread of the leagues not looked at, and how many of each.
     double spread = 1;
+    size_t focused = 0, others = 0;
+    bool watching = false;
     Seconds soonest = kIdleWait;
     int sent = 0;
     bool over = false;

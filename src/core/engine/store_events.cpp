@@ -117,6 +117,8 @@ constexpr uint32_t kBoardRefreshMs = 30000;  // clock texts ("in 25 m")
 // Boards asked for by scores, a rebuild or the clock: not sooner than this
 // after the last began (your own changes don't wait).
 constexpr uint32_t kBoardGapMs = 1500;
+// Build 145: a round this soon after the focus moves (Store::eventsFocus).
+constexpr uint32_t kFocusRoundMs = 2000;
 constexpr uint32_t kTimingLogMs = 60000;
 // The day's schedule in the background: this long after the channels are
 // in, then looked at again this often (a new day while the app runs).
@@ -370,21 +372,91 @@ sports::schedule::Context Store::scheduleContext() const {
 
 // ------------------------------------------------------------ opening
 
-void Store::eventsOpen(bool open) {
+void Store::eventsOpen(bool open, EventsScreen screen) {
   EventsState& e = impl_->ev;
+  namespace sc = sports::scores;
+  auto stopped = [&] {
+    e.scores.cancelRound();
+    e.scoresRound = false;
+    e.scoresPending.reset();
+  };
   int before = eventsOpen_;
   eventsOpen_ = std::max(0, eventsOpen_ + (open ? 1 : -1));
   if (!open && eventsOpen_ == 0) impl_->eventsUsedAt = time::now();
   if (open && before == 0) {
-    e.scores.start(sports::scores::Holder::board, settings_.scheduleEnabled);
+    e.scores.start(sc::Holder::board, settings_.scheduleEnabled);
     eventsArrive(0);
   } else if (!open && eventsOpen_ == 0) {
     e.holding = e.freshNote = e.wholeFirst = false;
-    if (e.scores.stop(sports::scores::Holder::board)) {
-      e.scores.cancelRound();
-      e.scoresRound = false;
-      e.scoresPending.reset();
+    if (e.scores.stop(sc::Holder::board)) stopped();
+  }
+  if (screen != EventsScreen::guide) return;
+  // Build 145: the in-player event guide holds the scores at full pace
+  // while it's open, a channel playing or not; closed, a channel playing
+  // goes back to the background's pace (the network kept for the stream).
+  int guideBefore = guideOpen_;
+  guideOpen_ = std::max(0, guideOpen_ + (open ? 1 : -1));
+  if (open && guideBefore == 0) {
+    if (e.scores.start(sc::Holder::guide, settings_.scheduleEnabled)) {
+      // It looks now instead of after the background's wait (each league
+      // still at its own pace); a round under way is followed by one.
+      ++e.lookSerial;
+      if (!e.scoresRound) e.scoresAt = host_.ms();
     }
+  } else if (!open && guideOpen_ == 0) {
+    e.guideRow.clear();
+    e.guidePlaying.clear();
+    if (e.scores.stop(sc::Holder::guide)) stopped();
+  }
+}
+
+void Store::eventsFocus(EventsScreen screen, const std::string& rowId, const std::string& playing) {
+  EventsState& e = impl_->ev;
+  bool guide = screen == EventsScreen::guide;
+  std::string& row = guide ? e.guideRow : e.boardRow;
+  if (row == rowId && (!guide || e.guidePlaying == playing)) return;
+  row = rowId;
+  if (guide) e.guidePlaying = playing;
+  // Looked at on screen now: the next round soon, not after the wait
+  // worked out without it (a moment's grace while the focus moves on; a
+  // league just asked still waits its own pace). Never the background's.
+  bool onScreen = guideOpen_ > 0 || (eventsOpen_ > 0 && !(host_.playingFull && host_.playingFull()));
+  if (!onScreen || !e.scores.looking()) return;
+  if (e.scoresRound) e.focusMoved = true;  // after the round under way
+  else e.scoresAt = std::min(e.scoresAt, host_.ms() + kFocusRoundMs);
+}
+
+std::string Store::eventPlaying(const std::string& entryId, time::Seconds now) const {
+  const sports::board::Board& board = impl_->ev.board;
+  if (entryId.empty() || board.events.count(entryId)) return entryId;
+  // A guide channel (or its other coast's version) showing a game now.
+  std::vector<std::string> ids = {entryId};
+  if (const GuideChannel* g = channels_ ? channels_->find(entryId) : nullptr; g && !g->partner.empty())
+    ids.push_back(g->partner);
+  return sports::banner::onChannel(board, ids, now);
+}
+
+void Store::scoresFocus(sports::scores::RoundInput& in) const {
+  const EventsState& e = impl_->ev;
+  in.focus.teams = e.mySports.teams;
+  // The row on screen: the in-player guide's while it's open, else the
+  // board's. A sport's row ("sport|Tennis": ATP and WTA); Live now, Your
+  // teams and the rest are many leagues at once, not one sport looked at.
+  const std::string& rowId = guideOpen_ > 0 ? e.guideRow : e.boardRow;
+  if (str::startsWith(rowId, "sport|")) {
+    for (const sports::board::Row& row : e.board.rows) {
+      if (row.id != rowId) continue;
+      for (const std::string& id : row.eventIDs) {
+        auto ev = e.board.events.find(id);
+        if (ev != e.board.events.end() && ev->second.game) in.focus.leagues.insert(ev->second.game->leagueShort);
+      }
+      break;
+    }
+  }
+  // The game playing under the guide.
+  if (guideOpen_ > 0 && !e.guidePlaying.empty()) {
+    auto ev = e.board.events.find(eventPlaying(e.guidePlaying, in.now));
+    if (ev != e.board.events.end() && ev->second.game) in.focus.leagues.insert(ev->second.game->leagueShort);
   }
 }
 
@@ -612,6 +684,7 @@ void Store::pumpScores(uint32_t ms) {
     in.now = now;
     in.zone = host_.zone();
     in.watchableListed = e.watchableListed;  // worked out with the board
+    scoresFocus(in);  // Build 145: what you're looking at goes first
     e.scores.beginRound(in);
     e.scoresRound = true;
     e.roundFor = {e.lookSerial, e.scheduleRevision};
@@ -630,6 +703,9 @@ void Store::pumpScores(uint32_t ms) {
       // them (the leagues just asked wait for their next look).
       if (e.roundFor != EventsState::Look{e.lookSerial, e.scheduleRevision})
         e.scoresAt = ms + static_cast<uint32_t>(sports::scores::kRequestSpacingMs);
+      // Build 145: the focus moved during it.
+      if (e.focusMoved) e.scoresAt = std::min(e.scoresAt, ms + kFocusRoundMs);
+      e.focusMoved = false;
       if (e.scores.revision() != e.statusesRevision) e.boardStale = true;
       return;
     }
@@ -1743,14 +1819,7 @@ WhereToWatch Store::whereToWatch(const std::string& eventId) const {
 
 std::optional<GameBanner> Store::gameBanner(const std::string& entryId, time::Seconds now) const {
   const Impl& m = *impl_;
-  std::string id = entryId;
-  if (!m.ev.board.events.count(id)) {
-    // A guide channel (or its other coast's version) showing a game now.
-    std::vector<std::string> ids = {entryId};
-    if (const GuideChannel* g = channels_ ? channels_->find(entryId) : nullptr; g && !g->partner.empty())
-      ids.push_back(g->partner);
-    id = sports::banner::onChannel(m.ev.board, ids, now);
-  }
+  std::string id = eventPlaying(entryId, now);
   // A studio show isn't a game: the usual banner.
   auto ev = m.ev.board.events.find(id);
   const EventTile* t = id.empty() ? nullptr : eventTile(id);

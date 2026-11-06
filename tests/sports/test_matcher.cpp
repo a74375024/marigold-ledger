@@ -1161,3 +1161,208 @@ TEST_CASE("a feed the rosters read as two teams joins their scheduled game at ab
   CHECK(ids(replay->sources) == std::vector<std::string>{"xt|3", "xt|4"});
   CHECK_FALSE(find(out->events, "x4"));
 }
+
+// MARK: Build 145: games with no time set; "Surname-Surname" tennis slots
+
+namespace {
+
+// Saturday 14 November, 10 AM Eastern; ESPN lists Valley Tech at Harbor
+// State with no time: 05:00Z, midnight Eastern of the day.
+struct TbdDay {
+  Seconds now = utc(2026, 11, 14, 15, 0);
+  SportsGame tbd = [] {
+    SportsGame g = game("NCAAF", "College Football", "401", team("10", "Harbor State Gulls", std::string("HSG")),
+                        team("11", "Valley Tech Hawks", std::string("VTH")), utc(2026, 11, 14, 5, 0), {"ABC"});
+    g.timeTbd = true;
+    return g;
+  }();
+  BuildInput input(std::vector<SportsGame> games) const {
+    BuildInput in;
+    in.games = std::move(games);
+    in.now = now;
+    in.zone = time::Zone::usEastern();
+    return in;
+  }
+};
+
+}  // namespace
+
+TEST_CASE("Build 145: a game with no time set takes a feed anywhere on its day; the tile keeps its listed time") {
+  TbdDay d;
+  BuildInput in = d.input({d.tbd});
+  in.now = utc(2026, 11, 13, 22, 0);  // the evening before
+  in.events = {
+      // 7:30 PM Eastern that day: the game, 14.5 hours after the placeholder.
+      provider("on", "Valley Tech Hawks vs Harbor State Gulls", "College Football", utc(2026, 11, 15, 0, 30), {"xt|1"}),
+      // The next day: another day's slot, a replay.
+      provider("next", "Valley Tech Hawks vs Harbor State Gulls", "College Football", utc(2026, 11, 16, 0, 30),
+               {"xt|2"}),
+      // The day before, at 6 PM: another day too.
+      provider("before", "Valley Tech Hawks vs Harbor State Gulls", "College Football", utc(2026, 11, 13, 23, 0),
+               {"xt|3"}),
+  };
+  auto out = build(in);
+  REQUIRE(out);
+  const SportsEvent* tile = findGame(out->events, "NCAAF|401");
+  REQUIRE(tile);
+  CHECK(ids(tile->sources) == std::vector<std::string>{"xt|1"});
+  CHECK(tile->start == d.tbd.start);  // the time shown stays as listed
+  REQUIRE(tile->game);
+  CHECK(tile->game->isTimeTbd());
+  CHECK(out->stats.replays == 2);
+  CHECK(out->stats.hidden["xt|2"] == "a replay: its game is on another day");
+  CHECK(out->stats.hidden["xt|3"] == "a replay: its game is on another day");
+
+  // Without the mark the placeholder is a time: the 7:30 PM feed is a replay
+  // (as it was before Build 145).
+  SportsGame unmarked = d.tbd;
+  unmarked.timeTbd.reset();
+  in.games = {unmarked};
+  out = build(in);
+  REQUIRE(out);
+  CHECK(findGame(out->events, "NCAAF|401")->sources.empty());
+  CHECK(out->stats.hidden["xt|1"] == "a replay: its game is on another day");
+
+  // Once ESPN sets the time (2 PM), the usual 3 hours around it.
+  SportsGame set = d.tbd;
+  set.timeTbd.reset();
+  set.start = utc(2026, 11, 14, 19, 0);
+  in.games = {set};
+  out = build(in);
+  REQUIRE(out);
+  CHECK(findGame(out->events, "NCAAF|401")->sources.empty());  // 5.5 hours after it
+  in.events[0].start = utc(2026, 11, 14, 20, 30);
+  out = build(in);
+  CHECK(ids(findGame(out->events, "NCAAF|401")->sources) == std::vector<std::string>{"xt|1"});
+}
+
+TEST_CASE("Build 145: a game with no time set: day-less slots that day, and no clock offset learned from it") {
+  TbdDay d;
+  // "3:30PM" with no day, read as today's: the game whose time isn't set,
+  // though its placeholder is ten hours gone.
+  BuildInput in = d.input({d.tbd});
+  in.events = {provider("g", "Valley Tech Hawks at Harbor State Gulls 3:30PM", "College Football",
+                        utc(2026, 11, 14, 20, 30), {"xt|1"}, "slots", false, true)};
+  auto out = build(in);
+  REQUIRE(out);
+  CHECK(ids(findGame(out->events, "NCAAF|401")->sources) == std::vector<std::string>{"xt|1"});
+  CHECK(out->stats.guessedMatched == 1);
+  // Not the next day's: no game then.
+  in.now = utc(2026, 11, 15, 15, 0);
+  in.events[0].start = utc(2026, 11, 15, 20, 30);
+  out = build(in);
+  REQUIRE(out);
+  CHECK(findGame(out->events, "NCAAF|401")->sources.empty());
+
+  // Three games with no time and their feeds at noon Eastern: no "+7h"
+  // clock for the group (the placeholders aren't times).
+  SportsGame b = d.tbd, c = d.tbd;
+  b.id = "NCAAF|402";
+  b.home = team("12", "River Town Otters", std::string("RTO"));
+  b.away = team("13", "Lake City Pikes", std::string("LCP"));
+  c.id = "NCAAF|403";
+  c.home = team("14", "Desert Foxes", std::string("DSF"));
+  c.away = team("15", "Coast Crabs", std::string("CCR"));
+  in = d.input({d.tbd, b, c});
+  const Seconds noon = utc(2026, 11, 14, 17, 0);
+  in.events = {
+      provider("e1", "Valley Tech Hawks vs Harbor State Gulls", "College Football", noon, {"eu|1"}, "eu"),
+      provider("e2", "Lake City Pikes vs River Town Otters", "College Football", noon, {"eu|2"}, "eu"),
+      provider("e3", "Coast Crabs vs Desert Foxes", "College Football", noon, {"eu|3"}, "eu"),
+  };
+  out = build(in);
+  REQUIRE(out);
+  CHECK(out->stats.offsets.empty());
+  CHECK(ids(findGame(out->events, "NCAAF|402")->sources) == std::vector<std::string>{"eu|2"});
+}
+
+TEST_CASE("Build 145: a tennis match with no time set, at home and abroad") {
+  auto match = [](const std::string& id, const std::string& tournament, Seconds start, bool tbd) {
+    SportsGame g = game("ATP", "Tennis", id, team(id + "a", "Ann Shelby"), team(id + "b", "Lu Van Haren"), start);
+    g.tennis = true;
+    g.tournament = tournament;
+    if (tbd) g.timeTbd = true;
+    return g;
+  };
+  // The semifinal on Saturday 7 November, time not set (05:00Z): a slot at
+  // 3 PM Eastern that day is it.
+  SportsGame sf = match("1", "Harbor Masters", utc(2026, 11, 7, 5, 0), true);
+  BuildInput in;
+  in.now = utc(2026, 11, 7, 12, 0);
+  in.zone = time::Zone::usEastern();
+  in.games = {sf};
+  in.events = {provider("p", "Ann Shelby vs Lu Van Haren", "Tennis", utc(2026, 11, 7, 20, 0), {"xt|1"})};
+  auto out = build(in);
+  REQUIRE(out);
+  CHECK(ids(findGame(out->events, "ATP|1")->sources) == std::vector<std::string>{"xt|1"});
+  // Before Build 145 (no mark): 15 hours from the placeholder, a replay.
+  in.games[0].timeTbd.reset();
+  out = build(in);
+  REQUIRE(out);
+  CHECK(out->stats.hidden["xt|1"] == "a replay: its game is on another day");
+
+  // Abroad: a final in the Far East on the 8th, local time (05:00Z); its
+  // 11:00 start there is 10 PM the evening before in New York: within a
+  // tennis match's window of that day.
+  SportsGame final = match("2", "Harbor Open", utc(2026, 11, 8, 5, 0), true);
+  in.games = {final};
+  in.now = utc(2026, 11, 8, 1, 0);
+  in.events = {provider("f", "Ann Shelby vs Lu Van Haren", "Tennis", utc(2026, 11, 8, 3, 0), {"xt|2"}),
+               provider("g", "Ann Shelby vs Lu Van Haren", "Tennis", utc(2026, 11, 9, 13, 0), {"xt|3"})};
+  out = build(in);
+  REQUIRE(out);
+  CHECK(ids(findGame(out->events, "ATP|2")->sources) == std::vector<std::string>{"xt|2"});
+  CHECK(out->stats.hidden["xt|3"] == "a replay: its game is on another day");  // the day after
+
+  // A tournament's feed on the final's day takes it too (the day's play).
+  std::vector<SportsGame> games = {final};
+  CHECK(tennisTargets("ATP Tennis: Harbor Open Final", "", utc(2026, 11, 8, 13, 0), in.now, {0}, games) ==
+        std::vector<int>{0});
+  CHECK(tennisTargets("ATP Tennis: Harbor Open", "", utc(2026, 11, 9, 13, 0), in.now, {0}, games).empty());
+}
+
+TEST_CASE("Build 145: \"Surname-Surname\" is the one match of those two; hyphenated names stay whole") {
+  const Seconds at = utc(2026, 11, 6, 13, 0);
+  auto match = [&](const std::string& id, const std::string& home, const std::string& away, Seconds start) {
+    SportsGame g = game("ATP", "Tennis", id, team(id + "a", home), team(id + "b", away), start);
+    g.tennis = true;
+    g.tournament = "Harbor Masters";
+    g.venue = "Harbor City, Somewhere";
+    return g;
+  };
+  std::vector<SportsGame> games = {
+      match("1", "Tom Pauling", "Ben Shelby", at + 600),
+      match("2", "Ray Hijano", "Lu Van Haren", at + 8400),
+      match("3", "Cole / Nakano", "Harris / Skov", at + 300),  // doubles, first on
+      match("4", "Rae Auger-Allard", "Cas Rudd", at + 21'600),
+      match("5", "Hal / Herbin", "Arno / Oliva", at + 13'500),
+  };
+  const std::vector<int> all = {0, 1, 2, 3, 4};
+  const std::vector<int> day = {2, 0, 1, 4, 3};  // the day's matches by start
+  CHECK(tennisTargets("ATP: Shelby-Pauling, kvartfinale, Harbor", "", at, at, all, games) == std::vector<int>{0});
+  CHECK(tennisTargets("ATP: Pauling-Shelby, Harbor", "", at, at, all, games) == std::vector<int>{0});
+  CHECK(tennisTargets("ATP: Hijano-Haren, Harbor", "", at, at, all, games) == std::vector<int>{1});
+  // A hyphenated surname, three names joined, initials, two players of
+  // different matches, a place: the day's matches, as before.
+  CHECK(tennisTargets("ATP: Auger-Allard, kvartfinale, Harbor", "", at, at, all, games) == day);
+  CHECK(tennisTargets("ATP: Auger-Allard-Rudd, Harbor", "", at, at, all, games) == day);
+  CHECK(tennisTargets("ATP: Herbin H-P, Harbor", "", at, at, all, games) == day);
+  CHECK(tennisTargets("ATP: Rudd-Pauling, Harbor", "", at, at, all, games) == day);
+  CHECK(tennisTargets("Center Court-Harbor-ATP Quarterfinals", "", at, at, all, games, true) == day);
+  // The doubles pairs aren't two surnames.
+  CHECK(tennisTargets("ATP: Cole-Harris, Harbor", "", at, at, all, games) == day);
+
+  // As a feed: only that match's tile gets it.
+  BuildInput in;
+  in.now = at;
+  in.zone = time::Zone::usEastern();
+  in.games = games;
+  in.events = {provider("dk", "ATP: Shelby-Pauling, kvartfinale, Harbor", "Tennis", at, {"dk|1"})};
+  auto out = build(in);
+  REQUIRE(out);
+  CHECK(ids(findGame(out->events, "ATP|1")->sources) == std::vector<std::string>{"dk|1"});
+  for (const char* other : {"ATP|2", "ATP|3", "ATP|4", "ATP|5"}) {
+    const SportsEvent* tile = findGame(out->events, other);
+    CHECK((!tile || tile->sources.empty()));
+  }
+}

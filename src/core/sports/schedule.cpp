@@ -198,6 +198,17 @@ std::string soccerCompetitionTag(const std::string& competition) {
   return competition;
 }
 
+namespace {
+
+// Build 145: a competition ESPN lists with no time set yet ("timeValid":
+// false, dated 05:00Z: midnight US Eastern of its day).
+bool timeNotSet(const json::Value& competition) {
+  const json::Value& valid = competition["timeValid"];
+  return valid.isBool() && !valid.asBool();
+}
+
+}  // namespace
+
 std::optional<SportsGame> parseGame(const json::Value& event, const League& league) {
   auto id = text::text(event["id"]);
   auto start = text::date(text::text(event["date"]));
@@ -241,6 +252,7 @@ std::optional<SportsGame> parseGame(const json::Value& event, const League& leag
   game.start = *start;
   game.networks = parse::networks(competition);
   game.venue = parse::venue(competition["venue"]);
+  if (timeNotSet(competition)) game.timeTbd = true;
   auto contains = [&](const char* w) { return statusName.find(w) != std::string::npos; };
   game.postponed = contains("POSTPONED") || contains("CANCELED") || contains("CANCELLED");
   game.completed = text::flag(status["completed"]) || contains("FINAL");
@@ -750,6 +762,7 @@ std::optional<std::vector<SportsGame>> parseTennisMatches(std::string_view body,
       game.away = *away;
       game.start = *start;
       game.venue = court;
+      if (timeNotSet(competition)) game.timeTbd = true;
       game.completed = text::flag(status["completed"]) || (state && str::lower(*state) == "post");
       // The draw's first-listed player first, as broadcasts list them (the
       // home side; Build 141: was the other way round).

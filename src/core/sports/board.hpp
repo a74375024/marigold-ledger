@@ -167,7 +167,8 @@ struct Input {
   // than the viewer's: an event no schedule has that's only on such feeds
   // isn't in Live now, and goes to More events.
   std::function<bool(const std::string& channelID)> feedAbroad;
-  // A finished session's top three (RaceData.top3: race_data::RaceData::podiumHook).
+  // A finished session's top three (RaceData.top3: race_data::RaceData::podiumHook);
+  // the board asks for the race's alone (Build 145).
   std::function<std::vector<PodiumDriver>(const std::string& kind, Seconds start)> podium;
   // Marigold: what titles say, kept from one board to the next by the
   // caller (one board at a time; newTitleMemo()). Reading a title and the

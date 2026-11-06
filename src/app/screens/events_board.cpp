@@ -27,6 +27,9 @@
 // stands where the hero is, with OK and Change (My Sports). With "I don't
 // watch sports" saved, More events shows whatever Show on the board says.
 // Holding OK on a game offers Follow and Hide beside Where to Watch.
+//
+// Build 145: the row the focus is on goes to the store (Store::eventsFocus):
+// a sport's leagues get their scores first.
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -184,6 +187,7 @@ class EventsBoardScreen : public Screen {
     if (promptAt_) wakeFor(promptAt_);  // My Sports is offered in a moment: asleep until then
     previewTick(ms);
     logStats(ms);
+    reportFocus();
     return pulse || sliding;
   }
   uint32_t wakeAt() const override { return wake_; }
@@ -621,6 +625,15 @@ class EventsBoardScreen : public Screen {
   bool chooseFocused() const {
     if (row_ < 0 || row_ >= static_cast<int>(layout_.size()) || !layout_[static_cast<size_t>(row_)].choose) return false;
     return tile_ == static_cast<int>(flat(row_).size());
+  }
+
+  // The row the focus is on, to the store when it changes (its scores first).
+  void reportFocus() {
+    std::string row;
+    if (row_ >= 0 && row_ < static_cast<int>(rows().size())) row = rows()[static_cast<size_t>(row_)].row->id;
+    if (row == reportedRow_) return;
+    reportedRow_ = std::move(row);
+    app_.store().eventsFocus(Store::EventsScreen::board, reportedRow_);
   }
 
   // The focused game (none on a row's "Choose" tile).
@@ -1262,6 +1275,7 @@ class EventsBoardScreen : public Screen {
   uint64_t version_ = ~0ull;
   int row_ = 0, tile_ = 0;
   std::string focusId_, focusRow_;  // the focused game and its row (ids)
+  std::string reportedRow_;  // reportFocus()
   bool filterFocus_ = false;  // on the filter button
   // The one-time note after the update (the board's noteTitle): shown in
   // place of the hero until OK or Change; it has the focus when it first

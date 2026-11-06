@@ -473,6 +473,19 @@ bool listsEveryGame(const SportsGame& game) {
   return league && league->everyGame;
 }
 
+// One of your teams plays (My Sports' "LEAGUE|teamID"), without a string
+// made per game.
+bool yourTeamPlays(const std::vector<std::string>& teams, const SportsGame& game) {
+  const std::string& league = game.leagueShort;
+  for (const std::string& key : teams) {
+    if (key.size() <= league.size() + 1 || key.compare(0, league.size(), league) != 0 || key[league.size()] != '|')
+      continue;
+    std::string_view id = std::string_view(key).substr(league.size() + 1);
+    if ((!game.home.id.empty() && id == game.home.id) || (!game.away.id.empty() && id == game.away.id)) return true;
+  }
+  return false;
+}
+
 }  // namespace
 
 bool LiveScores::start(Holder holder, bool scheduleEnabled) {
@@ -497,6 +510,18 @@ std::optional<LiveStatus> LiveScores::status(const std::string& gameID) const {
   return it->second;
 }
 
+Seconds LiveScores::dueOf(const std::string& league) const {
+  auto next = nextDue_.find(league);
+  if (next == nextDue_.end()) return 0;
+  if (!focus_.count(league)) return next->second;
+  auto own = focusDue_.find(league);
+  return own == focusDue_.end() ? next->second : std::min(next->second, own->second);
+}
+
+bool LiveScores::onScreen(bool watching) const {
+  return holders_.count(Holder::guide) || (holders_.count(Holder::board) && !watching);
+}
+
 bool Awaited::from(const std::string& leagueShort) const {
   const League* league = leagueByShort(leagueShort);
   if (!league || capped || failing.count(leagueShort)) return false;
@@ -510,8 +535,7 @@ bool LiveScores::awaits(const std::string& leagueShort, Seconds now) const {
   if (!league || requestsToday(now, zone_) >= kDailyCap) return false;
   auto failed = failures_.find(leagueShort);
   if (failed != failures_.end() && failed->second > 0) return false;
-  auto next = nextDue_.find(leagueShort);
-  if (next != nextDue_.end() && next->second > now) return false;
+  if (dueOf(leagueShort) > now) return false;
   auto refused = refusedUntil_.find(refusals::sourceOf(*league));
   return refused == refusedUntil_.end() || refused->second <= now;
 }
@@ -519,6 +543,8 @@ bool LiveScores::awaits(const std::string& leagueShort, Seconds now) const {
 Awaited LiveScores::awaited(Seconds now) const {
   Awaited a;
   a.due = nextDue_;
+  for (const std::string& league : focus_)
+    if (a.due.count(league)) a.due[league] = dueOf(league);
   for (const auto& [league, count] : failures_)
     if (count > 0) a.failing.insert(league);
   for (const auto& [source, until] : refusedUntil_)
@@ -551,14 +577,16 @@ void LiveScores::beginRound(const RoundInput& input) {
   // On screen: the guide, or the board with nothing playing over it. A
   // channel playing (and nobody on screen): only the background looks, at
   // its own pace.
-  bool onScreen = holders_.count(Holder::guide) || (holders_.count(Holder::board) && !input.watching);
-  bool background = !onScreen && holders_.count(Holder::background);
-  if (!onScreen && !background) {
+  bool shown = onScreen(input.watching);
+  bool background = !shown && holders_.count(Holder::background);
+  focus_.clear();
+  if (!shown && !background) {
     lastWait_ = kWatchingWait;
     return;
   }
   Round r;
   r.background = background;
+  r.watching = input.watching;
   r.games = input.games;
   r.showsScores = input.showsScores;
   for (const SportsGame& game : input.games) {
@@ -582,8 +610,20 @@ void LiveScores::beginRound(const RoundInput& input) {
   }
   recent_.erase(std::remove_if(recent_.begin(), recent_.end(), [&](Seconds t) { return now - t > 3600; }),
                 recent_.end());
-  // Several leagues on at once share the pace: each waits longer.
-  r.spread = std::max(1.0, static_cast<double>(r.windows.size()) / 2);
+  // Build 145: on screen, the leagues looked at (the sport open, the game
+  // playing, your teams' games) keep their own pace.
+  if (!background) {
+    for (const auto& [key, games] : r.windows) {
+      bool looked = input.focus.leagues.count(key) > 0;
+      for (size_t i = 0; !looked && i < games.size(); ++i) looked = yourTeamPlays(input.focus.teams, games[i]);
+      if (looked) focus_.insert(key);
+    }
+  }
+  r.focused = focus_.size();
+  r.others = r.windows.size() - r.focused;
+  // Several leagues on at once share the pace: each waits longer (the
+  // leagues looked at aside).
+  r.spread = std::max(1.0, static_cast<double>(r.others) / 2);
   for (const auto& [key, games] : r.windows) r.order.push_back(key);
   round_ = std::move(r);
 }
@@ -598,11 +638,18 @@ std::optional<LiveScores::Request> LiveScores::nextRequest(Seconds now) {
         lastWait_ = r.background ? std::max(r.soonest, kBackgroundEvery) : r.soonest;
         return std::nullopt;
       }
+      // Build 145: the guide closed (or the board) mid-round over a playing
+      // channel: the rest waits for the background's pace.
+      if (!r.background && !onScreen(r.watching)) {
+        r.over = true;
+        lastWait_ = holders_.count(Holder::background) ? kBackgroundEvery : kWatchingWait;
+        return std::nullopt;
+      }
       const std::string& shortName = r.order[r.nextIndex];
       r.nextIndex += 1;
-      auto due = nextDue_.find(shortName);
-      if (due != nextDue_.end() && due->second > now) {
-        r.soonest = std::min(r.soonest, due->second - now);
+      Seconds due = dueOf(shortName);
+      if (due > now) {
+        r.soonest = std::min(r.soonest, due - now);
         continue;
       }
       const League* league = leagueByShort(shortName);
@@ -716,10 +763,32 @@ void LiveScores::endLeague(Seconds now) {
     if (r.league.cricket) interval = std::max(interval, static_cast<double>(kQuietInterval));
     // An NCAA page is a whole division's day: every two minutes at most.
     if (r.league.ncaaPage) interval = std::max(interval, static_cast<double>(kQuietInterval));
-    interval *= r.spread;
-    if (recent_.size() >= static_cast<size_t>(kHourlyPace)) interval = std::max(interval, static_cast<double>(kPacedInterval));
-    Seconds wait = static_cast<Seconds>(interval);
+    // Build 145: a league looked at keeps its own pace; the others share
+    // the pace (spread over the others only).
+    double own = interval;
+    double shared = interval * r.spread;
+    // Past the hourly pace the hour's kHourlyPace requests are shared out,
+    // the others slowed down first: they keep only each a request every
+    // kCappedWait; the leagues looked at take the rest, up to once a
+    // minute each (at least every kPacedInterval), and the others what is
+    // left (at least kPacedInterval apart). With nothing looked at, as
+    // before Build 145.
+    if (recent_.size() >= static_cast<size_t>(kHourlyPace)) {
+      const double hour = 3600, pace = kHourlyPace;
+      const double focused = static_cast<double>(std::max<size_t>(1, r.focused));
+      const double others = static_cast<double>(r.others);
+      const double othersAtLeast = others * hour / kCappedWait;
+      const double lookedShare =
+          std::min(focused * hour / kLiveInterval, std::max(pace - othersAtLeast, focused * hour / kPacedInterval));
+      own = std::max(own, focused * hour / lookedShare);
+      const double othersShare = std::max(pace - (r.focused ? lookedShare : 0.0), othersAtLeast);
+      shared = std::max(shared, static_cast<double>(kPacedInterval));
+      if (others > 0) shared = std::max(shared, others * hour / othersShare);
+    }
+    const bool looked = focus_.count(shortName) > 0;
+    Seconds wait = static_cast<Seconds>(looked ? own : shared);
     nextDue_[shortName] = now + wait;
+    focusDue_[shortName] = now + static_cast<Seconds>(own);
     r.soonest = std::min(r.soonest, wait);
     // Believed until the next look is due, and a little after.
     for (const auto& [id, status] : r.merged) {
@@ -730,7 +799,7 @@ void LiveScores::endLeague(Seconds now) {
     int count = failures_[shortName] + 1;
     failures_[shortName] = count;
     Seconds wait = kBackoff[std::min(count - 1, 3)];
-    nextDue_[shortName] = now + wait;
+    nextDue_[shortName] = focusDue_[shortName] = now + wait;
     r.soonest = std::min(r.soonest, wait);
   }
 }
