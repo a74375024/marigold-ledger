@@ -30,6 +30,8 @@ bool PanelScreen::tick(uint32_t ms) {
 
 bool PanelScreen::key(const KeyEvent& e) {
   if (onKey && onKey(e)) return true;
+  // A row asking first: Back keeps things as they are.
+  if (e.key == Key::Back && panel_.stopAsking()) return true;
   if (e.key == Key::Ok && e.longPress) {
     int f = panel_.focused();
     if (f >= 0 && f < static_cast<int>(panel_.items.size()) && panel_.items[static_cast<size_t>(f)].hold) {

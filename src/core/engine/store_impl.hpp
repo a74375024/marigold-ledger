@@ -268,6 +268,7 @@ struct Store::Impl {
   struct AccountRun {
     std::string state = "Not loaded yet";
     std::vector<std::string> formats;  // Xtream allowed_output_formats
+    bool endedStatus = false;          // its panel said "Expired" last time
   };
 
   // Persisted.
@@ -364,6 +365,12 @@ struct Store::Impl {
   // this tick time (ms).
   uint32_t updatedUntil = 0, failedUntil = 0, lastTick = 0;
   bool loadUpdated = false, loadFailed = false;  // set off the tick; timed at the next
+  // The guide's once-a-day heads-up about a membership's end
+  // (guideOpened): waiting for its turn on the line, then shown until
+  // headsUpUntil. Given up if not shown within a minute.
+  std::string headsUpLine, headsUpAccount;
+  uint32_t headsUpUntil = 0;
+  time::Seconds headsUpAskedAt = 0;
   std::string updatedLine;  // "Channel list updated", "Channels added"
   // Providers added or removed while a list is on screen: it stays until
   // the new one is sorted; the header line says what's going on.

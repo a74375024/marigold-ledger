@@ -50,6 +50,41 @@ enum class SettingsCategory { Watching, Guide, MyLineup, LiveEvents, Providers, 
 // `at`: a group's header in that category, the focus on its first row
 // (the empty Live Events board opens kShowOnBoard).
 void openAllSettings(App& app, std::optional<SettingsCategory> inside = std::nullopt, const std::string& at = {});
+
+// A page inside Settings (Build 144). Panels float only over the picture
+// (Sources, Aa, Quick settings): every Settings page opens in Settings'
+// own middle column, one level deeper, with the categories dimmed on the
+// left, "SETTINGS › PROVIDERS › BACKUP TV" over its title and the focused
+// row explained on the right. Back goes up a level, to the row it was
+// opened from. A row's select opens one with SettingsPages::open.
+struct SettingsPage {
+  std::string title;  // over the rows ("Backup TV")
+  std::string crumb;  // its part of the line above when shorter ("Send a report")
+  // The rows, built again after every change (toggles show their new state).
+  std::function<void(ui::ListPanel&)> build;
+  bool liveRows = false;  // built again once a second (live state)
+  // The right column drawn by the page itself (a report's code) for the
+  // focused row (may be null); false: the row's about, as everywhere.
+  std::function<bool(ui::Ctx&, float x, float y, float w, const ui::PanelItem*)> info;
+  // Something on it that moves by itself: true when it needs drawing, and
+  // when it next will (the spinner while a report builds).
+  std::function<bool(uint32_t ms)> tick;
+  std::function<uint32_t()> wakeAt;
+};
+class SettingsPages {
+ public:
+  virtual ~SettingsPages() = default;
+  // One level deeper, once the key that asked for it is done.
+  virtual void open(SettingsPage page) = 0;
+  // Back a level, to the row it was opened from (a removed provider's page).
+  virtual void close() = 0;
+};
+using SettingsPageMaker = std::function<SettingsPage(App&, SettingsPages&)>;
+// Settings opened at one of its pages from outside it (Quick settings' Edit
+// My Lineup, the first-run providers list): `category`, on its row titled
+// `row`, with `page` open over it. Back from that page (or removing the
+// provider on it) closes Settings, back to where it was opened from.
+void openSettingsAt(App& app, SettingsCategory category, const std::string& row, SettingsPageMaker page);
 inline constexpr const char* kShowOnBoard = "SHOW ON THE BOARD";
 // Settings › Live Events › Show on the board (Build 119): Games not on my
 // channels, More events, Time not listed and Event channels; also opened
@@ -57,11 +92,13 @@ inline constexpr const char* kShowOnBoard = "SHOW ON THE BOARD";
 void showOnBoardRows(App& app, ui::ListPanel& p, bool about);
 // A category's rows and its one-line summary (settings_rows.cpp). Advanced
 // is only listed when one of its rows applies to this TV and its providers.
-void settingsRows(App& app, SettingsCategory category, ui::ListPanel& p);
+// `pages` opens the pages its rows lead to.
+void settingsRows(App& app, SettingsCategory category, ui::ListPanel& p, SettingsPages& pages);
 std::string settingsSummary(App& app, SettingsCategory category);
 bool settingsCategoryShown(App& app, SettingsCategory category);
-// Settings › My Lineup › Edit My Lineup (also in the guide's Quick settings).
-std::unique_ptr<Screen> makeEditLineup(App& app);
+// Settings › My Lineup › Edit My Lineup, opened from the guide's Quick
+// settings (openSettingsAt).
+void openEditLineup(App& app);
 // "Getting around": the remote's keys. The player shows it once, the first
 // time a channel plays; Settings › Help & info shows it again (`again`).
 std::unique_ptr<Screen> makeGettingAround(App& app);
@@ -71,8 +108,10 @@ void drawGettingAround(ui::Ctx& c, const RemoteKeys& keys, bool again, int hitOk
 // only the form (Settings › Providers › Add a provider); Back closes it.
 std::unique_ptr<Screen> makeAccounts(App& app, bool firstRun);
 std::unique_ptr<Screen> makeAddProvider(App& app);
-// One provider: its state and Remove (which asks first).
-std::unique_ptr<Screen> makeProvider(App& app, const std::string& accountId);
+// Settings › Providers › one provider (its sign-in, membership and Remove,
+// which asks on its row first), opened from the providers list outside
+// Settings (openSettingsAt).
+void openProviderPage(App& app, const std::string& accountId);
 // First-run setup (onboarding.cpp): the welcome (the root until a provider
 // is added), signing in from a phone, "Getting your guide ready" after the
 // teams (it waits until the guide is usable, then carries on by itself) and
@@ -138,10 +177,9 @@ std::string pickName(const std::string& id);
 // the focus: OK undoes, Back or any other key closes it, and it closes by
 // itself after a few seconds (Hide on a game card: "Liga MX hidden").
 std::unique_ptr<Screen> makeUndoNote(App& app, std::string text, std::function<void()> undo);
-// Settings › Help & info › Send a report to your phone: share a file with a
-// phone on the home network.
+// Settings › Help & info › Send a report to your phone: a report shared
+// with a phone on the home network (report_share.hpp).
 enum class ExportKind { ChannelReport, PlaybackLog, LiveEvents };
-std::unique_ptr<Screen> makeExport(App& app, ExportKind kind);
 // The platform's diagnostics screen (Settings › Help & info ›
 // Diagnostics): the key and video test on webOS, the system and video state
 // on Android and Apple TV.

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "core/net/lan_http.hpp"
 #include "core/util/base64.hpp"
 #include "core/util/json.hpp"
 #include "core/util/strings.hpp"
@@ -52,6 +53,38 @@ std::optional<std::string> serverURL(std::string_view serverUrlString) {
 void applyAccountInfo(Account& account, const AccountInfo& info) {
   account.expires = info.expires;
   account.maxConnections = info.maxConnections;
+  account.trial = info.trial;
+}
+
+bool endedStatus(const AccountInfo& info) { return str::lowerAscii(str::trim(info.status)) == "expired"; }
+
+std::optional<Account> panelAccount(std::string_view playlistUrl) {
+  std::string_view url = trimWhitespaceAndNewlines(playlistUrl);
+  size_t q = url.find('?');
+  if (q == std::string_view::npos) return std::nullopt;
+  std::string_view path = url.substr(0, q);
+  std::string_view query = url.substr(q + 1);
+  if (size_t hash = query.find('#'); hash != std::string_view::npos) query = query.substr(0, hash);
+  constexpr std::string_view kGet = "/get.php";
+  if (path.size() <= kGet.size() || str::lowerAscii(path.substr(path.size() - kGet.size())) != kGet)
+    return std::nullopt;
+  // The panel's address: what's left must be a plain base address (a
+  // scheme and a host, no login before it).
+  std::string base(path.substr(0, path.size() - kGet.size()));
+  std::string lower = str::lowerAscii(base);
+  if (!str::startsWith(lower, "http://") && !str::startsWith(lower, "https://")) return std::nullopt;
+  if (!isValidBaseUrl(base)) return std::nullopt;
+  // As the panel reads its query ('+' is a space, %XX a byte).
+  std::map<std::string, std::string> form = lan::parseForm(query);
+  auto user = form.find("username");
+  auto pass = form.find("password");
+  if (user == form.end() || pass == form.end() || user->second.empty() || pass->second.empty()) return std::nullopt;
+  Account a;
+  a.kind = AccountKind::Xtream;
+  a.serverUrl = std::move(base);
+  a.userName = user->second;
+  a.password = pass->second;
+  return a;
 }
 
 Result<Client> Client::make(const Account& account) {
@@ -84,7 +117,9 @@ Result<AccountInfo> Client::parseAccountInfo(int status, std::string_view body) 
   if (lenientInt(user["auth"]).value_or(0) != 1) return Error::make("Wrong username or password.");
   AccountInfo info;
   info.status = user["status"].isString() ? user["status"].asString() : "Active";
+  // A number or text ("1788393600"); null, "" or 0 is no end date.
   if (std::optional<int64_t> exp = lenientInt(user["exp_date"]); exp && *exp > 0) info.expires = *exp;
+  info.trial = lenientInt(user["is_trial"]).value_or(0) == 1;
   // `as? [String]`: a list with anything but strings counts as none.
   const json::Value& formats = user["allowed_output_formats"];
   bool allStrings = formats.isArray();

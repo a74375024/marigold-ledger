@@ -107,6 +107,8 @@ EncodedAccounts encodeAccounts(const std::vector<Account>& accounts) {
     if (a.allowInsecureTLS) o.set("allowInsecureTLS", true);
     if (a.expires) o.set("expires", static_cast<int64_t>(*a.expires));
     if (a.maxConnections) o.set("maxConnections", *a.maxConnections);
+    if (a.trial) o.set("trial", true);
+    if (a.noticeDay) o.set("noticeDay", a.noticeDay);
     if (a.lastChannelCount) o.set("lastChannelCount", *a.lastChannelCount);
     if (a.guideFromPlaylist) o.set("guideFromPlaylist", true);
     list.push(o);
@@ -152,6 +154,8 @@ Result<std::vector<Account>> decodeAccounts(std::string_view main, std::string_v
     a.allowInsecureTLS = o["allowInsecureTLS"].asBool();
     if (o["expires"].isNumber()) a.expires = o["expires"].asInt();
     a.maxConnections = optionalInt(o["maxConnections"]);
+    a.trial = o["trial"].asBool();
+    if (o["noticeDay"].isNumber()) a.noticeDay = o["noticeDay"].asInt();
     a.lastChannelCount = optionalInt(o["lastChannelCount"]);
     const json::Value& s = secretRoot[a.id];
     a.password = s["password"].asString();

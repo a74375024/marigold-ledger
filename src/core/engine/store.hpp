@@ -21,6 +21,7 @@
 #include "core/engine/disk.hpp"
 #include "core/engine/events_model.hpp"
 #include "core/engine/host.hpp"
+#include "core/engine/membership.hpp"
 #include "core/engine/model.hpp"
 #include "core/engine/quality.hpp"
 #include "core/engine/search.hpp"
@@ -39,7 +40,10 @@ struct Saved;
 }  // namespace catalog
 namespace sources {
 struct Account;
+namespace xtream {
+struct AccountInfo;
 }
+}  // namespace sources
 namespace sports {
 struct MySportsPrefs;
 struct Conference;
@@ -90,6 +94,10 @@ struct AccountSummary {
   std::string name;   // the name the person gave it
   std::string kind;   // "Xtream", "Emby", "M3U playlist"
   std::string state;  // "Signed in", "Couldn't sign in" (never a channel count)
+  bool signInFailed = false;  // the last read of its channels failed
+  // Its end date, trial and streams at once (Xtream, or an M3U playlist from
+  // an Xtream panel); in words with membership::accountLine and the rest.
+  membership::Membership membership;
 };
 
 // Fields of the add-account form. Passwords and playlist links go to the
@@ -287,6 +295,11 @@ class Store {
   void addAccount(const AccountForm& form, std::function<void(std::string)> done);
   void removeAccount(const std::string& id);
   void refreshAll();
+  // The guide was opened: in a membership's last week (and after it ends)
+  // its status line says so for a few seconds, the first time each day
+  // (per provider, kept across launches), unless a more important line
+  // (loading, updating) is up; then it waits its turn.
+  void guideOpened();
 
   // Guide rows on screen: fetches short EPG for those with no listings,
   // a few rows at a time. Cheap to call every frame.
@@ -541,6 +554,9 @@ class Store {
 
  private:
   void saveAccounts();
+  // A provider's account info (Xtream, or the panel an M3U link is from):
+  // its end date, trial and streams at once.
+  void membershipRead(const std::string& accountId, const sources::xtream::AccountInfo& info);
   // lists.json now (recent searches switched off: forgotten on file too).
   void saveLists();
   // The same on a worker (a tune, a favourite, a search): the newest list

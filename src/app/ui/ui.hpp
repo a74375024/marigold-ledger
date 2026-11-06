@@ -46,6 +46,9 @@ constexpr uint32_t kStar = 0xE0A100;
 constexpr uint32_t kEast = 0x3D7BFF, kWest = 0xF59E0B;  // East/West version tags
 constexpr uint32_t kToggleOn = 0x34C759;
 constexpr uint32_t kWarning = 0xFF9F0A;
+constexpr uint32_t kWarningOnLight = 0x9A5B00;  // the amber line on a focused (white) row
+// A row asking before something that can't be undone ("Remove Backup TV?").
+constexpr uint32_t kDanger = 0xC62828;
 // The calm focus's fill (calmFocus()): where logos appear, focus never
 // turns a cell white.
 constexpr uint32_t kFocusFill = 0x2A2E36;

@@ -42,6 +42,8 @@ std::string ListPanel::look() const {
     out += it.enabled ? '1' : '0';
     out += it.dot ? '1' : '0';
     out += it.stepper ? '1' : '0';
+    out += it.warn ? '1' : '0';
+    out += it.ask ? '1' : '0';
     add(std::to_string(it.choice) + ',' + std::to_string(it.coast));
     add(it.title);
     add(it.detail);
@@ -50,12 +52,36 @@ std::string ListPanel::look() const {
     add(it.why);
     add(it.about);
     add(it.preview);
+    add(it.aboutLabel);
+    add(it.aboutHeading);
+    add(it.okLabel);
+    add(it.next);
     for (const std::string& c : it.choices) add(c);
   }
   return out;
 }
 
 void ListPanel::settle() {
+  settleFocus();
+  // The rows changed (rebuilt) or the focus moved: a question stays only on
+  // its own row.
+  bool ok = focus_ >= 0 && focus_ < static_cast<int>(items.size()) && items[static_cast<size_t>(focus_)].ask;
+  arm_.keepIf(focus_, ok ? items[static_cast<size_t>(focus_)].title : std::string());
+  if (!ok) arm_.clear();
+}
+
+const PanelItem* ListPanel::asking() const {
+  int r = arm_.row();
+  return arm_.armed() && r < static_cast<int>(items.size()) ? &items[static_cast<size_t>(r)] : nullptr;
+}
+
+bool ListPanel::stopAsking() {
+  bool was = arm_.armed();
+  arm_.clear();
+  return was;
+}
+
+void ListPanel::settleFocus() {
   if (items.empty()) {
     focus_ = -1;
     return;
@@ -94,6 +120,7 @@ bool ListPanel::key(Key k) {
     for (int i = focus_ + step; i >= 0 && i < static_cast<int>(items.size()); i += step) {
       if (items[static_cast<size_t>(i)].focusable()) {
         focus_ = i;
+        arm_.clear();  // moving away keeps things as they are
         return true;
       }
     }
@@ -118,7 +145,13 @@ bool ListPanel::key(Key k) {
     return true;
   }
   if (k == Key::Ok) {
-    if (it.focusable() && it.select) it.select();
+    if (!it.focusable()) return true;
+    if (it.ask && !arm_.on(focus_)) {
+      arm_.arm(focus_, it.title);
+      return true;
+    }
+    arm_.clear();
+    if (it.select) it.select();
     return true;
   }
   return false;
@@ -131,6 +164,7 @@ void ListPanel::hover(int id) {
     i = (i - kChoiceHits) / 8;
   }
   if (i >= 0 && i < static_cast<int>(items.size()) && items[static_cast<size_t>(i)].focusable()) {
+    if (i != focus_) arm_.clear();
     focus_ = i;
     hoveredChoice_ = choice;
     // The rows stay where they are under the pointer.
@@ -192,8 +226,9 @@ void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
         paragraph(c, it.title, row.x + 8, ny, row.w - 16, Weight::Regular, kNotePx, theme::white(0.6f), kNoteLines,
                   kNoteLineH / kNotePx);
       } else {
+        Color head = it.warn ? theme::hex(theme::kWarning) : theme::white(0.9f);
         for (const std::string& line : c.t.wrap(it.title, Weight::Bold, kNoteTitlePx, row.w - 16, kNoteLines)) {
-          label(c, line, row.x + 8, ny, Weight::Bold, kNoteTitlePx, theme::white(0.9f));
+          label(c, line, row.x + 8, ny, Weight::Bold, kNoteTitlePx, head);
           ny += kNoteLineH;
         }
         paragraph(c, it.detail, row.x + 8, ny, row.w - 16, Weight::Regular, kNotePx, theme::white(0.6f), kNoteLines,
@@ -202,6 +237,14 @@ void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
       continue;
     }
     c.hit(row, hitBase + static_cast<int>(i));
+    if (arm_.on(static_cast<int>(i)) && it.ask) {
+      // Asking on the row itself: red, the question over what OK and Back do.
+      c.g.fill(row, theme::hex(theme::kDanger), theme::kRowRadius);
+      float tw = row.w - 48;
+      label(c, it.ask->title, row.x + 24, row.y + 12, Weight::Bold, 25, theme::white(), tw);
+      label(c, it.ask->line, row.x + 24, row.y + 46, Weight::Medium, 19, theme::white(0.85f), tw);
+      continue;
+    }
     float alpha = it.enabled ? 1.0f : 0.4f;
     Color fg = focused ? theme::black(alpha) : theme::white(alpha);
     Color sub = focused ? theme::black(0.6f * alpha) : theme::white(0.6f * alpha);
@@ -293,6 +336,9 @@ void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
     if (it.coast >= 0) coastChip(c, it.coast == 1, x + titleW + 12, titleY + 5, 13);
     if (!it.tag.empty()) chip(c, it.tag, x + titleW + 12, titleY + 3, 14, theme::hex(theme::kNew), theme::white());
     if (&second == &it.why) label(c, second, x, row.y + 46, Weight::Medium, 17, theme::hex(theme::kWarning), tw);
+    else if (!second.empty() && it.warn)
+      label(c, second, x, row.y + 46, Weight::Medium, 17,
+            theme::hex(focused ? theme::kWarningOnLight : theme::kWarning), tw);
     else if (!second.empty()) label(c, second, x, row.y + 46, Weight::Medium, 19, sub, tw);
   }
   c.g.popClip();

@@ -66,7 +66,14 @@ Bar setup(const RemoteKeys& k, bool letters);
 // All settings: moving through the categories, or inside one (with
 // "◀▶ Change" on a row of choices). LG's pointer is mentioned on the
 // categories.
-Bar settings(const RemoteKeys& k, bool inRows, bool choiceRow);
+// `ok`: what OK does on the focused row ("Open" on one that opens a page).
+Bar settings(const RemoteKeys& k, bool inRows, bool choiceRow, const std::string& ok = "Select");
+// A page inside Settings (Build 144): what OK does on the focused row
+// ("Remove…", "Stop sharing"), ▼ and what it moves to ("Next report"),
+// and where Back goes (the level above: "Providers"). While a row asks
+// first: OK "Remove", Back "Keep it".
+Bar settingsPage(const RemoteKeys& k, const std::string& ok, const std::string& back, bool choiceRow = false,
+                 const std::string& down = "");
 
 // The player: the Sources key (Red on LG; elsewhere a button in the
 // controls OK brings up), Quick settings (only a colour key; its label is

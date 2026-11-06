@@ -4,11 +4,13 @@
 #pragma once
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "app/ui/ui.hpp"
 #include "core/input/keys.hpp"
+#include "core/input/settings_nav.hpp"
 
 namespace marigold::ui {
 
@@ -40,6 +42,26 @@ struct PanelItem {
   // '\n'), and a picture over it ("captions": a caption in the chosen style).
   std::string about;
   std::string preview;
+  // Build 144, Settings' pages in place. The right column's small heading
+  // instead of the title ("BACKUP TV"), and a heading over `about`
+  // ("Membership ends March 3, 2027").
+  std::string aboutLabel, aboutHeading;
+  // The second line (a note's title) in amber: a membership's last week.
+  bool warn = false;
+  // What OK does, for the key hints ("Remove…", "Stop sharing");
+  // empty: by kind ("Open" on a chevron). `next`: a ▼ hint while focused
+  // ("Next report").
+  std::string okLabel, next;
+  // Asks on the row itself before something that can't be undone: OK
+  // turns the row red with `title` over `line`, OK again runs `select`;
+  // Back, or moving to another row, keeps things as they are.
+  struct Ask {
+    std::string title;            // "Remove Backup TV?"
+    std::string line;             // "OK to remove · Back to keep it"
+    std::string ok, back;         // the key hints: "Remove", "Keep it"
+    std::string heading, about;  // the right column: what happens
+  };
+  std::optional<Ask> ask;
 
   PanelItem() = default;
   PanelItem(Kind k, std::string t) : kind(k), title(std::move(t)) {}
@@ -60,8 +82,13 @@ class ListPanel {
   void focusFirst();
   void focusIndex(int i);
   int focused() const { return focus_; }
-  // Up/Down/Ok. Returns true when handled.
+  // Up/Down/Ok. Returns true when handled. OK on a row that asks first
+  // (PanelItem::ask) asks; OK again acts.
   bool key(Key k);
+  // The row asking now, if any; stopAsking() (Back) keeps things as they
+  // are and says whether one was asking.
+  const PanelItem* asking() const;
+  bool stopAsking();
   // Pointer: id from the hit regions registered by draw(). A Choice row's
   // choices are targets of their own, so a click picks the one under it.
   void hover(int id);
@@ -82,6 +109,8 @@ class ListPanel {
 
  private:
   float rowHeight(Ctx& c, const PanelItem& it, float width) const;
+  void settleFocus();
+  settings_nav::Arm arm_;  // the row asking first
   int focus_ = -1;
   float scroll_ = 0;
   bool followFocus_ = true;  // scrolled to keep the focus in view

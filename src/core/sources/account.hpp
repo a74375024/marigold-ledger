@@ -35,9 +35,14 @@ struct Account {
   bool preferTS = false;
   // Skip certificate checks for this provider (a broken or old certificate).
   bool allowInsecureTLS = false;
-  // Learned from the provider (Xtream account info, last channel load).
+  // Learned from the provider (Xtream account info, or the Xtream panel an
+  // M3U link is from; last channel load).
   std::optional<time::Seconds> expires;
   std::optional<int> maxConnections;
+  bool trial = false;  // a trial membership (Xtream is_trial)
+  // The guide's heads-up about the membership's end was last shown on this
+  // day (membership::localDay; 0: never): once a day.
+  int64_t noticeDay = 0;
   std::optional<int> lastChannelCount;
 
   // Secrets: written only to the secrets JSON.

@@ -125,6 +125,9 @@ float GuideScreen::xAt(time::Seconds t) const { return progX() + static_cast<flo
 
 void GuideScreen::shown() {
   refresh(true);
+  // A membership in its last week (or ended): the status line says so,
+  // the first time the guide shows each day (Build 144).
+  app_.store().guideOpened();
   // Back after a while (hours of a channel): the window starts now again.
   if (windowStart_ < nowWindow()) returnToNow();
   // Back from the player: the picture shrinks into the corner again.

@@ -82,9 +82,9 @@ class AccountsScreen : public Screen {
     }
   }
 
-  // The same page as Settings › Providers › the provider (Remove asks
-  // first; Reload channels and listings is in Settings › Providers).
-  void accountMenu(const AccountSummary& a) { app_.nav().push(makeProvider(app_, a.id)); }
+  // Settings › Providers › the provider, in Settings (Remove asks on its
+  // row first; Back comes back here).
+  void accountMenu(const AccountSummary& a) { openProviderPage(app_, a.id); }
 
   void drawList(ui::Ctx& c) {
     float x = 120, y = 80;
@@ -101,8 +101,15 @@ class AccountsScreen : public Screen {
       if (i < list_.size()) {
         const AccountSummary& a = list_[i];
         ui::label(c, a.name, r.x + 32, r.y + 16, Weight::Bold, 27, f ? theme::black() : theme::white(), 700);
-        ui::label(c, a.kind + " \xc2\xb7 " + a.state, r.x + 32, r.y + 56, Weight::Medium, 20,
-                  f ? theme::black(0.6f) : theme::white(0.6f), 900);
+        // As in Settings › Providers: the membership's end, in amber in its
+        // last week and once it has ended (Build 144).
+        time::Seconds now = time::now();
+        bool warn = membership::warns(a.membership, now, app_.zone());
+        ui::label(c, membership::accountLine(a.kind, a.state, a.membership, now, app_.zone()), r.x + 32, r.y + 56,
+                  Weight::Medium, 20,
+                  warn ? theme::hex(f ? theme::kWarningOnLight : theme::kWarning)
+                       : (f ? theme::black(0.6f) : theme::white(0.6f)),
+                  900);
       } else {
         bool phone = i > list_.size();
         ui::labelIn(c, phone ? "+  Add from your phone" : "+  Add a provider", {r.x + 32, r.y, r.w - 64, r.h},

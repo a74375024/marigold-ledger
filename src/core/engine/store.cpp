@@ -1090,6 +1090,11 @@ std::vector<AccountSummary> Store::accounts() const {
                                                    : "M3U playlist";
     auto it = impl_->runs.find(a.sourceId());
     s.state = it == impl_->runs.end() ? "" : it->second.state;
+    s.signInFailed = s.state == "Couldn't sign in";
+    s.membership.ends = a.expires;
+    s.membership.trial = a.trial;
+    s.membership.streams = a.maxConnections;
+    s.membership.endedStatus = it != impl_->runs.end() && it->second.endedStatus;
     out.push_back(std::move(s));
   }
   return out;
@@ -1225,6 +1230,35 @@ void Store::removeAccount(const std::string& id) {
   // After refreshAll: it drops the jobs queued before it.
   dropLinks({source + "|"});
   pruneDisk();  // its saved guide and channel list
+}
+
+void Store::membershipRead(const std::string& accountId, const sources::xtream::AccountInfo& info) {
+  Impl& m = *impl_;
+  auto it = std::find_if(m.accounts.begin(), m.accounts.end(),
+                         [&](const sources::Account& a) { return a.id == accountId; });
+  if (it == m.accounts.end()) return;
+  sources::xtream::applyAccountInfo(*it, info);
+  m.runs[it->sourceId()].endedStatus = sources::xtream::endedStatus(info);
+  saveAccounts();  // only a change is written
+}
+
+void Store::guideOpened() {
+  Impl& m = *impl_;
+  if (!m.headsUpLine.empty()) return;  // one waiting or showing
+  time::Seconds now = time::now();
+  const time::Zone& zone = host_.zone();
+  for (const AccountSummary& a : accounts()) {
+    auto acc = std::find_if(m.accounts.begin(), m.accounts.end(),
+                            [&](const sources::Account& x) { return x.id == a.id; });
+    if (acc == m.accounts.end() || !membership::headsUpDue(acc->noticeDay, now, zone)) continue;
+    std::string line = membership::headsUp(a.name, a.membership, now, zone);
+    if (line.empty()) continue;
+    m.headsUpLine = std::move(line);
+    m.headsUpAccount = a.id;
+    m.headsUpUntil = 0;
+    m.headsUpAskedAt = now;
+    return;
+  }
 }
 
 // ------------------------------------------------------------ loading
@@ -1436,12 +1470,17 @@ void Store::downloadChannels(uint64_t gen) {
           break;
         }
         auto c = std::make_shared<sources::xtream::Client>(client.take());
-        // Account info (formats, expiry) alongside the list.
-        auto infoBox = std::make_shared<std::optional<sources::xtream::AccountInfo>>();
-        host_.pool.submit(toHttp(c->accountInfoRequest(), "xtream.info"), [c, infoBox, slot, this, gen](http::Response&& r) {
+        // Account info (formats, end date, streams at once) alongside the
+        // list: at every launch and every re-read, so a renewal shows by
+        // itself. (`parts` keeps the slot alive should it answer last.)
+        std::string accountId = a.id;
+        host_.pool.submit(toHttp(c->accountInfoRequest(), "xtream.info"),
+                          [c, parts, slot, this, gen, accountId](http::Response&& r) {
           if (gen != impl_->generation) return;
           auto info = c->parseAccountInfo(r.status, r.body);
-          if (info) slot->formats = info.value().formats;
+          if (!info) return;
+          slot->formats = info.value().formats;
+          membershipRead(accountId, info.value());
         });
         host_.pool.submit(toHttp(c->categoriesRequest(), "xtream.categories"),
                            [this, gen, c, slot, name, finished, i](http::Response&& r) {
@@ -1494,6 +1533,22 @@ void Store::downloadChannels(uint64_t gen) {
         break;
       }
       case sources::AccountKind::M3U: {
+        // A playlist from an Xtream panel: the panel's account info (its
+        // end date) for the same login, one small request per read.
+        if (std::optional<sources::Account> panel = sources::xtream::panelAccount(a.playlistUrl)) {
+          panel->id = a.id;
+          panel->allowInsecureTLS = a.allowInsecureTLS;
+          if (auto client = sources::xtream::Client::make(*panel)) {
+            auto c = std::make_shared<sources::xtream::Client>(client.take());
+            std::string accountId = a.id;
+            host_.pool.submit(toHttp(c->accountInfoRequest(), "m3u.membership"),
+                              [c, this, gen, accountId](http::Response&& r) {
+              if (gen != impl_->generation) return;
+              auto info = c->parseAccountInfo(r.status, r.body);
+              if (info) membershipRead(accountId, info.value());
+            });
+          }
+        }
         auto parser = std::make_shared<sources::m3u::Parser>(a.id, [slot](Channel&& ch, sources::m3u::StreamInfo&& info) {
           slot->streams[ch.id] = std::move(info);
           slot->channels.push_back(std::move(ch));
@@ -3942,6 +3997,18 @@ bool Store::tick(uint32_t ms) {
   } else if (m.failedUntil && ms < m.failedUntil) {
     line = "Couldn't update the channel list \xc2\xb7 tries again later";
     mark = StoreStatus::Mark::Failed;
+  } else if (!m.headsUpLine.empty() && status_.phase == StoreStatus::Phase::Ready &&
+             (m.headsUpUntil || time::now() - m.headsUpAskedAt < 60)) {
+    // A membership's end, once a day: its seconds start once it's up, and
+    // the day is kept then (not when it only waited).
+    if (!m.headsUpUntil) {
+      m.headsUpUntil = std::max<uint32_t>(ms + membership::kHeadsUpMs, 1);
+      for (sources::Account& a : m.accounts)
+        if (a.id == m.headsUpAccount) a.noticeDay = membership::localDay(time::now(), host_.zone());
+      saveAccounts();
+    }
+    line = m.headsUpLine;
+    mark = StoreStatus::Mark::Failed;
   } else if (m.providerRunning || m.outsideRunning) {
     GuideBuildLine g = guideBuildLine(m.providerRunning, m.providerRunning && providerGuideMissing(m),
                                       m.outsideRunning, m.outsideWaiting->load());
@@ -3950,6 +4017,14 @@ bool Store::tick(uint32_t ms) {
   }
   if (m.updatedUntil && ms >= m.updatedUntil) m.updatedUntil = 0;
   if (m.failedUntil && ms >= m.failedUntil) m.failedUntil = 0;
+  // The heads-up's seconds are up (or it waited too long): gone until the
+  // next day.
+  if (!m.headsUpLine.empty() && ((m.headsUpUntil && ms >= m.headsUpUntil) ||
+                                 (!m.headsUpUntil && time::now() - m.headsUpAskedAt >= 60))) {
+    m.headsUpLine.clear();
+    m.headsUpAccount.clear();
+    m.headsUpUntil = 0;
+  }
   if (status_.phase == StoreStatus::Phase::Ready && (status_.line != line || status_.mark != mark)) {
     status_.line = line;
     status_.mark = mark;

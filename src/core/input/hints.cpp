@@ -127,18 +127,27 @@ Bar setup(const RemoteKeys& k, bool letters) {
   return b;
 }
 
-Bar settings(const RemoteKeys& k, bool inRows, bool choiceRow) {
+Bar settings(const RemoteKeys& k, bool inRows, bool choiceRow, const std::string& ok) {
   Bar b;
-  std::string ok = k.clickpad ? "Click" : "OK";
   if (!inRows) {
     b.keys = {cap(std::string(kUp) + kDown, "Move"), cap(kRight, "Open"), cap("Back", "Close Settings")};
     if (k.colour) b.right = "Point and click works too";
     return b;
   }
   if (choiceRow) b.keys.push_back(cap(std::string(kLeft) + kRight, "Change"));
-  b.keys.push_back(cap(ok, "Select"));
+  b.keys.push_back(cap(k.clickpad ? "Click" : "OK", ok.empty() ? std::string("Select") : ok));
   b.keys.push_back(cap("Back", "Categories"));
   b.right = "Changes save as you go";
+  return b;
+}
+
+Bar settingsPage(const RemoteKeys& k, const std::string& ok, const std::string& back, bool choiceRow,
+                 const std::string& down) {
+  Bar b;
+  if (choiceRow) b.keys.push_back(cap(std::string(kLeft) + kRight, "Change"));
+  if (!ok.empty()) b.keys.push_back(cap(k.clickpad ? "Click" : "OK", ok));
+  if (!down.empty()) b.keys.push_back(cap(kDown, down));
+  b.keys.push_back(cap("Back", back));
   return b;
 }
 

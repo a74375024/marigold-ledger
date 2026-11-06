@@ -8,8 +8,18 @@
 // back to the categories and Back again closes. With the Magic Remote every
 // row is clickable and the wheel scrolls the pane under the pointer. The
 // rows themselves are in settings_rows.cpp. Also the "Getting around" card.
+//
+// Build 144: panels float only over the picture. A page a row opens (a
+// provider, Edit My Lineup, the reports...) opens in the middle column, one
+// level deeper: the categories stay on the left, dimmed; the line over the
+// title says where you are ("SETTINGS › PROVIDERS › BACKUP TV"); the right
+// column still explains the focused row. Back goes up a level, to the row
+// it was opened from. Something that can't be undone asks on its own row
+// (red: "Remove Backup TV?"), never in a pop-up.
 #include <algorithm>
 #include <cmath>
+#include <memory>
+#include <optional>
 
 #include "app/app.hpp"
 #include "app/playback.hpp"
@@ -19,6 +29,7 @@
 #include "app/ui/panel.hpp"
 #include "core/captions/sentence_case.hpp"
 #include "core/input/hints.hpp"
+#include "core/input/settings_nav.hpp"
 #include "core/sports/my_sports.hpp"
 #include "core/util/strings.hpp"
 #include "platform/icons.hpp"
@@ -139,48 +150,108 @@ std::string rowValue(const ui::PanelItem& it) {
   }
 }
 
-class AllSettings : public Screen {
+// The keys' word for OK on a row: its own, the question's, or by kind.
+std::string okWord(const ui::PanelItem& it) {
+  if (!it.okLabel.empty()) return it.okLabel;
+  if (it.ask) return it.ask->ok + "\xe2\x80\xa6";
+  if (it.kind == ui::PanelItem::Kind::Chevron) return "Open";
+  if (it.kind == ui::PanelItem::Kind::Action && !it.value.empty()) return it.value;
+  return "Select";
+}
+
+// "Remove Backup TV?" -> "REMOVE BACKUP TV".
+std::string askLabel(const ui::PanelItem::Ask& a) {
+  std::string t = a.title;
+  while (!t.empty() && (t.back() == '?' || t.back() == ' ')) t.pop_back();
+  return str::upperAscii(t);
+}
+
+// All settings: the categories on the left; in the middle the focused
+// category's rows, or (Build 144) the page one of them opened, one level
+// deeper each time, with the categories dimmed; on the right what the
+// focused row does.
+class AllSettings : public Screen, public SettingsPages {
  public:
-  AllSettings(App& app, std::optional<SettingsCategory> inside, const std::string& at) : Screen(app) {
+  AllSettings(App& app, std::optional<SettingsCategory> inside, const std::string& at, const std::string& row,
+              const SettingsPageMaker& maker)
+      : Screen(app) {
     listCategories();
     SettingsCategory start = inside.value_or(SettingsCategory::Watching);
     for (size_t i = 0; i < cats_.size(); ++i)
       if (cats_[i] == start) cat_ = static_cast<int>(i);
-    buildRows(false);
-    // A group's first row.
-    for (size_t i = 0; !at.empty() && i < rows_.items.size(); ++i)
-      if (rows_.items[i].kind == ui::PanelItem::Kind::Header && rows_.items[i].title == at) {
-        rows_.focusIndex(static_cast<int>(i) + 1);
+    startCategory();
+    ui::ListPanel& rows = levels_.front()->rows;
+    // A group's first row, or a row by its title.
+    for (size_t i = 0; i < rows.items.size(); ++i) {
+      const ui::PanelItem& it = rows.items[i];
+      if (!at.empty() && it.kind == ui::PanelItem::Kind::Header && it.title == at) {
+        rows.focusIndex(static_cast<int>(i) + 1);
         break;
       }
-    inRows_ = inside.has_value() && rows_.focused() >= 0;
+      if (!row.empty() && it.kind != ui::PanelItem::Kind::Header && it.title == row) {
+        rows.focusIndex(static_cast<int>(i));
+        break;
+      }
+    }
+    inRows_ = inside.has_value() && rows.focused() >= 0;
+    if (maker) {
+      // Opened at a page from outside Settings: Back from it closes.
+      open(maker(app_, *this));
+      applyPending();
+      opened_ = depth();
+      inRows_ = true;
+    }
   }
+
+  // SettingsPages: after the key that asked (a row's select runs inside
+  // the rows' own key handling).
+  void open(SettingsPage page) override { pendingOpen_ = std::move(page); }
+  void close() override { ++pendingClose_; }
 
   void shown() override {
     listCategories();
-    buildRows(true);
+    if (levels_.empty() || levelCategory_ != category()) {
+      startCategory();
+      return;
+    }
+    // Back from a full-screen task (Add a provider, the lineup steps): on
+    // the same row, wherever the rows moved it.
+    rebuild(top(), true);
   }
 
-  // Rows that show live state (a provider signing in, memory).
+  // Rows that show live state (a provider signing in, memory, a report's
+  // time left), and whatever moves on the page by itself.
   bool tick(uint32_t ms) override {
+    Level& l = top();
+    bool changed = l.page.tick && l.page.tick(ms);
     SettingsCategory c = category();
-    if (c != SettingsCategory::Providers && c != SettingsCategory::Help) return false;
-    if (ms - rebuiltAt_ < 1000) return false;
-    rebuiltAt_ = ms;
+    bool live = depth() > 0 ? l.page.liveRows : c == SettingsCategory::Providers || c == SettingsCategory::Help;
+    if (!live || ms - l.rebuiltAt < 1000) return changed;
+    l.rebuiltAt = ms;
     // Drawn again only when what the rows (or the summaries) say changed.
-    auto look = [this] {
-      std::string out = rows_.look();
+    auto look = [this, &l] {
+      std::string out = l.rows.look();
       for (const std::string& s : summaries_) out += '\x1d' + s;
       return out;
     };
     std::string before = look();
-    buildRows(true);
-    return look() != before;
+    rebuild(l, false);
+    return changed || look() != before;
+  }
+  uint32_t wakeAt() const override {
+    const Level& l = *levels_.back();
+    return l.page.wakeAt ? l.page.wakeAt() : 0;
   }
   const char* name() const override { return "settings"; }
 
   bool key(const KeyEvent& e) override {
     if (e.wheel) return wheel(e.key == Key::Up ? -1 : 1);
+    // A click on a dimmed category while a page is open: that category.
+    if (depth() > 0 && pane_ == 0 && hoverCat_ >= 0 && e.key == Key::Ok) {
+      int to = hoverCat_;
+      toCategory(to);
+      return true;
+    }
     if (!inRows_) {
       switch (e.key) {
         case Key::Up:
@@ -192,24 +263,23 @@ class AllSettings : public Screen {
         default: return true;
       }
     }
+    ui::ListPanel& rows = top().rows;
     const ui::PanelItem* f = focusedRow();
-    bool choice = f && f->kind == ui::PanelItem::Kind::Choice;
+    bool choice = f && f->kind == ui::PanelItem::Kind::Choice && !rows.asking();
     switch (e.key) {
       case Key::Up:
-      case Key::Down: rows_.key(e.key); return true;
+      case Key::Down: rows.key(e.key); return true;
       case Key::Left:
-        // On a row of choices Left and Right change it; elsewhere Left goes
-        // back to the categories.
+        // On a row of choices Left and Right change it; elsewhere Left steps
+        // out, as Back does.
         if (choice) changeRow(Key::Left);
-        else inRows_ = false;
+        else back();
         return true;
       case Key::Right:
         if (choice) changeRow(Key::Right);
         return true;
       case Key::Ok: changeRow(Key::Ok); return true;
-      case Key::Back:
-        inRows_ = false;
-        return true;
+      case Key::Back: back(); return true;
       case Key::Exit: return false;
       default: return true;
     }
@@ -218,16 +288,26 @@ class AllSettings : public Screen {
   void hover(int id) override {
     if (id >= kHitCategory && id < kHitCategory + static_cast<int>(cats_.size())) {
       pane_ = 0;
+      if (depth() > 0) {
+        // A page is open: only a click leaves it (key()).
+        hoverCat_ = id - kHitCategory;
+        return;
+      }
       inRows_ = false;
       if (id - kHitCategory != cat_) {
         cat_ = id - kHitCategory;
-        buildRows(false);
+        startCategory();
       }
     } else if (id >= ui::ListPanel::kHitBase) {
       pane_ = 1;
+      hoverCat_ = -1;
       inRows_ = true;
-      rows_.hover(id);
+      top().rows.hover(id);
     }
+  }
+  void pointerGone() override {
+    hoverCat_ = -1;
+    pane_ = 1;
   }
 
   void draw(ui::Ctx& c) override {
@@ -237,12 +317,22 @@ class AllSettings : public Screen {
     drawCategories(c);
     drawRows(c);
     drawInfo(c);
-    const ui::PanelItem* f = inRows_ ? focusedRow() : nullptr;
-    ui::keyBar(c, hints::settings(app_.remoteKeys(), inRows_, f && f->kind == ui::PanelItem::Kind::Choice));
+    ui::keyBar(c, keys());
   }
 
  private:
+  // A level: the category's rows (the first), or a page opened from a row.
+  struct Level {
+    SettingsPage page;
+    ui::ListPanel rows;
+    std::string crumb;  // the line over the title, worked out once
+    uint32_t rebuiltAt = 0;
+  };
+
   SettingsCategory category() const { return cats_[static_cast<size_t>(cat_)]; }
+  size_t depth() const { return levels_.empty() ? 0 : levels_.size() - 1; }
+  Level& top() { return *levels_.back(); }
+  const Level& top() const { return *levels_.back(); }
 
   void listCategories() {
     SettingsCategory was = cats_.empty() ? SettingsCategory::Watching : category();
@@ -256,47 +346,144 @@ class AllSettings : public Screen {
       if (cats_[i] == was) cat_ = static_cast<int>(i);
   }
 
-  // The rows again: after every change (toggles show their new state), and
-  // on another category (from its top).
-  void buildRows(bool keepFocus) {
-    int focus = rows_.focused();
-    rows_.items.clear();
-    settingsRows(app_, category(), rows_);
-    if (keepFocus) rows_.focusIndex(focus < 0 ? 0 : focus);
-    else rows_.focusFirst();
+  // The category's rows, from their top, with no page open.
+  void startCategory() {
+    levels_.clear();
+    pendingOpen_.reset();
+    pendingClose_ = 0;
+    opened_ = 0;
+    levelCategory_ = category();
+    auto root = std::make_unique<Level>();
+    SettingsCategory cat = category();
+    root->page.title = categoryTitle(cat);
+    root->page.build = [this, cat](ui::ListPanel& p) { settingsRows(app_, cat, p, *this); };
+    root->crumb = settings_nav::crumb({categoryTitle(cat)});
+    levels_.push_back(std::move(root));
+    rebuild(top(), false);
+    top().rows.focusFirst();
+  }
+
+  // A level's rows again: after every change (toggles show their new
+  // state), once a second where they show live state, and on coming back.
+  // `byTitle`: back from a full-screen task, on the row of the same title.
+  void rebuild(Level& l, bool byTitle) {
+    int focus = l.rows.focused();
+    std::string was =
+        focus >= 0 && focus < static_cast<int>(l.rows.items.size()) ? l.rows.items[static_cast<size_t>(focus)].title
+                                                                      : std::string();
+    l.rows.items.clear();
+    if (l.page.build) l.page.build(l.rows);
+    if (byTitle) {
+      std::vector<std::string> titles;
+      titles.reserve(l.rows.items.size());
+      for (const ui::PanelItem& it : l.rows.items) titles.push_back(it.focusable() ? it.title : std::string());
+      focus = settings_nav::refocus(titles, focus, was);
+    }
+    l.rows.focusIndex(focus < 0 ? 0 : focus);
     // The categories' summaries change with the rows (not worked out
     // every frame).
     summaries_.clear();
     for (SettingsCategory c : cats_) summaries_.push_back(settingsSummary(app_, c));
   }
 
+  // What a row's select asked for: a page opened, or closed.
+  void applyPending() {
+    while (pendingClose_ > 0) {
+      --pendingClose_;
+      if (depth() == 0) break;
+      if (depth() == opened_) {
+        // The page Settings was opened at: back where it came from.
+        app_.nav().pop();
+        pendingOpen_.reset();
+        pendingClose_ = 0;
+        return;
+      }
+      popLevel();
+    }
+    if (pendingOpen_) {
+      auto l = std::make_unique<Level>();
+      l->page = std::move(*pendingOpen_);
+      pendingOpen_.reset();
+      std::vector<std::string> names;
+      for (const auto& up : levels_) names.push_back(up->page.crumb.empty() ? up->page.title : up->page.crumb);
+      names.push_back(l->page.crumb.empty() ? l->page.title : l->page.crumb);
+      l->crumb = settings_nav::crumb(names);
+      levels_.push_back(std::move(l));
+      rebuild(top(), false);
+      top().rows.focusFirst();
+      inRows_ = true;
+    }
+  }
+
+  // Back a level: the rows it was opened from, on the same row.
+  void popLevel() {
+    if (depth() == 0) return;
+    levels_.pop_back();
+    rebuild(top(), false);
+  }
+
+  void back() {
+    ui::ListPanel& rows = top().rows;
+    switch (settings_nav::back(rows.asking() != nullptr, depth(), inRows_, opened_)) {
+      case settings_nav::Back::Disarm: rows.stopAsking(); break;
+      case settings_nav::Back::UpOneLevel: popLevel(); break;
+      case settings_nav::Back::ToCategories: inRows_ = false; break;
+      case settings_nav::Back::Close: app_.nav().pop(); break;
+    }
+  }
+
+  // A click on another category while a page is open.
+  void toCategory(int index) {
+    cat_ = std::clamp(index, 0, static_cast<int>(cats_.size()) - 1);
+    hoverCat_ = -1;
+    inRows_ = false;
+    startCategory();
+  }
+
   const ui::PanelItem* focusedRow() const {
-    int f = rows_.focused();
-    return f >= 0 && f < static_cast<int>(rows_.items.size()) ? &rows_.items[static_cast<size_t>(f)] : nullptr;
+    const ui::ListPanel& rows = top().rows;
+    int f = rows.focused();
+    return f >= 0 && f < static_cast<int>(rows.items.size()) ? &rows.items[static_cast<size_t>(f)] : nullptr;
   }
 
   void moveCategory(int step) {
     int next = std::clamp(cat_ + step, 0, static_cast<int>(cats_.size()) - 1);
     if (next == cat_) return;
     cat_ = next;
-    buildRows(false);
+    startCategory();
   }
 
   void enterRows() {
-    if (rows_.focused() >= 0) inRows_ = true;
+    if (top().rows.focused() >= 0) inRows_ = true;
   }
 
   void changeRow(Key k) {
-    rows_.key(k);
-    buildRows(true);
+    top().rows.key(k);
+    applyPending();
+    // (Settings may be closing: the page it was opened at was closed.)
+    if (!levels_.empty()) rebuild(top(), false);
   }
 
-  // The wheel moves the pane under the pointer: the categories a step, the
-  // rows by scrolling.
+  // The wheel moves the pane under the pointer: the categories a step (not
+  // while a page is open), the rows by scrolling.
   bool wheel(int step) {
-    if (pane_ == 1) rows_.scrollBy(static_cast<float>(step) * kWheelStep);
-    else moveCategory(step);
+    if (pane_ == 1) top().rows.scrollBy(static_cast<float>(step) * kWheelStep);
+    else if (depth() == 0) moveCategory(step);
     return true;
+  }
+
+  hints::Bar keys() const {
+    const RemoteKeys& k = app_.remoteKeys();
+    if (!inRows_) return hints::settings(k, false, false);
+    const ui::PanelItem* asking = top().rows.asking();
+    if (asking && asking->ask) return hints::settingsPage(k, asking->ask->ok, asking->ask->back);
+    const ui::PanelItem* f = focusedRow();
+    bool choice = f && f->kind == ui::PanelItem::Kind::Choice;
+    std::string ok = f ? okWord(*f) : std::string();
+    if (depth() == 0) return hints::settings(k, true, choice, ok);
+    std::string back = depth() == opened_ ? std::string("Close")
+                                          : levels_[depth() - 1]->page.title;
+    return hints::settingsPage(k, f && f->enabled ? ok : std::string(), back, choice, f ? f->next : std::string());
   }
 
   void drawCategories(ui::Ctx& c) {
@@ -318,22 +505,39 @@ class AllSettings : public Screen {
                     focused ? theme::black(0.45f) : theme::white(0.45f), Align::Right);
       y += kCatH + kCatGap;
     }
+    // A page open: the categories stay, quieter (one veil over them all),
+    // the current one still marked.
+    if (depth() > 0) c.g.fill({kLeft - 4, kCatsY - 4, kCatW + 8, y - kCatsY + 8}, theme::hex(theme::kBackground, 0.55f));
   }
 
   void drawRows(ui::Ctx& c) {
-    std::string title = categoryTitle(category());
-    std::string crumb = inRows_ ? "SETTINGS \xe2\x80\xba " + str::upperAscii(title) : std::string("SETTINGS");
-    ui::label(c, crumb, kPaneX, kPaneY, Weight::Bold, 16, theme::white(0.5f), kPaneW);
+    Level& l = top();
+    const std::string& title = l.page.title;
+    ui::label(c, inRows_ ? l.crumb : std::string("SETTINGS"), kPaneX, kPaneY, Weight::Bold, 16, theme::white(0.5f),
+              kPaneW);
     ui::label(c, title, kPaneX, kPaneY + 26, Weight::Bold, 44, theme::white(), kPaneW);
     Rect list{kPaneX, kPaneY + 110, kPaneW, kPaneBottom - kPaneY - 110};
-    rows_.draw(c, list, ui::ListPanel::kHitBase, inRows_);
+    // (The rows' own drawing, as in every list; a level's title is drawn
+    // above, not by the list.)
+    l.rows.draw(c, list, ui::ListPanel::kHitBase, inRows_);
     // A preview while the categories have the focus: shown, but quieter.
     if (!inRows_) c.g.fill({list.x - 4, list.y, list.w + 8, list.h}, theme::hex(theme::kBackground, 0.38f));
   }
 
   void drawInfo(ui::Ctx& c) {
     float x = kInfoX, y = kInfoY, w = kInfoW;
+    const Level& l = top();
+    const ui::PanelItem* asking = inRows_ ? l.rows.asking() : nullptr;
+    if (asking && asking->ask) {
+      // What happens if OK is pressed again.
+      const ui::PanelItem::Ask& a = *asking->ask;
+      y += ui::paragraph(c, askLabel(a), x, y, w, Weight::Bold, 19, theme::white(0.5f), 2) + 12;
+      if (!a.heading.empty()) y += ui::paragraph(c, a.heading, x, y, w, Weight::Bold, 26, theme::white(), 3) + 12;
+      paragraphs(c, a.about, x, y, w, theme::white(0.68f));
+      return;
+    }
     const ui::PanelItem* f = inRows_ ? focusedRow() : nullptr;
+    if (f && l.page.info && l.page.info(c, x, y, w, f)) return;
     if (!f) {
       SettingsCategory cat = category();
       About a = categoryAbout(cat);
@@ -347,21 +551,33 @@ class AllSettings : public Screen {
       captionPreview(c, {x, y, w, 197}, app_.store().settings());
       y += 197 + 22;
     }
-    std::string value = rowValue(*f);
-    std::string head = str::upperAscii(f->title) + (value.empty() ? "" : " \xc2\xb7 " + str::upperAscii(value));
+    std::string head;
+    if (!f->aboutLabel.empty()) {
+      head = f->aboutLabel;
+    } else {
+      std::string value = rowValue(*f);
+      head = str::upperAscii(f->title) + (value.empty() ? "" : " \xc2\xb7 " + str::upperAscii(value));
+    }
     y += ui::paragraph(c, head, x, y, w, Weight::Bold, 19, theme::white(0.5f), 2) + 12;
     if (!f->enabled && !f->why.empty())
       y += ui::paragraph(c, f->why, x, y, w, Weight::Medium, 21, theme::hex(theme::kWarning), 3) + 14;
+    if (!f->aboutHeading.empty())
+      y += ui::paragraph(c, f->aboutHeading, x, y, w, Weight::Bold, 26, theme::white(), 3) + 12;
     paragraphs(c, f->about.empty() ? f->detail : f->about, x, y, w, theme::white(0.68f));
   }
 
   std::vector<SettingsCategory> cats_;
   int cat_ = 0;
   bool inRows_ = false;
-  int pane_ = 1;  // under the pointer: 0 the categories, 1 the rows
-  ui::ListPanel rows_;
+  int pane_ = 1;       // under the pointer: 0 the categories, 1 the rows
+  int hoverCat_ = -1;  // the dimmed category under the pointer while a page is open
+  // [0] the category's rows, then each page opened from them.
+  std::vector<std::unique_ptr<Level>> levels_;
+  SettingsCategory levelCategory_ = SettingsCategory::Watching;
+  size_t opened_ = 0;  // > 0: Settings was opened at this level's page from outside
+  std::optional<SettingsPage> pendingOpen_;
+  int pendingClose_ = 0;
   std::vector<std::string> summaries_;  // one per category
-  uint32_t rebuiltAt_ = 0;
 };
 
 // ------------------------------------------------------------ quick settings
@@ -434,7 +650,11 @@ void guideQuickRows(App& app, ui::ListPanel& p) {
   p.items.push_back(quickToggle(app, "All Channels tab", "Every channel in your countries", &Settings::allChannelsTab));
   ui::PanelItem edit{ui::PanelItem::Kind::Chevron, "Edit My Lineup"};
   edit.detail = "Added by you, removed by you, the whole list";
-  edit.select = [&app] { app.nav().push(makeEditLineup(app)); };
+  // Opens Settings at that page (Back comes back here).
+  edit.select = [&app] {
+    app.nav().pop();
+    openEditLineup(app);
+  };
   if (!app.store().channels()->lineupConfigured) {
     edit.enabled = false;
     edit.why = "Set up My Lineup first";
@@ -505,7 +725,11 @@ class GettingAround : public Screen {
 }  // namespace
 
 void openAllSettings(App& app, std::optional<SettingsCategory> inside, const std::string& at) {
-  app.nav().push(std::make_unique<AllSettings>(app, inside, at));
+  app.nav().push(std::make_unique<AllSettings>(app, inside, at, std::string(), SettingsPageMaker()));
+}
+
+void openSettingsAt(App& app, SettingsCategory category, const std::string& row, SettingsPageMaker page) {
+  app.nav().push(std::make_unique<AllSettings>(app, category, std::string(), row, page));
 }
 
 std::unique_ptr<Screen> makeQuickSettings(App& app, QuickPlace place) {

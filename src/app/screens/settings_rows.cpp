@@ -1,18 +1,21 @@
 // Settings' rows, category by category (the tree in docs/m4-test.md,
 // "Settings (Build 112)"), their one-line summaries, and the pages they
-// open as side panels: Edit My Lineup, Channel by channel, Groups in All
-// Channels, Guide listings, a provider, Home city, Send a report to your
-// phone and Status. Every row shows its current value; a row that can't be
-// used is dimmed with the reason, never hidden; small choices are inline
-// and only lists open a page. No row ever shows a number of channels.
+// open in Settings' middle column (Build 144: in place, no side panels):
+// Edit My Lineup, Channel by channel, Groups in All Channels, Guide
+// listings, a provider, Home city, Send a report to your phone, Status and
+// Hidden. Every row shows its current value; a row that can't be used is
+// dimmed with the reason, never hidden; small choices are inline and only
+// lists open a page; what can't be undone asks on its own row first. No row
+// ever shows a number of channels.
 #include <algorithm>
 #include <set>
 
 #include "app/app.hpp"
 #include "app/playback.hpp"
-#include "app/screens/panel_screen.hpp"
+#include "app/screens/report_share.hpp"
 #include "app/screens/screens.hpp"
 #include "app/store/store.hpp"
+#include "app/ui/panel.hpp"
 #include "core/catalog/lineup.hpp"
 #include "core/sports/my_sports.hpp"
 #include "core/util/memory.hpp"
@@ -22,13 +25,15 @@
 namespace marigold::app {
 namespace {
 
-constexpr float kWidth = 760.0f;
 const char* const kSizes[] = {"Small", "Medium", "Large", "Extra large"};
 const char* const kLooks[] = {"Box", "Outline", "Shadow"};
 const char* const kSetUpFirst = "Set up My Lineup first";
 
-std::unique_ptr<PanelScreen> page(App& app, std::function<void(ui::ListPanel&)> build) {
-  return std::make_unique<PanelScreen>(app, PanelScreen::Side::Trailing, kWidth, std::move(build));
+SettingsPage page(std::string title, std::function<void(ui::ListPanel&)> build) {
+  SettingsPage pg;
+  pg.title = std::move(title);
+  pg.build = std::move(build);
+  return pg;
 }
 
 void toggleSetting(App& app, bool Settings::*field) {
@@ -164,41 +169,36 @@ std::string teamsSummary(App& app, const sports::MySportsPrefs& my) {
   return firstFew(names, 2);
 }
 
-// A yes/no page before something that can't be undone; Cancel has the
-// focus.
-std::unique_ptr<Screen> confirm(App& app, std::string title, std::string detail, std::string action,
-                                std::function<void()> yes) {
-  auto panel = page(app, [&app, title, detail, action, yes](ui::ListPanel& p) {
-    p.subtitle = "SETTINGS";
-    p.title = title;
-    p.items.push_back(ui::PanelItem::note(detail));
-    ui::PanelItem go{ui::PanelItem::Kind::Action, action};
-    go.select = yes;
-    p.items.push_back(go);
-    ui::PanelItem cancel{ui::PanelItem::Kind::Action, "Cancel"};
-    cancel.select = [&app] { app.nav().pop(); };
-    p.items.push_back(cancel);
-  });
-  panel->panel().focusIndex(2);
-  return panel;
-}
-
 // ------------------------------------------------------------ pages
 
 // What was added or removed by hand, and the lineup itself (no counts).
-std::unique_ptr<Screen> editLineupPage(App& app) {
-  return page(app, [&app](ui::ListPanel& p) {
+SettingsPage editLineupPage(App& app) {
+  return page("Edit My Lineup", [&app](ui::ListPanel& p) {
     Store& s = app.store();
     auto ch = s.channels();
     catalog::LineupPrefs prefs = s.lineupPrefs();
-    p.subtitle = "SETTINGS \xc2\xb7 MY LINEUP";
-    p.title = "Edit My Lineup";
-    auto row = [&](const std::string& id, bool add) {
+    enum class Group { Added, Removed, Lineup };
+    auto row = [&](const std::string& id, Group group) {
       const GuideChannel* g = ch->find(id);
       if (!g) return;
+      bool add = group == Group::Removed;
       ui::PanelItem it{ui::PanelItem::Kind::Action, g->name};
       it.detail = g->section;
       it.value = add ? "Add back" : "Remove";
+      switch (group) {
+        case Group::Added:
+          it.aboutHeading = "You added it";
+          it.about = "It stays in My Lineup whatever your area and kinds of channels suggest. OK takes it out again.";
+          break;
+        case Group::Removed:
+          it.aboutHeading = "You removed it";
+          it.about = "It stays out of My Lineup whatever your area and kinds of channels suggest. OK adds it back.";
+          break;
+        case Group::Lineup:
+          it.aboutHeading = "In My Lineup";
+          it.about = "OK takes it out. It stays out until you add it back here or from the guide.";
+          break;
+      }
       it.select = [&app, id] { app.store().toggleLineup(id); };
       p.items.push_back(it);
     };
@@ -209,22 +209,20 @@ std::unique_ptr<Screen> editLineupPage(App& app) {
       if (ch->find(id)) removed.push_back(id);
     p.items.push_back(ui::PanelItem::header("ADDED BY YOU"));
     if (added.empty()) p.items.push_back(ui::PanelItem::note("Hold OK on a channel in the guide to add it."));
-    for (const std::string& id : added) row(id, false);
+    for (const std::string& id : added) row(id, Group::Added);
     p.items.push_back(ui::PanelItem::header("REMOVED BY YOU"));
     if (removed.empty()) p.items.push_back(ui::PanelItem::note("Channels you remove show here, to add back."));
-    for (const std::string& id : removed) row(id, true);
+    for (const std::string& id : removed) row(id, Group::Removed);
     p.items.push_back(ui::PanelItem::header("MY LINEUP"));
-    for (int i : ch->lineup) row(ch->all[static_cast<size_t>(i)].id, false);
+    for (int i : ch->lineup) row(ch->all[static_cast<size_t>(i)].id, Group::Lineup);
   });
 }
 
 // East / West / Both for each channel the provider has in both versions.
-std::unique_ptr<Screen> channelByChannelPage(App& app) {
-  return page(app, [&app](ui::ListPanel& p) {
+SettingsPage channelByChannelPage(App& app) {
+  return page("Channel by channel", [&app](ui::ListPanel& p) {
     Store& s = app.store();
     auto ch = s.channels();
-    p.subtitle = "SETTINGS \xc2\xb7 MY LINEUP";
-    p.title = "Channel by channel";
     catalog::Coast set = s.lineupPrefs().coast;
     std::string rest = set == catalog::Coast::automatic ? std::string("Automatic: ") + coastLabel(s.resolvedCoast())
                                                         : std::string(coastLabel(set));
@@ -247,21 +245,23 @@ std::unique_ptr<Screen> channelByChannelPage(App& app) {
         app.store().setChannelCoast(id, kPick[k]);
       });
       it.detail = on < 0 ? g->section + " \xc2\xb7 Not in My Lineup" : g->section;
+      it.about = "East, West or both versions of this channel in My Lineup. It keeps this choice whatever East/West "
+                 "feeds is set to.";
       p.items.push_back(it);
     }
   });
 }
 
-std::unique_ptr<Screen> groupsPage(App& app) {
-  return page(app, [&app](ui::ListPanel& p) {
-    p.subtitle = "SETTINGS \xc2\xb7 GUIDE";
-    p.title = "Groups in All Channels";
+SettingsPage groupsPage(App& app) {
+  return page("Groups in All Channels", [&app](ui::ListPanel& p) {
     p.items.push_back(ui::PanelItem::note(
         "Unchecked groups are left out of All Channels. Search (outside your lineup) and the guide filter still "
         "find them."));
     for (const GroupSummary& g : app.store().groups()) {
       ui::PanelItem it{ui::PanelItem::Kind::Check, g.name};
       it.on = !g.hidden;
+      it.about = g.hidden ? "Left out of All Channels. OK shows it there again."
+                          : "Shown in All Channels. OK leaves it out; Search and the guide filter still find it.";
       std::string name = g.name;
       bool hidden = g.hidden;
       it.select = [&app, name, hidden] { app.store().setGroupHidden(name, !hidden); };
@@ -270,16 +270,16 @@ std::unique_ptr<Screen> groupsPage(App& app) {
   });
 }
 
-std::unique_ptr<Screen> guideListingsPage(App& app) {
-  auto panel = page(app, [&app](ui::ListPanel& p) {
+SettingsPage guideListingsPage(App& app) {
+  SettingsPage pg = page("Guide listings", [&app](ui::ListPanel& p) {
     Store& s = app.store();
     GuideListingsStatus st = s.guideListings();
     bool fill = s.settings().fillMissingListings;
-    p.subtitle = "SETTINGS \xc2\xb7 GUIDE";
-    p.title = "Guide listings";
     p.items.push_back(settingToggle(app, "Fill in missing listings",
                                     "Free TV listings for channels your provider has no guide for",
-                                    &Settings::fillMissingListings));
+                                    &Settings::fillMissingListings,
+                                    "Your provider's guide comes first. Free TV listings fill in channels it has no "
+                                    "guide for."));
     p.items.push_back(ui::PanelItem::note(st.outsideLine));
     p.items.push_back(ui::PanelItem::header("LISTINGS TO USE"));
     for (const GuideListingsStatus::Shard& sh : st.shards) {
@@ -294,28 +294,27 @@ std::unique_ptr<Screen> guideListingsPage(App& app) {
     }
     p.items.push_back(ui::PanelItem::header(""));
     ui::PanelItem refresh{ui::PanelItem::Kind::Action, "Refresh listings now"};
+    refresh.about = "Reads the listings again now. Help & info \xe2\x80\xba Status has each file.";
     refresh.select = [&app] {
       // Never a second build while one runs.
       app.toast(app.store().refreshListings() ? "Refreshing listings" : "The guide is already loading");
     };
     p.items.push_back(refresh);
-    p.hint = "Help & info \xe2\x80\xba Status has each file";
   });
-  panel->liveRows = true;
-  return panel;
+  pg.liveRows = true;
+  return pg;
 }
 
 // Home city with more areas than fit on one row of choices.
-std::unique_ptr<Screen> homeCityPage(App& app) {
-  return page(app, [&app](ui::ListPanel& p) {
+SettingsPage homeCityPage(App& app) {
+  return page("Home city", [&app](ui::ListPanel& p) {
     Store& s = app.store();
-    p.subtitle = "SETTINGS \xc2\xb7 LIVE EVENTS";
-    p.title = "Home city";
     p.items.push_back(ui::PanelItem::note("Its stations are listed first on games."));
     std::string home = s.homeMarketName();
     for (const catalog::MarketChoice& m : s.lineupPrefs().markets) {
       ui::PanelItem it{ui::PanelItem::Kind::Check, shortMarket(m.name)};
       it.on = m.name == home;
+      it.about = "Its stations are listed first on games.";
       std::string name = m.name;
       it.select = [&app, name] { app.store().setHomeMarket(name); };
       p.items.push_back(it);
@@ -323,74 +322,134 @@ std::unique_ptr<Screen> homeCityPage(App& app) {
   });
 }
 
-std::unique_ptr<Screen> providerPage(App& app, const std::string& id) {
-  return page(app, [&app, id](ui::ListPanel& p) {
+// One provider (Build 144): its kind and sign-in, the membership's end and
+// streams at once (when the provider says), then Remove, which asks on its
+// row first.
+SettingsPage providerPage(App& app, SettingsPages& pages, const std::string& id, const std::string& name) {
+  return page(name, [&app, &pages, id](ui::ListPanel& p) {
     std::vector<AccountSummary> all = app.store().accounts();
     auto a = std::find_if(all.begin(), all.end(), [&](const AccountSummary& x) { return x.id == id; });
-    p.subtitle = "SETTINGS \xc2\xb7 PROVIDERS";
     if (a == all.end()) {
-      p.title = "Provider";
       p.items.push_back(ui::PanelItem::note("This provider was removed."));
       return;
     }
-    p.title = a->name;
+    time::Seconds now = time::now();
+    const membership::Membership& m = a->membership;
+    bool ended = membership::stage(m, now, app.zone()) == membership::Stage::Ended;
     ui::PanelItem kind{ui::PanelItem::Kind::Note, a->kind};
-    kind.detail = a->state.empty() ? "Signing in\xe2\x80\xa6" : a->state;
+    kind.detail = ended && a->signInFailed ? std::string("Can't sign in: the membership has ended")
+                  : a->state.empty()      ? std::string("Signing in\xe2\x80\xa6")
+                                          : a->state;
     p.items.push_back(kind);
-    p.items.push_back(ui::PanelItem::note("Its login stays on this TV. Passwords are never shown."));
+    membership::Text note = membership::pageNote(m, now, app.zone());
+    if (!note.title.empty()) {
+      ui::PanelItem it{ui::PanelItem::Kind::Note, note.title};
+      it.detail = note.detail;
+      it.warn = membership::warns(m, now, app.zone());
+      p.items.push_back(it);
+    }
+    std::string streams = membership::streamsNote(m);
+    if (!streams.empty()) {
+      ui::PanelItem it{ui::PanelItem::Kind::Note, "Streams at once"};
+      it.detail = streams;
+      p.items.push_back(it);
+    }
     p.items.push_back(ui::PanelItem::header(""));
     ui::PanelItem remove{ui::PanelItem::Kind::Action, "Remove this provider"};
     remove.detail = "Its channels leave the guide; My Lineup keeps the rest";
-    std::string name = a->name;
-    remove.select = [&app, id, name] {
-      app.nav().push(confirm(app, "Remove " + name + "?", "Its channels leave the guide. My Lineup keeps the rest.",
-                             "Remove", [&app, id] {
-                               app.store().removeAccount(id);
-                               app.nav().pop();  // the question
-                               app.nav().pop();  // the provider
-                               app.toast("Provider removed");
-                             }));
+    remove.aboutLabel = str::upperAscii(a->name);
+    remove.aboutHeading = "Remove this provider";
+    remove.about = "Its login stays on this TV until you remove it; the password is never shown.";
+    remove.okLabel = "Remove\xe2\x80\xa6";
+    ui::PanelItem::Ask ask;
+    ask.title = "Remove " + a->name + "?";
+    ask.line = "OK to remove \xc2\xb7 Back to keep it";
+    ask.ok = "Remove";
+    ask.back = "Keep it";
+    ask.heading = "Its channels leave the guide";
+    ask.about = "My Lineup keeps the rest, from your other providers. You can add " + a->name +
+                " again later with its login.";
+    remove.ask = std::move(ask);
+    remove.select = [&app, &pages, id] {
+      app.store().removeAccount(id);
+      pages.close();
+      app.toast("Provider removed");
     };
     p.items.push_back(remove);
   });
 }
 
-// The three reports on one page, and clearing the playback log.
-std::unique_ptr<Screen> reportsPage(App& app) {
-  return page(app, [&app](ui::ListPanel& p) {
-    p.subtitle = "SETTINGS \xc2\xb7 HELP & INFO";
-    p.title = "Send a report to your phone";
+// The three reports on one page, and clearing the playback log (Build 144:
+// OK on a report shares it, its code beside the list).
+SettingsPage reportsPage(App& app) {
+  auto share = std::make_shared<ReportShare>(app);
+  SettingsPage pg = page("Send a report to your phone", [&app, share](ui::ListPanel& p) {
     p.items.push_back(ui::PanelItem::note(
         "Pick a report and scan the code with your phone. The link works for 10 minutes, only on your home network. "
         "No passwords, links or server addresses are in any report."));
-    p.items.push_back(chevron("Channel report", "A spreadsheet of your channels: how each was sorted, its feeds", "",
-                              [&app] { app.nav().push(makeExport(app, ExportKind::ChannelReport)); }));
-    p.items.push_back(chevron("Playback log", "What happened when channels were tuned", "",
-                              [&app] { app.nav().push(makeExport(app, ExportKind::PlaybackLog)); }));
-    p.items.push_back(chevron("Live Events report", "Why each event is on the board, or left out", "",
-                              [&app] { app.nav().push(makeExport(app, ExportKind::LiveEvents)); }));
+    struct Report {
+      ExportKind kind;
+      const char* detail;
+      const char* about;
+    };
+    static const Report kReports[] = {
+        {ExportKind::ChannelReport, "A spreadsheet of your channels: how each was sorted, its feeds",
+         "A spreadsheet of every channel: how it was sorted, its feeds, and where its listings come from."},
+        {ExportKind::PlaybackLog, "What happened when channels were tuned",
+         "What happened each time a channel was tuned: feeds tried, stalls, reconnects and errors. No stream links."},
+        {ExportKind::LiveEvents, "Why each event is on the board, or left out",
+         "A spreadsheet of every event in your provider's event channels: what it was read as, and the tile it's on "
+         "or why it was left out."},
+    };
+    for (size_t i = 0; i < 3; ++i) {
+      const Report& r = kReports[i];
+      bool on = share->kind() == r.kind;
+      ui::PanelItem it{ui::PanelItem::Kind::Action, reportName(r.kind)};
+      it.detail = on ? share->rowLine() : std::string(r.detail);
+      if (on && share->sharing() && i + 1 < 3) it.next = "Next report";
+      it.okLabel = on && (share->sharing() || share->building()) ? "Stop sharing" : "Share";
+      it.about = std::string(r.about) + "\nOK shares it: a code to scan with your phone.";
+      it.preview = "report";  // its code in the right column while shared
+      ExportKind kind = r.kind;
+      it.select = [share, kind] { share->toggle(kind); };
+      p.items.push_back(it);
+    }
     p.items.push_back(ui::PanelItem::header(""));
     ui::PanelItem clear{ui::PanelItem::Kind::Action, "Clear playback log"};
     clear.detail = "The log starts again from now";
+    clear.about = "Forgets what happened when channels were tuned. The log starts again from now.";
+    clear.okLabel = "Clear\xe2\x80\xa6";
+    ui::PanelItem::Ask ask;
+    ask.title = "Clear the playback log?";
+    ask.line = "OK to clear \xc2\xb7 Back to keep it";
+    ask.ok = "Clear";
+    ask.back = "Keep it";
+    ask.heading = "What happened when channels were tuned is forgotten";
+    ask.about = "The log starts again from now. It can't be brought back.";
+    clear.ask = std::move(ask);
     clear.select = [&app] {
-      app.nav().push(confirm(app, "Clear the playback log?", "What happened when channels were tuned is forgotten.",
-                             "Clear", [&app] {
-                               app.playback().clearLog();
-                               app.nav().pop();
-                               app.toast("Playback log cleared");
-                             }));
+      app.playback().clearLog();
+      app.toast("Playback log cleared");
     };
     p.items.push_back(clear);
   });
+  pg.crumb = "Send a report";
+  pg.liveRows = true;
+  pg.info = [share](ui::Ctx& c, float x, float y, float w, const ui::PanelItem* f) {
+    if (!f || f->preview != "report" || !share->kind() || f->title != reportName(*share->kind())) return false;
+    share->drawInfo(c, x, y, w);
+    return true;
+  };
+  pg.tick = [share](uint32_t ms) { return share->tick(ms); };
+  pg.wakeAt = [share] { return share->wakeAt(); };
+  return pg;
 }
 
 // The guide files and memory: what the old Guide Listings page and the
 // notes at the end of the list said (never how many channels).
-std::unique_ptr<Screen> statusPage(App& app) {
-  auto panel = page(app, [&app](ui::ListPanel& p) {
+SettingsPage statusPage(App& app) {
+  SettingsPage pg = page("Status", [&app](ui::ListPanel& p) {
     GuideListingsStatus st = app.store().guideListings();
-    p.subtitle = "SETTINGS \xc2\xb7 HELP & INFO";
-    p.title = "Status";
     if (!st.providers.empty()) {
       p.items.push_back(ui::PanelItem::header("YOUR PROVIDER'S GUIDE"));
       for (const GuideListingsStatus::Provider& pr : st.providers) {
@@ -411,13 +470,13 @@ std::unique_ptr<Screen> statusPage(App& app) {
       p.items.push_back(ui::PanelItem::note("In use: " + inUse));
     }
   });
-  panel->liveRows = true;
-  return panel;
+  pg.liveRows = true;
+  return pg;
 }
 
 // ------------------------------------------------------------ categories
 
-void watchingRows(App& app, ui::ListPanel& p) {
+void watchingRows(App& app, ui::ListPanel& p, SettingsPages& /*pages*/) {
   const Settings& set = app.store().settings();
   bool apple = Playback::playerDrawsSubtitles();
   p.items.push_back(ui::PanelItem::header("SUBTITLES"));
@@ -498,7 +557,7 @@ void watchingRows(App& app, ui::ListPanel& p) {
   p.items.push_back(up);
 }
 
-void guideRows(App& app, ui::ListPanel& p) {
+void guideRows(App& app, ui::ListPanel& p, SettingsPages& pages) {
   Store& s = app.store();
   const Settings& set = s.settings();
   p.items.push_back(settingToggle(app, "Preview channels", "Rest on a channel to hear it in the corner",
@@ -523,25 +582,25 @@ void guideRows(App& app, ui::ListPanel& p) {
   if (set.allChannelsTab)
     for (const GroupSummary& g : s.groups()) anyHidden = anyHidden || g.hidden;
   ui::PanelItem groups = chevron("Groups in All Channels", "The provider's groups the tab shows",
-                                 anyHidden ? "Some hidden" : "All shown", [&app] { app.nav().push(groupsPage(app)); });
+                                 anyHidden ? "Some hidden" : "All shown", [&app, &pages] { pages.open(groupsPage(app)); });
   groups.about = "Unchecked groups are left out of All Channels. Search (outside your lineup) and the guide filter "
                  "still find them.";
   dim(groups, set.allChannelsTab, "Turn on All Channels tab");
   p.items.push_back(groups);
   ui::PanelItem listings = chevron("Guide listings", "Your provider's guide and free listings",
                                    set.fillMissingListings ? "Fill in on" : "Provider's only",
-                                   [&app] { app.nav().push(guideListingsPage(app)); });
+                                   [&app, &pages] { pages.open(guideListingsPage(app)); });
   listings.about = "Your provider's guide comes first. Free TV listings fill in channels it has no guide for.";
   p.items.push_back(listings);
 }
 
-void lineupRows(App& app, ui::ListPanel& p) {
+void lineupRows(App& app, ui::ListPanel& p, SettingsPages& pages) {
   Store& s = app.store();
   auto ch = s.channels();
   catalog::LineupPrefs prefs = s.lineupPrefs();
   bool configured = ch->lineupConfigured;
   ui::PanelItem edit = chevron("Edit My Lineup", "Added by you, removed by you, the whole list", "",
-                               [&app] { app.nav().push(editLineupPage(app)); });
+                               [&app, &pages] { pages.open(editLineupPage(app)); });
   edit.about = "Add a channel back, or take one out. Your own changes stay as suggestions change.";
   dim(edit, configured, kSetUpFirst);
   p.items.push_back(edit);
@@ -593,7 +652,7 @@ void lineupRows(App& app, ui::ListPanel& p) {
   std::vector<std::string> pairs = s.coastPairNames();
   std::vector<std::string> some(pairs.begin(), pairs.begin() + std::min<size_t>(pairs.size(), 4));
   std::string names = str::join(some, ", ") + (pairs.size() > 4 ? "\xe2\x80\xa6" : "");
-  ui::PanelItem each = chevron("Channel by channel", names, "", [&app] { app.nav().push(channelByChannelPage(app)); });
+  ui::PanelItem each = chevron("Channel by channel", names, "", [&app, &pages] { pages.open(channelByChannelPage(app)); });
   each.about = "East, West or both for each channel your provider has twice. A channel set here keeps its choice.";
   dim(each, !pairs.empty(), "None of your channels have both versions right now");
   p.items.push_back(each);
@@ -607,10 +666,8 @@ void lineupRows(App& app, ui::ListPanel& p) {
 
 // Settings › Live Events › Hidden (Build 127): what the board leaves out,
 // each with why and Show again (back in its row on the board).
-std::unique_ptr<Screen> hiddenPage(App& app) {
-  return page(app, [&app](ui::ListPanel& p) {
-    p.subtitle = "LIVE EVENTS";
-    p.title = "Hidden from Live Events";
+SettingsPage hiddenPage(App& app) {
+  SettingsPage pg = page("Hidden from Live Events", [&app](ui::ListPanel& p) {
     p.items.push_back(ui::PanelItem::note("Shown again means back in its row on the board."));
     std::vector<Store::HiddenItem> items = app.store().hiddenFromBoard();
     if (items.empty()) p.items.push_back(ui::PanelItem::note("Nothing is hidden."));
@@ -618,6 +675,7 @@ std::unique_ptr<Screen> hiddenPage(App& app) {
       ui::PanelItem it{ui::PanelItem::Kind::Action, h.name};
       it.detail = h.why;
       it.value = "Show again";
+      it.about = "OK puts it back in its row on the board.";
       std::string id = h.id, name = h.name;
       it.select = [&app, id, name] {
         app.store().showOnBoard(id);
@@ -627,9 +685,11 @@ std::unique_ptr<Screen> hiddenPage(App& app) {
     }
     p.hint = "Hide a league from any game card.";
   });
+  pg.crumb = "Hidden";
+  return pg;
 }
 
-void eventsRows(App& app, ui::ListPanel& p) {
+void eventsRows(App& app, ui::ListPanel& p, SettingsPages& pages) {
   Store& s = app.store();
   const Settings& set = s.settings();
   const sports::MySportsPrefs& my = s.mySports();
@@ -648,7 +708,7 @@ void eventsRows(App& app, ui::ListPanel& p) {
   std::vector<std::string> hidden;
   for (const Store::HiddenItem& h : s.hiddenFromBoard()) hidden.push_back(h.name);
   ui::PanelItem hide = chevron("Hidden", "Leagues and sports left off the board",
-                               hidden.empty() ? "None" : firstFew(hidden, 2), [&app] { app.nav().push(hiddenPage(app)); });
+                               hidden.empty() ? "None" : firstFew(hidden, 2), [&app, &pages] { pages.open(hiddenPage(app)); });
   hide.about = "Leagues hidden from a game card, and sports that stay off the board unless you turn them on. "
                "Show again puts one back in its row.";
   p.items.push_back(hide);
@@ -690,7 +750,7 @@ void eventsRows(App& app, ui::ListPanel& p) {
       app.store().setHomeMarket(markets[static_cast<size_t>(k)].name);
     });
   } else if (markets.size() > 3) {
-    city = chevron("Home city", "", shortMarket(home), [&app] { app.nav().push(homeCityPage(app)); });
+    city = chevron("Home city", "", shortMarket(home), [&app, &pages] { pages.open(homeCityPage(app)); });
   } else {
     city = ui::PanelItem{ui::PanelItem::Kind::Action, "Home city"};
     city.value = home.empty() ? "None" : shortMarket(home);
@@ -709,15 +769,22 @@ void eventsRows(App& app, ui::ListPanel& p) {
   p.items.push_back(refresh);
 }
 
-void providersRows(App& app, ui::ListPanel& p) {
+void providersRows(App& app, ui::ListPanel& p, SettingsPages& pages) {
   std::vector<AccountSummary> accounts = app.store().accounts();
   if (accounts.empty())
     p.items.push_back(ui::PanelItem::note("No providers yet. Add the one your channels come from."));
+  time::Seconds now = time::now();
   for (const AccountSummary& a : accounts) {
-    std::string id = a.id;
-    ui::PanelItem it = chevron(a.name, a.kind + " \xc2\xb7 " + (a.state.empty() ? "Signing in\xe2\x80\xa6" : a.state),
-                               "", [&app, id] { app.nav().push(providerPage(app, id)); });
-    it.about = "Its login stays on this TV; the password is never shown. Open it to remove the provider.";
+    std::string id = a.id, name = a.name;
+    // Build 144: the membership's end on its second line, amber in the
+    // last week and once it has ended.
+    ui::PanelItem it = chevron(a.name, membership::accountLine(a.kind, a.state, a.membership, now, app.zone()), "",
+                               [&app, &pages, id, name] { pages.open(providerPage(app, pages, id, name)); });
+    it.warn = membership::warns(a.membership, now, app.zone());
+    membership::Text info = membership::info(a.membership, a.signInFailed, now, app.zone());
+    it.aboutHeading = info.title;
+    it.about = (info.detail.empty() ? std::string() : info.detail + "\n") +
+               "Its login stays on this TV; the password is never shown. Open it to remove the provider.";
     p.items.push_back(it);
   }
   ui::PanelItem add = chevron("Add a provider", "Xtream, Emby / Jellyfin or an M3U playlist", "",
@@ -760,7 +827,7 @@ AdvancedApplies advancedApplies(App& app) {
   return a;
 }
 
-void advancedRows(App& app, ui::ListPanel& p) {
+void advancedRows(App& app, ui::ListPanel& p, SettingsPages& /*pages*/) {
   AdvancedApplies a = advancedApplies(app);
   if (a.relay)
     p.items.push_back(settingToggle(app, "Play through Marigold",
@@ -789,14 +856,14 @@ void advancedRows(App& app, ui::ListPanel& p) {
                                         (app.remoteKeys().colour ? "Sources (the red key)." : "Sources.")));
 }
 
-void helpRows(App& app, ui::ListPanel& p) {
+void helpRows(App& app, ui::ListPanel& p, SettingsPages& pages) {
   ui::PanelItem around = chevron("Getting around", "The remote\xe2\x80\x99s keys, as shown the first time", "",
                                  [&app] { app.nav().push(makeGettingAround(app)); });
   around.tag = "NEW";
   around.about = "The card from the first time you watched: the keys for the guide, channels, subtitles and more.";
   p.items.push_back(around);
   ui::PanelItem report = chevron("Send a report to your phone", "Channel report, playback log or Live Events report",
-                                 "", [&app] { app.nav().push(reportsPage(app)); });
+                                 "", [&app, &pages] { pages.open(reportsPage(app)); });
   report.about = "Pick a report and scan the code with your phone. The link works for 10 minutes, only on your home "
                  "network.\nNo passwords, links or server addresses are in any report.";
   p.items.push_back(report);
@@ -805,7 +872,7 @@ void helpRows(App& app, ui::ListPanel& p) {
   diag.about = "For checking a TV: what it runs on and how the picture is set up.";
   p.items.push_back(diag);
   ui::PanelItem status = chevron("Status", "Guide listings files, memory in use", "",
-                                 [&app] { app.nav().push(statusPage(app)); });
+                                 [&app, &pages] { pages.open(statusPage(app)); });
   status.about = "When your provider's guide and the free listings were last read, and how much memory Marigold "
                  "uses.";
   p.items.push_back(status);
@@ -867,15 +934,15 @@ bool settingsCategoryShown(App& app, SettingsCategory category) {
   return category != SettingsCategory::Advanced || advancedApplies(app).any();
 }
 
-void settingsRows(App& app, SettingsCategory category, ui::ListPanel& p) {
+void settingsRows(App& app, SettingsCategory category, ui::ListPanel& p, SettingsPages& pages) {
   switch (category) {
-    case SettingsCategory::Watching: watchingRows(app, p); break;
-    case SettingsCategory::Guide: guideRows(app, p); break;
-    case SettingsCategory::MyLineup: lineupRows(app, p); break;
-    case SettingsCategory::LiveEvents: eventsRows(app, p); break;
-    case SettingsCategory::Providers: providersRows(app, p); break;
-    case SettingsCategory::Advanced: advancedRows(app, p); break;
-    case SettingsCategory::Help: helpRows(app, p); break;
+    case SettingsCategory::Watching: watchingRows(app, p, pages); break;
+    case SettingsCategory::Guide: guideRows(app, p, pages); break;
+    case SettingsCategory::MyLineup: lineupRows(app, p, pages); break;
+    case SettingsCategory::LiveEvents: eventsRows(app, p, pages); break;
+    case SettingsCategory::Providers: providersRows(app, p, pages); break;
+    case SettingsCategory::Advanced: advancedRows(app, p, pages); break;
+    case SettingsCategory::Help: helpRows(app, p, pages); break;
   }
 }
 
@@ -914,11 +981,16 @@ std::string settingsSummary(App& app, SettingsCategory category) {
       std::vector<AccountSummary> accounts = s.accounts();
       if (accounts.empty()) return "None yet";
       std::vector<std::string> failing;
-      for (const AccountSummary& a : accounts)
-        if (str::startsWith(a.state, "Couldn")) failing.push_back(a.name);
+      bool ended = false;
+      for (const AccountSummary& a : accounts) {
+        if (!str::startsWith(a.state, "Couldn")) continue;
+        failing.push_back(a.name);
+        ended = membership::stage(a.membership, time::now(), app.zone()) == membership::Stage::Ended;
+      }
       if (failing.empty())
         return accounts.size() == 1 ? accounts.front().name + " \xc2\xb7 Signed in" : std::string("All signed in");
-      return failing.size() == 1 ? failing.front() + " couldn't sign in" : "Some couldn't sign in";
+      if (failing.size() == 1) return failing.front() + (ended ? " has ended" : " couldn't sign in");
+      return "Some couldn't sign in";
     }
     case SettingsCategory::Advanced: return "Playback options for your providers";
     case SettingsCategory::Help: return "Getting around, reports, version";
@@ -926,7 +998,18 @@ std::string settingsSummary(App& app, SettingsCategory category) {
   return "";
 }
 
-std::unique_ptr<Screen> makeEditLineup(App& app) { return editLineupPage(app); }
-std::unique_ptr<Screen> makeProvider(App& app, const std::string& accountId) { return providerPage(app, accountId); }
+void openEditLineup(App& app) {
+  openSettingsAt(app, SettingsCategory::MyLineup, "Edit My Lineup",
+                 [](App& a, SettingsPages&) { return editLineupPage(a); });
+}
+
+void openProviderPage(App& app, const std::string& accountId) {
+  std::string name;
+  for (const AccountSummary& a : app.store().accounts())
+    if (a.id == accountId) name = a.name;
+  openSettingsAt(app, SettingsCategory::Providers, name, [accountId, name](App& a, SettingsPages& pages) {
+    return providerPage(a, pages, accountId, name);
+  });
+}
 
 }  // namespace marigold::app

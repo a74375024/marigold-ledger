@@ -1496,3 +1496,44 @@ Reports: the Live Events report ends with the broadcaster names not recognised t
 | College soccer | A college soccer game (Arizona, Pittsburgh, Houston) | No MLB / NHL team channel, no FanDuel channel of that place |
 | Unknown names | Send a Live Events report | Last rows "Broadcaster names not recognised" with names, leagues and game counts; no ESPN+, Peacock or team apps |
 | Next titles | Send a channel report | "next_titles" filled for sports channels (three titles with times), empty for others |
+
+## Build 144 — Settings pages open in place; provider membership dates
+
+One rule now: panels float only over the picture (in the player: Sources, Aa, Quick settings). Everything in Settings opens in Settings' own middle column.
+
+- **Pages in place.** A provider, Edit My Lineup, Channel by channel, Groups in All Channels, Guide listings, Home city, Hidden, Send a report to your phone and Status open in the middle column, one level deeper. The categories stay on the left, dimmed, with the current one still marked; the line over the title says where you are ("SETTINGS › PROVIDERS › BACKUP TV"); the right column explains the focused row. Back (or Left, off a row of choices) goes up one level and lands on the row you came from; a page opened from a page works the same way. The pointer, clicks and the wheel work as on the category rows; a click on a dimmed category goes to that category.
+- **From outside Settings.** Quick settings' Edit My Lineup (in the guide) and a provider picked in the providers list outside Settings open Settings at that page; Back from it (or removing the provider) goes back where you were.
+- **Asking on the row.** OK on Remove this provider or Clear playback log turns that row red: "Remove Backup TV?" / "Clear the playback log?" over "OK to remove · Back to keep it"; the right column says what happens and the key hints say "OK Remove · Back Keep it". OK again does it; Back, or moving to another row, keeps everything. No pop-up in Settings.
+- **Reports beside the list.** OK on a report builds it ("Building the report…" with a spinner) and shares it: its code, link, time left and "Only devices on your home network can open it." in the right column, its row saying "Sharing now · 9:41 left". OK again stops; OK on another report shares that one instead. Leaving the page stops sharing, as the card did.
+- **Real tasks stay full screen** (Add a provider, Add from your phone, the lineup steps, My Sports, Diagnostics, Getting around); Back or finishing returns to the row they were opened from, even when a provider was added above it.
+- **Membership dates.** An Xtream provider's end date (and for an M3U playlist whose link is an Xtream panel's own, the same panel's, asked with the same login) is read at sign-in and with every read of the channel list (each launch, then every half hour while games matter, else every two hours, and Reload), so a renewal shows by itself (until now the date was only saved at sign-in). No date (or 0) shows nothing; Emby / Jellyfin has none. Settings › Providers: "Xtream · Signed in · Ends Mar 3, 2027"; in the last 7 days, in amber, "Ends in 5 days · Nov 10", "Ends tomorrow · Nov 10", "Ends today"; once it has ended "Ended Nov 10 · renew it with your provider" instead of "Couldn't sign in". A trial says "Trial · ends …". The right column: "Membership ends March 3, 2027 — 118 days left. Up to 2 streams at once." The provider's page: its kind and sign-in, the membership ("Membership ends in 5 days" in amber over the date and "Renew it with your provider to keep its channels."), "Streams at once", then Remove.
+- **The guide's heads-up.** In the last 7 days and after the end, the guide's status line says "! Backup TV ends in 5 days" (tomorrow, today, "ended Nov 10") for 8 seconds the first time the guide shows each day, once per provider per day (kept across launches). Loading and updating lines keep their place; it waits its turn. Nothing pops up.
+
+Days are counted on the TV's own calendar and time zone. Never a link, login or channel count on screen or in the log.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Provider page | Settings › Providers › a provider | Opens in the middle column; categories dimmed with Providers marked; "SETTINGS › PROVIDERS › <NAME>" over its name |
+| Back | Back on that page | Providers' rows, the provider's row focused; Back again: the categories |
+| Edit My Lineup | Settings › My Lineup › Edit My Lineup | In place; right column "You added it" / "You removed it" / "In My Lineup" for the focused channel |
+| Nested pages | Help & info › Status, Guide › Guide listings | In place, live state updating; Back returns to the row |
+| Pointer | LG pointer over a page's rows, wheel, click | Rows highlight, wheel scrolls the page, click acts; a click on a dimmed category goes there |
+| Remove | Provider page › Remove this provider › OK | Row turns red "Remove <name>? · OK to remove · Back to keep it"; keys "OK Remove · Back Keep it" |
+| Cancel | Then Back, or Up | Row back to normal, provider kept |
+| Confirm | OK on the red row | Provider removed, back on Providers, "Provider removed" |
+| Clear log | Help & info › Send a report › Clear playback log | Same red row "Clear the playback log?"; OK clears |
+| Reports | OK on Channel report | "Building the report…" spinner, then the code, link and time left on the right; row "Sharing now · 9:59 left" |
+| Next report | ▼ then OK on Playback log | The playback log's code replaces the channel report's |
+| Stop | OK on the shared report | Sharing stops; the row's own line again |
+| Tasks | Providers › Add a provider, then Back | Back on "Add a provider" |
+| Quick settings | Guide › Quick settings › Edit My Lineup | Settings at Edit My Lineup; Back returns to the guide |
+| First-run list | Providers list outside Settings › a provider | Settings at its page; Back returns to the list |
+| Player panels | Sources, Aa, Quick settings in the player | Unchanged side panels over the picture |
+| Date far off | Xtream account ending in months | "Ends Mar 3, 2027" on its row; right column "Membership ends …", days left, streams at once |
+| Last week | Account ending in 5 days | Amber "Ends in 5 days · Nov 10"; page "Membership ends in 5 days" in amber with the full date |
+| Ended | Account past its date that can't sign in | "Ended Nov 10 · renew it with your provider", not "Couldn't sign in"; page "Can't sign in: the membership has ended" |
+| Unlimited | Account with exp_date 0 / null, Emby / Jellyfin | No date anywhere |
+| M3U from a panel | M3U link to a panel's `get.php` with the login in it | Its end date shows like an Xtream account's |
+| Renewal | Renew with the provider, wait for the next channel list read (or Reload) | The new date by itself |
+| Heads-up | Open the guide with an account in its last week | "! <name> ends in 5 days" in the status line for ~8 s; not again that day, even after a relaunch; again the next day |
+| Priority | Open the guide while "Updating your channel list…" | The update line stays; the heads-up follows after it |

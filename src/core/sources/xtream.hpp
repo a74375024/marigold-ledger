@@ -30,8 +30,10 @@ constexpr std::string_view kApiPath = "/player_api.php";
 constexpr std::string_view kGuidePath = "/xmltv.php";
 
 struct AccountInfo {
-  std::string status;  // "Active" when the panel doesn't say
+  std::string status;  // "Active" when the panel doesn't say ("Expired", "Banned"...)
+  // exp_date: none, 0 or null is no end date (unlimited).
   std::optional<time::Seconds> expires;
+  bool trial = false;  // is_trial "1" / 1 / true
   std::optional<int> maxConnections;
   std::optional<int> activeConnections;
   std::vector<std::string> formats;  // allowed_output_formats: "m3u8", "ts"
@@ -48,9 +50,18 @@ std::optional<Error> checkStatus(int status);
 // isn't a usable address.
 std::optional<std::string> serverURL(std::string_view serverUrlString);
 
-// Account info expires and connection limit, saved on the account
+// Account info expires, trial and connection limit, saved on the account
 // (Settings save in the tvOS app).
 void applyAccountInfo(Account& account, const AccountInfo& info);
+// The panel says the membership has ended (status "Expired").
+bool endedStatus(const AccountInfo& info);
+
+// An M3U playlist link that is an Xtream panel's own
+// (http(s)://host[:port][/path]/get.php, with username and password parameters):
+// an account for the same panel and login, so its player API can be asked
+// for the membership's end date. nullopt for any other link. Secret: it
+// carries the login.
+std::optional<Account> panelAccount(std::string_view playlistUrl);
 
 class Client {
  public:
