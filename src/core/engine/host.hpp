@@ -52,6 +52,10 @@ struct Host {
   // Nothing needs the CPU this moment (no key pressed lately, no channel
   // starting): the time to hand freed memory back. Unset counts as idle.
   std::function<bool()> idle;
+  // 1.0.1: ms() of the last touch (a key, the pointer, the wheel, a swipe,
+  // or the app shown again). Live Events' scores slow down while it's long
+  // ago. Unset: always touched.
+  std::function<uint32_t()> lastTouchMs;
   // For the channel report: whether a channel's logo is on screen.
   std::function<std::string(const std::string& logoUrl)> logoStatus;
   // Every request was cancelled (a provider change): image loads in flight

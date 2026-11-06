@@ -194,3 +194,48 @@ TEST_CASE("engine: the sport open on the board gets its scores first") {
   }
   store.eventsOpen(false);
 }
+
+// 1.0.1: Live Events left on screen untouched (no key, pointer, wheel or
+// swipe) for 5 minutes asks for scores every 20 minutes, silently; the first
+// touch brings a round within a moment and the usual pace back.
+TEST_CASE("engine: an untouched Live Events slows to a round every 20 minutes until touched") {
+  Afternoon a;
+  uint32_t touched = 0;
+  marigold::engine::Host h = a.host();
+  h.lastTouchMs = [&touched] { return touched; };
+  Store store(h);
+  REQUIRE(fake::addPlaylist(store, a.tv).empty());
+  touched = a.tv.ms;
+  store.eventsOpen(true);
+  // Touched: the board's own pace (two leagues, once a minute).
+  a.run(store, 30);
+  int start = a.asked(a.nflUrl);
+  a.run(store, 4 * 60);
+  CHECK(a.asked(a.nflUrl) - start >= 3);
+  // Left alone past 5 minutes: at most one round in the next 19 minutes,
+  // and a round again within 20.
+  a.run(store, 2 * 60);
+  start = a.asked(a.nflUrl);
+  a.run(store, 19 * 60);
+  CHECK(a.asked(a.nflUrl) - start <= 1);
+  a.run(store, 2 * 60);
+  CHECK(a.asked(a.nflUrl) - start >= 1);
+  CHECK(a.asked(a.nflUrl) - start <= 2);
+  // A touch: asked within 3 s, then once a minute again.
+  start = a.asked(a.nflUrl);
+  touched = a.tv.ms;
+  a.run(store, 3);
+  CHECK(a.asked(a.nflUrl) == start + 1);
+  a.run(store, 3 * 60);
+  CHECK(a.asked(a.nflUrl) - start >= 3);
+  // The in-player column over a channel, untouched: the same slow pace.
+  a.playing = true;
+  store.eventsOpen(false);
+  store.eventsOpen(true, Store::EventsScreen::guide);
+  touched = a.tv.ms;
+  a.run(store, 6 * 60);
+  start = a.asked(a.nflUrl);
+  a.run(store, 19 * 60);
+  CHECK(a.asked(a.nflUrl) - start <= 1);
+  store.eventsOpen(false, Store::EventsScreen::guide);
+}

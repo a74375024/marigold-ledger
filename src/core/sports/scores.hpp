@@ -93,6 +93,11 @@ constexpr Seconds kMinimumWait = 15;
 // often, and none once this many of the day's requests are used (the rest
 // are kept for Live Events on screen).
 constexpr Seconds kBackgroundEvery = 600;
+// 1.0.1: Live Events on screen but untouched (no key, pointer, wheel or
+// swipe) this long: its rounds go to this pace, as the background's (and
+// within its daily share), until the next touch.
+constexpr Seconds kUntouchedAfter = 5 * 60;
+constexpr Seconds kUntouchedEvery = 20 * 60;
 constexpr int kBackgroundDailyCap = kDailyCap / 2;
 constexpr size_t kLargeScoreboardBytes = 700'000;
 // Failed requests back a league off.
@@ -155,6 +160,9 @@ struct RoundInput {
     std::vector<std::string> teams;
   } focus;
   bool showsScores = kShowsScoresByDefault;
+  // 1.0.1: nothing touched for kUntouchedAfter: on screen counts as the
+  // background, at kUntouchedEvery.
+  bool untouched = false;
   Seconds now = 0;
   // The viewer's zone, for the daily request count.
   time::Zone zone = time::Zone::device();
@@ -285,6 +293,9 @@ class LiveScores {
     bool awaiting = false;
     // At the background's pace (nobody looking on screen).
     bool background = false;
+    // The background's pace: kBackgroundEvery, or kUntouchedEvery for a
+    // screen left untouched.
+    Seconds every = kBackgroundEvery;
   };
   std::optional<Round> round_;
   Seconds lastWait_ = kIdleWait;

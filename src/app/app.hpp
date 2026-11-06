@@ -114,6 +114,7 @@ class App {
   bool dirty_ = true;
   uint32_t ms_ = 0;
   uint32_t lastKeyMs_ = 0;    // the last key press (host.idle)
+  uint32_t lastTouchMs_ = 0;  // any key, pointer, wheel or swipe (host.lastTouchMs)
   bool playbackBusy_ = false;  // a channel is starting or recovering
   time::Seconds lastMinute_ = 0;
   // What the screens last drew of playback, the spinner's step, and the

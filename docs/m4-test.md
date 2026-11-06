@@ -1604,3 +1604,15 @@ On the Nov 6 export (both builds side by side): the Shelton-Paul slot leaves the
 | F1 after the race | Grand Prix finished (results come about 10 minutes after the end) | The race's top three, "Race" under them |
 | NASCAR / IndyCar | Race live, then final | No drivers while live; the top three once final |
 | Banner | Watch any game | No score in the player's banner |
+
+## Build 147 — 1.0.1: untouched Live Events slows its scores
+
+Live Events on screen (the board, or the player's Live Events column) with nothing touched for 5 minutes (no key, pointer move, wheel or swipe) asks for scores once every 20 minutes instead of at its usual pace, and within the background's half of the day's requests. Nothing on screen changes: the scores stay, no note. The first touch brings fresh scores within a couple of seconds and the usual pace back. Watching a channel with nothing open is unchanged (the background's pace). The release links pick up 1.0.1 by themselves (a new version makes a release).
+
+| Area | How to check | Pass |
+|---|---|---|
+| Untouched | Live Events open on a busy afternoon, remote down for 30 min | Scores change at most about every 20 minutes after the first 5 |
+| Touch | Then press any key (or move the LG pointer) | Scores fresh within a few seconds, then updating at the usual pace |
+| Player column | The same with Live Events open over a channel | Same |
+| Watching | A channel full screen, nothing open | As before |
+| Release | `.../releases/latest/download/marigold-android.apk` | 1.0.1 |

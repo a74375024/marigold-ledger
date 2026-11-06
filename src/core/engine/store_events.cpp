@@ -674,6 +674,16 @@ bool Store::eventsInBackground(uint32_t ms) {
 
 void Store::pumpScores(uint32_t ms) {
   EventsState& e = impl_->ev;
+  // 1.0.1: Live Events on screen and nothing touched for 5 minutes: its
+  // rounds go at the untouched pace (20 minutes). The first touch after
+  // that: a round within a moment, then the usual pace.
+  const bool untouched = host_.lastTouchMs &&
+                         ms - host_.lastTouchMs() >= static_cast<uint32_t>(sports::scores::kUntouchedAfter) * 1000u;
+  if (e.scoresUntouched && !untouched && e.scores.looking()) {
+    e.scoresUntouched = false;
+    if (e.scoresRound) e.focusMoved = true;  // after the round under way
+    else e.scoresAt = std::min(e.scoresAt, ms + kFocusRoundMs);
+  }
   if (!e.scores.looking() || e.scoresBusy || ms < e.scoresAt) return;
   time::Seconds now = time::now();
   if (!e.scoresRound) {
@@ -685,6 +695,8 @@ void Store::pumpScores(uint32_t ms) {
     in.zone = host_.zone();
     in.watchableListed = e.watchableListed;  // worked out with the board
     scoresFocus(in);  // Build 145: what you're looking at goes first
+    in.untouched = untouched;
+    e.scoresUntouched = untouched;
     e.scores.beginRound(in);
     e.scoresRound = true;
     e.roundFor = {e.lookSerial, e.scheduleRevision};

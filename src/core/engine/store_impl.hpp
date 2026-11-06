@@ -113,6 +113,7 @@ struct EventsState {
   // row, and the in-player guide's row and what plays under it.
   std::string boardRow, guideRow, guidePlaying;
   bool focusMoved = false;  // during a round: another soon after it
+  bool scoresUntouched = false;  // 1.0.1: the last round began untouched
 
   sports::board::Board board;
   std::set<std::string> watchableListed;  // the board's (events_build::BoardMade)

@@ -39,6 +39,7 @@ App::App(platform::Window& window, platform::Storage& storage, gfx::Renderer& g,
     if (playback_) playback_->logMemory(what);
   };
   host.idle = [this] { return ms_ - lastKeyMs_ >= 2000 && !playbackBusy_; };
+  host.lastTouchMs = [this] { return lastTouchMs_; };
   host.logoStatus = [this](const std::string& url) { return logos_->status(url); };
   host.requestsCancelled = [this] { logos_->abandonLoads(); };
   host.build = build_.build;
@@ -119,6 +120,9 @@ void App::dispatch(const KeyEvent& k) {
 void App::handle(const platform::Event& e) {
   using Type = platform::Event::Type;
   if (e.type == Type::Wake) return;
+  // Anything the viewer does (and the app coming back on screen) counts as
+  // a touch: Live Events' scores keep their pace (store, 1.0.1).
+  if (e.type != Type::None && (!e.lifecycle() || e.type == Type::Shown)) lastTouchMs_ = ms_;
   if (!e.lifecycle()) {
     if (Screen* top = nav_.top(); top && top->rawEvent(e)) {
       dirty_ = true;
