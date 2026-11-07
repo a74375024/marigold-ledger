@@ -62,6 +62,9 @@ class Screen {
   // A corner preview may keep playing under this screen (the guide). Under
   // any other full screen it stops.
   virtual bool keepsPreview() const { return false; }
+  // The guide and Live Events: where the app's update card may show
+  // (Build 148).
+  virtual bool home() const { return false; }
   // Pushed or uncovered again.
   virtual void shown() {}
   // Every event before the app's own handling (the webOS key test screen

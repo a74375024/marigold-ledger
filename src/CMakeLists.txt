@@ -28,6 +28,7 @@ add_executable(marigold
   platform/text.cpp
   platform/text_sdl.cpp
   platform/ts_proxy.cpp
+  platform/update_none.cpp
   platform/video.cpp
   platform/window.cpp
 )

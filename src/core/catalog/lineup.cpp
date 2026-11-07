@@ -177,6 +177,41 @@ const MarketChoice* LineupPrefs::home() const {
   return markets.empty() ? nullptr : &markets.front();
 }
 
+std::string shortMarketName(const std::string& name) {
+  size_t cut = name.find("\xe2\x80\x93");
+  if (cut == std::string::npos) cut = name.find('-');
+  return cut == std::string::npos ? name : name.substr(0, cut);
+}
+
+int LocalAreas::of(const std::optional<std::string>& callsign) const {
+  if (!callsign || areaOf.empty()) return -1;
+  auto it = areaOf.find(reference::bareCallsign(*callsign));
+  return it == areaOf.end() ? -1 : it->second;
+}
+
+LocalAreas localAreas(const LineupPrefs& prefs) {
+  LocalAreas out;
+  if (prefs.markets.size() < 2) return out;
+  const MarketChoice* home = prefs.home();
+  std::vector<const MarketChoice*> order{home};
+  for (const MarketChoice& m : prefs.markets)
+    if (&m != home) order.push_back(&m);
+  const reference::Index& index = reference::builtInIndex();
+  for (const MarketChoice* m : order) {
+    int area = static_cast<int>(out.names.size());
+    std::string name = shortMarketName(m->name);
+    // A second area of the same short name ("Twin City-North", "Twin
+    // City-South") by its whole name, so they stay apart.
+    if (std::find(out.names.begin(), out.names.end(), name) != out.names.end()) name = m->name;
+    out.names.push_back(std::move(name));
+    // emplace: a sign an area before it (home, or one picked earlier) has stays there.
+    for (const std::string& sign : m->callsigns) out.areaOf.emplace(reference::bareCallsign(sign), area);
+    for (const reference::Station* s : index.stationsIn(m->name))
+      out.areaOf.emplace(reference::bareCallsign(s->callsign), area);
+  }
+  return out;
+}
+
 bool LineupPrefs::operator==(const LineupPrefs& o) const {
   return configured == o.configured && markets == o.markets && categories == o.categories &&
          requireGuide == o.requireGuide && suggested == o.suggested && added == o.added &&

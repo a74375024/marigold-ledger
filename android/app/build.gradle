@@ -97,4 +97,7 @@ dependencies {
   implementation 'androidx.media3:media3-exoplayer:1.5.1'
   implementation 'androidx.media3:media3-exoplayer-hls:1.5.1'
   implementation 'androidx.media3:media3-datasource:1.5.1'
+  // FileProvider, for handing an update to the system's installer (the
+  // version media3 already brings in).
+  implementation 'androidx.core:core:1.8.0'
 }

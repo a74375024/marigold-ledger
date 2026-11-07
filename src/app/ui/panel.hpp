@@ -48,6 +48,8 @@ struct PanelItem {
   std::string aboutLabel, aboutHeading;
   // The second line (a note's title) in amber: a membership's last week.
   bool warn = false;
+  // A spinner at the right: something under way ("Updating…", Build 148).
+  bool busy = false;
   // What OK does, for the key hints ("Remove…", "Stop sharing");
   // empty: by kind ("Open" on a chevron). `next`: a ▼ hint while focused
   // ("Next report").

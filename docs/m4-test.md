@@ -1616,3 +1616,42 @@ Live Events on screen (the board, or the player's Live Events column) with nothi
 | Player column | The same with Live Events open over a channel | Same |
 | Watching | A channel full screen, nothing open | As before |
 | Release | `.../releases/latest/download/marigold-android.apk` | 1.0.1 |
+
+## Build 148 — Each picked area is its own neighborhood
+
+With stations of two or more of your picked areas in My Lineup, each area is a neighborhood of its own in place of Local, named by its short name (the part before the dash, as Settings shows it: "San Francisco–Oakland–San Jose" is "San Francisco"). The home area comes first (Live Events › Home city; the first one picked unless you chose another), then the others in the order you picked them, each in channel-number order. A station in two of your areas goes with home when home is one of them, else with the one picked first. Local stations in none of your areas (added by hand, or another city's in All Channels) stay under Local, after the cities. With one area (or a second whose stations you've all removed) the guide is exactly as before.
+
+Everything that names a neighborhood picks the city up: the grid's headers, the label above the preview, the NEIGHBORHOODS column (Left at Now, then Down to the next city), the player's guide (its top line and headers), Filter › Neighborhoods, Edit My Lineup's second line and the "My Lineup is ready" tiles. Changing the home city re-sorts the guide. A number two cities share (4, 13) tunes the home city's station. Live Events › Home city now says "Its stations come first, in the guide and on games". The player's guide writes its headers in capitals like the guide ("LOCAL", "NEW YORK"). A neighborhood picked in Filter that goes away (Local splitting into cities, or back) clears the filter.
+
+| Area | How to check | Pass |
+|---|---|---|
+| One area | My Lineup with one area (New York), a station of another city added by hand | One LOCAL header, rows in number order, as before |
+| Two areas | Pick New York and Indianapolis, keep some of each | NEW YORK then INDIANAPOLIS headers in place of LOCAL, each city's rows together in number order; no counts anywhere |
+| Unpicked local | Also add a third city's station by hand | It sits under LOCAL, after the cities |
+| Column | Left at Now | New York, Indianapolis, (Local), News…; Down then OK lands on Indianapolis' first station |
+| Hero / filter / setup | Focus an Indianapolis row; open Filter; Settings › My Lineup › Edit My Lineup | Label above the preview says Indianapolis; Filter › NEIGHBORHOODS lists the cities; Edit My Lineup's second line names each station's city |
+| Home city | Live Events › Home city › Indianapolis | Indianapolis comes first in the guide and the column; the row's description reads "Its stations come first, in the guide and on games" |
+| Number keys | Type 4 with WNBC 4 and WTTV 4 in My Lineup | Home's station (WNBC with New York home, WTTV with Indianapolis home) |
+| Player's guide | Open the guide over a channel | Top line "MY LINEUP · NEW YORK"; headers in capitals, the cities as in the guide |
+| Back to one | Remove every Indianapolis station | LOCAL again, as before |
+
+## Build 148 — Updates on Fire TV and Mac
+
+Where Marigold can install itself (Android and Fire TV, the Mac), it looks for a newer release: once within a minute or so of opening (from 20 seconds on, when nothing is pressed or starting and the first channel list is in), then at most once a day, from GitHub's latest release, without signing in and with the device's ordinary agent. A newer plain version (`x.y.z` above the running one; 1.0.10 is above 1.0.9) with this device's file and its SHA-256 digest counts; prereleases and other tags don't. Nothing says what changed: a small card at the top right says "Update available" with **Update** and **Not now** (Left/Right; OK; Back is Not now). It comes up only on the guide or Live Events, with nothing full screen, after 2 seconds without a key, at most once a day (Not now, or 20 seconds untouched, waits for tomorrow), never in the run that began with the first-time setup, and never over a reminder card. An OK in its first second is ignored (it was meant for the guide). While an update waits, Settings › Help & info starts with an "Update available" row (OK updates). Updating: "Updating…" with a spinner on the card or the row; the file goes to the app's cache and must match the release's digest (no digest, or another file: refused). Android hands it to the system's installer (the "Install unknown apps" page for Marigold opens first where the system asks; the installer follows when you come back with it allowed). The Mac copies the new app next to the old one, quits, and a small helper puts it in the old one's place and opens it. Anything that goes wrong: "Couldn't update. Try again later." for a few seconds (the Mac, in a folder it may not change: "Couldn't update. Marigold's folder can't be changed.", or run from Downloads: "Couldn't update. Move Marigold to Applications first."). LG and Apple TV: nothing at all — no check, no request, no card, no row.
+
+The updater ships in this build, so a device takes its first in-app update from the next version on (this one is installed the usual way). An Android update installs only over an APK signed with the same key (CI's release key if set, else its cached debug key); one signed otherwise is refused before the installer opens ("Couldn't update").
+
+| Area | How to check | Pass |
+|---|---|---|
+| Check | Fire TV with an older version installed than the latest release; open, wait on the guide | Card "Update available" within a minute or so; no version or notes on it |
+| Once a day | Not now; close and open the app again the same day | No card; Help & info has the "Update available" row |
+| Next day | Open the app the next day | The card once more |
+| Where | Open Search or Settings, or play full screen, when the card would come | No card there; it waits for the guide or Live Events |
+| Setup | First-time setup on a fresh install with an update out | No card in that run |
+| Update (Fire TV) | Card › Update | "Updating…" with a spinner, then the system's installer (after "Install unknown apps" for Marigold the first time); after installing, the new version in Help & info › Version |
+| Update (Mac) | Card › Update, Marigold in Applications | "Updating…", the app quits and opens again as the new version, in the same place |
+| Mac folder | Marigold run from a folder you can't change | "Couldn't update. Marigold's folder can't be changed." for a few seconds |
+| Row | Settings › Help & info › Update available › OK | Same as the card's Update |
+| Up to date | The installed version is the latest | No card, no row |
+| LG, Apple TV | Any time | No card, no row, no request to GitHub (the log has no "update" lines) |
+| Log | marigold.log (Android: also logcat; Mac: Console) | "update" lines with versions and status codes, never a link or a path |

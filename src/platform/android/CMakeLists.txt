@@ -41,6 +41,7 @@ add_library(marigold SHARED
   main.cpp
   storage.cpp
   text.cpp
+  update.cpp
   video.cpp
   window.cpp
 )

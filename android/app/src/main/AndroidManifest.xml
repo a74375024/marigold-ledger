@@ -5,6 +5,8 @@
   <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
   <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
   <uses-permission android:name="android.permission.WAKE_LOCK" />
+  <!-- Build 148: the app hands its own update to the system's installer. -->
+  <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
   <!-- A TV app: no touchscreen, the remote's D-pad. -->
   <uses-feature android:name="android.software.leanback" android:required="false" />
@@ -34,5 +36,16 @@
         <category android:name="android.intent.category.LAUNCHER" />
       </intent-filter>
     </activity>
+
+    <!-- The downloaded update, for the system's installer to read. -->
+    <provider
+        android:name="androidx.core.content.FileProvider"
+        android:authorities="${applicationId}.updates"
+        android:exported="false"
+        android:grantUriPermissions="true">
+      <meta-data
+          android:name="android.support.FILE_PROVIDER_PATHS"
+          android:resource="@xml/update_paths" />
+    </provider>
   </application>
 </manifest>

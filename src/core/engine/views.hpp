@@ -58,6 +58,10 @@ List guide(const Channels& ch, const Listings* li, Tab tab, const Filter& filter
 // Ids no longer in the list are skipped.
 List grouped(const Channels& ch, const std::vector<std::string>& ids);
 
+// A neighborhood's header line in a grid, the guide's and the player's
+// alike: its name in capitals ("LOCAL", "NEW YORK").
+std::string headerTitle(const std::string& section);
+
 // The entries a list's channel lines hold, in order: what CH+ / CH- move
 // through in the player.
 std::vector<std::string> flipList(const Channels& ch, const List& list);

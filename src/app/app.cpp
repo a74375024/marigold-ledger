@@ -9,6 +9,7 @@
 #include "app/store/store.hpp"
 #include "core/report/playback_log.hpp"
 #include "core/util/log.hpp"
+#include "platform/update.hpp"
 
 namespace marigold::app {
 namespace {
@@ -18,6 +19,15 @@ constexpr uint32_t kReminderMs = 15000;  // the reminder card hides itself then
 // OK held this long counts as a long press (Legacy's NV_HOLD_MS, as Android TV).
 constexpr uint32_t kHoldMs = 700;
 constexpr int kPoolThreads = 4;
+// The update card (Build 148): hides itself after this long; comes up only
+// after this long without a key; and an OK this soon after it came up was
+// meant for the screen under it, not an answer.
+constexpr uint32_t kUpdateCardMs = 20000;
+constexpr uint32_t kUpdateCardCalmMs = 2000;
+constexpr uint32_t kUpdateCardSettleMs = 1000;
+// The card's buttons, for the pointer.
+constexpr int kCardHitUpdate = 7480001;
+constexpr int kCardHitNotNow = 7480002;
 
 }  // namespace
 
@@ -41,9 +51,22 @@ App::App(platform::Window& window, platform::Storage& storage, gfx::Renderer& g,
   host.idle = [this] { return ms_ - lastKeyMs_ >= 2000 && !playbackBusy_; };
   host.lastTouchMs = [this] { return lastTouchMs_; };
   host.logoStatus = [this](const std::string& url) { return logos_->status(url); };
-  host.requestsCancelled = [this] { logos_->abandonLoads(); };
+  host.requestsCancelled = [this] {
+    logos_->abandonLoads();
+    if (updates_) updates_->abandoned();
+  };
   host.build = build_.build;
+  // Build 148: updates only where the app installs itself (Android, Fire
+  // TV, the Mac); elsewhere nothing is made, asked or shown.
+  host.updateAsset = platform::update::asset();
+  if (!host.updateAsset.empty()) {
+    host.updateFile = platform::update::file();
+    host.installUpdate = platform::update::install;
+  }
+  updates_ = engine::updates::Updates::make(host, build_.version);
   store_ = std::make_unique<Store>(std::move(host));
+  // The first-run setup: no update card in this run.
+  firstRun_ = store_->accounts().empty();
   playback_ = std::make_unique<Playback>(*this);
   // The run's first line in the playback log: which build on what.
   playback_->logLaunch(report::launchDetail(build_.build, build_.version, build_.system, build_.device));
@@ -56,6 +79,7 @@ App::~App() {
   nav_ = Navigator();  // screens first: they may still use playback and the store
   playback_.reset();
   pool_.stop();
+  updates_.reset();
   store_.reset();
   logos_.reset();
 }
@@ -107,6 +131,7 @@ void App::dispatch(const KeyEvent& k) {
       return;
     }
   }
+  if (cardUp_ && updateCardKey(k)) return;
   if (!top) return;
   bool used = top->key(k);
   if (!used && k.key == Key::Back) {
@@ -229,9 +254,16 @@ void App::handle(const platform::Event& e) {
       pointerX_ = e.x * gfx::kLayoutWidth / static_cast<float>(std::max(1, g_.drawableWidth()));
       pointerY_ = e.y * gfx::kLayoutHeight / static_cast<float>(std::max(1, g_.drawableHeight()));
       // Last registered region wins: panels are drawn over the grid.
+      cardHover_ = -1;
       for (auto it = hits_.rbegin(); it != hits_.rend(); ++it) {
         const ui::Rect& r = it->rect;
         if (pointerX_ >= r.x && pointerX_ < r.x + r.w && pointerY_ >= r.y && pointerY_ < r.y + r.h) {
+          if (it->id == kCardHitUpdate || it->id == kCardHitNotNow) {
+            // The update card's buttons (drawn over everything).
+            cardHover_ = cardChoice_ = it->id == kCardHitUpdate ? 0 : 1;
+            dirty_ = true;
+            break;
+          }
           if (Screen* top = nav_.top()) top->hover(it->id);
           dirty_ = true;
           break;
@@ -344,6 +376,117 @@ void App::drawReminder(ui::Ctx& c) {
             ui::theme::white(0.55f));
 }
 
+bool App::updateCardKey(const KeyEvent& k) {
+  using Phase = engine::updates::Updates::Phase;
+  // Exit puts the card away and does what it does.
+  if (k.key == Key::Exit) {
+    cardUp_ = false;
+    return false;
+  }
+  if (updates_->phase() != Phase::Idle) {
+    // Updating, or saying it couldn't: Back puts the card away (Settings ›
+    // Help & info shows how it goes); nothing else reaches the screen.
+    if (k.key == Key::Back) cardUp_ = false;
+    return true;
+  }
+  switch (k.key) {
+    case Key::Left: cardChoice_ = 0; break;
+    case Key::Right: cardChoice_ = 1; break;
+    case Key::Back: cardUp_ = false; break;
+    case Key::Ok:
+      // An OK meant for the screen as the card came up, a hold, or a click
+      // away from the card's buttons: no answer.
+      if (k.longPress || ms_ - cardAt_ < kUpdateCardSettleMs) break;
+      if (pointer_.active() && cardHover_ < 0) break;
+      if (cardChoice_ == 0) {
+        cardActed_ = true;
+        updates_->update();
+      } else {
+        cardUp_ = false;
+      }
+      break;
+    default:
+      break;  // the card is answered first
+  }
+  return true;
+}
+
+void App::tickUpdates(wake::Due& due, bool& draw) {
+  using Phase = engine::updates::Updates::Phase;
+  // Quiet: no key lately, no channel starting, the first channel list in.
+  bool quiet = ms_ - lastKeyMs_ >= kUpdateCardCalmMs && !playbackBusy_ &&
+               store_->status().phase != engine::StoreStatus::Phase::Loading;
+  if (updates_->tick(ms_, quiet)) draw = true;
+  Phase phase = updates_->phase();
+  if (phase == Phase::Failed) due.at(updates_->failedUntil());
+  // Updating: the spinner (the card's, Settings' row) moves on.
+  if (phase == Phase::Updating) {
+    if (spinner_.moved(ms_)) draw = true;
+    due.at(spinner_.next(ms_));
+  }
+  // Only over the guide or Live Events, nothing playing full screen, no
+  // reminder card, not in the first-run setup's run.
+  Screen* top = nav_.top();
+  bool home = top && top->home() && !hidden_ && !firstRun_ && !store_->dueReminder() &&
+              !(playback_->active() && playback_->full());
+  if (cardUp_) {
+    bool gone = false;
+    if (cardActed_) gone = phase == Phase::Idle;  // the outcome was shown (or handed over)
+    else if (phase == Phase::Idle) gone = !home || ms_ - cardAt_ >= kUpdateCardMs;
+    if (gone) {
+      cardUp_ = false;
+      draw = true;
+    } else if (!cardActed_) {
+      due.at(cardAt_ + kUpdateCardMs);
+    }
+    return;
+  }
+  if (home && phase == Phase::Idle && updates_->cardDue() && ms_ - lastKeyMs_ >= kUpdateCardCalmMs) {
+    cardUp_ = true;
+    cardAt_ = ms_;
+    cardChoice_ = 0;
+    cardActed_ = false;
+    cardHover_ = -1;
+    updates_->cardShown();  // once a day: kept as it comes up
+    draw = true;
+  }
+}
+
+void App::drawUpdateCard(ui::Ctx& c) {
+  using Phase = engine::updates::Updates::Phase;
+  namespace up = engine::updates;
+  if (!cardUp_ || !updates_) return;
+  // Where the reminder card goes (the top right), smaller.
+  ui::Rect r{gfx::kLayoutWidth - 80 - 600, 60, 600, 196};
+  c.g.fill(r, ui::theme::hex(0x1C1F25, 0.97f), ui::theme::kPanelRadius);
+  ui::label(c, up::kAvailableText, r.x + 36, r.y + 34, ui::Weight::Bold, 30, ui::theme::white(), r.w - 72);
+  float y = r.y + 100;
+  Phase phase = updates_->phase();
+  if (phase == Phase::Updating) {
+    ui::spinner(c, r.x + 50, y + 30, 14);
+    ui::labelIn(c, up::kUpdatingText, {r.x + 80, y, r.w - 116, 60}, ui::Weight::Medium, 24, ui::theme::white(0.85f));
+    return;
+  }
+  if (phase == Phase::Failed) {
+    ui::labelIn(c, updates_->failText(), {r.x + 36, y, r.w - 72, 60}, ui::Weight::Medium, 22,
+                ui::theme::hex(ui::theme::kWarning));
+    return;
+  }
+  float x = r.x + 36;
+  const char* const names[] = {"Update", "Not now"};
+  for (int i = 0; i < 2; ++i) {
+    std::string name = names[i];
+    float w = ui::chipWidth(c, name, 22) + 56;
+    ui::Rect b{x, y, w, 60};
+    bool focused = i == cardChoice_;
+    c.g.fill(b, focused ? ui::theme::white() : ui::theme::white(0.12f), 30);
+    ui::labelIn(c, name, b, ui::Weight::Bold, 22, focused ? ui::theme::black() : ui::theme::white(0.9f),
+                ui::Align::Center);
+    c.hit(b, i == 0 ? kCardHitUpdate : kCardHitNotNow);
+    x += w + 20;
+  }
+}
+
 void App::frame() {
   hits_.clear();
   ui::Ctx c{g_, t_, logos_.get(), &icons_, time::now(), ms_, &zone_, &hits_, pointer_.active(), store_->settings().clock24};
@@ -351,6 +494,7 @@ void App::frame() {
   nav_.draw(c);
   drawToast(c);
   drawReminder(c);
+  drawUpdateCard(c);
   logos_->frame();
   window_.swap();
 }
@@ -375,6 +519,7 @@ bool App::tickOwn(wake::Due& due) {
     if (ms_ >= toastUntil_) draw = true;
     else due.at(toastUntil_);
   }
+  if (updates_) tickUpdates(due, draw);
   if (store_->dueReminder()) {
     uint32_t at = store_->dueReminderAt();
     if (at != reminderAt_) draw = true;
@@ -432,6 +577,8 @@ void App::run() {
     window_.frame();
     bool results = pool_.pump() > 0;
     if (results) dirty_ = true;
+    // An update is in place: the app quits the usual way for it (the Mac).
+    if (updates_ && updates_->quitWanted()) quit_ = true;
     spent[Part::Events] = since(t);
     t = Clock::now();
     bool stored = store_->tick(ms_);

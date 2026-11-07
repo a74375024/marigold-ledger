@@ -10,6 +10,7 @@
 
 #include "app/screen.hpp"
 #include "core/engine/session.hpp"
+#include "core/engine/updates.hpp"
 #include "core/input/pointer_mode.hpp"
 #include "core/input/wake.hpp"
 #include "core/report/loop_stats.hpp"
@@ -60,6 +61,9 @@ class App {
   Playback& playback() { return *playback_; }
   const Build& build() const { return build_; }
   const time::Zone& zone() const { return zone_; }
+  // Build 148: updating the app itself; null where it can't (webOS, the
+  // Apple TV).
+  engine::updates::Updates* updates() { return updates_.get(); }
 
   // A short message in a capsule (3.5 s).
   void toast(const std::string& message, bool top = false);
@@ -94,6 +98,11 @@ class App {
   void suspend();
   void drawToast(ui::Ctx& c);
   void drawReminder(ui::Ctx& c);
+  // The update card (Build 148): up when due, on the guide or Live Events;
+  // its keys while it is.
+  void tickUpdates(wake::Due& due, bool& draw);
+  bool updateCardKey(const KeyEvent& k);
+  void drawUpdateCard(ui::Ctx& c);
 
   platform::Window& window_;
   platform::Storage& storage_;
@@ -108,6 +117,7 @@ class App {
   std::unique_ptr<logos::LogoCache> logos_;
   std::unique_ptr<Store> store_;
   std::unique_ptr<Playback> playback_;
+  std::unique_ptr<engine::updates::Updates> updates_;
   Navigator nav_;
 
   bool quit_ = false;
@@ -124,6 +134,15 @@ class App {
   uint32_t reminderAt_ = UINT32_MAX;
   bool hidden_ = false;  // in the background, or the window hidden
   report::LoopStats loopStats_;
+  // The update card: up, since when, the button focused (0 Update, 1 Not
+  // now), and Update chosen on it (it stays for the outcome). Never in a
+  // run that began with the first-run setup.
+  bool cardUp_ = false;
+  uint32_t cardAt_ = 0;
+  int cardChoice_ = 0;
+  bool cardActed_ = false;
+  int cardHover_ = -1;  // the button under the pointer (-1: none)
+  bool firstRun_ = false;
 
   // OK is reported on release, or as a long press after kHoldMs (700 ms).
   bool okDown_ = false;

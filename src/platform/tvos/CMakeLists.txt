@@ -57,6 +57,7 @@ add_executable(Marigold MACOSX_BUNDLE
   ${src}/platform/files_posix.cpp
   ${src}/platform/http_groups.cpp
   ${src}/platform/ts_proxy_none.cpp
+  ${src}/platform/update_none.cpp  # no updates of its own
   # tvOS backends.
   ${MARIGOLD_TVOS_SOURCES}
   Assets.xcassets

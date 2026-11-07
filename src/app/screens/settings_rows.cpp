@@ -82,12 +82,9 @@ void changeCaptions(App& app, const std::function<void(Settings&)>& edit) {
   app.playback().subtitlesChanged();
 }
 
-// "San Francisco–Oakland–San Jose" -> "San Francisco".
-std::string shortMarket(const std::string& name) {
-  size_t cut = name.find("\xe2\x80\x93");
-  if (cut == std::string::npos) cut = name.find('-');
-  return cut == std::string::npos ? name : name.substr(0, cut);
-}
+// "San Francisco–Oakland–San Jose" -> "San Francisco" (the guide's
+// neighborhood for that area, with two or more).
+std::string shortMarket(const std::string& name) { return catalog::shortMarketName(name); }
 
 // "NFL, NBA, MLB +1": the first few, then how many more.
 std::string firstFew(const std::vector<std::string>& names, size_t few) {
@@ -309,12 +306,12 @@ SettingsPage guideListingsPage(App& app) {
 SettingsPage homeCityPage(App& app) {
   return page("Home city", [&app](ui::ListPanel& p) {
     Store& s = app.store();
-    p.items.push_back(ui::PanelItem::note("Its stations are listed first on games."));
+    p.items.push_back(ui::PanelItem::note("Its stations come first, in the guide and on games."));
     std::string home = s.homeMarketName();
     for (const catalog::MarketChoice& m : s.lineupPrefs().markets) {
       ui::PanelItem it{ui::PanelItem::Kind::Check, shortMarket(m.name)};
       it.on = m.name == home;
-      it.about = "Its stations are listed first on games.";
+      it.about = "Its stations come first, in the guide and on games.";
       std::string name = m.name;
       it.select = [&app, name] { app.store().setHomeMarket(name); };
       p.items.push_back(it);
@@ -756,8 +753,9 @@ void eventsRows(App& app, ui::ListPanel& p, SettingsPages& pages) {
     city.value = home.empty() ? "None" : shortMarket(home);
     dim(city, false, markets.empty() ? "Pick your area in My Lineup" : "Pick a second area in My Lineup to choose");
   }
-  if (city.enabled) city.detail = "Its stations come first on games";
-  city.about = "With more than one area in My Lineup: the one whose stations are listed first on games.";
+  if (city.enabled) city.detail = "Its stations come first, in the guide and on games";
+  city.about =
+      "With more than one area in My Lineup: the one whose stations are listed first, in the guide and on games.";
   p.items.push_back(city);
   ui::PanelItem refresh{ui::PanelItem::Kind::Action, "Refresh schedule"};
   refresh.about = "Reads every league's schedule again, now.";
@@ -856,7 +854,37 @@ void advancedRows(App& app, ui::ListPanel& p, SettingsPages& /*pages*/) {
                                         (app.remoteKeys().colour ? "Sources (the red key)." : "Sources.")));
 }
 
+// Build 148: while an update waits (only where the app installs itself),
+// the row that installs it; the rows are rebuilt every second, so it shows
+// how it goes.
+void updateRow(App& app, ui::ListPanel& p) {
+  namespace up = engine::updates;
+  using Phase = up::Updates::Phase;
+  up::Updates* u = app.updates();
+  if (!u || (!u->available() && u->phase() == Phase::Idle)) return;
+  ui::PanelItem row{ui::PanelItem::Kind::Action, up::kAvailableText};
+  row.about = "OK downloads the update and installs it.";
+  switch (u->phase()) {
+    case Phase::Updating:
+      row.detail = up::kUpdatingText;
+      row.busy = true;
+      break;
+    case Phase::Failed:
+      row.detail = u->failText();
+      row.warn = true;
+      break;
+    case Phase::Idle:
+      row.okLabel = "Update";
+      row.select = [&app] {
+        if (up::Updates* x = app.updates()) x->update();
+      };
+      break;
+  }
+  p.items.push_back(row);
+}
+
 void helpRows(App& app, ui::ListPanel& p, SettingsPages& pages) {
+  updateRow(app, p);
   ui::PanelItem around = chevron("Getting around", "The remote\xe2\x80\x99s keys, as shown the first time", "",
                                  [&app] { app.nav().push(makeGettingAround(app)); });
   around.tag = "NEW";

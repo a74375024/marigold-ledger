@@ -61,6 +61,12 @@ public final class MarigoldActivity extends Activity implements SurfaceHolder.Ca
   }
 
   @Override
+  protected void onResume() {
+    super.onResume();
+    Updates.resumed(this);  // back from allowing the app to install its update
+  }
+
+  @Override
   protected void onStop() {
     super.onStop();
     Bridge.nativeLifecycle(3);  // in the background: the picture stops

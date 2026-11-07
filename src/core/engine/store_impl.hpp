@@ -515,7 +515,7 @@ struct Store::Impl {
   struct PublishTiming {
     uint32_t since = 0;
     int full = 0, patched = 0, patchedLater = 0, made = 0;
-    double fullMax = 0, patchMax = 0, laterMax = 0, madeMax = 0;
+    double fullMax = 0, patchMax = 0, laterMax = 0, madeMax = 0, lineupMax = 0;
   };
   PublishTiming publishTiming;
   struct LaunchSteps {

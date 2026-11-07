@@ -98,6 +98,8 @@ List grouped(const Channels& ch, const std::vector<std::string>& ids) {
   return out;
 }
 
+std::string headerTitle(const std::string& section) { return str::upperAscii(section); }
+
 std::vector<std::string> flipList(const Channels& ch, const List& list) {
   std::vector<std::string> out;
   for (const Line& l : list.lines) {

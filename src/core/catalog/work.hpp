@@ -114,11 +114,20 @@ struct LineupOutput {
   std::vector<Channel> lineupEntries;
   std::vector<Channel> browseEntries;
   std::vector<std::pair<std::string, int>> groups;  // name, count
+  // Build 148: with stations of two or more picked areas in My Lineup, the
+  // areas' neighborhoods (LocalAreas::names) and each local entry's area by
+  // id; both empty otherwise (every local is under Local).
+  std::vector<std::string> areaNames;
+  std::unordered_map<std::string, int> areaOf;
+  // A local entry's neighborhood when it is an area's; null: Local.
+  const std::string* areaSection(const std::string& entryId) const;
 };
 
 // Lineup membership and the entry list, in guide order: neighbourhoods
 // (Local, News, Sports, Entertainment...), locals by their broadcast
-// number, everything else A-Z.
+// number, everything else A-Z. With stations of two or more picked areas in
+// My Lineup, the locals go by area first (home, then the order picked; those
+// in no picked area last).
 LineupOutput lineup(const LineupInput& input);
 
 }  // namespace marigold::catalog

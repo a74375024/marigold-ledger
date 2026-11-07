@@ -26,9 +26,19 @@
 //   MARIGOLD_PREVIEW_AT=2026-11-05T14:00:00Z  the engine's clock set to that
 //                                   time (schedules and scores are still
 //                                   today's): tiles' sources and states then
+//   MARIGOLD_PREVIEW_MARKETS="New York;Indianapolis"  My Lineup set up with
+//                                   these areas picked (home the first,
+//                                   unless MARIGOLD_PREVIEW_HOME names
+//                                   another), holding just the report's
+//                                   channels
+//   MARIGOLD_PREVIEW_GUIDE=g.txt    My Lineup's guide written there (its
+//                                   neighborhoods, rows, number keys) with
+//                                   the lineup's build time; then it stops
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -44,7 +54,9 @@
 #include <string>
 #include <vector>
 
+#include "core/catalog/lineup.hpp"
 #include "core/engine/store.hpp"
+#include "core/engine/views.hpp"
 #include "core/net/http.hpp"
 #include "core/sports/my_sports.hpp"
 #include "core/util/strings.hpp"
@@ -415,7 +427,7 @@ int main(int argc, char** argv) {
   // The channels as a playlist (names and groups only: the report has no
   // links); a row's link is its number, so a report of the same list with
   // slots renamed renames them in place.
-  std::set<std::string> lineupNames;
+  std::set<std::string> lineupNames, lineupIds;
   int channels = 0;
   auto playlistOf = [&](const std::vector<std::vector<std::string>>& list) {
     std::string m3u = "#EXTM3U\n";
@@ -430,6 +442,9 @@ int main(int argc, char** argv) {
       m3u += "#EXTINF:-1 group-title=\"" + group + "\"," + name + "\nhttp://preview.invalid/" +
              std::to_string(++channels) + ".ts\n";
       if (cell(row, "in_my_lineup") == "yes" && !cell(row, "entry").empty()) lineupNames.insert(cell(row, "entry"));
+      // The row's entry id (newer reports): a local's row is named by its
+      // call sign, not by the report's entry name.
+      if (cell(row, "in_my_lineup") == "yes" && !cell(row, "row_id").empty()) lineupIds.insert(cell(row, "row_id"));
     }
     return m3u;
   };
@@ -482,9 +497,113 @@ int main(int argc, char** argv) {
   if (auto ch = store.channels()) {
     std::vector<std::string> ids;
     for (const auto& g : ch->all) {
-      if (lineupNames.count(g.name) && !g.inLineup) ids.push_back(g.id);
+      if ((lineupNames.count(g.name) || lineupIds.count(g.id)) && !g.inLineup) ids.push_back(g.id);
     }
     if (!ids.empty()) store.addToLineup(ids);
+  }
+  if (const char* picked = std::getenv("MARIGOLD_PREVIEW_MARKETS")) {
+    // The areas picked, and My Lineup just the report's channels: its own
+    // channels added, every other one removed (no suggestions join).
+    settle(3);
+    std::vector<std::string> names;
+    for (std::string_view n : str::split(picked, ';'))
+      if (!str::trim(n).empty()) names.emplace_back(str::trim(n));
+    catalog::LineupPrefs draft = store.lineupPrefs();
+    store.resolveMarkets(names, draft, [&](std::vector<catalog::MarketChoice> made) { draft.markets = std::move(made); });
+    settle(1);
+    if (const char* home = std::getenv("MARIGOLD_PREVIEW_HOME")) draft.homeMarket = std::string(home);
+    if (auto ch = store.channels()) {
+      for (const auto& g : ch->all) {
+        if (lineupNames.count(g.name) || lineupIds.count(g.id) || g.inLineup) {
+          draft.added.insert(g.id);
+          draft.removed.erase(g.id);
+        } else {
+          draft.removed.insert(g.id);
+        }
+      }
+    }
+    store.buildLineup(draft);
+    settle(3);
+    std::string line;
+    for (const catalog::MarketChoice& m : store.lineupPrefs().markets)
+      line += (line.empty() ? "" : ", ") + m.name + " (" + std::to_string(m.callsigns.size()) + " call signs)";
+    std::fprintf(stderr, "Areas: %s; home %s\n", line.c_str(), store.homeMarketName().c_str());
+  }
+  if (const char* guidePath = std::getenv("MARIGOLD_PREVIEW_GUIDE")) {
+    // The lineup worked out again (as a change in Edit My Lineup does), a
+    // few times: its build on the worker and the rows, timed.
+    std::vector<double> took;
+    for (int i = 0; i < 15; ++i) {
+      catalog::LineupPrefs p = store.lineupPrefs();
+      auto from = std::chrono::steady_clock::now();
+      store.buildLineup(p);
+      requests.drain();
+      took.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - from).count());
+      ms += 1000;
+      store.tick(ms);
+    }
+    std::sort(took.begin(), took.end());
+    auto ch = store.channels();
+    std::ofstream g(guidePath, std::ios::binary | std::ios::trunc);
+    namespace views = engine::views;
+    auto upper = [](std::string s) {
+      for (char& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+      return s;
+    };
+    char head[160];
+    std::snprintf(head, sizeof head, "lineup build (lineup + rows, ms): min %.1f median %.1f max %.1f\n",
+                  took.front(), took[took.size() / 2], took.back());
+    g << head << "areas:";
+    for (const catalog::MarketChoice& m : store.lineupPrefs().markets) g << " [" << m.name << "]";
+    g << " home [" << store.homeMarketName() << "]\n\n";
+    if (ch) {
+      views::List list = views::guide(*ch, nullptr, views::Tab::Lineup, {}, time::now());
+      g << "== My Lineup (grid)\n";
+      for (const views::Line& l : list.lines) {
+        if (l.kind == views::Line::Kind::Header) {
+          g << "-- " << upper(l.title) << "\n";
+        } else if (l.kind == views::Line::Kind::Channel) {
+          const engine::GuideChannel& c = ch->all[static_cast<size_t>(l.channel)];
+          g << "   " << (c.number ? std::to_string(*c.number) : std::string("-")) << "\t" << c.name << "\t"
+            << c.subtitle << "\t| hero: " << c.section << " | mini top: MY LINEUP \xc2\xb7 " << upper(c.section)
+            << "\n";
+        }
+      }
+      g << "\n== Neighborhoods column / Filter \xe2\x80\xba Neighborhoods\n";
+      for (const views::Count& n : views::sectionCounts(*ch, views::tabRows(*ch, views::Tab::Lineup, {})))
+        g << "   " << n.title << "\n";
+      g << "\n== \"My Lineup is ready\" tiles\n  ";
+      std::string last;
+      for (int i : ch->lineup) {
+        const std::string& s = ch->all[static_cast<size_t>(i)].section;
+        if (s != last) g << " [" << s << "]";
+        last = s;
+      }
+      g << "\n\n== Number keys on a number two rows share (the first row with it)\n";
+      std::map<int, std::vector<std::string>> byNumber;
+      for (int i : ch->lineup) {
+        const engine::GuideChannel& c = ch->all[static_cast<size_t>(i)];
+        if (c.number) byNumber[*c.number].push_back(c.name);
+      }
+      for (const auto& kv : byNumber) {
+        if (kv.second.size() < 2) continue;
+        std::string first;
+        for (const engine::GuideChannel& c : ch->all) {
+          if (c.number && *c.number == kv.first) {
+            first = c.name;
+            break;
+          }
+        }
+        g << "   " << kv.first << ": " << first << " (of";
+        for (const std::string& name : kv.second) g << " " << name;
+        g << ")\n";
+      }
+      g << "\n== All Channels' neighborhoods\n";
+      for (const views::Count& n : views::sectionCounts(*ch, views::tabRows(*ch, views::Tab::All, {})))
+        g << "   " << n.title << "\n";
+    }
+    std::fprintf(stderr, "Guide: %s (lineup build median %.1f ms)\n", guidePath, took[took.size() / 2]);
+    return 0;
   }
   std::fprintf(stderr, "Loading schedules and scores\xe2\x80\xa6 (%d s)\n", elapsed());
   if (std::getenv("MARIGOLD_PREVIEW_UNSCHEDULED")) {

@@ -11,6 +11,7 @@
 
 #include "core/catalog/lineup.hpp"
 #include "core/engine/store.hpp"
+#include "core/engine/views.hpp"
 #include "core/guide/outside.hpp"
 #include "core/sources/account.hpp"
 #include "core/sources/xtream.hpp"
@@ -364,4 +365,120 @@ TEST_CASE("engine: a TV left on with the same channel list refreshes its guides 
   clock.move(13 * 3600);
   for (int i = 0; i < 60; ++i) step(store, tv);
   CHECK(tv.pool.asked[kGuide] == 3);
+}
+
+namespace {
+
+// A local row's neighborhood and call sign, in guide order ("New York:WNBC").
+std::vector<std::string> rowsOf(const Channels& ch, const std::vector<int>& rows) {
+  std::vector<std::string> out;
+  for (int i : rows) {
+    const GuideChannel& g = ch.all[static_cast<size_t>(i)];
+    if (g.style == GuideChannel::Style::Local) out.push_back(g.section + ":" + g.name);
+  }
+  return out;
+}
+
+// The grid's headers for My Lineup, as drawn.
+std::vector<std::string> headersOf(const Channels& ch) {
+  std::vector<std::string> out;
+  for (const views::Line& l : views::guide(ch, nullptr, views::Tab::Lineup, {}, time::now()).lines)
+    if (l.kind == views::Line::Kind::Header) out.push_back(views::headerTitle(l.title));
+  return out;
+}
+
+// The channel a number key tunes in the guide: the first row with it.
+std::string dialled(const Channels& ch, int n) {
+  for (const GuideChannel& g : ch.all)
+    if (g.number && *g.number == n) return g.name;
+  return "";
+}
+
+}  // namespace
+
+TEST_CASE("engine: Build 148, each picked area with stations in My Lineup is its own neighborhood") {
+  fake::Tv tv;
+  std::string m3u = "#EXTM3U\n";
+  int n = 0;
+  for (const char* name : {"US: NBC 4 (WNBC) NEW YORK", "US: CBS 2 (WCBS) NEW YORK", "US: NBC 13 (WTHR) INDIANAPOLIS",
+                           "US: CBS 4 (WTTV) INDIANAPOLIS", "US: ABC 7 (KGO) SAN FRANCISCO", "US: CNN"})
+    m3u += std::string("#EXTINF:-1 group-title=\"US\",") + name + "\nhttp://mock.example.invalid/" +
+           std::to_string(++n) + ".ts\n";
+  tv.pool.answer(fake::kPlaylist, m3u);
+  Store store(tv.host());
+  REQUIRE(fake::addPlaylist(store, tv).empty());
+  auto idOf = [&](const std::string& name) {
+    for (const GuideChannel& g : store.channels()->all)
+      if (g.name == name) return g.id;
+    return std::string();
+  };
+  REQUIRE(!idOf("WNBC").empty());
+  REQUIRE(!idOf("KGO").empty());
+
+  // One area: Local, by number.
+  catalog::MarketChoice ny, indy;
+  ny.name = "New York";
+  ny.callsigns = {"WNBC", "WCBS"};
+  indy.name = "Indianapolis";
+  indy.callsigns = {"WTHR", "WTTV"};
+  catalog::LineupPrefs p = store.lineupPrefs();
+  p.markets = {ny};
+  p.requireGuide = false;
+  p.added = {idOf("KGO")};  // another city's, added by hand
+  store.buildLineup(p);
+  fake::settle(store, tv);
+  auto ch = store.channels();
+  CHECK(rowsOf(*ch, ch->lineup) == std::vector<std::string>{"Local:WCBS", "Local:WNBC", "Local:KGO"});
+  CHECK(headersOf(*ch) == std::vector<std::string>{"LOCAL", "NEWS"});
+  // As before: the first row with 4 of the whole list, by name ("CBS 4
+  // (WTTV)" before "NBC 4 (WNBC)").
+  CHECK(dialled(*ch, 4) == "WTTV");
+  CHECK_ROWS(store);
+
+  // Two: New York (home, the first picked), Indianapolis, then Local's own.
+  p = store.lineupPrefs();
+  p.markets = {ny, indy};
+  store.buildLineup(p);
+  fake::settle(store, tv);
+  ch = store.channels();
+  CHECK(rowsOf(*ch, ch->lineup) == std::vector<std::string>{"New York:WCBS", "New York:WNBC", "Indianapolis:WTTV",
+                                                            "Indianapolis:WTHR", "Local:KGO"});
+  // Each once: a city's stations are together.
+  CHECK(headersOf(*ch) == std::vector<std::string>{"NEW YORK", "INDIANAPOLIS", "LOCAL", "NEWS"});
+  std::vector<std::string> filter;
+  for (const views::Count& c : views::sectionCounts(*ch, ch->lineup)) filter.push_back(c.title);
+  CHECK(filter == std::vector<std::string>{"New York", "Indianapolis", "Local", "News"});
+  views::Filter indyOnly{views::Filter::Kind::Section, "Indianapolis"};
+  CHECK(views::guide(*ch, nullptr, views::Tab::Lineup, indyOnly, time::now()).lines.size() == 3);
+  // 4 is New York's and Indianapolis': home's.
+  CHECK(dialled(*ch, 4) == "WNBC");
+  CHECK(dialled(*ch, 13) == "WTHR");
+  CHECK_ROWS(store);
+
+  // Home changed: Indianapolis first, and 4 is its.
+  store.setHomeMarket("Indianapolis");
+  fake::settle(store, tv);
+  ch = store.channels();
+  CHECK(rowsOf(*ch, ch->lineup) == std::vector<std::string>{"Indianapolis:WTTV", "Indianapolis:WTHR",
+                                                            "New York:WCBS", "New York:WNBC", "Local:KGO"});
+  CHECK(headersOf(*ch) == std::vector<std::string>{"INDIANAPOLIS", "NEW YORK", "LOCAL", "NEWS"});
+  CHECK(dialled(*ch, 4) == "WTTV");
+  CHECK_ROWS(store);
+
+  // Indianapolis' stations taken out: one area with stations, Local again.
+  store.toggleLineup(idOf("WTTV"));
+  fake::settle(store, tv);
+  store.toggleLineup(idOf("WTHR"));
+  fake::settle(store, tv);
+  ch = store.channels();
+  CHECK(rowsOf(*ch, ch->lineup) == std::vector<std::string>{"Local:WCBS", "Local:WNBC", "Local:KGO"});
+  CHECK(headersOf(*ch) == std::vector<std::string>{"LOCAL", "NEWS"});
+  CHECK_ROWS(store);
+}
+
+TEST_CASE("views: a grid's header is its neighborhood in capitals, the guide's and the player's alike") {
+  CHECK(views::headerTitle("Local") == "LOCAL");
+  CHECK(views::headerTitle("New York") == "NEW YORK");
+  CHECK(views::headerTitle("Movies & Premium") == "MOVIES & PREMIUM");
+  CHECK(views::headerTitle("").empty());
 }

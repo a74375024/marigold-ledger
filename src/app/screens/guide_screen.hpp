@@ -31,6 +31,7 @@ class GuideScreen : public Screen {
   bool tick(uint32_t ms) override;
   uint32_t wakeAt() const override { return wake_.get(); }
   const char* name() const override { return "guide"; }
+  bool home() const override { return true; }
   void hover(int id) override;
   void pointerGone() override { pointer_ = 0; }
   void shown() override;

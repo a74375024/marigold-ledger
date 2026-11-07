@@ -8,6 +8,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "core/catalog/types.hpp"
@@ -83,6 +84,26 @@ struct LineupPrefs {
 // the caller starts from LineupPrefs(). Dates are Unix seconds.
 std::string toJson(const LineupPrefs& prefs);
 std::optional<LineupPrefs> lineupPrefsFromJson(std::string_view text);
+
+// "San Francisco–Oakland–San Jose" -> "San Francisco": an area's name in
+// Settings and, with two or more areas, its neighborhood in the guide.
+std::string shortMarketName(const std::string& name);
+
+// Build 148: the picked areas as the guide's neighborhoods. With stations
+// of two or more of them in My Lineup, each area is a neighborhood of its
+// own in place of Local: home first, then the others in the order picked.
+// A station in two areas goes with home when home is one of them, else
+// with the first picked.
+struct LocalAreas {
+  std::vector<std::string> names;  // short names, home first
+  // Bare call sign -> index into names: each area's call signs
+  // (MarketChoice::callsigns) and the reference data's stations in it.
+  std::unordered_map<std::string, int> areaOf;
+  // A station's area by its call sign ("WNBC", "WABC-TV"); -1 for none.
+  int of(const std::optional<std::string>& callsign) const;
+};
+// Made once per lineup build (empty with fewer than two areas picked).
+LocalAreas localAreas(const LineupPrefs& prefs);
 
 // Whether a market is on Pacific, Mountain, Alaska or Hawaii time, where
 // cable carries the West feeds (a network's West feed is its Pacific

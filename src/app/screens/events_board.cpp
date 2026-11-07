@@ -192,6 +192,7 @@ class EventsBoardScreen : public Screen {
   }
   uint32_t wakeAt() const override { return wake_; }
   const char* name() const override { return "live events"; }
+  bool home() const override { return true; }
 
   bool key(const KeyEvent& e) override {
     Key k = e.key;

@@ -333,6 +333,7 @@ class MiniGuide : public Screen {
   struct Section {
     std::string title;
     int row = 0;  // its first channel
+    std::string header;  // the grid's header: the title in capitals, as in the guide
   };
   // Where the focus was when the column opened (the return rule).
   struct Place {
@@ -373,7 +374,7 @@ class MiniGuide : public Screen {
     headerAt_.clear();
     for (const views::Line& l : list.lines) {
       if (l.kind == views::Line::Kind::Header) {
-        sections_.push_back({l.title, static_cast<int>(rows_.size())});
+        sections_.push_back({l.title, static_cast<int>(rows_.size()), views::headerTitle(l.title)});
       } else {
         rows_.push_back(l.channel);
         headerAt_.push_back(-1);
@@ -948,7 +949,7 @@ class MiniGuide : public Screen {
       // Its neighborhood's name first, when the row starts one.
       if (int h = headerAt(row); h >= 0) {
         if (y + kHeaderBand + kRowH > kGridTop + kGridH) break;
-        ui::label(c, sections_[static_cast<size_t>(h)].title, left_, y, Weight::Bold, 17, theme::white(0.5f));
+        ui::label(c, sections_[static_cast<size_t>(h)].header, left_, y, Weight::Bold, 17, theme::white(0.5f));
         y += kHeaderBand;
       }
       if (y + kRowH > kGridTop + kGridH) break;

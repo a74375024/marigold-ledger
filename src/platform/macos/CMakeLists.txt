@@ -40,7 +40,8 @@ set(MARIGOLD_MAC_SOURCES
   ${tvos}/text.mm
   ${tvos}/video.mm
   ${tvos}/window.mm
-  main.mm)
+  main.mm
+  update.mm)
 
 add_executable(Marigold MACOSX_BUNDLE
   ${MARIGOLD_APP_SOURCES}

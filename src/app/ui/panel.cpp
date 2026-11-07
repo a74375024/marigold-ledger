@@ -43,6 +43,7 @@ std::string ListPanel::look() const {
     out += it.dot ? '1' : '0';
     out += it.stepper ? '1' : '0';
     out += it.warn ? '1' : '0';
+    out += it.busy ? '1' : '0';
     out += it.ask ? '1' : '0';
     add(std::to_string(it.choice) + ',' + std::to_string(it.coast));
     add(it.title);
@@ -319,6 +320,10 @@ void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
       }
       default:
         break;
+    }
+    if (it.busy) {
+      spinner(c, right - 12, row.y + row.h * 0.5f, 11, sub);
+      right -= 40;
     }
     if (!it.value.empty()) {
       float vw = std::min(textWidth(c, it.value, Weight::Medium, 19), row.w * 0.4f);

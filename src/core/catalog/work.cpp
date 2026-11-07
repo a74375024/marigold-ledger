@@ -213,6 +213,13 @@ ProgramLists mergedListings(const std::set<std::string>& ids,
   return merged;
 }
 
+const std::string* LineupOutput::areaSection(const std::string& entryId) const {
+  if (areaOf.empty()) return nullptr;
+  auto it = areaOf.find(entryId);
+  if (it == areaOf.end() || it->second < 0 || static_cast<size_t>(it->second) >= areaNames.size()) return nullptr;
+  return &areaNames[static_cast<size_t>(it->second)];
+}
+
 LineupOutput lineup(const LineupInput& input) {
   const LineupPrefs& prefs = input.prefs;
   const std::vector<EntryInfo>& infos = input.sharedInfos ? *input.sharedInfos : input.infos;
@@ -268,6 +275,34 @@ LineupOutput lineup(const LineupInput& input) {
     const EntryInfo* east = byId.at(eastIdOf(e->id));
     return east->category == e->category ? east : e;
   };
+  // Build 148: each local's picked area (-1: none), worked out once. With
+  // stations of two or more areas in My Lineup the areas are neighborhoods
+  // of their own, in LocalAreas' order, and locals in no picked area come
+  // after them (still Local); with one, everything stays as it was.
+  LocalAreas areas = localAreas(prefs);
+  std::vector<int> areaAt;
+  if (!areas.areaOf.empty()) {
+    areaAt.assign(infos.size(), -1);
+    std::vector<bool> held(areas.names.size(), false);
+    size_t holding = 0;
+    for (size_t i = 0; i < infos.size(); ++i) {
+      if (infos[i].category != LineupCategory::local) continue;
+      int area = areas.of(infos[i].callsign);
+      areaAt[i] = area;
+      if (area >= 0 && !held[static_cast<size_t>(area)] && out.lineupIDs.count(infos[i].id) &&
+          std::any_of(infos[i].members.begin(), infos[i].members.end(),
+                      [&](const std::string& m) { return member(m) != nullptr; })) {
+        held[static_cast<size_t>(area)] = true;
+        ++holding;
+      }
+    }
+    if (holding < 2) areaAt.clear();
+  }
+  const int noArea = static_cast<int>(areas.names.size());
+  auto areaRank = [&](const EntryInfo* e) {
+    int area = areaAt[static_cast<size_t>(e - infos.data())];
+    return area < 0 ? noArea : area;
+  };
   std::vector<const EntryInfo*> ordered;
   ordered.reserve(infos.size());
   for (const EntryInfo& info : infos) ordered.push_back(&info);
@@ -278,6 +313,10 @@ LineupOutput lineup(const LineupInput& input) {
     int ra = rank(a->category), rb = rank(b->category);
     if (ra != rb) return ra < rb;
     if (a->category == LineupCategory::local) {
+      if (!areaAt.empty()) {
+        int aa = areaRank(a), ab = areaRank(b);
+        if (aa != ab) return aa < ab;
+      }
       int na = a->virtualNumber.value_or(999), nb = b->virtualNumber.value_or(999);
       if (na != nb) return na < nb;
     }
@@ -312,7 +351,12 @@ LineupOutput lineup(const LineupInput& input) {
     entry.group = primary.group;
     entry.shortName = info->name;
     out.entries.push_back(std::move(entry));
+    if (!areaAt.empty() && info->category == LineupCategory::local) {
+      int area = areaAt[static_cast<size_t>(info - infos.data())];
+      if (area >= 0) out.areaOf.emplace(info->id, area);
+    }
   }
+  if (!areaAt.empty()) out.areaNames = std::move(areas.names);
   for (size_t i = 0; i < out.entries.size(); ++i) out.entryIndex.try_emplace(out.entries[i].id, i);
   for (const Channel& e : out.entries) {
     if (out.lineupIDs.count(e.id)) out.lineupEntries.push_back(e);

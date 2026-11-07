@@ -411,6 +411,9 @@ std::shared_ptr<ChannelRows> makeRows(const catalog::LineupOutput& lo, const Cat
     row.category = category;
     g.section = catalog::genreTitle(category);
     g.sectionRank = catalog::rank(category);
+    // Build 148: a picked area's station under its area, with two or more.
+    if (category == catalog::LineupCategory::local)
+      if (const std::string* area = lo.areaSection(e.id)) g.section = *area;
     g.name = ei ? ei->name : e.displayName();
     g.group = catalog::groupOf(e);
     if (g.group.empty()) g.group = kOtherGroup;
@@ -2033,16 +2036,19 @@ void Store::rebuildEntries() {
   // row's logo on the UI thread).
   auto rows = std::make_shared<std::shared_ptr<const ChannelRows>>();
   auto rowsMs = std::make_shared<double>(0);
+  auto lineupMs = std::make_shared<double>(0);
   std::shared_ptr<const CatalogResult> cat = m.catalog;
   std::shared_ptr<const std::vector<Channel>> list = m.channels;
   uint64_t gen = m.generation;
-  host_.pool.post([input, out, rows, rowsMs, cat, list, iptvOrg = m.iptvOrg] {
+  host_.pool.post([input, out, rows, rowsMs, lineupMs, cat, list, iptvOrg = m.iptvOrg] {
+                     auto began = SteadyClock::now();
                      *out = catalog::lineup(*input);
+                     *lineupMs = msSince(began);
                      auto started = SteadyClock::now();
                      *rows = makeRows(*out, *cat, *list, iptvOrg.get(), nullptr, nullptr);
                      *rowsMs = msSince(started);
                    },
-                   [this, gen, generation, out, rows, rowsMs, cat, list] {
+                   [this, gen, generation, out, rows, rowsMs, lineupMs, cat, list] {
                      if (gen != impl_->generation || generation != impl_->rebuildGeneration) return;
                      impl_->lineup = std::move(*out);
                      ++impl_->lineupSerial;
@@ -2052,6 +2058,7 @@ void Store::rebuildEntries() {
                      Impl::PublishTiming& t = impl_->publishTiming;
                      ++t.made;
                      t.madeMax = std::max(t.madeMax, *rowsMs);
+                     t.lineupMax = std::max(t.lineupMax, *lineupMs);
                      ++impl_->lineupRevision;
                      impl_->channelsDirty = true;
                      impl_->rowsBuilt = true;
@@ -3741,8 +3748,8 @@ void Store::noteChannelsTiming(uint32_t ms) {
   if (t.full || t.patched || t.patchedLater || t.made)
     MLOG_I("store",
            "timing publishes full=%d fullMax=%.1fms patched=%d patchMax=%.1fms onWorker=%d workerMax=%.1fms "
-           "rowsMade=%d rowsMax=%.0fms",
-           t.full, t.fullMax, t.patched, t.patchMax, t.patchedLater, t.laterMax, t.made, t.madeMax);
+           "rowsMade=%d rowsMax=%.0fms lineupMax=%.0fms",
+           t.full, t.fullMax, t.patched, t.patchMax, t.patchedLater, t.laterMax, t.made, t.madeMax, t.lineupMax);
   t = Impl::PublishTiming{};
   t.since = ms;
 }
@@ -3769,6 +3776,8 @@ std::shared_ptr<const Channels> Store::channelsNow() const {
     catalog::LineupCategory cat = ei ? ei->category : catalog::LineupCategory::entertainment;
     g.section = catalog::genreTitle(cat);
     g.sectionRank = catalog::rank(cat);
+    if (cat == catalog::LineupCategory::local)
+      if (const std::string* area = lo.areaSection(e.id)) g.section = *area;
     g.name = ei ? ei->name : e.displayName();
     g.group = catalog::groupOf(e);
     if (g.group.empty()) g.group = kOtherGroup;

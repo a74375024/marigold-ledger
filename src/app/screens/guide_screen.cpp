@@ -93,12 +93,6 @@ engine::views::Tab tabOf(rail::Item i) {
 
 bool inRange(int id, int base) { return id >= base && id < base + 100; }
 
-std::string upper(const std::string& s) {
-  std::string out = s;
-  for (char& ch : out) ch = static_cast<char>(ch >= 'a' && ch <= 'z' ? ch - 32 : ch);
-  return out;
-}
-
 }  // namespace
 
 GuideScreen::GuideScreen(App& app) : Screen(app) {
@@ -174,6 +168,15 @@ void GuideScreen::rebuildLines(bool samePlace) {
   views::List list;
   if (ch_) {
     list = views::guide(*ch_, li_.get(), tab_, filter(), time::now());
+    // A neighborhood picked in the filter that is gone (Local split into
+    // its areas, or back, Build 148): the whole list again.
+    if (filter_ == Filter::Section && std::none_of(list.lines.begin(), list.lines.end(), [](const views::Line& l) {
+          return l.kind == views::Line::Kind::Channel;
+        })) {
+      filter_ = Filter::None;
+      filterSection_.clear();
+      list = views::guide(*ch_, li_.get(), tab_, filter(), time::now());
+    }
     flip_ = views::flipList(*ch_, list);
   }
   float y = 0;
@@ -186,7 +189,7 @@ void GuideScreen::rebuildLines(bool samePlace) {
       y += kRowH + kGap;
     } else if (v.kind == views::Line::Kind::Header) {
       l.kind = Line::Kind::Header;
-      l.title = upper(v.title);
+      l.title = views::headerTitle(v.title);
       if (!lines_.empty()) y += 4;
       l.y = y;
       y += kHeaderH + kGap;

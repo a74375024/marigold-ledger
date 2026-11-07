@@ -22,9 +22,19 @@ final class Bridge {
 
   private static final Handler ui = new Handler(Looper.getMainLooper());
   private static volatile MarigoldActivity activity;
+  private static volatile android.content.Context context;  // the application's
 
   static void attach(MarigoldActivity a) {
     activity = a;
+    context = a.getApplicationContext();
+  }
+
+  static MarigoldActivity activity() {
+    return activity;
+  }
+
+  static android.content.Context context() {
+    return context;
   }
 
   static void detach(MarigoldActivity a) {
@@ -149,6 +159,16 @@ final class Bridge {
         (android.view.accessibility.CaptioningManager) a.getSystemService(android.content.Context.CAPTIONING_SERVICE);
     if (cm == null) return -1;
     return cm.isEnabled() ? 1 : 0;
+  }
+
+  // ---- Updates (Build 148: the app thread and a worker) ----
+
+  static byte[] updateFile() {
+    return utf8(Updates.file());
+  }
+
+  static byte[] updateInstall(byte[] path) {
+    return utf8(Updates.install(str(path)));
   }
 
   // ---- The keyboard and the app (the app thread) ----

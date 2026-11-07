@@ -36,6 +36,16 @@ class Files {
 enum class FileKind { Cache, Keep, Secret };
 FileKind fileKind(const std::string& name);
 
+// Build 148: what installing a checked update came to (Host::installUpdate).
+struct UpdateInstall {
+  bool ok = false;    // handed to the system's installer, or ready to swap in
+  bool quit = false;  // the app must end for it (the Mac's helper waits)
+  std::string why;    // for the log when it failed (never a link or a path)
+  // On screen in place of the usual "Couldn't update" line (the Mac: a
+  // folder it may not change). Empty: the usual.
+  std::string message;
+};
+
 struct Host {
   Host(http::Pool& requests, Files& folder) : pool(requests), files(folder) {}
 
@@ -66,6 +76,16 @@ struct Host {
   // Free bytes on the partition holding a folder (disk.hpp); unset: the
   // real statvfs. Tests set it to try a nearly full partition.
   std::function<std::optional<uint64_t>(const std::string& dir)> freeSpace;
+
+  // Build 148, updates (updates.hpp): only a device that installs the app
+  // by itself can (Android and Fire TV, the Mac). The release file it
+  // installs ("marigold-android.apk", "marigold-mac.dmg"), where its download
+  // goes (the app's cache), and, on a worker, the hand-over of the checked
+  // file. Unset (webOS, the Apple TV): no check, no request, nothing shown.
+  std::string updateAsset;
+  std::string updateFile;
+  std::function<UpdateInstall(const std::string& path)> installUpdate;
+  bool canSelfUpdate() const { return !updateAsset.empty() && !updateFile.empty() && installUpdate != nullptr; }
 };
 
 }  // namespace marigold::engine
