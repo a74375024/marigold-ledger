@@ -2284,13 +2284,20 @@ void Store::addToLineup(const std::vector<std::string>& entryIds) {
   setPrefs(p);
 }
 
+bool Store::isFavorite(const std::string& entryId) const {
+  const Impl& m = *impl_;
+  auto at = m.lineup.entryIndex.find(entryId);
+  bool server = at != m.lineup.entryIndex.end() && m.lineup.entries[at->second].isFavorite;
+  return favoriteNow(entryId, server, m.favorites, m.unfavorited);
+}
+
 void Store::toggleFavorite(const std::string& entryId) {
   Impl& m = *impl_;
   // From what the row shows: a server favourite (Emby / Jellyfin) is
   // removed too, not made a local one.
   auto at = m.lineup.entryIndex.find(entryId);
   bool server = at != m.lineup.entryIndex.end() && m.lineup.entries[at->second].isFavorite;
-  bool fav = !favoriteNow(entryId, server, m.favorites, m.unfavorited);
+  bool fav = !isFavorite(entryId);
   if (fav) {
     m.favorites.insert(entryId);
     m.unfavorited.erase(entryId);

@@ -310,6 +310,9 @@ class Store {
 
   // Personal lists.
   void toggleFavorite(const std::string& entryId);
+  // Build 149: whether a row is a favourite now (a toggle shows at once;
+  // the published rows follow on the next tick).
+  bool isFavorite(const std::string& entryId) const;
   void toggleLineup(const std::string& entryId);
   // Puts these channels in My Lineup in one go (the preview tool's copy of
   // a report's lineup).

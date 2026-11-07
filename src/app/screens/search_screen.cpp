@@ -1502,7 +1502,7 @@ class SearchScreen : public Screen {
       lineup.select = [&app, id] { app.store().toggleLineup(id); };
       p.items.push_back(lineup);
       ui::PanelItem fav{ui::PanelItem::Kind::Toggle, "Favorites"};
-      fav.on = c->favorite;
+      fav.on = app.store().isFavorite(id);  // a toggle shows at once
       fav.select = [&app, id] { app.store().toggleFavorite(id); };
       p.items.push_back(fav);
       ui::PanelItem feed{ui::PanelItem::Kind::Chevron, "Choose Feed"};

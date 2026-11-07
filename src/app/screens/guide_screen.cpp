@@ -655,7 +655,9 @@ void GuideScreen::longPress() {
       };
       p.items.push_back(feeds);
     }
-    ui::PanelItem fav{ui::PanelItem::Kind::Action, c->favorite ? "Remove from Favorites" : "Add to Favorites"};
+    // The store's answer, not the published rows': a toggle shows at once.
+    ui::PanelItem fav{ui::PanelItem::Kind::Action,
+                      app.store().isFavorite(id) ? "Remove from Favorites" : "Add to Favorites"};
     fav.select = [&app, id] { app.store().toggleFavorite(id); };
     p.items.push_back(fav);
     if (self->tab_ == Tab::All && !c->group.empty()) {

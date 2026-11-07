@@ -666,8 +666,7 @@ class PlayerScreen : public Screen {
         goPrevious();
         break;
       case Pill::Favorite: {
-        bool was = false;
-        if (const GuideChannel* g = app_.store().channels()->find(p.entry())) was = g->favorite;
+        bool was = app_.store().isFavorite(p.entry());
         app_.store().toggleFavorite(p.entry());
         notice(was ? "Removed from Favorites" : "Added to Favorites", "OK again to undo", kNoticeMs);
         break;
@@ -1299,7 +1298,7 @@ class PlayerScreen : public Screen {
         case Pill::Coast: it.title = g && g->west ? "Watch East \xe2\x86\x94" : "Watch West \xe2\x86\x94"; break;
         case Pill::Guide: it.title = app_.store().isEvent(p.entry()) ? "Games" : "Guide"; break;
         case Pill::Last: it.title = "Back to " + nameOf(p.previousEntry()); break;
-        case Pill::Favorite: it.title = g && g->favorite ? "Unfavorite" : "Favorite"; break;
+        case Pill::Favorite: it.title = g && app_.store().isFavorite(g->id) ? "Unfavorite" : "Favorite"; break;
         case Pill::More: it.title = "Settings"; break;
       }
       items.push_back(std::move(it));

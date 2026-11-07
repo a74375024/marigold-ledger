@@ -118,3 +118,70 @@ TEST_CASE("favourites: kept across a restart, and removable after it") {
   CHECK_FALSE(fav(again, ids[1]));
   CHECK(favCount(again) == 2);
 }
+
+TEST_CASE("favourites: a second one while the first is still being published") {
+  fake::Tv tv;
+  mock::Provider provider(400);
+  tv.pool.answer(fake::kPlaylist, provider.m3u());
+  Store store(tv.host());
+  REQUIRE(fake::addPlaylist(store, tv).empty());
+  catalog::LineupPrefs p = store.lineupPrefs();
+  p.configured = true;
+  store.buildLineup(p);
+  fake::settle(store, tv);
+  auto ch = store.channels();
+  std::vector<std::string> ids;
+  for (size_t i = 0; i < 4; ++i) ids.push_back(ch->all[i * 5].id);
+  // Each toggle lands between the ticks of the one before (its patch on a
+  // worker, not yet published).
+  for (int gap = 0; gap < 4; ++gap) {
+    for (const std::string& id : ids) {
+      store.toggleFavorite(id);
+      for (int k = 0; k < gap; ++k) {
+        tv.ms += 16;
+        store.tick(tv.ms);
+      }
+    }
+    fake::settle(store, tv);
+    INFO("gap " << gap);
+    for (const std::string& id : ids) CHECK(fav(store, id) == (gap % 2 == 0));
+    CHECK(favCount(store) == (gap % 2 == 0 ? ids.size() : 0));
+  }
+  // And with a worker's job half done: one pass of the pool between toggles.
+  for (const std::string& id : ids) {
+    store.toggleFavorite(id);
+    tv.ms += 16;
+    store.tick(tv.ms);
+    tv.pool.drain();
+  }
+  fake::settle(store, tv);
+  for (const std::string& id : ids) CHECK(fav(store, id));
+  CHECK(favCount(store) == ids.size());
+}
+
+TEST_CASE("favourites: the store answers at once, before the rows are published (menus read it)") {
+  fake::Tv tv;
+  mock::Provider provider(400);
+  tv.pool.answer(fake::kPlaylist, provider.m3u());
+  Store store(tv.host());
+  REQUIRE(fake::addPlaylist(store, tv).empty());
+  auto ch = store.channels();
+  const std::string a = ch->all[0].id, b = ch->all[3].id;
+  CHECK_FALSE(store.isFavorite(a));
+  store.toggleFavorite(a);
+  // The hold menu redraws right after OK: it must say "Remove" now, so a
+  // second OK doesn't undo the first.
+  CHECK(store.isFavorite(a));
+  CHECK_FALSE(store.channels()->find(a)->favorite);  // the rows follow on the next tick
+  store.toggleFavorite(b);
+  CHECK(store.isFavorite(b));
+  CHECK(store.isFavorite(a));
+  fake::settle(store, tv);
+  CHECK(fav(store, a));
+  CHECK(fav(store, b));
+  store.toggleFavorite(a);
+  CHECK_FALSE(store.isFavorite(a));
+  fake::settle(store, tv);
+  CHECK_FALSE(fav(store, a));
+  CHECK(fav(store, b));
+}

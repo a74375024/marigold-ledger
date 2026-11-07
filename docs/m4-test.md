@@ -1658,7 +1658,7 @@ The updater ships in this build, so a device takes its first in-app update from 
 
 ## Build 149 — 1.0.3: favourites can be removed again
 
-Favourites stuck: once a channel had been a favourite through a lineup rebuild (every launch, a channel list read, a My Lineup edit), it kept its star after "Remove from Favorites" until the next rebuild. My Lineup's build takes the viewer's favourites in (a favourite always joins My Lineup) and marked them on the lineup's entries as if the server (Emby / Jellyfin) had; the rows took that mark as a favourite of their own. Now the entries carry the server's flag only; the viewer's favourites still bring channels into My Lineup and All Channels. Removing a server favourite here removes it (and tells the server), instead of turning it into a local one.
+Favourites stuck: once a channel had been a favourite through a lineup rebuild (every launch, a channel list read, a My Lineup edit), it kept its star after "Remove from Favorites" until the next rebuild. My Lineup's build takes the viewer's favourites in (a favourite always joins My Lineup) and marked them on the lineup's entries as if the server (Emby / Jellyfin) had; the rows took that mark as a favourite of their own. Now the entries carry the server's flag only; the viewer's favourites still bring channels into My Lineup and All Channels. Removing a server favourite here removes it (and tells the server), instead of turning it into a local one. And the menus (hold OK in the guide, Search's channel menu, the player's ★) read the favourite from the store at once: they used to read the rows published on the next tick, so right after "Add to Favorites" the row still said "Add to Favorites", and a second OK quietly took it off again.
 
 | Area | How to check | Pass |
 |---|---|---|
@@ -1667,3 +1667,4 @@ Favourites stuck: once a channel had been a favourite through a lineup rebuild (
 | After relaunch | Relaunch, then remove another | Gone at once; stays gone after the next relaunch |
 | Player | ★ pill on a favourite in the player | "Removed from Favorites"; the guide agrees |
 | Emby / Jellyfin | Remove a server favourite | Gone here and on the server |
+| Menu flips | Hold OK › Add to Favorites, keep the menu open | The row reads "Remove from Favorites" at once (a second OK no longer undoes the first unseen); Search's Favorites switch the same |
