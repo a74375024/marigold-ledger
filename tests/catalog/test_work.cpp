@@ -365,3 +365,38 @@ TEST_CASE("lineup: a West version filed apart from its East one stays in its own
   for (const Channel& e : lineup(input).entries) order.push_back(e.id);
   CHECK(order == std::vector<std::string>{"e|n:US:syfy~west", "e|n:US:tbs", "e|n:US:hbo", "e|n:US:syfy"});
 }
+
+TEST_CASE("lineup: the viewer's favourites join My Lineup but aren't marked as the server's (Build 149)") {
+  std::vector<Channel> channels = {channel("1", "Channel A"), channel("2", "Channel B"), channel("3", "Channel C")};
+  channels[1].isFavorite = true;  // the server's own (Emby / Jellyfin)
+  auto info = [](const std::string& id, const std::string& member) {
+    EntryInfo e;
+    e.id = id;
+    e.name = id;
+    e.category = LineupCategory::entertainment;
+    e.members = {member};
+    e.market = "UK";  // outside the picked countries: only a favourite brings it in
+    return e;
+  };
+  LineupInput input;
+  input.infos = {info("e|a", "xt:1|1"), info("e|b", "xt:1|2"), info("e|c", "xt:1|3")};
+  input.channels = channels;
+  for (size_t i = 0; i < channels.size(); ++i) input.indexByID[channels[i].id] = i;
+  input.prefs.configured = true;
+  input.otherGroup = "Other";
+  // The viewer favourited A; B is the server's.
+  input.favoriteIDs = std::unordered_set<std::string>{"xt:1|1", "xt:1|2"};
+  LineupOutput out = lineup(input);
+  CHECK(out.lineupIDs.count("e|a"));
+  CHECK(out.lineupIDs.count("e|b"));
+  CHECK_FALSE(out.lineupIDs.count("e|c"));
+  auto entry = [&](const std::string& id) -> const Channel& { return out.entries[out.entryIndex.at(id)]; };
+  CHECK_FALSE(entry("e|a").isFavorite);  // the rows add the viewer's own
+  CHECK(entry("e|b").isFavorite);
+  CHECK_FALSE(entry("e|c").isFavorite);
+  std::set<std::string> browse;
+  for (const Channel& c : out.browseEntries) browse.insert(c.id);
+  CHECK(browse.count("e|a"));
+  CHECK(browse.count("e|b"));
+  CHECK_FALSE(browse.count("e|c"));
+}

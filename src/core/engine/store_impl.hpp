@@ -279,6 +279,9 @@ struct Store::Impl {
   // Persisted.
   std::vector<sources::Account> accounts;
   std::set<std::string> favorites;   // entry ids (Xtream and M3U have no favorites API)
+  // Build 149: entry ids whose Emby / Jellyfin favourite was removed here
+  // (the server is told too; dropped once the server's list agrees).
+  std::set<std::string> unfavorited;
   std::vector<std::string> recents;  // entry ids, newest first
   std::vector<search::Recent> searches;  // names picked from Search, newest first
   std::map<std::string, std::string> pinned;  // entry id -> raw channel id

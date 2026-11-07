@@ -1655,3 +1655,15 @@ The updater ships in this build, so a device takes its first in-app update from 
 | Up to date | The installed version is the latest | No card, no row |
 | LG, Apple TV | Any time | No card, no row, no request to GitHub (the log has no "update" lines) |
 | Log | marigold.log (Android: also logcat; Mac: Console) | "update" lines with versions and status codes, never a link or a path |
+
+## Build 149 — 1.0.3: favourites can be removed again
+
+Favourites stuck: once a channel had been a favourite through a lineup rebuild (every launch, a channel list read, a My Lineup edit), it kept its star after "Remove from Favorites" until the next rebuild. My Lineup's build takes the viewer's favourites in (a favourite always joins My Lineup) and marked them on the lineup's entries as if the server (Emby / Jellyfin) had; the rows took that mark as a favourite of their own. Now the entries carry the server's flag only; the viewer's favourites still bring channels into My Lineup and All Channels. Removing a server favourite here removes it (and tells the server), instead of turning it into a local one.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Many | Hold OK › Add to Favorites on five channels | Five stars; the Favorites list has five |
+| Remove | Hold OK › Remove from Favorites on one | Star gone at once; Favorites has four |
+| After relaunch | Relaunch, then remove another | Gone at once; stays gone after the next relaunch |
+| Player | ★ pill on a favourite in the player | "Removed from Favorites"; the guide agrees |
+| Emby / Jellyfin | Remove a server favourite | Gone here and on the server |

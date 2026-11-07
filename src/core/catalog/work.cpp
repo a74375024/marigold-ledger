@@ -240,6 +240,7 @@ LineupOutput lineup(const LineupInput& input) {
     return c && (input.favoriteIDs ? input.favoriteIDs->count(c->id) > 0 : c->isFavorite);
   };
   LineupOutput out;
+  std::unordered_set<std::string> favored;  // entries with a favourite (the viewer's or the server's)
   CoastFeeds coasts = CoastFeeds::of(infos, input.coast);
   // The user's choices, also those made under a row's earlier ids.
   auto chosen = [](const std::set<std::string>& ids, const EntryInfo& info) {
@@ -344,8 +345,11 @@ LineupOutput lineup(const LineupInput& input) {
         break;
       }
     }
-    entry.isFavorite =
-        std::any_of(members.begin(), members.end(), isFavorite);
+    // The server's own favourite (Emby / Jellyfin) only: the rows add the
+    // viewer's favourites themselves, which can change between builds
+    // (Build 149: favourites taken in here stuck until the next build).
+    entry.isFavorite = std::any_of(members.begin(), members.end(), [](const Channel* c) { return c->isFavorite; });
+    if (std::any_of(members.begin(), members.end(), isFavorite)) favored.insert(entry.id);
     entry.tags = primary.tags;
     entry.isRadio = primary.isRadio;
     entry.group = primary.group;
@@ -365,7 +369,7 @@ LineupOutput lineup(const LineupInput& input) {
     auto market = marketOf.find(e.id);
     std::optional<std::string> m =
         market == marketOf.end() ? std::nullopt : std::optional<std::string>(market->second);
-    if (out.lineupIDs.count(e.id) || e.isFavorite || prefs.includes(m))
+    if (out.lineupIDs.count(e.id) || favored.count(e.id) || prefs.includes(m))
       out.browseEntries.push_back(e);
   }
   std::map<std::string, int> counts;

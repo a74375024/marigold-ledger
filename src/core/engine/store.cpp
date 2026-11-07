@@ -465,11 +465,21 @@ std::shared_ptr<ChannelRows> makeRows(const catalog::LineupOutput& lo, const Cat
   return out;
 }
 
+// Build 149: a row's star. The viewer's favourite, or the server's own
+// (Emby / Jellyfin) unless removed here. The lineup's build takes the
+// viewer's favourites in only for membership, never for the star (they
+// stuck until the next build).
+bool favoriteNow(const std::string& id, bool serverFavorite, const std::set<std::string>& favorites,
+                 const std::set<std::string>& unfavorited) {
+  return favorites.count(id) > 0 || (serverFavorite && unfavorited.count(id) == 0);
+}
+
 // What a publish sets on the rows: the viewer's lists and the lineup's
 // membership. The store's own, or copies for a worker.
 struct RowFlags {
   const std::set<std::string>* lineupIDs = nullptr;
   const std::set<std::string>* favorites = nullptr;
+  const std::set<std::string>* unfavorited = nullptr;
   const std::set<std::string>* hiddenGroups = nullptr;
   const std::vector<std::string>* recents = nullptr;
   bool configured = false;
@@ -477,18 +487,22 @@ struct RowFlags {
 };
 
 RowFlags rowFlags(const Store::Impl& m) {
-  return RowFlags{&m.lineup.lineupIDs, &m.favorites, &m.hiddenGroups, &m.recents, m.prefs.configured,
-                  m.channels->size()};
+  return RowFlags{&m.lineup.lineupIDs, &m.favorites,        &m.unfavorited, &m.hiddenGroups,
+                  &m.recents,          m.prefs.configured, m.channels->size()};
 }
 
 // The same, copied (a few hundred ids) for a patch made on a worker.
 struct RowFlagsCopy {
-  std::set<std::string> lineupIDs, favorites, hiddenGroups;
+  std::set<std::string> lineupIDs, favorites, unfavorited, hiddenGroups;
   std::vector<std::string> recents;
   RowFlags flags;
   explicit RowFlagsCopy(const Store::Impl& m)
-      : lineupIDs(m.lineup.lineupIDs), favorites(m.favorites), hiddenGroups(m.hiddenGroups), recents(m.recents),
-        flags{&lineupIDs, &favorites, &hiddenGroups, &recents, m.prefs.configured, m.channels->size()} {}
+      : lineupIDs(m.lineup.lineupIDs),
+        favorites(m.favorites),
+        unfavorited(m.unfavorited),
+        hiddenGroups(m.hiddenGroups),
+        recents(m.recents),
+        flags{&lineupIDs, &favorites, &unfavorited, &hiddenGroups, &recents, m.prefs.configured, m.channels->size()} {}
   RowFlagsCopy(const RowFlagsCopy&) = delete;
   RowFlagsCopy& operator=(const RowFlagsCopy&) = delete;
 };
@@ -508,7 +522,7 @@ std::shared_ptr<Channels> patchRows(const ChannelRows& r, const RowFlags& f) {
     GuideChannel& g = out->all[i];
     const ChannelRows::Row& row = r.rows[i];
     g.inLineup = f.lineupIDs->count(g.id) > 0;
-    g.favorite = row.serverFavorite || f.favorites->count(g.id) > 0;
+    g.favorite = favoriteNow(g.id, row.serverFavorite, *f.favorites, *f.unfavorited);
     // Locals by their broadcast number; the rest by cable-style blocks.
     if (row.number) {
       g.number = row.number;
@@ -737,6 +751,7 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
   if (auto text = st.read(kListsFile)) {
     if (auto v = json::parse(*text)) {
       m.favorites = stringSet((*v)["favorites"]);
+      m.unfavorited = stringSet((*v)["unfavorited"]);
       m.hiddenGroups = stringSet((*v)["hiddenGroups"]);
       for (const json::Value& x : (*v)["recents"].items())
         if (x.isString()) m.recents.push_back(x.asString());
@@ -860,6 +875,8 @@ std::string Store::listsText() const {
   const Impl& m = *impl_;
   json::Value v = json::Value::object();
   v.set("favorites", stringArray(std::vector<std::string>(m.favorites.begin(), m.favorites.end())));
+  if (!m.unfavorited.empty())
+    v.set("unfavorited", stringArray(std::vector<std::string>(m.unfavorited.begin(), m.unfavorited.end())));
   v.set("recents", stringArray(m.recents));
   if (!m.searches.empty()) {
     // The names picked from Search and their ids, never what was typed.
@@ -2023,6 +2040,16 @@ void Store::rebuildEntries() {
   std::unordered_set<std::string> favorites;
   for (const Channel& c : *m.channels)
     if (c.isFavorite && str::startsWith(c.serverId, "jf:")) favorites.insert(c.id);
+  // Server favourites removed here (Build 149): out, and forgotten once the
+  // server's list no longer has them.
+  for (auto u = m.unfavorited.begin(); u != m.unfavorited.end();) {
+    auto it = m.entryInfo.find(*u);
+    bool still = false;
+    if (it != m.entryInfo.end())
+      for (const std::string& member : m.catalog->entries[it->second].members)
+        still = favorites.erase(member) > 0 || still;
+    u = still || it == m.entryInfo.end() ? std::next(u) : m.unfavorited.erase(u);
+  }
   for (const std::string& fav : m.favorites) {
     auto it = m.entryInfo.find(fav);
     if (it == m.entryInfo.end()) continue;
@@ -2259,13 +2286,23 @@ void Store::addToLineup(const std::vector<std::string>& entryIds) {
 
 void Store::toggleFavorite(const std::string& entryId) {
   Impl& m = *impl_;
-  if (!m.favorites.erase(entryId)) m.favorites.insert(entryId);
+  // From what the row shows: a server favourite (Emby / Jellyfin) is
+  // removed too, not made a local one.
+  auto at = m.lineup.entryIndex.find(entryId);
+  bool server = at != m.lineup.entryIndex.end() && m.lineup.entries[at->second].isFavorite;
+  bool fav = !favoriteNow(entryId, server, m.favorites, m.unfavorited);
+  if (fav) {
+    m.favorites.insert(entryId);
+    m.unfavorited.erase(entryId);
+  } else {
+    m.favorites.erase(entryId);
+    if (server) m.unfavorited.insert(entryId);
+  }
   saveListsLater();
   m.channelsDirty = true;
   // Emby favourites also go to the server.
   auto it = m.entryInfo.find(entryId);
   if (it == m.entryInfo.end()) return;
-  bool fav = m.favorites.count(entryId) > 0;
   for (const std::string& member : m.catalog->entries[it->second].members) {
     auto ci = m.indexByID.find(member);
     if (ci == m.indexByID.end()) continue;
@@ -3785,7 +3822,7 @@ std::shared_ptr<const Channels> Store::channelsNow() const {
     g.west = catalog::isWestId(e.id);
     if (std::string other = catalog::coastPartnerId(e.id); lo.entryIndex.count(other)) g.partner = other;
     g.inLineup = lo.lineupIDs.count(e.id) > 0;
-    g.favorite = m.favorites.count(e.id) > 0 || e.isFavorite;
+    g.favorite = favoriteNow(e.id, e.isFavorite, m.favorites, m.unfavorited);
     // Which logo a row tries and how its cell reads (ChannelLogos.spec).
     const Channel* member = nullptr;
     if (ei && !ei->members.empty()) {
