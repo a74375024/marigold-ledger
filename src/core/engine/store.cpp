@@ -3,6 +3,7 @@
 // except the lambdas handed to pool().post() / afterTransfer / onChunk,
 // which only touch what they captured (by value or shared_ptr).
 #include "core/engine/store.hpp"
+#include "core/engine/viewer_lists.hpp"
 #include "core/engine/store_impl.hpp"
 
 #include <sys/stat.h>
@@ -1901,6 +1902,7 @@ void Store::rebuildCatalog() {
                    http::Priority::Background);
 }
 
+
 void Store::installCatalog(std::shared_ptr<const std::vector<Channel>> list, std::shared_ptr<const CatalogResult> cat,
                            bool partial) {
   Impl& m = *impl_;
@@ -1914,6 +1916,8 @@ void Store::installCatalog(std::shared_ptr<const std::vector<Channel>> list, std
   for (size_t i = 0; i < m.catalog->entries.size(); ++i) m.entryInfo.emplace(m.catalog->entries[i].id, i);
   m.familyAt.clear();
   for (size_t i = 0; i < m.catalog->families.size(); ++i) m.familyAt.emplace(m.catalog->families[i].id, i);
+  if (!partial && carryFormerIds(m.catalog->entries, m.entryInfo, m.favorites, m.unfavorited, m.recents))
+    saveListsLater();
   ++m.catalogRevision;
   rebuildEntries();
 }

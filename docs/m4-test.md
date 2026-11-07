@@ -1667,4 +1667,6 @@ Favourites stuck: once a channel had been a favourite through a lineup rebuild (
 | After relaunch | Relaunch, then remove another | Gone at once; stays gone after the next relaunch |
 | Player | ★ pill on a favourite in the player | "Removed from Favorites"; the guide agrees |
 | Emby / Jellyfin | Remove a server favourite | Gone here and on the server |
+| Favorites screen | Favourite channels in My Lineup and outside it, one at a time | Each shows in Favorites (guide tab and the player's list) right away, and after a relaunch |
+| Renamed row | A favourite on a channel whose row id changes (new matching rules in an update, a renamed channel) | Still in Favorites under its new id; recents follow too |
 | Menu flips | Hold OK › Add to Favorites, keep the menu open | The row reads "Remove from Favorites" at once (a second OK no longer undoes the first unseen); Search's Favorites switch the same |

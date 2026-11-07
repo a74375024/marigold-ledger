@@ -4,11 +4,16 @@
 // favourite always joins My Lineup); that must not make them stick.
 #include <doctest.h>
 
+#include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "core/catalog/lineup.hpp"
 #include "core/engine/store.hpp"
+#include "core/engine/viewer_lists.hpp"
+#include "core/engine/views.hpp"
+#include "core/util/time.hpp"
 #include "engine/loaded_store.hpp"
 #include "sources/mock_provider.hpp"
 
@@ -184,4 +189,64 @@ TEST_CASE("favourites: the store answers at once, before the rows are published 
   fake::settle(store, tv);
   CHECK_FALSE(fav(store, a));
   CHECK(fav(store, b));
+}
+
+TEST_CASE("favourites: a row whose id changed keeps its favourite, recents and removed server favourite") {
+  using marigold::catalog::EntryInfo;
+  auto entry = [](std::string id, std::vector<std::string> former) {
+    EntryInfo e;
+    e.id = std::move(id);
+    e.formerIds = std::move(former);
+    return e;
+  };
+  // ESPN's row was "e|espn hd" before new matching rules; "e|cnn" was
+  // another row's earlier id but is a row of its own now.
+  std::vector<EntryInfo> entries = {entry("e|espn", {"e|espn hd"}), entry("e|cnn", {}),
+                                    entry("e|hln", {"e|cnn", "e|headline news"})};
+  std::unordered_map<std::string, size_t> at;
+  for (size_t i = 0; i < entries.size(); ++i) at.emplace(entries[i].id, i);
+  std::set<std::string> favorites = {"e|espn hd", "e|cnn", "e|gone"};
+  std::set<std::string> unfavorited = {"e|headline news"};
+  std::vector<std::string> recents = {"e|espn hd", "e|espn", "e|cnn", "e|gone"};
+  CHECK(marigold::engine::carryFormerIds(entries, at, favorites, unfavorited, recents));
+  CHECK(favorites == std::set<std::string>{"e|espn", "e|cnn", "e|gone"});
+  CHECK(unfavorited == std::set<std::string>{"e|hln"});
+  CHECK(recents == std::vector<std::string>{"e|espn", "e|cnn", "e|gone"});
+  // Nothing old left: nothing moves.
+  CHECK_FALSE(marigold::engine::carryFormerIds(entries, at, favorites, unfavorited, recents));
+}
+
+TEST_CASE("favourites: every one made shows in Favorites, in the guide and the player's lists alike") {
+  fake::Tv tv;
+  mock::Provider provider(400);
+  tv.pool.answer(fake::kPlaylist, provider.m3u());
+  Store store(tv.host());
+  REQUIRE(fake::addPlaylist(store, tv).empty());
+  catalog::LineupPrefs p = store.lineupPrefs();
+  p.configured = true;
+  store.buildLineup(p);
+  fake::settle(store, tv);
+  auto ch = store.channels();
+  // In My Lineup and out of it, every eleventh row.
+  std::vector<std::string> ids;
+  for (size_t i = 0; i < ch->all.size(); i += 11) ids.push_back(ch->all[i].id);
+  REQUIRE(ids.size() >= 5);
+  for (size_t n = 0; n < ids.size(); ++n) {
+    store.toggleFavorite(ids[n]);
+    fake::settle(store, tv);
+    auto now = store.channels();
+    views::List list = views::guide(*now, nullptr, views::Tab::Favorites, {}, time::now());
+    std::set<std::string> shown;
+    for (const views::Line& l : list.lines)
+      if (l.kind == views::Line::Kind::Channel) shown.insert(now->all[static_cast<size_t>(l.channel)].id);
+    CHECK(shown.size() == n + 1);
+    for (size_t k = 0; k <= n; ++k) CHECK(shown.count(ids[k]));
+  }
+  // Still all there after a lineup rebuild.
+  rebuild(store, tv);
+  auto now = store.channels();
+  views::List list = views::guide(*now, nullptr, views::Tab::Favorites, {}, time::now());
+  size_t channels = 0;
+  for (const views::Line& l : list.lines) channels += l.kind == views::Line::Kind::Channel;
+  CHECK(channels == ids.size());
 }
