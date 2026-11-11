@@ -37,6 +37,9 @@ struct Entry {
   std::string closed;                // "2024-07-01", "yes" (date unknown), or empty
   std::string wikidata;              // "Q12345"
   std::string iptvOrg;               // "UPtv.us"
+  // Its Wikidata logo as a PNG link on upload.wikimedia.org, kept only
+  // when iptv-org has none for it (empty otherwise).
+  std::string logo;
 
   bool operator==(const Entry& o) const;
 };
@@ -53,6 +56,10 @@ struct Data {
   // and by the names' core key ("cnn"). The TV never fetches them.
   std::map<std::string, std::string> logos;
   std::map<std::string, std::string> logosByName;
+  // Every other country's channels' logos by iptv-org id only, packed
+  // (logos::IptvOrgIndex::Abroad): the link beginnings and the words.
+  std::vector<std::string> logoPrefixes;
+  std::string logosAbroad;
 
   bool empty() const { return entries.empty(); }
 };

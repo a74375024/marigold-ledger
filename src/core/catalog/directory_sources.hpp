@@ -70,8 +70,21 @@ struct EntityFacts {
   std::vector<std::string> aliases;
   std::string language;  // "en", "es"...; the item id when unmapped
   std::string closed;    // "2024-07-01"
+  // Its logos' files on Wikimedia Commons ("CNN.svg"), current first:
+  // preferred ones, then by latest start; deprecated and ended ones left
+  // out.
+  std::vector<std::string> logos = {};
 };
 std::map<std::string, EntityFacts> parseEntities(std::string_view body);
+
+// Wikimedia Commons' facts about up to 50 files (their names as Wikidata
+// gives them, "CNN.svg"), and from the answer each one's link as a PNG
+// the TVs can decode, on upload.wikimedia.org: an SVG's PNG rendering
+// (kLogoWidth wide, a width Wikimedia renders), a PNG itself when it's of
+// a sensible size, else its rendering. Other kinds are left out.
+constexpr int kLogoWidth = 330;
+std::string fileInfoRequestUrl(const std::vector<std::string>& files);
+std::map<std::string, std::string> parseFileInfo(std::string_view body);
 // A language item as a code ("Q1321" -> "es"); the id itself when unknown.
 std::string languageOfItem(const std::string& item);
 
@@ -116,8 +129,13 @@ struct Sources {
   std::map<std::string, PageFacts> pages;
   std::map<std::string, EntityFacts> entities;
   std::vector<IptvChannel> iptv;
+  // A Commons file's PNG link (parseFileInfo()), for the entities' logos.
+  std::map<std::string, std::string> logoLinks = {};
 };
 Data assemble(const Sources& sources, const std::string& made);
+// Drops the Wikidata logo of entries iptv-org has a logo for (data.logos
+// by the entry's iptv-org id): the app needs only the others'.
+void keepNeededLogos(Data& data);
 
 // Channels every week's directory must know; a list page read wrong or an
 // odd edit shows here first.

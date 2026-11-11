@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <set>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -399,6 +400,56 @@ std::string entitiesRequestUrl(const std::vector<std::string>& ids) {
          percentEncoded(str::join(ids, "|"));
 }
 
+std::string fileInfoRequestUrl(const std::vector<std::string>& files) {
+  std::vector<std::string> titles;
+  titles.reserve(files.size());
+  for (const std::string& f : files) titles.push_back("File:" + f);
+  return "https://commons.wikimedia.org/w/api.php?action=query&format=json&prop=imageinfo"
+         "&iiprop=url%7Csize%7Cmime&titles=" +
+         percentEncoded(str::join(titles, "|"));
+}
+
+std::map<std::string, std::string> parseFileInfo(std::string_view body) {
+  std::map<std::string, std::string> out;
+  auto doc = json::parse(body);
+  if (!doc) return out;
+  const json::Value& query = (*doc)["query"];
+  // The names as asked ("File:Foo bar.svg" may come back as asked or
+  // written otherwise).
+  std::map<std::string, std::string> askedAs;
+  for (const json::Value& n : query["normalized"].items()) {
+    if (n["from"].isString() && n["to"].isString()) askedAs[n["to"].asString()] = n["from"].asString();
+  }
+  for (const auto& [id, page] : query["pages"].fields()) {
+    const json::Value& info = page["imageinfo"][size_t{0}];
+    if (!page["title"].isString() || !info["url"].isString()) continue;
+    std::string title = page["title"].asString();
+    if (auto it = askedAs.find(title); it != askedAs.end()) title = it->second;
+    if (!str::startsWith(title, "File:")) continue;
+    // "https://upload.wikimedia.org/wikipedia/commons/b/b1/CNN.svg"
+    std::string original = info["url"].asString();
+    original = original.substr(0, original.find('?'));
+    constexpr std::string_view kCommons = "https://upload.wikimedia.org/wikipedia/commons/";
+    if (!str::startsWith(original, kCommons)) continue;
+    std::string path = original.substr(kCommons.size());  // "b/b1/CNN.svg"
+    std::string file = path.substr(path.rfind('/') + 1);
+    std::string rendering = std::string(kCommons) + "thumb/" + path + "/" + std::to_string(kLogoWidth) + "px-" + file;
+    std::string mime = info["mime"].asString();
+    int64_t width = info["width"].asInt(), size = info["size"].asInt();
+    std::string link;
+    if (mime == "image/svg+xml") {
+      link = rendering + ".png";
+    } else if (mime == "image/png") {
+      // Small enough to fetch as it is; a big one by its rendering (never
+      // one narrower than the rendering's width: that isn't made).
+      if (width > 0 && width <= 1200 && size > 0 && size <= 1000000) link = original;
+      else if (width > kLogoWidth) link = rendering;
+    }
+    if (!link.empty()) out[title.substr(5)] = link;
+  }
+  return out;
+}
+
 std::string languageOfItem(const std::string& item) {
   static const std::unordered_map<std::string, std::string> kLanguages = {
       {"Q1860", "en"},  {"Q1321", "es"}, {"Q150", "fr"},  {"Q5146", "pt"}, {"Q1568", "hi"}, {"Q1617", "ur"},
@@ -425,6 +476,31 @@ std::map<std::string, EntityFacts> parseEntities(std::string_view body) {
       std::string language = languageOfItem(value["id"].asString());
       if (facts.language.empty() || language == "en") facts.language = language;
     }
+    // Its logos, current first: preferred before normal, then the latest
+    // started (the first listed of equals). Deprecated and ended ones are
+    // past logos.
+    struct Logo {
+      int rank;
+      std::string start;  // "+2019-01-01T00:00:00Z": the same length for any year since 1000
+      size_t at;
+      std::string file;
+    };
+    std::vector<Logo> logos;
+    for (const json::Value& claim : entity["claims"]["P154"].items()) {
+      const json::Value& value = claim["mainsnak"]["datavalue"]["value"];
+      std::string rank = claim["rank"].asString();
+      if (!value.isString() || value.asString().empty() || rank == "deprecated") continue;
+      if (!claim["qualifiers"]["P582"].items().empty()) continue;
+      std::string start;
+      for (const json::Value& q : claim["qualifiers"]["P580"].items()) {
+        if (q["datavalue"]["value"]["time"].isString()) start = q["datavalue"]["value"]["time"].asString();
+      }
+      logos.push_back({rank == "preferred" ? 1 : 0, start, logos.size(), value.asString()});
+    }
+    std::sort(logos.begin(), logos.end(), [](const Logo& a, const Logo& b) {
+      return std::tie(a.rank, a.start, b.at) > std::tie(b.rank, b.start, a.at);
+    });
+    for (Logo& l : logos) facts.logos.push_back(std::move(l.file));
     for (const json::Value& claim : entity["claims"]["P576"].items()) {
       const json::Value& value = claim["mainsnak"]["datavalue"]["value"];
       if (!value["time"].isString()) continue;
@@ -654,6 +730,13 @@ Data assemble(const Sources& sources, const std::string& made) {
         if (auto entity = sources.entities.find(facts->wikidata); entity != sources.entities.end()) {
           for (const std::string& a : entity->second.aliases) d.fromArticle.push_back(a);
           if (e.language.empty()) e.language = entity->second.language;
+          // The current one the TVs can show.
+          for (const std::string& file : entity->second.logos) {
+            if (auto link = sources.logoLinks.find(file); link != sources.logoLinks.end()) {
+              e.logo = link->second;
+              break;
+            }
+          }
           d.articleClosed = entity->second.closed;
         }
       }
@@ -800,6 +883,12 @@ Data assemble(const Sources& sources, const std::string& made) {
     }
   }
   return data;
+}
+
+void keepNeededLogos(Data& data) {
+  for (Entry& e : data.entries) {
+    if (!e.logo.empty() && !e.iptvOrg.empty() && data.logos.count(str::lower(e.iptvOrg))) e.logo.clear();
+  }
 }
 
 const std::vector<std::string>& wellKnownChannels() {

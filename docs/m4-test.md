@@ -1725,3 +1725,18 @@ Channels sometimes showed another channel's schedule: a provider guide id pointi
 | Player | Sources (red key) › Listings look wrong? | The same panel over the picture |
 | Report | Help › channel report | guide_choice and guide_rejected filled for My Lineup rows |
 | Speed (LG) | Scroll the guide, change the time window | No pause; the guide header settles as before |
+
+## Build 155: 1.0.4, more channels with their own logo
+
+More rows show the channel's own logo instead of the provider's. The logo library's free streaming folder (misc/vod, same commit and CDN) is asked by the channel's exact name ("The Bob Ross Channel", "Vevo '70s", "AMC+"); names the library files under another name are found ("Family Movie Classics", IndiePlex, RetroPlex, LiveNOW from FOX, beIN SPORTS en Español, Jewelry Television, Sho x Bet, NBC Sports Bay Area and California, SportsNet LA); a numbered, extra or alternate feed shows its parent's ("BEIN SPORTS CONNECT 5", "BIG TEN ALTERNATE 2", "ESPN COLLEGE EXTRA 6", "Tennis Channel 2"). A station shows as a station in any section: a Telemundo station under Spanish has its call sign and Telemundo's logo. Other countries' channels get iptv-org's logo by their guide id (built in, packed: about 17,500 ids in 0.56 MB). A listed channel iptv-org has no logo for gets its Wikidata logo, rendered as a PNG by Wikimedia. Of a channel's iptv-org logos the best for the wide cell is kept (PNG, wide, large; never a search engine's thumbnail). Where the library has a horizontal version that fills the wide cell better (Syfy, Tennis Channel, SEC Network, Paramount Network…), that one. A FanDuel regional network with no other logo shows its Bally Sports file.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Free streaming | My Lineup: AMC+, EstrellaTV, Vevo '80s, The Archive, WildEarth | Each its own logo; channel report logo_sources "logo set, provider" |
+| Other names | Family Movie Classics, IndiePlex, LiveNOW from FOX, beIN SPORTS en Español, Sho x Bet | Each its own logo |
+| Feeds | beIN Sports Connect 3–8, Big Ten Alternate, ESPN College Extra 1–7, TUDN Extra | The parent's logo |
+| Stations | Spanish: TELEMUNDO 52 [LOS ANGELES], NBC (KSTS) TELEMUNDO | Call sign, "Telemundo 52" and Telemundo's logo (not NBC's) |
+| Other countries | A foreign channel with a guide id (Kanal 7, TRT Kurdî) | Its logo; logo_sources "public database, provider" |
+| Wikidata | A listed channel iptv-org has no logo for (NTN24, TyC Sports) | Its logo; logo_sources "Wikidata, provider" |
+| Wide | Syfy, Tennis Channel, Game Show Network | The horizontal logo fills the cell |
+| Log | marigold.log at launch | "fallback logos: … by id, … by name, … abroad (… KB)" |
