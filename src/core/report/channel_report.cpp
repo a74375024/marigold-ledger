@@ -224,7 +224,7 @@ const std::vector<std::string>& channelReportColumns() {
       "now_subtitle", "now_description", "outside_listings_end",
       "now_start", "outside_built_at", "provider_built_at",
       "outside_described_next_3h", "provider_guide_described_next_3h", "logo_sources", "logo_status",
-      "directory_id", "directory_match", "row_id", "next_titles"};
+      "directory_id", "directory_match", "row_id", "next_titles", "guide_choice", "guide_rejected"};
   return kColumns;
 }
 
@@ -368,6 +368,7 @@ std::string channelReportCSV(const ChannelReportInput& in,
 
     const std::string* provider = find(in.providerNames, channel.serverId);
     const std::pair<std::string, std::string>* logo = entryId ? find(in.logos, *entryId) : nullptr;
+    const std::pair<std::string, std::string>* choice = entryId ? find(in.guideChoices, *entryId) : nullptr;
     const std::string empty;
     std::vector<std::string> row = {
         cell(channel.number.value_or("")),
@@ -421,6 +422,10 @@ std::string channelReportCSV(const ChannelReportInput& in,
         cell(trait && trait->category == catalog::LineupCategory::sports && trait->kind == catalog::ChannelKind::channel
                  ? nextTitles(findShared(in.programs, channel.id), in.now, in.zone)
                  : empty),
+        // Build 153: which schedule the row shows and why, and those set
+        // aside (guide/choice.hpp); empty for rows not weighed.
+        cell(choice ? choice->first : empty),
+        cell(choice ? choice->second : empty),
     };
     out += str::join(row, ",");
     out += '\n';

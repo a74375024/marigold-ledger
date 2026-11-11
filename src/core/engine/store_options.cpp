@@ -412,7 +412,7 @@ void Store::buildChannelReport(std::function<void(std::shared_ptr<std::string>)>
     std::map<std::string, std::string> outsideNotes, providerNotes, names;
     std::map<std::string, guide::provider::Status> providerStates;
     guide::StationsByNetwork stations;
-    std::unordered_map<std::string, std::pair<std::string, std::string>> logos;
+    std::unordered_map<std::string, std::pair<std::string, std::string>> logos, guideChoices;
     std::vector<std::string> privateWords;
     time::Seconds now = 0, windowStart = 0, outsideBuilt = 0;
     time::Zone zone = time::Zone::device();
@@ -472,6 +472,8 @@ void Store::buildChannelReport(std::function<void(std::shared_ptr<std::string>)>
     std::string status = g.logoUrl.empty() ? "no logo" : (host_.logoStatus ? host_.logoStatus(g.logoUrl) : std::string());
     job->logos[g.id] = {g.logoSources.empty() ? "none" : g.logoSources, status};
   }
+  for (const auto& [id, g] : m.rowGuides)
+    if (g) job->guideChoices[id] = {g->why, g->rejected};
   job->now = now;
   job->windowStart = windowStart();
   job->zone = host_.zone();
@@ -496,6 +498,7 @@ void Store::buildChannelReport(std::function<void(std::shared_ptr<std::string>)>
         in.providerNames = &job->names;
         in.stations = &job->stations;
         in.logos = &job->logos;
+        in.guideChoices = &job->guideChoices;
         in.now = job->now;
         in.windowStart = job->windowStart;
         in.zone = job->zone;

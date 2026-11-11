@@ -172,6 +172,14 @@ std::unique_ptr<Screen> makeSources(App& app, const std::string& entryId) {
         p.items.push_back(it);
       }
     }
+    if (app.store().hasGuideChoice(id)) {
+      // Build 153: the player reaches the channel's listings choice here.
+      p.items.push_back(ui::PanelItem::header("GUIDE"));
+      ui::PanelItem listings{ui::PanelItem::Kind::Chevron, "Listings look wrong?"};
+      listings.detail = app.store().guidePicked(id) ? "Showing the listings you picked" : "Pick the ones that match what's on";
+      listings.select = [&app, id] { app.nav().push(makeGuideChoice(app, id)); };
+      p.items.push_back(listings);
+    }
     p.hint = "OK switches at once; the others stay as automatic backups. Back closes.";
   });
   panel->liveRows = true;  // "Opening…" turns into "Playing now"

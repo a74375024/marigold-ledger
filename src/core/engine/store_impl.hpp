@@ -23,6 +23,7 @@
 #include "core/catalog/markets.hpp"
 #include "core/catalog/types.hpp"
 #include "core/catalog/work.hpp"
+#include "core/guide/choice.hpp"
 #include "core/guide/outside.hpp"
 #include "core/guide/provider.hpp"
 #include "core/logos/logos.hpp"
@@ -285,6 +286,9 @@ struct Store::Impl {
   std::vector<std::string> recents;  // entry ids, newest first
   std::vector<search::Recent> searches;  // names picked from Search, newest first
   std::map<std::string, std::string> pinned;  // entry id -> raw channel id
+  // Build 153: entry id -> the schedule picked for its listings
+  // (guide::choice::Candidate::key).
+  std::map<std::string, std::string> guidePicks;
   // Entry id -> the version that last played on it: it starts first next
   // time unless one is pinned.
   std::map<std::string, std::string> lastFeed;
@@ -398,6 +402,28 @@ struct Store::Impl {
   std::unordered_map<std::string, GuideState> guideState;
   std::unordered_map<std::string, time::Seconds> guideWindowByChannel;
   std::unordered_map<std::string, std::string> entryGuideKeys;
+  // Build 153: rows whose listings were chosen by channel identity
+  // (guide/choice.hpp): why, what was set aside, and each distinct schedule
+  // (for "Listings look wrong?"; only its key, lists and shift are kept).
+  struct RowGuide {
+    std::string chosen, automatic;  // candidate keys
+    bool picked = false;
+    std::string why, rejected;
+    struct Option {
+      std::string key, channelId;
+      guide::Schedule raw;
+      std::shared_ptr<const std::vector<Program>> extra;
+      int shift = 0;
+      bool outside = false;
+    };
+    std::vector<Option> options;
+  };
+  std::unordered_map<std::string, std::shared_ptr<const RowGuide>> rowGuides;
+  // Rows asked for on screen (wantListings) since the list was read.
+  std::unordered_set<std::string> choiceRows;
+  // Entry id -> the newest weighing asked for it (older answers are dropped).
+  std::unordered_map<std::string, uint64_t> choiceAsked;
+  uint64_t choiceSerial = 0;
   std::vector<std::string> pendingGuide;
   std::unordered_set<std::string> pendingGuideSet;
   std::vector<std::string> recentlyRequested;

@@ -660,6 +660,15 @@ void GuideScreen::longPress() {
                       app.store().isFavorite(id) ? "Remove from Favorites" : "Add to Favorites"};
     fav.select = [&app, id] { app.store().toggleFavorite(id); };
     p.items.push_back(fav);
+    if (app.store().hasGuideChoice(id)) {
+      ui::PanelItem listings{ui::PanelItem::Kind::Chevron, "Listings look wrong?"};
+      listings.detail = app.store().guidePicked(id) ? "Showing the listings you picked" : "Pick the ones that match what's on";
+      listings.select = [&app, id] {
+        app.nav().pop();
+        app.nav().push(makeGuideChoice(app, id));
+      };
+      p.items.push_back(listings);
+    }
     if (self->tab_ == Tab::All && !c->group.empty()) {
       ui::PanelItem hide{ui::PanelItem::Kind::Action, "Hide Group from All Channels"};
       hide.detail = c->group;

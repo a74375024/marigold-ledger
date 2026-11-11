@@ -1709,3 +1709,19 @@ BlazeTV, Real America's Voice and Salem News Channel (streaming-only or free) ar
 | Free | Bob Ross Channel, Nosey, FailArmy | Under Free Streaming, not Entertainment |
 | MSG | New York area | MSG Network and MSG Sportsnet are two rows |
 | Overflow | A provider's "Tennis Channel 2" / "YES Network Overflow" | Its own row next to the channel, same section |
+
+## Build 154: guide listings by channel identity
+
+Channels sometimes showed another channel's schedule: a provider guide id pointing at a local station (CBS News 24/7 on WCBS, KNBC on NBC Connecticut, History on NYC Life), a UK or Canadian channel of the same name (Discovery, GET TV, YES Network), or the other coast's times (an East row on a schedule labelled West, a West row on East times with no shift). Now each row's schedules are weighed before one shows: another known channel, station or country is set aside; outside listings' coast labels are trusted and the provider's are checked by lining the schedules up at 0 and 3 hours; each schedule is moved to the row's coast; and of the distinct schedules left, the one most independent guides agree on shows (copies sharing one schedule count once). Hold OK › Listings look wrong? shows the row's distinct schedules as on now / next, to pick the right one; the pick stays until that schedule is gone. The channel report says which schedule each row shows and why (guide_choice) and what was set aside (guide_rejected).
+
+| Area | How to check | Pass |
+|---|---|---|
+| Other channel | My Lineup › CBS News 24/7, History, KNBC (West lineup) | No Price Is Right on CBS News, no NYC Life on History, no Connecticut news on KNBC |
+| Other country | Discovery, GET TV, YES Network with UK and Canada listings on | US programmes at US times |
+| East coast | East lineup: Discovery, Food Network, HGTV, TNT | What the guide says is on matches the picture |
+| West coast | West lineup: HBO West, Freeform West, National Geographic West | Listings 3 h after the East row's; matches the picture |
+| Listings look wrong? | Hold OK on a channel › Listings look wrong? | Automatic plus each distinct schedule as "On now · …" / "Next · … time", no source names; the one shown is marked |
+| Pick | Pick another schedule, then relaunch | The guide shows it at once and after the relaunch; Automatic goes back |
+| Player | Sources (red key) › Listings look wrong? | The same panel over the picture |
+| Report | Help › channel report | guide_choice and guide_rejected filled for My Lineup rows |
+| Speed (LG) | Scroll the guide, change the time window | No pause; the guide header settles as before |

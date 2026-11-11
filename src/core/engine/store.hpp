@@ -368,6 +368,23 @@ class Store {
   void pinFeed(const std::string& entryId, const std::string& channelId);  // "" = automatic
   std::string pinnedFeed(const std::string& entryId) const;
 
+  // Build 153: "Listings look wrong?" The distinct schedules a row's guide
+  // could show (guide/choice.hpp), the one shown first: what each has on
+  // now and next. Empty when the row's listings haven't been weighed yet.
+  struct GuideOption {
+    std::string key;  // pickGuide's argument
+    std::string now, next;
+    time::Seconds nextStart = 0;
+    bool current = false;  // shown now
+  };
+  std::vector<GuideOption> guideOptions(const std::string& entryId) const;
+  // The viewer's pick for a row ("" = automatic), saved with the lists; it
+  // is dropped once that schedule is gone.
+  void pickGuide(const std::string& entryId, const std::string& key);
+  bool guidePicked(const std::string& entryId) const;
+  // The row's listings have been weighed and there is one to show.
+  bool hasGuideChoice(const std::string& entryId) const;
+
   // My Lineup setup (LineupSetupView). The draft is the caller's until
   // buildLineup().
   catalog::LineupPrefs lineupPrefs() const;
@@ -632,6 +649,11 @@ class Store {
   std::vector<Program> outsideListing(const std::string& id) const;
   std::vector<Program> bestListing(const std::string& id) const;
   void applyEntryGuides(const std::vector<std::string>& entryIDs);
+  // Build 153: rows whose listings are weighed by channel identity (My
+  // Lineup, favourites, rows asked for on screen, rows with a pick), and
+  // the weighing itself: gathered here, decided on a worker.
+  bool weighsGuide(const std::string& entryId) const;
+  void decideRows(const std::vector<std::string>& entryIDs);
   void rebuildOutsidePrograms();
   // After a channel sort or a guide build: freed memory back to the system,
   // and a memory line in the playback log.

@@ -5,6 +5,8 @@
 // listing matched and how, what the provider's full guide says, and what is
 // on now. Build 143: a sports channel's next three programmes (start time
 // and title, "next_titles"), so a report shows what its guide calls games.
+// Build 153: which schedule the row shows and why ("guide_choice") and the
+// schedules set aside with their reasons ("guide_rejected").
 //
 // No stream links, logins, tokens or server addresses: the inputs carry none
 // (channel ids and guide ids never hold a login), and every cell still goes
@@ -106,6 +108,9 @@ struct ChannelReportInput {
   // Each entry's logo: where its logos come from ("logo set, provider") and
   // whether one is on screen ("shown", "failed"...), by entry id.
   const std::unordered_map<std::string, std::pair<std::string, std::string>>* logos = nullptr;
+  // Build 153: each weighed row's guide choice and what it set aside
+  // (guide::choice::Decision why / rejected), by entry id.
+  const std::unordered_map<std::string, std::pair<std::string, std::string>>* guideChoices = nullptr;
   // The station directory (tvOS read it from the outside guide's cache).
   const guide::StationsByNetwork* stations = nullptr;
 
