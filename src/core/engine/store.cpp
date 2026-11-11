@@ -121,6 +121,9 @@ constexpr int kShortEpgParallel = 2;
 constexpr time::Seconds kListingsAheadEnough = 90 * 60;
 constexpr size_t kRecentMax = 30;
 constexpr size_t kRecentlyRequestedMax = 300;
+// Build 153: rows asked for on screen that are weighed by channel identity
+// (guide/choice.hpp) besides My Lineup and favourites.
+constexpr size_t kChoiceRowsMax = 1500;
 constexpr double kGuideHours = 3.0;
 constexpr uint32_t kGuideFlushMs = 120;
 constexpr uint32_t kProviderDelayMs = 4000;
@@ -2403,6 +2406,9 @@ void Store::wantListings(const std::vector<std::string>& ids) {
   // Build 153: rows asked for on screen are weighed by channel identity;
   // one with listings already in and never weighed is weighed now.
   std::vector<std::string> weigh;
+  // Rows seen on screen lately: browsing every row of a big list starts over
+  // (those on screen now are asked for again here).
+  if (m.choiceRows.size() > kChoiceRowsMax) m.choiceRows.clear();
   for (const std::string& id : ids) {
     if (!m.entryInfo.count(id) || !m.choiceRows.insert(id).second) continue;
     if (!m.rowGuides.count(id) && !m.choiceAsked.count(id) && entryHasGuide(id)) weigh.push_back(id);
@@ -2732,6 +2738,10 @@ void Store::rebuildOutsidePrograms() {
         mm.programs = std::move(*merged);
         std::vector<std::string> ids2;
         for (const auto& [id, idx] : mm.entryInfo) ids2.push_back(id);
+        // Build 153: weighings of rows no longer weighed (gone, or out of
+        // My Lineup and off screen) go, with the lists they hold.
+        for (auto g = mm.rowGuides.begin(); g != mm.rowGuides.end();)
+          g = mm.entryInfo.count(g->first) && weighsGuide(g->first) ? std::next(g) : mm.rowGuides.erase(g);
         applyEntryGuides(ids2);
         afterBigJob("listings merged");
       },

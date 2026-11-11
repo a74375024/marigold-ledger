@@ -107,6 +107,8 @@ TEST_CASE("guide choice: names and ids read through the reference data") {
   CHECK(identifyId("nbc30wvit.us").callsign == "WVIT");
   CHECK(identifyId("nyclifewnye.us").callsign == "WNYE");
   CHECK(identifyId("TheWeatherNetwork.ca").country == "CA");
+  CHECK(identifyId("HBOWest.us").coast == Coast::west);
+  CHECK(identifyId("StarzEncoreWesterns.us").coast == Coast::unknown);
   CHECK(identifyId("AMC.us").ref == "amc");
   CHECK(identifyId("historychannel.us").ref == "history");
   CHECK(identifyId("cbssportsnetworkusa.us").ref == "cbs-sports-network");
@@ -154,6 +156,17 @@ TEST_CASE("guide choice: another channel is set aside, an unknown one kept") {
   CHECK(k.rejected.find("other station") != std::string::npos);
   REQUIRE(k.chosen == 1);
   CHECK(k.why.rfind("outside US locals", 0) == 0);
+
+  // A provider's guide channel named after its stream ("|US| TLC WEST" over
+  // an unknown id) doesn't vouch for itself: the outside listing that
+  // names the channel wins when they disagree.
+  std::vector<Candidate> tlc = {provider("360north.us", "|US| TLC WEST", hourly("Alaska Now", kNow - 60, 20)),
+                                outside("US national", "us-national", "US", "TLC HD (Pacific)",
+                                        hourly("Dr Pimple", kNow - 60, 20))};
+  Decision t = decide(row("e|r:tlc~west"), tlc, kNow, kNowSec);
+  REQUIRE(t.chosen == 1);
+  CHECK(t.shift == 0);
+  CHECK(t.rejected.find("disagrees") != std::string::npos);
 
   // A row whose only schedule is another channel's shows nothing.
   std::vector<Candidate> only = {provider("WCBS.us", "|US| CBS NEWS", hourly("The Price Is Right", kNow, 10))};

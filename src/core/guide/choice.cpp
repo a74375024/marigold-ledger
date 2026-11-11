@@ -107,7 +107,7 @@ Identity identifyNameNow(std::string_view name) {
   return out;
 }
 
-// "DiscoveryChannel" -> "Discovery Channel", "nbc30wvit" stays.
+// "DiscoveryChannel" -> "Discovery Channel", "nbc30wvit" -> "nbc 30 wvit".
 std::string splitWords(std::string_view base) {
   std::string out;
   for (size_t i = 0; i < base.size(); ++i) {
@@ -187,8 +187,15 @@ Identity identifyIdNow(std::string_view guideId) {
       out.country = countryCode(suffix);
   }
   std::string lower = str::lower(base);
-  if (lower.find("west") != std::string::npos || lower.find("pacific") != std::string::npos) out.coast = Coast::west;
-  else if (lower.find("east") != std::string::npos) out.coast = Coast::east;
+  // "HBOWest", "hbowest", "DisneyPacificHD": the coast at the end, not
+  // inside a word ("StarzEncoreWesterns").
+  std::string end = lower;
+  for (const char* drop : {"hd", "tv"})
+    if (str::endsWith(end, drop) && end.size() > 6) end.resize(end.size() - 2);
+  if (str::endsWith(end, "west") || str::endsWith(end, "pacific") || namesWestFeed(str::lower(splitWords(base))))
+    out.coast = Coast::west;
+  else if (str::endsWith(end, "east"))
+    out.coast = Coast::east;
   if (!out.country.empty() && out.country != "US") return out;
   // A station: the whole id ("WCBS", "KNBC-DT") or its end ("nbc30wvit",
   // "nyclifewnye"), when the reference knows the call sign.
@@ -590,20 +597,24 @@ Decision decide(const Row& row, const std::vector<Candidate>& cands, int now, ti
     // A provider names its guide channels after one of its streams with
     // that id ("CA: BRAVO" for Bravo.us): the id picks the listings, so it
     // wins where it tells anything.
+    // Its name only sets it aside: a provider's name says which stream
+    // carried the id, not whose listings these are ("|US| TLC WEST" over
+    // 360 North's), so only the id (or an outside listing's own name)
+    // vouches for it.
     bool idTells = !byId.ref.empty() || !byId.callsign.empty();
     const Identity& who = idTells ? byId : byName;
+    bool vouches = idTells || c.outside;
     std::string shown = idTells || c.name.empty() ? c.guideId : c.name;
     if (!row.ref.empty()) {
       if (!who.ref.empty() && who.ref != row.ref) x.reject = "other channel: " + shown;
       else if (who.ref.empty() && !who.callsign.empty()) x.reject = "other channel: " + shown;
-      else if (who.ref == row.ref) x.confirmed = true;
+      else if (who.ref == row.ref) x.confirmed = vouches;
     } else if (!row.callsign.empty()) {
       if (!who.callsign.empty() && !sameStation(who.callsign, row.callsign)) x.reject = "other station: " + shown;
       else if (!who.ref.empty()) x.reject = "other channel: " + shown;
-      else if (!who.callsign.empty()) x.confirmed = true;
+      else if (!who.callsign.empty()) x.confirmed = vouches;
     }
   }
-  // Countries: the source's, else the name's or the id's.
   // Countries: the outside source's, the guide id's ("TheWeatherNetwork.ca"),
   // else the name's.
   std::vector<std::string> country(n);
