@@ -39,3 +39,18 @@ The download must match that digest. So for an update to reach the apps:
 The LG and Apple TV apps never look (webOS Developer Mode and the Apple TV's
 signing service install them). An app takes in-app updates from the first
 release that has the updater (after 1.0.1); that one is installed by hand.
+
+## The channel list (Build 153)
+
+The lineup reference data (`data/lineup-reference.bin`) is built from the
+viewer's reviewed channel matrix: paid national and regional channels and US
+stations, one row each, with a stable `ID` column (the app's row ids:
+`discovery-channel`, `discovery-channel~west`, a station's call sign) and an
+`Aliases` column (other names providers use). The matrix itself is never kept
+in the repo. After editing it:
+
+    python3 -I tools/reference/pack.py <reviewed matrix csv> data/lineup-reference.bin <yyyy-mm-dd>
+
+Keep a row's ID when renaming or splitting it, so the viewer's picks and
+favourites follow; a new row gets a new ID. A US channel not on the list is
+Free Streaming when something calls it so, else Other (hidden unless shown).
