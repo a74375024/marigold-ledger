@@ -761,6 +761,8 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
         if (m.searches.size() < search::kRecentKept && !r.name.empty() && !r.id.empty()) m.searches.push_back(r);
       }
       for (const auto& [k, x] : (*v)["pinned"].fields()) m.pinned[k] = x.asString();
+      for (const auto& [k, x] : (*v)["guidePicks"].fields())
+        if (x.isString() && !x.asString().empty()) m.guidePicks[k] = x.asString();
       for (const auto& [k, x] : (*v)["lastFeed"].fields()) m.lastFeed[k] = x.asString();
       for (const auto& [k, x] : (*v)["unplayable"].fields()) m.unplayable[k] = x.asInt();
       for (const auto& [k, x] : (*v)["audioOnly"].fields()) m.audioOnly[k] = x.asInt();
@@ -894,6 +896,11 @@ std::string Store::listsText() const {
   json::Value pinned = json::Value::object();
   for (const auto& [k, x] : m.pinned) pinned.set(k, x);
   v.set("pinned", pinned);
+  if (!m.guidePicks.empty()) {
+    json::Value picks = json::Value::object();
+    for (const auto& [k, x] : m.guidePicks) picks.set(k, x);
+    v.set("guidePicks", picks);
+  }
   json::Value last = json::Value::object();
   for (const auto& [k, x] : m.lastFeed) last.set(k, x);
   v.set("lastFeed", last);
@@ -1377,6 +1384,9 @@ void Store::reset() {
   m.providerMatches.clear();
   m.outsideMatches.clear();
   m.guideState.clear();
+  m.rowGuides.clear();
+  m.choiceRows.clear();
+  m.choiceAsked.clear();
   m.channelsDirty = m.allListingsDirty = m.listingsDirty = true;
   m.readyOnPublish = m.saveOnRows = false;
   status_ = StoreStatus{};
@@ -2390,6 +2400,14 @@ void Store::wantListings(const std::vector<std::string>& ids) {
       added = true;
     }
   }
+  // Build 153: rows asked for on screen are weighed by channel identity;
+  // one with listings already in and never weighed is weighed now.
+  std::vector<std::string> weigh;
+  for (const std::string& id : ids) {
+    if (!m.entryInfo.count(id) || !m.choiceRows.insert(id).second) continue;
+    if (!m.rowGuides.count(id) && !m.choiceAsked.count(id) && entryHasGuide(id)) weigh.push_back(id);
+  }
+  decideRows(weigh);
   // Most recently requested last (they are fetched first).
   for (const std::string& id : ids) {
     m.recentlyRequested.erase(std::remove(m.recentlyRequested.begin(), m.recentlyRequested.end(), id),
@@ -2608,13 +2626,22 @@ std::vector<Program> Store::bestListing(const std::string& id) const {
 
 void Store::applyEntryGuides(const std::vector<std::string>& entryIDs) {
   // An entry's guide is the best of its versions' guides (catalog::bestGuide).
+  // Build 153: rows on screen or in My Lineup are weighed by channel
+  // identity on a worker (decideRows); one weighed before keeps its listing
+  // until the new weighing lands, one not yet weighed shows this meanwhile.
   Impl& m = *impl_;
   time::Seconds start = windowStart();
   std::vector<const std::vector<Program>*> lists;
   std::vector<std::pair<const catalog::ProgramList*, const std::string*>> found;
+  std::vector<std::string> weigh;
   for (const std::string& id : entryIDs) {
     auto info = m.entryInfo.find(id);
     if (info == m.entryInfo.end()) continue;
+    bool weighed = false;
+    if (weighsGuide(id)) {
+      weigh.push_back(id);
+      weighed = m.rowGuides.count(id) > 0;
+    }
     lists.clear();
     found.clear();
     bool anyLoading = false, anyLoaded = false, anyFailed = false;
@@ -2632,9 +2659,19 @@ void Store::applyEntryGuides(const std::vector<std::string>& entryIDs) {
       }
     }
     int described = 0;
-    int pick = catalog::bestGuide(lists, start, &described);
+    int pick = weighed ? -1 : catalog::bestGuide(lists, start, &described);
     const catalog::ProgramList* best = pick < 0 ? nullptr : found[static_cast<size_t>(pick)].first;
     std::string bestMember = pick < 0 ? std::string() : *found[static_cast<size_t>(pick)].second;
+    if (weighed) {
+      auto own = m.programs.find(id);
+      Impl::GuideState st = (own != m.programs.end() && own->second) || anyLoaded ? Impl::GuideState::Loaded
+                            : anyLoading ? Impl::GuideState::Loading
+                            : anyFailed  ? Impl::GuideState::Failed
+                                         : Impl::GuideState::None;
+      if (m.guideState[id] != st) m.dirtyEntries.insert(id);
+      m.guideState[id] = st;
+      continue;
+    }
     // Unchanged since last time (same version, same programmes and tags): keep it.
     std::string key;
     if (best) {
@@ -2657,6 +2694,7 @@ void Store::applyEntryGuides(const std::vector<std::string>& entryIDs) {
     m.guideState[id] = st;
   }
   if (!m.dirtyEntries.empty()) m.listingsDirty = true;
+  decideRows(weigh);
 }
 
 void Store::rebuildOutsidePrograms() {
@@ -3252,6 +3290,7 @@ void Store::runOutsideGuide() {
           s.channelCount = static_cast<int>(snapshot->size());
           s.programs = built->programs;
           s.notes = built->notes;
+          s.others = built->others;
           s.sources = built->states;
           s.nextCheck = built->nextCheck;
           s.targetsKey = built->targetsKey;

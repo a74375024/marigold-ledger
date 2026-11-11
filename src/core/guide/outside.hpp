@@ -59,6 +59,9 @@ struct Source {
   // Channels named by network and city ("5.1 CBS San Francisco"), resolved
   // to a station through the station directory.
   bool stationNames = false;
+  // The country its channels are in ("US", "CA", "UK"): a channel's
+  // listings come from sources of one country (Build 153).
+  std::string country = "US";
 
   // File name in the cache and key of its saved state.
   std::string id() const;
@@ -97,7 +100,8 @@ constexpr time::Seconds kStaleRetry = 2 * 3600;
 // Sports descriptions kept for the whole window (2): older builds kept only
 // the next few hours', so they're rebuilt once.
 // 5: descriptions for kDescHours, the first or English one.
-constexpr int kDetailVersion = 5;  // 3: national networks by any of their names; 4: call signs with a network word
+// 6: a channel's listings from one country, another schedule kept apart (Build 153).
+constexpr int kDetailVersion = 6;  // 3: national networks by any of their names; 4: call signs with a network word
 
 // MARK: Data
 
@@ -116,6 +120,14 @@ struct RawProgram {
   }
 };
 
+// Build 153: a channel's listings from a later source that are clearly
+// another schedule than the ones it has (another guide channel of the same
+// name: "WCBS-DT" and "CBS News National Stream" for a copy whose guide id is
+// WCBS.us), kept apart rather than filling its gaps, so the row's choice
+// (guide/choice.hpp) can weigh them. `note`: that source's note part.
+struct Apart;
+using ApartLists = std::map<std::string, std::vector<Apart>>;
+
 // User channel id -> its programmes.
 using ProgramsById = std::map<std::string, std::vector<RawProgram>>;
 
@@ -124,6 +136,10 @@ using ProgramsById = std::map<std::string, std::vector<RawProgram>>;
 // live, handed to a worker) copy pointers, not programmes.
 using Schedule = std::shared_ptr<const std::vector<RawProgram>>;
 using SharedPrograms = std::map<std::string, Schedule>;
+struct Apart {
+  Schedule programs;
+  std::string note;
+};
 // Identical lists become one.
 SharedPrograms share(ProgramsById&& programs);
 SharedPrograms share(SharedPrograms&& programs);
@@ -187,6 +203,8 @@ struct Saved {
   // When the main files were last read: descriptions reach kDescHours past
   // it. Listings reused as they were keep the time they were read.
   std::optional<time::Seconds> readAt;
+  // Listings kept apart (Build 153), by user channel id.
+  ApartLists others;
 };
 
 // JSON. Dates are Unix seconds (Swift's JSONEncoder wrote its own reference
@@ -199,7 +217,9 @@ ProgramsById programsFromJson(const json::Value& v);
 // later in key order, "programs" (channel id -> index into "lists").
 // writeLists returns the index writePrograms needs.
 using ListIndex = std::unordered_map<const std::vector<RawProgram>*, int>;
-ListIndex writeLists(json::Writer& w, const SharedPrograms& programs);
+ListIndex writeLists(json::Writer& w, const SharedPrograms& programs, const ApartLists* others = nullptr);
+// "others": channel id -> [[index into "lists", note], ...].
+void writeOthers(json::Writer& w, const ApartLists& others, const ListIndex& index);
 void writePrograms(json::Writer& w, const SharedPrograms& programs, const ListIndex& index);
 // Reads them back from a json::DocumentReader with "lists" and "programs"
 // streamed; also takes the older "programs" (channel id -> list).
@@ -209,10 +229,13 @@ class ProgramsReader {
   // The lists, equal ones shared; true when "programs" was seen.
   SharedPrograms take();
   bool sawPrograms() const { return sawPrograms_; }
+  // "others", read as it streamed past.
+  ApartLists takeOthers() { return std::move(others_); }
 
  private:
   std::vector<Schedule> lists_;
   SharedPrograms programs_;
+  ApartLists others_;
   TextPool texts_;  // a description repeated in many lists is held once
   bool sawPrograms_ = false;
 };
@@ -365,6 +388,8 @@ struct BuildResult {
   time::Seconds readAt = 0;
   // Lines for the log.
   std::vector<std::string> log;
+  // Listings kept apart (Saved::others).
+  ApartLists others;
 };
 
 // Builds listings for `channels` from the enabled sources. Cheap when nothing

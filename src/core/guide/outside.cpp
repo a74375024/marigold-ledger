@@ -6,6 +6,7 @@
 #include <unordered_set>
 
 #include "core/catalog/catalog.hpp"
+#include "core/guide/choice.hpp"
 #include "core/guide/genre.hpp"
 #include "core/util/rx.hpp"
 #include "core/util/strings.hpp"
@@ -158,9 +159,12 @@ const std::vector<Source>& sources() {
     list.push_back(make("Samsung TV Plus", "fast", "https://i.mjh.nz/SamsungTVPlus/us.xml.gz"));
     list.push_back(make("Plex", "fast", "https://i.mjh.nz/Plex/us.xml.gz"));
     list.push_back(make("Roku", "fast", "https://i.mjh.nz/Roku/all.xml.gz"));
-    list.push_back(
-        make("Canada", "ca", "https://epgshare01.online/epgshare01/epg_ripper_CA2.xml.gz"));
-    list.push_back(make("UK", "uk", "https://epgshare01.online/epgshare01/epg_ripper_UK1.xml.gz"));
+    Source canada = make("Canada", "ca", "https://epgshare01.online/epgshare01/epg_ripper_CA2.xml.gz");
+    canada.country = "CA";
+    list.push_back(canada);
+    Source uk = make("UK", "uk", "https://epgshare01.online/epgshare01/epg_ripper_UK1.xml.gz");
+    uk.country = "UK";
+    list.push_back(uk);
     // Backups, used only while a main source is stale or short. EPGTalk
     // first (right times, several days ahead), then epg.pw (nearly every US
     // channel, one day ahead, times written 8 h late).
@@ -359,19 +363,43 @@ SharedPrograms share(SharedPrograms&& programs) {
   return std::move(programs);
 }
 
-ListIndex writeLists(json::Writer& w, const SharedPrograms& programs) {
+ListIndex writeLists(json::Writer& w, const SharedPrograms& programs, const ApartLists* others) {
   ListIndex index;
   w.key("lists");
   w.beginArray();
-  for (const auto& [id, list] : programs) {
-    if (!list || index.count(list.get())) continue;
+  auto write = [&](const Schedule& list) {
+    if (!list || index.count(list.get())) return;
     index.emplace(list.get(), static_cast<int>(index.size()));
     json::Value a = json::Value::array();
     for (const RawProgram& p : *list) a.push(toJson(p));
     w.value(a);
+  };
+  for (const auto& [id, list] : programs) write(list);
+  if (others) {
+    for (const auto& [id, lists] : *others)
+      for (const Apart& apart : lists) write(apart.programs);
   }
   w.endArray();
   return index;
+}
+
+void writeOthers(json::Writer& w, const ApartLists& others, const ListIndex& index) {
+  w.key("others");
+  w.beginObject();
+  for (const auto& [id, lists] : others) {
+    w.key(id);
+    w.beginArray();
+    for (const Apart& apart : lists) {
+      auto at = index.find(apart.programs.get());
+      if (at == index.end()) continue;
+      w.beginArray();
+      w.value(at->second);
+      w.value(apart.note);
+      w.endArray();
+    }
+    w.endArray();
+  }
+  w.endObject();
 }
 
 void writePrograms(json::Writer& w, const SharedPrograms& programs, const ListIndex& index) {
@@ -401,6 +429,12 @@ Schedule listFromJson(const json::Value& list, TextPool& pool) {
 void ProgramsReader::part(const std::string& key, const std::string& member, json::Value&& value) {
   if (key == "lists") {
     lists_.push_back(listFromJson(value, texts_));
+  } else if (key == "others") {
+    for (const json::Value& item : value.items()) {
+      int64_t i = item[size_t(0)].asInt(-1);
+      if (i < 0 || i >= static_cast<int64_t>(lists_.size())) continue;
+      others_[member].push_back({lists_[static_cast<size_t>(i)], item[size_t(1)].asString()});
+    }
   } else if (key == "programs") {
     sawPrograms_ = true;
     if (value.isNumber()) {
@@ -486,7 +520,7 @@ bool writeSaved(const Saved& saved, const json::Writer::Sink& sink) {
     w.key("detailVersion");
     w.value(*saved.detailVersion);
   }
-  ListIndex index = writeLists(w, saved.programs);
+  ListIndex index = writeLists(w, saved.programs, &saved.others);
   if (saved.nextCheck) {
     w.key("nextCheck");
     w.value(*saved.nextCheck);
@@ -500,6 +534,7 @@ bool writeSaved(const Saved& saved, const json::Writer::Sink& sink) {
     }
     w.endObject();
   }
+  if (!saved.others.empty()) writeOthers(w, saved.others, index);
   writePrograms(w, saved.programs, index);
   if (saved.readAt) {
     w.key("readAt");
@@ -546,7 +581,7 @@ std::optional<Saved> readSavedWith(const Feed& feed) {
   std::map<std::string, std::string> notes;
   bool sawNotes = false;
   json::DocumentReader reader(
-      {"lists", "programs", "notes"},
+      {"lists", "programs", "notes", "others"},
       [&](const std::string& key, json::Value&& v) {
         if (key == "built") {
           builtOk = v.isNumber();
@@ -584,6 +619,7 @@ std::optional<Saved> readSavedWith(const Feed& feed) {
       });
   if (!feed(reader) || !reader.finish()) return std::nullopt;
   if (!builtOk || !shardsOk || !programs.sawPrograms()) return std::nullopt;
+  s.others = programs.takeOthers();
   s.programs = programs.take();
   if (sawNotes) s.notes = std::move(notes);
   return s;
@@ -958,6 +994,10 @@ BuildResult build(const std::vector<Channel>& channels, const std::set<std::stri
 
   SharedPrograms merged;
   std::map<std::string, std::string> notes;
+  ApartLists others;
+  // Build 153: the country of each channel's listings (its first source's):
+  // sources of other countries leave it alone.
+  std::unordered_map<std::string, std::string> countryOf;
   std::vector<std::string> problems;
   std::map<std::string, SourceState> states;
   if (previous && previous->sources) states = *previous->sources;
@@ -1063,6 +1103,15 @@ BuildResult build(const std::vector<Channel>& channels, const std::set<std::stri
       if (m->second) merged[id] = m->second;
     }
     notes = previous->notes.value_or(std::map<std::string, std::string>());
+    others = previous->others;
+    for (const auto& [id, note] : notes) {
+      for (const choice::NotePart& part : choice::noteParts(note)) {
+        if (part.unused) continue;
+        for (const Source& source : sources())
+          if (source.name == part.source) countryOf.emplace(id, source.country);
+        break;
+      }
+    }
     log.push_back("guide main sources unchanged: saved listings reused (" + count(merged.size()) +
                   " channels)");
   } else {
@@ -1081,9 +1130,38 @@ BuildResult build(const std::vector<Channel>& channels, const std::set<std::stri
       }
       const SourceResult& found = *read.result;
       std::map<std::pair<const void*, const void*>, Schedule> memo;
+      std::map<std::pair<const void*, const void*>, bool> apart;
+      int keptApart = 0;
       for (const auto& [channelID, entry] : found.programs) {
         auto existing = merged.find(channelID);
         const Schedule* base = existing == merged.end() ? nullptr : &existing->second;
+        if (!entry.programs) continue;
+        // Build 153: one country's listings per channel, and one schedule:
+        // a later source's clearly different listing (another guide channel
+        // of that name) is kept apart rather than filling gaps.
+        if (base && *base) {
+          auto own = countryOf.find(channelID);
+          if (own != countryOf.end() && own->second != source.country) {
+            addNote(channelID, source.name + ": " + entry.note + " [other country, not used]");
+            continue;
+          }
+          std::pair<const void*, const void*> pk{base->get(), entry.programs.get()};
+          auto known = apart.find(pk);
+          if (known == apart.end()) {
+            std::vector<choice::Mark> a = choice::marks(base->get(), nullptr, now, now + choice::kCompareMinutes);
+            std::vector<choice::Mark> b =
+                choice::marks(entry.programs.get(), nullptr, now, now + choice::kCompareMinutes);
+            known = apart.emplace(pk, choice::agreement(a, 0, b, 0, now).differs()).first;
+          }
+          if (known->second) {
+            others[channelID].push_back({entry.programs, source.name + ": " + entry.note});
+            addNote(channelID, source.name + ": " + entry.note + " [another schedule, kept apart]");
+            ++keptApart;
+            continue;
+          }
+        } else {
+          countryOf[channelID] = source.country;
+        }
         std::pair<const void*, const void*> mk{base ? base->get() : nullptr, entry.programs.get()};
         auto m = memo.find(mk);
         if (m == memo.end()) {
@@ -1108,7 +1186,7 @@ BuildResult build(const std::vector<Channel>& channels, const std::set<std::stri
                     " of your channels from " + std::to_string(found.guideChannels) + ", read in " +
                     std::to_string(static_cast<int64_t>(found.seconds)) + " s, half end within " +
                     std::to_string(found.horizonMedian ? (*found.horizonMedian - now) / 60 : 0) +
-                    " h");
+                    " h" + (keptApart ? ", " + std::to_string(keptApart) + " kept apart" : std::string()));
     }
     // Never trade listings for shorter ones: what the last update had beyond
     // a channel's new end is kept.
@@ -1237,6 +1315,8 @@ BuildResult build(const std::vector<Channel>& channels, const std::set<std::stri
         // nothing worth having.
         std::map<std::pair<const void*, const void*>, Schedule> merges;
         for (const auto& [channelID, list] : candidates) {
+          auto home = countryOf.find(channelID);
+          if (home != countryOf.end() && home->second != source.country) continue;
           auto current = merged.find(channelID);
           const std::vector<RawProgram>* base =
               current == merged.end() ? nullptr : current->second.get();
@@ -1324,6 +1404,7 @@ BuildResult build(const std::vector<Channel>& channels, const std::set<std::stri
   result.programs = share(std::move(merged));
   result.problems = std::move(problems);
   result.notes = std::move(notes);
+  result.others = std::move(others);
   result.states = std::move(states);
   result.targetsKey = std::move(key);
   result.log = std::move(log);

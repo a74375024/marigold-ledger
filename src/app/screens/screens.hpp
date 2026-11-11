@@ -132,6 +132,9 @@ enum class LineupStep { Area, Countries, Kinds };
 std::unique_ptr<Screen> makeLineupStep(App& app, LineupStep step);
 // Sources for a channel (red key).
 std::unique_ptr<Screen> makeSources(App& app, const std::string& entryId);
+// "Listings look wrong?": the channel's distinct schedules, to pick the
+// right one (Build 153).
+std::unique_ptr<Screen> makeGuideChoice(App& app, const std::string& entryId);
 // Subtitles (the player's Aa): Off or a language the stream carries, the
 // timing and the style.
 std::unique_ptr<Screen> makeSubtitles(App& app);

@@ -236,9 +236,9 @@ Fixture sample() {
 
 TEST_CASE("channel report: header") {
   const auto& columns = channelReportColumns();
-  CHECK(columns.size() == 47);
+  CHECK(columns.size() == 49);
   CHECK(columns.front() == "number");
-  CHECK(columns.back() == "next_titles");
+  CHECK(columns.back() == "guide_rejected");
   std::string csv = channelReportCSV(ChannelReportInput());
   CHECK(csv ==
         "number,name,group,tags,hidden_group,favorite,callsign_in_name,station_lookup,match_key,"
@@ -249,7 +249,7 @@ TEST_CASE("channel report: header") {
         "provider_guide_genre_tagged_next_3h,now_genres,now_subtitle,now_description,"
         "outside_listings_end,now_start,outside_built_at,provider_built_at,outside_described_next_3h,"
         "provider_guide_described_next_3h,logo_sources,logo_status,directory_id,directory_match,"
-        "row_id,next_titles\n");
+        "row_id,next_titles,guide_choice,guide_rejected\n");
 }
 
 TEST_CASE("channel report: one row per channel with the Swift rules") {
@@ -258,7 +258,7 @@ TEST_CASE("channel report: one row per channel with the Swift rules") {
   std::string csv = channelReportCSV(f.input());
   auto rows = parseCsv(csv);
   REQUIRE(rows.size() == 6);
-  for (const auto& r : rows) CHECK(r.size() == 47);
+  for (const auto& r : rows) CHECK(r.size() == 49);
   CHECK(csv.back() == '\n');
 
   auto nbc = rowFor(rows, "US: NBC 4 WNBC");
@@ -501,4 +501,20 @@ TEST_CASE("channel report: a sports channel's next titles (Build 143)") {
         "18:30 NHL Hockey | 20:30 Postgame | 21:00 Highlights");
   // Only sports channels.
   CHECK(rowFor(rows, "US: NBC 4 WNBC")["next_titles"] == "");
+}
+
+TEST_CASE("channel report: the row's guide choice and what it set aside (Build 153)") {
+  Fixture f = sample();
+  ChannelReportInput in = f.input();
+  std::unordered_map<std::string, std::pair<std::string, std::string>> choices = {
+      {"e|nbc4",
+       {"outside US locals (agrees with 1 other)",
+        "provider guide \"US: NBC (WNBC)\" [nbc30wvit.us]: other station: nbc30wvit.us"}}};
+  in.guideChoices = &choices;
+  auto rows = parseCsv(channelReportCSV(in));
+  auto nbc = rowFor(rows, "US: NBC 4 WNBC");
+  CHECK(nbc["guide_choice"] == "outside US locals (agrees with 1 other)");
+  CHECK(nbc["guide_rejected"] == "provider guide \"US: NBC (WNBC)\" [nbc30wvit.us]: other station: nbc30wvit.us");
+  // A row not weighed (or a channel in no row) leaves them empty.
+  CHECK(rowFor(rows, "FOX 2 Capital City")["guide_choice"] == "");
 }

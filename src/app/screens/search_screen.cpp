@@ -1511,6 +1511,14 @@ class SearchScreen : public Screen {
         app.nav().push(makeSources(app, id));
       };
       p.items.push_back(feed);
+      if (app.store().hasGuideChoice(id)) {
+        ui::PanelItem listings{ui::PanelItem::Kind::Chevron, "Listings look wrong?"};
+        listings.select = [&app, id] {
+          app.nav().pop();
+          app.nav().push(makeGuideChoice(app, id));
+        };
+        p.items.push_back(listings);
+      }
     }));
   }
 
