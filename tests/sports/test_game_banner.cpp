@@ -210,7 +210,7 @@ TEST_CASE("game banner: the title starts after a doubles pair's flags (Build 141
   float doubles = banner::titleX(x, pair, pair, between, gap, minX);
   CHECK(x + pair + between + pair == doctest::Approx(260));
   CHECK(doubles == doctest::Approx(272));
-  CHECK(doubles - (x + pair + between + pair) == doctest::Approx(singles - (x + 60 + between + 60)));
+  CHECK(double(doubles - (x + pair + between + pair)) == doctest::Approx(double(singles - (x + 60 + between + 60))));
   // A pair on one side only.
   CHECK(banner::titleX(x, banner::markWidth(1, size), pair, between, gap, minX) == doctest::Approx(254));
   // Narrower marks never pull the title left of 236.

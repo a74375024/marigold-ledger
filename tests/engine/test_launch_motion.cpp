@@ -44,12 +44,12 @@ TEST_CASE("launch: the first frame is the splash's pose") {
   Motion m;
   m.start(1000);
   Frame f = m.frame(1000);
-  CHECK(f.outer[0].x == doctest::Approx(kCentreX));
-  CHECK(f.outer[0].y == doctest::Approx(kCentreY - kOuterRing));
-  CHECK(f.outer[0].r == doctest::Approx(kOuterRadius));
-  CHECK(f.outer[3].x == doctest::Approx(kCentreX + kOuterRing).epsilon(0.001));
-  CHECK(f.core.r == doctest::Approx(kCoreRadius));
-  CHECK(f.inner[0].r == doctest::Approx(kInnerRadius));
+  CHECK(double(f.outer[0].x) == doctest::Approx(double(kCentreX)));
+  CHECK(double(f.outer[0].y) == doctest::Approx(double(kCentreY - kOuterRing)));
+  CHECK(double(f.outer[0].r) == doctest::Approx(double(kOuterRadius)));
+  CHECK(double(f.outer[3].x) == doctest::Approx(double(kCentreX + kOuterRing)).epsilon(0.001));
+  CHECK(double(f.core.r) == doctest::Approx(double(kCoreRadius)));
+  CHECK(double(f.inner[0].r) == doctest::Approx(double(kInnerRadius)));
   CHECK(f.opacity == doctest::Approx(1));
   CHECK(f.wordmark == doctest::Approx(1));
   CHECK(f.covering);
