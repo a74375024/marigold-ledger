@@ -462,6 +462,8 @@ bool suggests(const EntryInfo& entry, const LineupPrefs& prefs, bool hasGuide,
     case LineupCategory::international:
     case LineupCategory::radio:
       return on(entry.category) && hasGuide;
+    case LineupCategory::other:
+      return false;  // never suggested; the viewer can add one
     default:
       return on(entry.category) && (hasGuide || !prefs.requireGuide);
   }

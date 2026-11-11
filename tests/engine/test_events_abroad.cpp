@@ -74,6 +74,11 @@ TEST_CASE("engine: another country's sports channel is read for Live Events only
   answerList(tv);
   answerGuide(tv);
   Store store(tv.host());
+  {  // Build 153: these made-up channels aren't on the channel list (Other).
+    Settings shown = store.settings();
+    shown.showOther = true;
+    store.setSettings(shown);
+  }
   AccountForm form = fake::m3uForm();
   form.server = kList;
   form.guideUrl = kGuide;

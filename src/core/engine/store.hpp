@@ -199,6 +199,9 @@ struct Settings {
   // link (no open step first), with the lean live load on webOS.
   bool embyQuickStart = false;
   bool fillMissingListings = true;  // outside guides for channels without one
+  // Build 153: channels the channel list doesn't know and nothing calls
+  // free streaming (the "Other" section); hidden until turned on.
+  bool showOther = false;
   bool clock24 = false;
   // Search keeps the names of what was picked (Settings › Guide › Recent
   // searches); off also clears them.

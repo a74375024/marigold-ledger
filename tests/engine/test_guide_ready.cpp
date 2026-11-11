@@ -99,6 +99,11 @@ TEST_CASE("guide ready: a playlist with no guide file has its listings done once
   fake::Tv tv;
   answerList(tv);
   Store store(tv.host());
+  {  // Build 153: these made-up channels aren't on the channel list (Other).
+    Settings shown = store.settings();
+    shown.showOther = true;
+    store.setSettings(shown);
+  }
   addLighthouse(store, false);
   fake::settle(store, tv);
   GuideReady r = store.guideReady();
@@ -120,6 +125,11 @@ TEST_CASE("guide ready: the provider's listings tick once their guide is built; 
   answerList(tv);
   answerGuide(tv, 120);
   Store store(tv.host());
+  {  // Build 153: these made-up channels aren't on the channel list (Other).
+    Settings shown = store.settings();
+    shown.showOther = true;
+    store.setSettings(shown);
+  }
   addLighthouse(store, true);
   REQUIRE(stepUntil(store, tv, [&] { return providerRunning(store); }));
   GuideReady r = store.guideReady();
@@ -171,6 +181,11 @@ TEST_CASE("guide ready: a provider guide that can't be downloaded is a problem, 
   fake::Tv tv;
   answerList(tv);  // the guide link isn't answered: offline
   Store store(tv.host());
+  {  // Build 153: these made-up channels aren't on the channel list (Other).
+    Settings shown = store.settings();
+    shown.showOther = true;
+    store.setSettings(shown);
+  }
   addLighthouse(store, true);
   fake::settle(store, tv);
   GuideReady r = store.guideReady();
@@ -237,6 +252,11 @@ TEST_CASE("guide rows: listings on the way while a guide builds, then none comin
   answerList(tv);
   answerGuide(tv, 24);
   Store store(tv.host());
+  {  // Build 153: these made-up channels aren't on the channel list (Other).
+    Settings shown = store.settings();
+    shown.showOther = true;
+    store.setSettings(shown);
+  }
   addLighthouse(store, true);
   REQUIRE(stepUntil(store, tv, [&] { return providerRunning(store); }));
   std::string cove = entryNamed(store, "Cove Sports");

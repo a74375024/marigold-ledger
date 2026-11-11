@@ -26,6 +26,8 @@ const char* rawValue(LineupCategory c) {
       return "international";
     case LineupCategory::radio:
       return "radio";
+    case LineupCategory::other:
+      return "other";
   }
   return "entertainment";
 }
@@ -61,6 +63,8 @@ const char* title(LineupCategory c) {
       return "International";
     case LineupCategory::radio:
       return "Radio";
+    case LineupCategory::other:
+      return "Other channels";
   }
   return "";
 }
@@ -89,6 +93,8 @@ const char* detail(LineupCategory c) {
       return "Channels from other countries";
     case LineupCategory::radio:
       return "Audio-only stations";
+    case LineupCategory::other:
+      return "Channels outside the channel list";
   }
   return "";
 }
@@ -117,6 +123,8 @@ int numberBlock(LineupCategory c) {
       return 2000;
     case LineupCategory::radio:
       return 3000;
+    case LineupCategory::other:
+      return 4000;
   }
   return 0;
 }
@@ -145,6 +153,8 @@ const char* symbol(LineupCategory c) {
       return "globe";
     case LineupCategory::radio:
       return "radio";
+    case LineupCategory::other:
+      return "questionmark.circle";
   }
   return "";
 }
@@ -173,6 +183,8 @@ const char* genreTitle(LineupCategory c) {
       return "International";
     case LineupCategory::radio:
       return "Radio";
+    case LineupCategory::other:
+      return "Other";
   }
   return "";
 }

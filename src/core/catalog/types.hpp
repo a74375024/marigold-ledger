@@ -31,6 +31,10 @@ enum class LineupCategory : uint8_t {
   free,
   international,
   radio,
+  // Marigold (Build 153): a US channel the channel list doesn't know and
+  // nothing calls free streaming. Hidden unless the viewer shows them; never
+  // offered as a lineup category (not in kAllCategories).
+  other,
 };
 
 constexpr std::array<LineupCategory, 11> kAllCategories = {

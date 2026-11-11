@@ -575,6 +575,9 @@ void guideRows(App& app, ui::ListPanel& p, SettingsPages& pages) {
   p.items.push_back(settingToggle(app, "All Channels tab", "Every channel in your countries", &Settings::allChannelsTab,
                                   "A tab in the guide with every channel of your countries and languages, by the "
                                   "provider's groups."));
+  p.items.push_back(settingToggle(app, "Other channels", "Channels outside the channel list", &Settings::showOther,
+                                  "Channels that aren't known paid or local channels and aren't free streaming "
+                                  "channels either. Off keeps them out of the guide; on lists them under Other."));
   bool anyHidden = false;
   if (set.allChannelsTab)
     for (const GroupSummary& g : s.groups()) anyHidden = anyHidden || g.hidden;

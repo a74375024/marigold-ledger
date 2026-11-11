@@ -1683,3 +1683,29 @@ A second provider that writes its countries in bars ("|FR| …", "|US| …") was
 | VIX | Live Events with the second provider | No "VIX Golden Multiplex" tile |
 | Bloomberg | My Lineup › Bloomberg | Its logo |
 | Log | Play a channel, then another | The second channel's first "tune" line has no version; one "gave up" line when a channel fails |
+
+## Build 153: the channel list is the backbone
+
+The viewer's channel list (paid national and regional channels and US stations, built into the app as the lineup reference) now decides what a US channel is. It's no longer only a reference beside the provider's group names.
+- **Not on the list, and nothing calls it free streaming:** it's Other. Other is out of the guide, All Channels and Search unless Settings › Guide › Other channels is on, and it's never suggested for My Lineup (a channel the viewer added or made a favourite stays).
+- **Free streaming:** a channel the list doesn't know is Free only when something says so: a copy in a free service's group, our free streaming names, or the channel directory's free tier. Before, a channel nothing knew counted as free.
+- **Overflow and alternate feeds:** "Tennis Channel 3", "TUDN Zona", "Yes Network Latin" are rows of their own, named after the channel and filed with it.
+
+The list itself gains:
+- a stable ID per row (the ids the app already used);
+- MSG Network and MSG Sportsnet as two channels;
+- overflow feeds: NESN+, NBC Sports Philadelphia+, SportsNet Pittsburgh+, CHSN+, Altitude, Monumental, MLB Network and NHL Network alternates, TMC Xtra;
+- DOGTV, QVC2, QVC3, getTV, Retro TV, 365BLK, Outlaw and TVP World;
+- other names providers use: "Willow Cricket", "TVG", "Home Shopping Network", "SportsNet LA Dodgers", "Sho x Bet".
+
+BlazeTV, Real America's Voice and Salem News Channel (streaming-only or free) are off it. tools/reference/pack.py rebuilds the data from the reviewed list.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Other hidden | Guide, All Channels, Search for a provider channel the list doesn't know | Not there |
+| Other shown | Settings › Guide › Other channels on | An Other section at the end of All Channels; Search finds them |
+| Never suggested | Rebuild My Lineup with Other on | No Other channels in My Lineup |
+| Kept | A channel added to My Lineup or made a favourite before, now Other | Still in My Lineup |
+| Free | Bob Ross Channel, Nosey, FailArmy | Under Free Streaming, not Entertainment |
+| MSG | New York area | MSG Network and MSG Sportsnet are two rows |
+| Overflow | A provider's "Tennis Channel 2" / "YES Network Overflow" | Its own row next to the channel, same section |

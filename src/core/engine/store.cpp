@@ -721,6 +721,7 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
       settings_.preferTS = (*v)["preferTS"].asBool(true);
       settings_.embyQuickStart = (*v)["embyQuickStart"].asBool(false);
       settings_.fillMissingListings = (*v)["fillMissingListings"].asBool(true);
+      settings_.showOther = (*v)["showOther"].asBool(false);
       settings_.scheduleEnabled = (*v)["scheduleEnabled"].asBool(true);
       settings_.showUnwatchable = (*v)["showUnwatchable"].asBool(true);
       settings_.boardMoreEvents = (*v)["boardMoreEvents"].asBool(false);
@@ -992,6 +993,7 @@ void Store::setSettings(const Settings& s) {
   bool tsChanged = s.preferTS != settings_.preferTS;
   bool fillChanged = s.fillMissingListings != settings_.fillMissingListings;
   bool tabChanged = s.allChannelsTab != settings_.allChannelsTab;
+  bool otherChanged = s.showOther != settings_.showOther;
   // Subtitle choices don't touch Live Events.
   Settings same = s;
   same.subtitles = settings_.subtitles;
@@ -1027,6 +1029,7 @@ void Store::setSettings(const Settings& s) {
   v.set("preferTS", s.preferTS);
   v.set("embyQuickStart", s.embyQuickStart);
   v.set("fillMissingListings", s.fillMissingListings);
+  v.set("showOther", s.showOther);
   v.set("scheduleEnabled", s.scheduleEnabled);
   v.set("showUnwatchable", s.showUnwatchable);
   v.set("boardMoreEvents", s.boardMoreEvents);
@@ -1061,6 +1064,7 @@ void Store::setSettings(const Settings& s) {
   if (tsChanged) {
     for (sources::Account& a : impl_->accounts) a.preferTS = s.preferTS;
   }
+  if (otherChanged && impl_->catalog) rebuildEntries();
   if (fillChanged) {
     if (s.fillMissingListings) scheduleOutside(true);
     else {
@@ -2035,6 +2039,7 @@ void Store::rebuildEntries() {
   input->prefs = m.prefs;
   input->coast = catalog::resolveCoast(m.prefs);
   input->otherGroup = kOtherGroup;
+  input->showOther = settings_.showOther;
   for (const auto& [id, list] : m.outsideMatches) input->guideIDs.insert(id);
   for (const auto& [id, list] : m.providerMatches) input->guideIDs.insert(id);
   for (const auto& [id, list] : m.serverPrograms)

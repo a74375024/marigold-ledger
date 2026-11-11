@@ -551,8 +551,8 @@ std::optional<std::string> markedCountry(const Channel& channel) {
 
 namespace {
 
-// A US channel nothing knows (the reference data, the directory, the core
-// networks, the stations) is a free streaming channel the lists missed. A
+// A US channel the directory lists in its free tier, by name, that the
+// reference data, the core networks and the stations don't know. A
 // known channel's other feed ("Tennis Channel 2", "Willow Xtra") isn't, nor
 // is anything in a sports or pay-per-view group or another country's.
 bool unknownChannel(const std::string& name, const ChannelTraits& traits, const Channel* first,
@@ -578,7 +578,9 @@ bool unknownChannel(const std::string& name, const ChannelTraits& traits, const 
     if (!m.elsewhere.empty()) return false;
     if (m.entry) return m.entry->list == "free";
   }
-  return true;
+  // Marigold (Build 153): nothing knows it. With the channel list as the
+  // backbone it isn't taken for free streaming on that alone (it's "other").
+  return false;
 }
 
 }  // namespace
@@ -829,10 +831,23 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
       } else if (entry.kind == ChannelKind::channel &&
                  (freeStreamingName(entry.name) ||
                   std::any_of(ranked.begin(), ranked.end(), [](const Ranked& r) { return freeStreamingCopy(*r.channel); }) ||
+                  (listed && listed->list == "free") ||
                   (context.reference && str::startsWith(key, "n:") && unknownChannel(entry.name, traits, ranked.front().channel,
                                                                                     context)))) {
         entry.kind = ChannelKind::fast;
         entry.category = LineupCategory::free;
+      }
+      // Marigold (Build 153): the channel list (the reference data, core
+      // networks and stations) is the backbone. A US channel it doesn't
+      // know and nothing calls free streaming is "other": out of the guide
+      // unless the viewer shows other channels.
+      bool usMarket = traits.market == std::string("US") || traits.market == std::string("US-ES");
+      // A station or network feed by its network's name ("TELEMUNDO 52 [LOS
+      // ANGELES]", "UNIVISION EAST") stays what the rules made it.
+      if (context.reference && usMarket && entry.kind == ChannelKind::channel &&
+          entry.category != LineupCategory::international && entry.category != LineupCategory::radio &&
+          entry.category != LineupCategory::free && !networkWord(entry.name)) {
+        entry.category = LineupCategory::other;
       }
     }
     entry.market = traits.market;
@@ -1192,13 +1207,11 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
   // BRAVO (WEST)") or by the core network's name ("HBO 2" is HBO Hits).
   const reference::Channel* refChannel = nullptr;
   const reference::Feed* refFeed = nullptr;
-  // Marigold (Build 143): the reference data has MSG Sportsnet (formerly
-  // MSG+) as another name of MSG Network; they're two networks (Devils and
-  // Islanders; Knicks and Rangers), so it isn't asked about MSG Sportsnet.
-  static const std::string kNotOneChannel = "\\bmsg ?(sportsnet|sn|plus|\\+)";
+  // An overflow or alternate feed of a channel it knows ("Tennis Channel
+  // 2", "TUDN Zona", "Yes Network Latin"): its own row, the channel's.
+  std::string overflow;
   if (context.reference && (kind == ChannelKind::channel || kind == ChannelKind::fast) && !familyKey &&
-      (!country || *country == "US") && !rx::test("\\((?!WEST\\))[KW][A-Z]{2,3}(-[A-Z0-9]+)?\\)", display) &&
-      !(contains(lower, "msg") && rx::test(kNotOneChannel, lower))) {
+      (!country || *country == "US") && !rx::test("\\((?!WEST\\))[KW][A-Z]{2,3}(-[A-Z0-9]+)?\\)", display)) {
     reference::Match m = context.reference->match(display);
     if (!m.channel) {
       if (auto rest = text::firstGroup("^(?:NBC|ABC|CBS|FOX)\\s+(.{3,})$", display, 1)) {
@@ -1208,6 +1221,17 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
       }
     }
     if (!m.channel && core) m = context.reference->match(core->name);
+    if (!m.channel) {
+      static const char* const kOverflow =
+          "(?i)^(.{3,}?)\\s+(\\d{1,2}|plus|\\+|xtra|extra|alt|alternate|overflow|latin|zona|zone)$";
+      if (auto stem = text::firstGroup(kOverflow, display, 1)) {
+        reference::Match parent = context.reference->match(*stem);
+        if (parent.channel) {
+          m = parent;
+          overflow = str::lower(std::string(str::trimUnicode(display.substr(stem->size()))));
+        }
+      }
+    }
     refChannel = m.channel;
     refFeed = m.feed;
   }
@@ -1397,7 +1421,19 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
     traits.closed = listed->closed;
   }
   traits.formerKey = std::move(formerKey);
-  if (refChannel) applyReference(traits, *refChannel, refFeed, core);
+  if (refChannel) {
+    applyReference(traits, *refChannel, refFeed, core);
+    if (!overflow.empty()) {
+      // Apart from the channel and its feeds, named after it ("Tennis
+      // Channel 2", "YES Network Latin").
+      std::string slug = rx::replace(overflow, "[^a-z0-9]+", "");
+      if (slug.empty()) slug = "plus";
+      traits.clusterKey = "r:" + refChannel->id + "~x" + slug + (traits.isWest ? "~west" : "");
+      std::string word = slug == "plus" ? std::string("Plus") : overflow;
+      if (!word.empty() && word[0] >= 'a' && word[0] <= 'z') word[0] = static_cast<char>(word[0] - 'a' + 'A');
+      traits.displayName = refChannel->name + " " + word + (traits.isWest ? " West" : "");
+    }
+  }
   // A core network that has shut down (Universal Kids) isn't suggested.
   if (core && !core->closed.empty() && traits.closed.empty()) traits.closed = core->closed;
   // A channel that shut down (and has no row of its own) isn't suggested.

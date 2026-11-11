@@ -105,6 +105,10 @@ struct LineupInput {
   std::shared_ptr<const std::vector<EntryInfo>> sharedInfos;
   std::shared_ptr<const std::vector<Channel>> sharedChannels;
   std::optional<std::unordered_set<std::string>> favoriteIDs;
+  // Marigold (Build 153): rows of the "other" category (channels the
+  // channel list doesn't know) are left out unless the viewer shows them,
+  // added one or made one a favourite.
+  bool showOther = false;
 };
 
 struct LineupOutput {

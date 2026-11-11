@@ -225,22 +225,59 @@ TEST_CASE("reference lineup: a shut-down channel isn't suggested unless the guid
   CHECK_FALSE(b.entryOf("4")->closed.empty());
 }
 
-TEST_CASE("reference lineup: a US channel nothing knows is free streaming; show loops are 24/7, known feeds channels") {
+TEST_CASE("reference lineup: a US channel nothing knows is other; show loops are 24/7, known feeds the channel's") {
+  // Build 153: the reference data is the backbone. Nothing knowing a US
+  // channel no longer makes it free streaming: it's "other", out of the
+  // guide unless the viewer shows those.
   Built b({channel("1", "AT&T: LOVE KILLS ᴿᴬᵂ", "US| AT&T"), channel("2", "US: CHEERS 4K", "US| CINEMA TV SHOWS"),
            channel("3", "TV: TENNIS CHANNEL 3", "US| TV"), channel("4", "TV: ABC7 NEW YORK", "US| TV"),
-           channel("5", "US: SOME SPORTS FEED", "US| SPORTS")});
+           channel("5", "US: SOME SPORTS FEED", "US| SPORTS"), channel("6", "RK: LOVE KILLS", "US| ROKU")});
   REQUIRE(b.entryOf("1"));
+  // A copy in a free service's group says what it is.
+  CHECK(b.entryOf("1") == b.entryOf("6"));
   CHECK(b.entryOf("1")->kind == ChannelKind::fast);
   CHECK(b.entryOf("1")->category == LineupCategory::free);
   REQUIRE(b.entryOf("2"));
   CHECK(b.entryOf("2")->kind == ChannelKind::loop247);
   CHECK(b.entryOf("2")->category == LineupCategory::free);
+  // A known channel's numbered feed: its own row, named and filed as the channel.
   REQUIRE(b.entryOf("3"));
   CHECK(b.entryOf("3")->kind == ChannelKind::channel);
+  CHECK(b.entryOf("3")->id == "e|r:tennis-channel~x3");
+  CHECK(b.entryOf("3")->name == "Tennis Channel 3");
+  CHECK(b.entryOf("3")->category == LineupCategory::sports);
   REQUIRE(b.entryOf("4"));
   CHECK(b.entryOf("4")->kind == ChannelKind::channel);
+  CHECK(b.entryOf("4")->category != LineupCategory::other);
   REQUIRE(b.entryOf("5"));
   CHECK(b.entryOf("5")->kind == ChannelKind::channel);
+  CHECK(b.entryOf("5")->category == LineupCategory::other);
+}
+
+TEST_CASE("reference lineup: other rows stay out of the guide unless shown, added or a favourite") {
+  Built b({channel("1", "US: BOUNCE", "US| ENTERTAINMENT"), channel("2", "US: SOME SPORTS FEED", "US| SPORTS"),
+           channel("3", "US: ANOTHER FEED", "US| SPORTS")});
+  REQUIRE(b.entryOf("2"));
+  REQUIRE(b.entryOf("2")->category == LineupCategory::other);
+  LineupInput in;
+  in.infos = b.result.entries;
+  for (const char* id : {"1", "2", "3"}) in.channels.push_back(channel(id, "x", "US| SPORTS"));
+  for (size_t i = 0; i < in.channels.size(); ++i) in.indexByID[in.channels[i].id] = i;
+  in.prefs.configured = true;
+  in.prefs.added.insert(b.entryOf("3")->id);
+  auto has = [](const LineupOutput& o, const std::string& id) {
+    return std::any_of(o.entries.begin(), o.entries.end(), [&](const Channel& c) { return c.id == id; });
+  };
+  LineupOutput hidden = lineup(in);
+  CHECK(has(hidden, b.entryOf("1")->id));
+  CHECK_FALSE(has(hidden, b.entryOf("2")->id));
+  CHECK(has(hidden, b.entryOf("3")->id));  // the viewer added it
+  CHECK_FALSE(hidden.lineupIDs.count(b.entryOf("2")->id));
+  in.showOther = true;
+  LineupOutput shown = lineup(in);
+  CHECK(has(shown, b.entryOf("2")->id));
+  // Shown, never suggested.
+  CHECK_FALSE(shown.lineupIDs.count(b.entryOf("2")->id));
 }
 
 TEST_CASE("single-show channels in a provider's TV shows group are 24/7; real networks there never") {

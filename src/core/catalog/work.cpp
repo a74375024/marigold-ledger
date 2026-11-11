@@ -327,6 +327,7 @@ LineupOutput lineup(const LineupInput& input) {
   });
   std::unordered_map<std::string, std::string> marketOf;
   for (const EntryInfo* info : ordered) {
+    if (info->category == LineupCategory::other && !input.showOther && !out.lineupIDs.count(info->id)) continue;
     std::vector<const Channel*> members;
     for (const std::string& m : info->members) {
       if (const Channel* c = member(m)) members.push_back(c);
