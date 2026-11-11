@@ -6,12 +6,15 @@
 // contacts these sites. Requests go through the system's curl, one at a
 // time, with the contact address Wikimedia asks automated clients for.
 //
-// It also packs iptv-org's US logos (logos::IptvOrgIndex) for the app's
-// fallback logos. Given last week's directory, it won't write one that lost
-// well-known channels or many entries or logos (exit 3; CI keeps last
-// week's).
+// It also packs iptv-org's logos (logos::IptvOrgIndex: US and English
+// channels by id and name, every other country's by id only) and, for
+// listed channels iptv-org has none for, their Wikidata logo as a PNG link
+// Wikimedia renders, for the app's fallback logos. Given last week's
+// directory, it won't write one that lost well-known channels or many
+// entries or logos (exit 3; CI keeps last week's).
 //
 //   marigold-channeldir data/channel-directory.new.json [data/channel-directory.json]
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -168,6 +171,21 @@ int main(int argc, char** argv) {
   }
   std::fprintf(stderr, "%zu Wikidata items read\n", src.entities.size());
 
+  // Their logos' files on Commons, as PNG links.
+  std::set<std::string> logoFiles;
+  for (const auto& [id, facts] : src.entities) {
+    logoFiles.insert(facts.logos.begin(), facts.logos.end());
+  }
+  std::vector<std::string> files(logoFiles.begin(), logoFiles.end());
+  for (size_t at = 0; at < files.size(); at += 50) {
+    std::vector<std::string> batch(files.begin() + static_cast<long>(at),
+                                   files.begin() + static_cast<long>(std::min(files.size(), at + 50)));
+    if (auto body = fetch(sources::fileInfoRequestUrl(batch), true)) {
+      for (auto& [file, link] : sources::parseFileInfo(*body)) src.logoLinks[file] = std::move(link);
+    }
+  }
+  std::fprintf(stderr, "%zu Wikidata logos, %zu as PNG links\n", files.size(), src.logoLinks.size());
+
   auto channels = fetch(std::string(sources::kIptvOrgBase) + "channels.csv", false);
   auto feeds = fetch(std::string(sources::kIptvOrgBase) + "feeds.csv", false);
   if (channels && feeds) src.iptv = sources::parseIptvOrg(*channels, *feeds);
@@ -179,9 +197,20 @@ int main(int argc, char** argv) {
     if (auto index = logos::IptvOrgIndex::build(*channels, *logoList, feeds ? *feeds : std::string())) {
       data.logos.insert(index->byID.begin(), index->byID.end());
       data.logosByName.insert(index->byName.begin(), index->byName.end());
+      logos::IptvOrgIndex::Abroad abroad = logos::IptvOrgIndex::buildAbroad(*channels, *logoList, *index);
+      data.logoPrefixes = std::move(abroad.prefixes);
+      data.logosAbroad = std::move(abroad.words);
     }
   }
-  std::fprintf(stderr, "%zu logos by id, %zu by name\n", data.logos.size(), data.logosByName.size());
+  sources::keepNeededLogos(data);
+  size_t wikidataLogos = 0;
+  for (const Entry& e : data.entries) wikidataLogos += e.logo.empty() ? 0 : 1;
+  std::fprintf(stderr, "%zu logos by id, %zu by name, %zu other countries' by id (%zu bytes), %zu from Wikidata\n",
+               data.logos.size(), data.logosByName.size(),
+               data.logosAbroad.empty()
+                   ? size_t{0}
+                   : static_cast<size_t>(std::count(data.logosAbroad.begin(), data.logosAbroad.end(), ' ') + 1) / 2,
+               data.logosAbroad.size(), wikidataLogos);
   std::map<std::string, int> byList;
   size_t withLanguage = 0, closed = 0, withIptv = 0, aliases = 0, withWikidata = 0;
   for (const Entry& e : data.entries) {

@@ -3,8 +3,10 @@
 
 namespace marigold::logos {
 
-const char* const kLogoBase =
-    "https://cdn.jsdelivr.net/gh/tv-logo/tv-logos@d32e347bb7c4c640dceec23957802ad9182f58a6/countries/united-states/";
+#define MARIGOLD_LOGO_LIBRARY "https://cdn.jsdelivr.net/gh/tv-logo/tv-logos@d32e347bb7c4c640dceec23957802ad9182f58a6/"
+const char* const kLibraryRoot = MARIGOLD_LOGO_LIBRARY;
+const char* const kLogoBase = MARIGOLD_LOGO_LIBRARY "countries/united-states/";
+#undef MARIGOLD_LOGO_LIBRARY
 
 const std::unordered_map<std::string, std::string>& coreLogos() {
   // clang-format off

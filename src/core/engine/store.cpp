@@ -82,13 +82,23 @@ std::vector<std::string> suggestionNames(const std::vector<Channel>& list) {
   return names;
 }
 
-// A lineup row's directory entry's iptv-org id ("" when none), for its
-// fallback logo.
-std::string directoryIptvOrg(const catalog::EntryInfo* entry) {
-  if (!entry || entry->directoryId.empty()) return std::string();
+// A lineup row's channel directory entry (nullptr when none).
+const catalog::directory::Entry* directoryEntry(const catalog::EntryInfo* entry) {
+  if (!entry || entry->directoryId.empty()) return nullptr;
   const catalog::directory::Index* index = builtInDirectory();
-  const catalog::directory::Entry* listed = index ? index->entryById(entry->directoryId) : nullptr;
+  return index ? index->entryById(entry->directoryId) : nullptr;
+}
+
+// Its iptv-org id ("" when none), for its fallback logo.
+std::string directoryIptvOrg(const catalog::EntryInfo* entry) {
+  const catalog::directory::Entry* listed = directoryEntry(entry);
   return listed ? listed->iptvOrg : std::string();
+}
+
+// The directory's Wikidata logo for a row's channel (empty for none).
+std::string directoryLogo(const catalog::EntryInfo* entry) {
+  const catalog::directory::Entry* listed = directoryEntry(entry);
+  return listed ? listed->logo : std::string();
 }
 
 using catalog::EntryInfo;
@@ -429,10 +439,13 @@ std::shared_ptr<ChannelRows> makeRows(const catalog::LineupOutput& lo, const Cat
       if (ci != channelAt->end()) member = &list[ci->second];
     }
     bool local = category == catalog::LineupCategory::local;
-    logos::LogoSpec spec = logos::spec(g.name, ei ? ei->core : std::nullopt, g.west, ei && local && ei->callsign,
+    // A station shows as one in whatever section it sits (a Telemundo
+    // station under Spanish).
+    logos::LogoSpec spec = logos::spec(g.name, ei ? ei->core : std::nullopt, g.west, ei && ei->callsign,
                                        ei ? ei->callsign : std::nullopt, ei ? ei->virtualNumber : std::nullopt,
                                        e.imageUrl, member ? member->epgId : std::nullopt, category, iptvOrg,
-                                       directoryIptvOrg(ei), ei ? logos::referenceIdOf(ei->id) : std::string());
+                                       directoryIptvOrg(ei), ei ? logos::referenceIdOf(ei->id) : std::string(),
+                                       directoryLogo(ei));
     g.logoUrl = logos::chain(spec.urls);
     g.logoSources = str::join(spec.sources, ", ");
     g.subtitle = spec.subtitle.value_or(catalog::genreTitle(category));
@@ -1872,12 +1885,17 @@ void Store::readStations() {
 void Store::useBuiltInLogos() {
   std::remove(host_.files.path(kOldLogoIndexFile).c_str());
   const catalog::directory::Data& data = catalog::directory::builtIn();
-  if (data.logos.empty() && data.logosByName.empty()) return;
+  if (data.logos.empty() && data.logosByName.empty() && data.logosAbroad.empty()) return;
   logos::IptvOrgIndex::Saved saved;
   saved.byID.insert(data.logos.begin(), data.logos.end());
   saved.byName.insert(data.logosByName.begin(), data.logosByName.end());
+  // Other countries' by guide id: read in place from the built-in
+  // directory, which lives as long as the app.
+  saved.abroadPrefixes = data.logoPrefixes;
+  saved.abroadWords = data.logosAbroad;
   impl_->iptvOrg = std::make_shared<logos::IptvOrgIndex>(std::move(saved));
-  MLOG_I("store", "fallback logos: %zu by id, %zu by name (built in)", data.logos.size(), data.logosByName.size());
+  MLOG_I("store", "fallback logos: %zu by id, %zu by name, %zu abroad (%zu KB) (built in)", data.logos.size(),
+         data.logosByName.size(), impl_->iptvOrg->abroadCount(), data.logosAbroad.size() / 1024);
 }
 
 // Classifies the current list again (the station directory changed).
@@ -3851,10 +3869,10 @@ std::shared_ptr<const Channels> Store::channelsNow() const {
       if (ci != m.indexByID.end()) member = &(*m.channels)[ci->second];
     }
     logos::LogoSpec spec = logos::spec(
-        g.name, ei ? ei->core : std::nullopt, g.west, ei && cat == catalog::LineupCategory::local && ei->callsign,
-        ei ? ei->callsign : std::nullopt, ei ? ei->virtualNumber : std::nullopt, e.imageUrl,
-        member ? member->epgId : std::nullopt, cat, m.iptvOrg.get(), directoryIptvOrg(ei),
-        ei ? logos::referenceIdOf(ei->id) : std::string());
+        g.name, ei ? ei->core : std::nullopt, g.west, ei && ei->callsign, ei ? ei->callsign : std::nullopt,
+        ei ? ei->virtualNumber : std::nullopt, e.imageUrl, member ? member->epgId : std::nullopt, cat,
+        m.iptvOrg.get(), directoryIptvOrg(ei), ei ? logos::referenceIdOf(ei->id) : std::string(),
+        directoryLogo(ei));
     g.logoUrl = logos::chain(spec.urls);
     g.logoSources = str::join(spec.sources, ", ");
     g.subtitle = spec.subtitle.value_or(catalog::genreTitle(cat));

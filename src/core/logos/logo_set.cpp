@@ -1,10 +1,11 @@
-// Generated from the file names in tv-logo/tv-logos countries/united-states
-// at the commit kLogoBase pins (git ls-tree), without the "-us.png" ending;
-// "-icon" and "-hz" variants left out. Data only.
+// Generated from the file names in tv-logo/tv-logos at the commit kLogoBase
+// pins (git ls-tree). Data only.
 #include "core/logos/table.hpp"
 
 namespace marigold::logos {
 
+// countries/united-states, without the "-us.png" ending; "-icon" and "-hz"
+// variants left out.
 const std::vector<std::string_view>& logoSetNames() {
   // clang-format off
   static const std::vector<std::string_view> kNames = {
@@ -148,6 +149,184 @@ const std::vector<std::string_view>& logoSetNames() {
       "waypoint-tv", "we-tv", "weather-channel", "weathernation", "wgn-america", "willow",
       "willow-xtra", "wnba-league-pass", "world-fishing-network", "world-pbs", "wwe", "xcorps-tv",
       "yes-network", "you-too-america", "z-living",
+  };
+  // clang-format on
+  return kNames;
+}
+
+// misc/vod, without ".png"; files named by a bare genre or a common word
+// ("movies-vod", "kids-vod", "home-vod") left out: a provider's channel
+// called just that is rarely the streaming service's.
+const std::vector<std::string_view>& vodNames() {
+  // clang-format off
+  static const std::vector<std::string_view> kNames = {
+      "10-years-younger-vod", "21-jump-street-vod", "24-hour-free-movies-vod", "70s-cinema-vod-us",
+      "80s-rewind-vod-us", "90s-throwback-vod-us", "a-vida-moderna-de-rocko-vod", "a-z-classic-flix-vod",
+      "absolute-reality-we-tv-vod-us", "acc-on-vod", "action-kids-vod", "action-sports-vod",
+      "aew-all-elite-wrestling-vod", "afroland-tv-vod", "after-school-cartoons-vod", "afv-espanol-vod",
+      "afv-family-vod", "afv-tv-vod", "all-reality-we-tv-vod", "all-weddings-we-tv-vod", "allblk-vod-us",
+      "amantes-del-romance-vod", "amc-plus-vod-us", "amc-presents-vod-us", "amc-thrillers-vod",
+      "american-gladiators-vod", "americas-test-kitchen-vod", "ana-y-los-7-vod", "andromeda-vod", "animakids-vod",
+      "anime-accion-vod", "anime-all-day-vod-us", "anime-clasico-vod", "antiques-roadshow-uk-vod",
+      "archivos-forenses-vod", "asiancrush-vod", "auction-hunters-vod", "avatar-der-herr-der-elemente-vod",
+      "aventura-vod", "awe-encore-vod-us", "awesomeness-tv-vod-us", "axs-tv-now-vod", "babar-vod", "baby-first-vod",
+      "baby-shark-vod", "babyfirst-vod", "badass-novelas-vod", "bambu-vod", "bar-rescue-vod", "barney-vod",
+      "baywatch-vod-us", "bbc-food-vod", "bbc-home-vod", "beauty-and-the-geek-vod", "bebecito-bum-y-sus-amigos-vod",
+      "being-human-vod", "bellator-mma-vod", "bet-being-mary-jane-vod", "bet-classics-vod", "bet-plus-vod-us",
+      "beverly-hills-90210-vod-us", "big-time-rush-vod", "bigsky-conference-vod-us", "biography-vod",
+      "black-cinema-vod-us", "black-ink-crew-vod", "blaze-live-vod", "bloodydisgusting-tv-vod", "bnc-go-vod",
+      "bob-esponja-vod", "bob-leponge-tv-vod", "bon-appetit-vod-us", "british-tv-vod-us", "britpocalypse-vod",
+      "buzzr-vod", "canela-tv-vod", "cartoon-network-adult-swim-vod-us", "cartoons-4u-vod-us", "catfish-vod",
+      "cats-24-7-vod-us", "cbs-sports-hq-vod", "channel-fight-vod", "chaos-city-vod", "chassy-vod", "chefkoch-vod",
+      "chiquilines-vod", "chopper-town-vod", "cine-accion-vod", "cine-adrenalina-vod", "cine-clasico-vod",
+      "cine-classicos-vod", "cine-comedia-vod", "cine-drama-vod", "cine-estelar-vod", "cine-familia-vod",
+      "cine-jaja-vod", "cine-latino-vod", "cine-premiere-vod", "cine-real-vod", "cine-retro-vod",
+      "cine-romance-vod", "cine-romantico-vod", "cine-sucessos-vod", "cine-sureno-vod", "cine-suspenso-vod",
+      "cine-terror-vod", "cine-xoxo-vod", "cinefest-vod-us", "cinehouse-selects-vod", "classic-toons-vod-us",
+      "classic-tv-comedy-vod-us", "classic-tv-drama-vod-us", "clubbing-tv-vod", "cmt-equal-play-vod",
+      "cmt-westerns-vod-us", "cnet-vod", "cold-case-files-vod-us", "combat-go-vod", "combate-world-vod",
+      "comedia-made-in-spain-vod", "comedy-central-animation-vod", "comedy-central-latino-vod",
+      "comedy-central-made-in-germany-vod", "comedy-central-stand-up-vod-us", "comedy-central-takeshis-castle-vod",
+      "comedy-dynamics-cdn-vod-us", "conspiracy-vod", "contv-anime-vod", "contv-vod-us", "cookalong-vod",
+      "cooking-4u-vod-us", "cooking-panda-vod", "cops-vod-us", "courtroom-vod", "crackle-vod",
+      "cribs-maisons-de-stars-vod", "crime-360-vod", "crime-investigation-australia-vod",
+      "crimenes-imperfectos-vod", "csi-en-espanol-vod", "csi-vod-us", "cult-films-vod-us", "curiosity-vod-us",
+      "curro-jimenez-vod", "dallas-cowboys-cheerleaders-vod", "dark-matter-tv-vod", "dark-matter-vod",
+      "dark-shadows-vod", "deadly-women-vod", "deal-or-no-deal-vod-us", "degrassi-vod-us", "demand-africa-vod",
+      "doctor-who-classic-vod-us", "documentaries-4u-vod-us", "docurama-vod-us", "dog-el-cazarrecompensas-vod",
+      "dog-the-bounty-hunter-vod-us", "dogs-24-7-vod-us", "dora-tv-vod", "dossiers-fbi-vod", "dr-oz-vod",
+      "drink-tv-vod", "duck-dynasty-vod", "duck-tv-vod-us", "edge-sport-vod", "el-conquistador-vod",
+      "el-gourmet-vod", "el-reino-infantil-vod", "electric-now-vod", "emergencia-911-vod", "empenos-a-lo-besta-vod",
+      "empenos-a-lo-bestia-vod", "entre-nosotras-vod", "espn-ondemand-vod-us", "esport-24-vod",
+      "esr-24x7-esports-network-vod", "estrella-news-vod", "estrella-tv-vod", "estrellas-de-accion-vod",
+      "estv-vod-us", "euronews-espanol-vod", "european-league-of-football-tv-vod",
+      "extreme-sports-channel-plus-vod", "failarmy-vod-us", "faith-tv-vod", "family-ties-vod", "fandor-vod",
+      "fantawild-vod", "fashionbox-vod", "fear-factor-vod", "femmes-de-loi-vod", "fifth-gear-vod",
+      "film-detective-vod", "film-stream-vod", "filmes-acao-vod", "filmes-nacionais-vod", "filmes-suspense-vod",
+      "fireplace-vod-us", "flicks-of-fury-vod-us", "flixfling-vod-us", "focus-tv-reportage-vod", "food-tv-vod-us",
+      "foodies-vod", "forensic-files-vod-us", "free-crime-tv-vod-us", "free-speech-fstv-vod-us", "freebie-tv-vod",
+      "front-row-channel-vod", "frontdoor-vod-us", "ftf-vod", "full-custom-garage-vod", "funny-af-vod-us",
+      "fuse-backstage-vod", "futbol-para-fans-vod", "game-show-central-vod-us", "gameplay-call-of-duty-vod",
+      "gameplay-fortnite-vod", "gameplay-roblox-vod", "gameplay-sports-vod", "gamespot-vod", "gaming-tv-vod",
+      "garfield-vod", "get-factual-vod", "gfn-tv-vod", "ghost-dimension-vod", "ghost-hunters-vod", "glewed-tv-vod",
+      "glory-kickboxing-vod", "go-diego-go-vod", "go-traveler-vod", "go-usa-vod",
+      "gordon-ramsays-hells-kitchen-vod-us", "gravitas-movies-vod-us", "grvty-vod-us", "gusto-tv-vod-us",
+      "happy-days-vod-us", "hard-knocks-vod", "helene-et-les-garcons-vod", "hells-kitchen-en-espanol-vod",
+      "here-tv-vod-us", "hi-yah-vod", "highway-to-heaven-vod", "historias-de-ultratumba-vod",
+      "holiday-lights-vod-us", "hollywire-vod-us", "homes-under-the-hammer-vod", "hopster-vod-us", "humor-mill-vod",
+      "icarly-vod", "ice-pilots-vod", "ifc-films-picks-vod", "ign-tv-vod", "impact-wrestling-vod-us",
+      "in-wonder-vod", "indies-vod", "ink-master-vod", "inspector-gadget-vod", "instant-saga-vod", "introuble-vod",
+      "jersey-shore-vod", "johnny-carson-tv-vod-us", "journy-vod", "judge-faith-vod", "judge-nosey-vod-us",
+      "julia-child-vod", "juntos-vod", "just-for-laughs-vod", "juste-pour-rire-vod", "kartoon-channel-vod-us",
+      "kidoodle-tv-vod", "kids-pang-vod", "kidsflix-vod", "kmtv-vod", "kultfilme-vod", "la-chica-invisible-vod",
+      "la-corriente-vod", "las-reglas-del-juego-vod", "latido-music-vod", "latin-angels-vod",
+      "laugh-out-loud-vod-us", "law-and-crime-rewind-vod-us", "le-gourmet-tv-vod-us", "le-miel-et-les-abeilles-vod",
+      "le-miracle-de-lamour-vod", "les-cordier-vod", "les-filles-da-cote-vod", "les-nouveaux-detectives-vod",
+      "levelup-tv-vod", "leverage-vod-us", "lion-mountain-tv-vod-us", "little-baby-bum-vod", "live-in-concert-vod",
+      "live-music-replay-vod", "lively-place-vod", "lone-star-vod-us", "loop-music-videos-vod",
+      "los-archivos-del-fbi-vod", "los-asesinatos-de-midsomer-vod", "los-nuevos-detectives-vod",
+      "louis-la-brocante-vod", "loupe-arte-musica-vod", "loupe-vod", "love-and-hip-hop-vod",
+      "love-nature-en-espanol-vod", "lucha-libre-worldwide-vod", "m-now-vod", "made-in-britain-vod",
+      "magellan-tv-vod-us", "magnolia-selects-vod-us", "mario-vs-sonic-vod", "mas-chic-vod", "master-chef-vod",
+      "mav-tv-select-vod", "maverick-black-cinema-vod-us", "mcleods-daughters-vod", "mi-obsesion-favorita-vod",
+      "midnight-pulp-vod", "midsomer-murders-vod-us", "mih-tv-vod", "minecraft-tv-vod", "minuto-para-ganar-vod",
+      "mission-impossible-vod", "misterios-medicos-vod", "misterios-sin-resolver-vod", "mlb-vod", "mma-tv-vod",
+      "most-haunted-vod", "movie-sphere-free-vod", "mst3k-vod", "mtv-animaciones-vod", "mtv-are-you-the-one-vod",
+      "mtv-biggest-pop-vod", "mtv-block-party-vod", "mtv-classic-vod", "mtv-classics-vod", "mtv-cribs-vod",
+      "mtv-dating-vod", "mtv-embarazada-a-los-16-vod", "mtv-latino-vod", "mtv-love-music-vod", "mtv-originals-vod",
+      "mtv-pranks-vod", "mtv-ridiculousness-vod", "mtv-serie-vod", "mtv-spankin-new-vod", "mtv-summer-hits-vod",
+      "mtv-teen-mom-vod", "mtv-teen-vod", "mtv-the-hills-vod", "mtv-the-shores-vod", "mtv-true-life-vod",
+      "mtv-unplugged-vod", "mtv-yo-vod", "mundo-geek-vod", "mundo-paranormal-vod", "mundo-real-vod",
+      "mundo-viajero-vod", "mutant-x-vod", "mutante-x-vod", "my-time-movie-network-vod", "my5-crime-vod",
+      "my5-gps-behind-closed-doors-vod", "mystery-science-theater-3000-vod", "mythbusters-vod",
+      "narcos-en-espanol-vod", "narcos-vod", "naruto-en-espanol-vod", "naruto-vod", "nashville-channel-vod",
+      "nba-on-demand-vod-us", "new-k-id-vod", "new-k-movies-vod", "nfl-channel-vod-us", "nhra-vod",
+      "nick-beyblade-burst-vod", "nick-blaze-vod", "nick-blues-clues-vod", "nick-bubble-guppies-vod",
+      "nick-clasico-vod", "nick-emma-einfach-magisch-vod", "nick-jr-club-vod", "nick-jr-dora-tv-vod",
+      "nick-latino-vod", "nick-rewind-vod", "nick-sam-and-cat-vod", "nick-spongebob-schwammkopf-vod",
+      "nick-totally-turtles-vod", "nick-victorious-vod", "nickelodeon-as-pistas-de-blue-vod",
+      "nickelodeon-blues-clues-vod", "nickelodeon-kenan-and-kel-vod", "nickelodeon-totally-turtles-vod",
+      "nosey-casos-vod", "nosey-escandalos-vod", "nosey-vod-us", "novelas-con-la-abuela-vod", "nuestra-vision-vod",
+      "nuestro-cine-vod", "oan-plus-vod", "oh-my-pet-vod", "ondemand-china-vod", "one-piece-vod",
+      "oreino-infantil-vod", "outdoor-america-vod", "outside-tv-features-vod-us", "outside-tv-plus-vod-us",
+      "pac-films-vod-us", "paramount-movie-channel-vod-us", "paramount-plus-picks-vod", "paramount-plus-vod-us",
+      "paramount-plus-white-vod-us", "paranormal-state-vod", "party-tyme-karaoke-spanish-vod",
+      "party-tyme-karaoke-vod", "pattrn-vod", "pbr-professional-bull-riders-ride-pass-vod",
+      "people-are-awesome-vod", "pga-tour-vod", "pistas-de-blue-vod", "planeta-junior-tv-vod", "play-works-vod",
+      "players-tv-vod-us", "playkids-vod-us", "plus-belle-la-vie-vod", "pluto-bet-her-vod", "pluto-tv-007-vod-us",
+      "pluto-tv-action-sports-vod", "pluto-tv-action-vod-us", "pluto-tv-animals-vod-us", "pluto-tv-backcountry-vod",
+      "pluto-tv-best-life-vod", "pluto-tv-bet-vod", "pluto-tv-cars-vod-us", "pluto-tv-celebrity-vod-us",
+      "pluto-tv-christmas-vod-us", "pluto-tv-cmt-vod", "pluto-tv-comedy-central-vod-us", "pluto-tv-comedy-vod-us",
+      "pluto-tv-crime-drama-vod-us", "pluto-tv-crime-movies-vod-us", "pluto-tv-documentaries-vod-us",
+      "pluto-tv-drama-life-vod", "pluto-tv-drama-vod-us", "pluto-tv-fantastic-vod-us", "pluto-tv-gamer-vod",
+      "pluto-tv-history-vod-us", "pluto-tv-horror-vod-us", "pluto-tv-iron-chef-vod",
+      "pluto-tv-kids-animation-vod-us", "pluto-tv-lives-vod-us", "pluto-tv-logo-vod",
+      "pluto-tv-love-stories-vod-us", "pluto-tv-military-vod-us", "pluto-tv-mistletoe-vod-us", "pluto-tv-mtv-vod",
+      "pluto-tv-news-vod", "pluto-tv-nick-jr-vod-us", "pluto-tv-nick-vod-us", "pluto-tv-paranormal-vod-us",
+      "pluto-tv-reaction-vod", "pluto-tv-reality-vod-us", "pluto-tv-romance-vod-us", "pluto-tv-scifi-vod-us",
+      "pluto-tv-shades-of-black-vod", "pluto-tv-spike-vod-us", "pluto-tv-sports-vod", "pluto-tv-spotlight-vod-us",
+      "pluto-tv-staff-picks-vod-us", "pluto-tv-suspense-vod-us", "pluto-tv-teen-vod", "pluto-tv-terror-vod-us",
+      "pluto-tv-thrillers-vod-us", "pluto-tv-true-crime-vod-us", "pluto-tv-viajes-vod", "pluto-tv-vida-real-vod",
+      "pluto-tv-vod", "pocket-watch-vod-us", "poker-go-vod", "poker-night-in-america-vod", "police-women-vod",
+      "popcornflix-vod", "popsugar-fitness-vod", "porta-dos-fundos-vod", "pro-wrestling-vod", "pursuit-up-vod",
+      "qello-concerts-by-stingray-vod", "quark-science-vod-us", "quicktake-by-bloomberg-vod-us",
+      "qwest-tv-classical-vod", "qwest-tv-jazz-and-beyond-vod", "qwest-tv-mix-vod", "rakuten-tv-action-vod",
+      "rakuten-tv-british-vod", "rakuten-tv-comedy-vod", "rakuten-tv-drama-vod", "rakuten-tv-family-vod",
+      "rakuten-tv-romance-vod", "rakuten-tv-thrillers-vod", "rakuten-tv-top-movies-vod", "rakuten-viki-vod",
+      "real-americas-voice-vod-us", "real-life-vod", "real-nosey-vod", "real-stories-vod",
+      "real-vision-free-vod-us", "rescue-911-vod-us", "retro-crush-vod", "retro-drama-vod", "retro-toons-vod",
+      "reuters-vod", "revry-news-vod", "revry-vod", "rifftrax-vod-us", "ring-of-honor-best-on-the-planet-vod",
+      "ripleys-believe-it-or-not-vod", "rugrats-crecidos-vod", "run-time-cine-y-series-vod", "run-time-espanol-vod",
+      "run-time-vod", "rush-by-amc-vod-us", "ryan-and-friends-vod-us", "saber-mas-vod", "sabrina-vod",
+      "sanctuary-vod", "screambox-vod", "screamfest-vod-us", "secret-dealers-vod", "sensing-murder-vod",
+      "septimo-arte-vod", "series-comedia-vod", "series-latinas-vod", "series-retro-vod", "sherlock-vod",
+      "shout-factory-tv-vod-us", "showtime-selects-vod", "sin-tetas-no-hay-paraiso-vod", "skills-and-thrills-vod",
+      "skwad-vod", "slightly-off-by-ifc-vod-us", "slow-tv-vod", "smithsonian-channel-selects-vod",
+      "sneak-peek-vod-us", "so-dramatic-vod", "so-real-vod", "so-yummy-vod-us", "socialclub-tv-vod",
+      "sony-canal-comedias-vod", "sony-canal-competencias-vod", "sony-canal-escape-perfecto-vod",
+      "sony-canal-novelas-vod", "south-park-vod", "space-channel-vod", "spike-extremo-vod", "spike-outdoors-vod-us",
+      "sport-now-insight-vod-us", "sports-grid-vod-us", "sportswire-vod", "stand-up-tv-vod-us", "star-trek-vod-us",
+      "stephens-drum-shed-sds-vod-us", "stingray-karaoke-vod-us", "stingray-naturescape-vod-us", "storage-wars-vod",
+      "stories-by-amc-vod", "strongman-champions-league-vod", "survivor-vod", "syfy-wire-vod-us", "tankee-vod",
+      "tastemade-brasil-vod", "tastemade-plus-vod-us", "tastemade-vod-us", "teen-stars-vod", "telefe-clasico-vod",
+      "telemundo-telenovelas-clasicas-vod", "the-addams-family-vod-us", "the-amazing-race-vod",
+      "the-archive-vod-us", "the-asylum-vod-us", "the-beverly-hillbillies-vod", "the-boat-show-vod",
+      "the-bob-ross-channel-vod", "the-carol-burnett-show-vod", "the-challenge-vod",
+      "the-country-network-plus-vod-us", "the-design-network-vod", "the-fbi-files-vod", "the-film-detective-vod-us",
+      "the-love-boat-vod-us", "the-love-destination-vod", "the-new-detectives-vod-us", "the-pet-collective-vod-us",
+      "the-preview-channel-vod", "the-price-is-right-vod", "the-rifleman-vod", "the-simple-life-vod",
+      "the-story-of-beat-club-vod", "the-walking-dead-espanol-vod", "the-walking-dead-universe-vod",
+      "this-old-house-vod", "threes-company-vod", "tierra-de-lobos-vod", "timeline-vod", "tiny-house-nation-vod",
+      "today-all-day-vod", "toku-sato-vod", "tokushoutsu-vod", "toon-goggles-junior-vod", "toon-goggles-vod",
+      "toons-clasico-vod", "top-cine-vod", "tortues-ninja-vod", "tosh-0-vod-us", "touchfit-vod-us",
+      "travel-4u-vod-us", "tribeca-channel-vod", "troll-tv-vod", "tu-cine-vod", "tumblebooks-tv-vod-us",
+      "turma-da-monica-vod", "tv-land-drama-vod-us", "tv-land-sitcoms-vod-us", "tween-vod", "uflytv-vod-us",
+      "unbeaten-esports-vod", "undercover-boss-global-vod", "unsolved-mysteries-vod-us",
+      "up-faith-and-family-vod-us", "us-weekly-tv-vod", "usa-today-vod", "vaya-semanita-vod", "venn-vod",
+      "vevo-2k-vod", "vevo-70s-vod", "vevo-80s-vod", "vevo-90s-vod", "vevo-country-vod", "vevo-hip-hop-vod",
+      "vevo-latino-vod", "vevo-pop-vod", "vevo-r-and-b-vod", "vevo-reggaeton-and-trap-vod",
+      "vevo-true-school-hip-hop-vod", "vh1-classics-vod", "vh1-hip-hop-family-vod", "vh1-i-love-reality-vod",
+      "viaje-a-las-estrellas-vod", "voyager-documentaries-vod", "wanted-dead-or-alive-vod", "waypoint-tv-vod",
+      "we-tv-plus-vod-us", "weather-spy-vod", "wer-ist-hier-der-boss-vod", "western-tv-vod", "whistle-tv-vod",
+      "wild-at-heart-vod", "wild-earth-vod", "wildn-out-vod", "wipeout-vod-us", "wired-2-fish-tv-vod",
+      "wpt-world-poker-tour-vod-us", "wu-tang-collection-vod", "xive-tv-vod-us", "xplore-vod", "yahoo-finance-vod",
+      "yg-tv-vod", "yu-gi-oh-en-espanol-vod", "yu-gi-oh-vod",
+  };
+  // clang-format on
+  return kNames;
+}
+
+// The "-hz" files whose visible logo comes out larger in the 154 x 60 cell
+// than the plain file's (by over 15%, measured on the two PNGs).
+const std::vector<std::string_view>& horizontalNames() {
+  // clang-format off
+  static const std::vector<std::string_view> kNames = {
+      "abc-news", "abc-news-light", "cheddar", "espn-sec", "fox-nfl", "game-show-network", "nba-league-pass",
+      "nbc-logo-alt", "nbc-logo-flat", "nbc-sports-engine", "nbcsn-bay-area", "nbcsn-boston", "nbcsn-california",
+      "nbcsn-chicago", "nbcsn-northwest", "nbcsn-philadelphia", "nbcsn-washington", "nfl-game-pass",
+      "pac-12-arizona", "pac-12-bay-area", "pac-12-los-angeles", "pac-12-mountain", "pac-12-network",
+      "pac-12-oregon", "pac-12-washington", "paramount-network", "sec-network", "sony-movie-channel", "syfy",
+      "telemundo-deportes", "tennis-channel",
   };
   // clang-format on
   return kNames;

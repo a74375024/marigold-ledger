@@ -525,3 +525,88 @@ TEST_CASE("directory: corrections reach the free tier too") {
   REQUIRE(index.match("Willow Cricket").entry);
   CHECK(index.match("Willow Cricket").entry->id == "iptv:Willow.us");
 }
+
+TEST_CASE("directory: Wikidata logos, current first, as PNG links on upload.wikimedia.org") {
+  const char* entities = R"json({"entities":{
+    "Q1":{"claims":{"P154":[
+      {"rank":"normal","mainsnak":{"datavalue":{"value":"Old 2010.svg"}},
+       "qualifiers":{"P580":[{"datavalue":{"value":{"time":"+2010-01-01T00:00:00Z"}}}]}},
+      {"rank":"normal","mainsnak":{"datavalue":{"value":"New 2020.svg"}},
+       "qualifiers":{"P580":[{"datavalue":{"value":{"time":"+2020-01-01T00:00:00Z"}}}]}},
+      {"rank":"normal","mainsnak":{"datavalue":{"value":"Ended 2024.svg"}},
+       "qualifiers":{"P580":[{"datavalue":{"value":{"time":"+2024-01-01T00:00:00Z"}}}],
+                     "P582":[{"datavalue":{"value":{"time":"+2025-01-01T00:00:00Z"}}}]}},
+      {"rank":"deprecated","mainsnak":{"datavalue":{"value":"Wrong.svg"}}}]}},
+    "Q2":{"claims":{"P154":[
+      {"rank":"normal","mainsnak":{"datavalue":{"value":"First.png"}}},
+      {"rank":"preferred","mainsnak":{"datavalue":{"value":"Preferred.webp"}}},
+      {"rank":"normal","mainsnak":{"datavalue":{"value":"Second.png"}}}]}},
+    "Q3":{"claims":{}}}})json";
+  auto facts = parseEntities(entities);
+  CHECK(facts.at("Q1").logos == std::vector<std::string>{"New 2020.svg", "Old 2010.svg"});
+  CHECK(facts.at("Q2").logos == std::vector<std::string>{"Preferred.webp", "First.png", "Second.png"});
+  CHECK(facts.at("Q3").logos.empty());
+
+  CHECK(fileInfoRequestUrl({"CNN.svg", "A b.png"}).find("titles=File%3ACNN.svg%7CFile%3AA%20b.png") !=
+        std::string::npos);
+  const char* info = R"json({"query":{
+    "normalized":[{"from":"File:New 2020.svg","to":"File:New 2020.svg"},{"from":"File:a_b.png","to":"File:A b.png"}],
+    "pages":{
+      "1":{"title":"File:New 2020.svg","imageinfo":[{"url":"https://upload.wikimedia.org/wikipedia/commons/a/ab/New_2020.svg?utm_source=x","mime":"image/svg+xml","width":1000,"height":400,"size":4000}]},
+      "2":{"title":"File:A b.png","imageinfo":[{"url":"https://upload.wikimedia.org/wikipedia/commons/c/cd/A_b.png","mime":"image/png","width":600,"height":200,"size":30000}]},
+      "3":{"title":"File:Huge.png","imageinfo":[{"url":"https://upload.wikimedia.org/wikipedia/commons/e/ef/Huge.png","mime":"image/png","width":5000,"height":2000,"size":4000000}]},
+      "4":{"title":"File:Preferred.webp","imageinfo":[{"url":"https://upload.wikimedia.org/wikipedia/commons/1/12/Preferred.webp","mime":"image/webp","width":600,"height":200,"size":30000}]},
+      "5":{"title":"File:Elsewhere.png","imageinfo":[{"url":"https://example.invalid/Elsewhere.png","mime":"image/png","width":600,"height":200,"size":300}]},
+      "-1":{"title":"File:Missing.svg","missing":""}}}})json";
+  auto links = parseFileInfo(info);
+  CHECK(links.at("New 2020.svg") ==
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/New_2020.svg/330px-New_2020.svg.png");
+  CHECK(links.at("a_b.png") == "https://upload.wikimedia.org/wikipedia/commons/c/cd/A_b.png");
+  CHECK(links.at("Huge.png") == "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ef/Huge.png/330px-Huge.png");
+  CHECK_FALSE(links.count("Preferred.webp"));
+  CHECK_FALSE(links.count("Elsewhere.png"));
+  CHECK_FALSE(links.count("Missing.svg"));
+
+  // An entry gets its current logo the TVs can show; one iptv-org has a
+  // logo for doesn't keep it.
+  Sources src;
+  src.rows["pay"] = {{"Dream TV", "Dream TV", "Family", "Dream TV"}, {"Other TV", "Other TV", "Family", "Other TV"}};
+  src.pages["Dream TV"] = {{}, "Q2"};
+  src.pages["Other TV"] = {{}, "Q1"};
+  src.entities = facts;
+  src.logoLinks = {{"First.png", "https://upload.wikimedia.org/wikipedia/commons/f/f1/First.png"},
+                   {"New 2020.svg", links.at("New 2020.svg")}};
+  Data data = assemble(src, "2026-11-11");
+  auto find = [&](const char* id) -> Entry* {
+    auto it = std::find_if(data.entries.begin(), data.entries.end(), [&](const Entry& e) { return e.id == id; });
+    return it == data.entries.end() ? nullptr : &*it;
+  };
+  REQUIRE(find("Dream TV"));
+  REQUIRE(find("Other TV"));
+  CHECK(find("Dream TV")->logo == "https://upload.wikimedia.org/wikipedia/commons/f/f1/First.png");
+  CHECK(find("Other TV")->logo == links.at("New 2020.svg"));
+  find("Other TV")->iptvOrg = "OtherTV.us";
+  data.logos["othertv.us"] = "https://example.invalid/other.png";
+  keepNeededLogos(data);
+  CHECK(find("Other TV")->logo.empty());
+  CHECK_FALSE(find("Dream TV")->logo.empty());
+}
+
+TEST_CASE("directory: Wikidata logos and other countries' logos saved and read back") {
+  Data data;
+  data.entries = {entry("Dream TV", "Dream TV")};
+  data.entries[0].logo = "https://upload.wikimedia.org/wikipedia/commons/f/f1/First.png";
+  data.logoPrefixes = {"https://i.imgur.com/"};
+  data.logosAbroad = "kanal.tr 0kanal.png tf1.fr 0tf1.png";
+  auto back = fromJson(toJson(data));
+  REQUIRE(back);
+  CHECK(back->entries[0] == data.entries[0]);
+  CHECK(back->logoPrefixes == data.logoPrefixes);
+  CHECK(back->logosAbroad == data.logosAbroad);
+  // An older directory without them.
+  auto older = fromJson(R"({"entries":[{"id":"A","name":"A"}],"logos":{"a.us":"https://example.invalid/a.png"}})");
+  REQUIRE(older);
+  CHECK(older->entries[0].logo.empty());
+  CHECK(older->logosAbroad.empty());
+  CHECK(older->logoPrefixes.empty());
+}

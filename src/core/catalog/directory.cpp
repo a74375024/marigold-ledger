@@ -107,7 +107,8 @@ std::vector<std::string> stringsFrom(const json::Value& v) {
 
 bool Entry::operator==(const Entry& o) const {
   return id == o.id && name == o.name && aliases == o.aliases && language == o.language && genre == o.genre &&
-         list == o.list && places == o.places && closed == o.closed && wikidata == o.wikidata && iptvOrg == o.iptvOrg;
+         list == o.list && places == o.places && closed == o.closed && wikidata == o.wikidata && iptvOrg == o.iptvOrg &&
+         logo == o.logo;
 }
 
 std::string exactKey(std::string_view name) { return str::join(nameWords(name), ""); }
@@ -211,6 +212,7 @@ std::string toJson(const Data& data) {
     if (!e.closed.empty()) item.set("closed", e.closed);
     if (!e.wikidata.empty()) item.set("wikidata", e.wikidata);
     if (!e.iptvOrg.empty()) item.set("iptvOrg", e.iptvOrg);
+    if (!e.logo.empty()) item.set("logo", e.logo);
     list.push(item);
   }
   v.set("entries", list);
@@ -221,6 +223,12 @@ std::string toJson(const Data& data) {
     json::Value logos = json::Value::object();
     for (const auto& [key, url] : *map) logos.set(key, url);
     v.set(field, logos);
+  }
+  if (!data.logosAbroad.empty()) {
+    json::Value abroad = json::Value::object();
+    abroad.set("prefixes", strings(data.logoPrefixes));
+    abroad.set("words", data.logosAbroad);
+    v.set("logosAbroad", abroad);
   }
   return json::write(v);
 }
@@ -243,12 +251,17 @@ std::optional<Data> fromJson(std::string_view text) {
     e.closed = item["closed"].asString();
     e.wikidata = item["wikidata"].asString();
     e.iptvOrg = item["iptvOrg"].asString();
+    e.logo = item["logo"].asString();
     data.entries.push_back(std::move(e));
   }
   for (const auto& [field, map] : {std::pair{"logos", &data.logos}, std::pair{"logosByName", &data.logosByName}}) {
     for (const auto& [key, url] : (*doc)[field].fields()) {
       if (url.isString()) (*map)[key] = url.asString();
     }
+  }
+  if ((*doc)["logosAbroad"]["words"].isString()) {
+    data.logoPrefixes = stringsFrom((*doc)["logosAbroad"]["prefixes"]);
+    data.logosAbroad = (*doc)["logosAbroad"]["words"].asString();
   }
   for (const auto& [key, country] : (*doc)["elsewhere"].fields()) {
     if (country.isString()) data.elsewhere[key] = country.asString();
