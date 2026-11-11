@@ -115,7 +115,12 @@ LogoSpec spec(std::string_view name, const std::optional<std::string>& core, boo
               std::optional<int> virtualNumber, const std::string& provider,
               const std::optional<std::string>& epgID,
               std::optional<catalog::LineupCategory> category, const IptvOrgIndex* iptvOrg,
-              const std::string& directoryIptvOrg = std::string());
+              const std::string& directoryIptvOrg = std::string(),
+              const std::string& referenceId = std::string());
+
+// The reference channel id in a lineup row's id ("e|r:hbo~west" -> "hbo");
+// empty for rows the reference data doesn't know.
+std::string referenceIdOf(std::string_view rowId);
 
 // Whether a loaded logo is good enough to stand alone on a channel card with
 // no name beside it (the guide's channel cell has about 154 x 60 for it):

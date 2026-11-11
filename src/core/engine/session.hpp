@@ -236,7 +236,7 @@ class Session {
   void pictureCheck(uint32_t now, const PlayerState& s, bool picture);
   void watched();
   void rememberGame();
-  void logEvent(std::string_view event, std::string_view detail = {});
+  void logEvent(std::string_view event, std::string_view detail = {}, bool withFeed = true);
   void saveLog(uint32_t ms, bool all = false);
   uint32_t ms() const { return host_.ms(); }
 

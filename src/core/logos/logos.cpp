@@ -198,12 +198,19 @@ std::optional<std::string> stationNetwork(std::string_view name, const std::stri
   return std::nullopt;
 }
 
+std::string referenceIdOf(std::string_view rowId) {
+  constexpr std::string_view kPrefix = "e|r:";
+  if (rowId.substr(0, kPrefix.size()) != kPrefix) return std::string();
+  std::string_view rest = rowId.substr(kPrefix.size());
+  return std::string(rest.substr(0, rest.find('~')));
+}
+
 LogoSpec spec(std::string_view name, const std::optional<std::string>& core, bool isWest,
               bool isLocal, const std::optional<std::string>& callsign,
               std::optional<int> virtualNumber, const std::string& provider,
               const std::optional<std::string>& epgID,
               std::optional<catalog::LineupCategory> category, const IptvOrgIndex* iptvOrg,
-              const std::string& directoryIptvOrg) {
+              const std::string& directoryIptvOrg, const std::string& referenceId) {
   auto url = [](const std::string& file) { return std::string(kLogoBase) + file; };
   LogoSpec out;
   auto add = [&out](std::string link, const char* from) {
@@ -262,7 +269,11 @@ LogoSpec spec(std::string_view name, const std::optional<std::string>& core, boo
 
   // The reference data's logo for a channel it knows.
   if (category != catalog::LineupCategory::local && category != catalog::LineupCategory::international) {
-    const catalog::reference::Channel* known = catalog::reference::builtInIndex().match(name).channel;
+    // By the row's own reference id first: its name can be a provider's
+    // ("BLOOMBERG TV+" for Bloomberg Television).
+    const catalog::reference::Index& index = catalog::reference::builtInIndex();
+    const catalog::reference::Channel* known = referenceId.empty() ? nullptr : index.channel(referenceId);
+    if (!known) known = index.match(name).channel;
     std::optional<std::string> file;
     if (known && !known->logo.empty()) file = known->logo;
     // None of its own: by its name or another name in the library ("TMC

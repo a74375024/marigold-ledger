@@ -279,6 +279,7 @@ TEST_CASE("provider guide: scope, rebuild, outcomes") {
   CHECK(provider::countryPrefix(std::string("US| NBC ᴴᴰ")) == std::string("US"));
   CHECK(provider::countryPrefix(std::string(" UK |x")) == std::string("UK"));
   CHECK_FALSE(provider::countryPrefix(std::string("Sports")));
+  CHECK(provider::countryPrefix(std::string("|FR| \xe2\x9c\xaa CHAINES")) == std::string("FR"));
   CHECK_FALSE(provider::countryPrefix(std::nullopt));
   Channel c = userChannel("a", "NBC", std::string("US| Locals"));
   CHECK_FALSE(provider::inScope(c, {"US"}));  // no guide id

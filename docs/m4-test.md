@@ -1670,3 +1670,16 @@ Favourites stuck: once a channel had been a favourite through a lineup rebuild (
 | Favorites screen | Favourite channels in My Lineup and outside it, one at a time | Each shows in Favorites (guide tab and the player's list) right away, and after a relaunch |
 | Renamed row | A favourite on a channel whose row id changes (new matching rules in an update, a renamed channel) | Still in Favorites under its new id; recents follow too |
 | Menu flips | Hold OK › Add to Favorites, keep the menu open | The row reads "Remove from Favorites" at once (a second OK no longer undoes the first unseen); Search's Favorites switch the same |
+
+## Build 152: second provider countries, West feeds, VIX tile
+
+A second provider that writes its countries in bars ("|FR| …", "|US| …") was read as having no country at all. Its French, German and other foreign copies joined the US rows (Discovery had 30 copies, Showtime held Canada's Showcase), skipped Live Events' language check, and took the room for the first provider's sports groups. Now "|XX|" reads like "XX|" ("|SW|" is Switzerland, "|AUS|" Australia, "|PPV|" no country). West feeds named with a marker after the word ("TBS WEST ᴿᴬᵂ") are West feeds again. A movie channel called "… Multiplex" is no longer a live soccer conference tile. A row whose name is a provider's ("BLOOMBERG TV+") keeps its curated logo. How well copies start is kept per provider. The playback log's first "tune" line no longer names the previous channel's version, and "gave up" is logged once.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Foreign copies | Two providers, one writing "|FR|" | Discovery Channel's Sources lists US copies only; the French ones sit under International |
+| Live Events | Both providers on | The first provider's sports and event groups are back (soccer, motorsport, golf rows) |
+| West | West coast; TBS West, HBO West | Each has the West copies of both providers |
+| VIX | Live Events with the second provider | No "VIX Golden Multiplex" tile |
+| Bloomberg | My Lineup › Bloomberg | Its logo |
+| Log | Play a channel, then another | The second channel's first "tune" line has no version; one "gave up" line when a channel fails |

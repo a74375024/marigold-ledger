@@ -575,6 +575,9 @@ TEST_CASE("whip-arounds lead Live now when enough games are on") {
   CHECK(whipNamed("MLB Strike Zone")->minimumLive == 2);
   CHECK(whipNamed("Bundesliga Konferenz")->group == "Soccer");
   CHECK_FALSE(whipNamed("Harbor News"));
+  // A movie channel that calls itself a multiplex isn't a match-day feed.
+  CHECK_FALSE(whipNamed("VIX  Golden Multiplex"));
+  CHECK(whipNamed("Football - ligue des nations - Multiplex")->group == "Soccer");
 }
 
 TEST_CASE("the hero: the first live game, its score and where it's on") {

@@ -15,6 +15,7 @@
 #include "core/sports/schedule.hpp"
 #include "core/sports/text.hpp"
 #include "core/sports/titles.hpp"
+#include "core/util/rx.hpp"
 
 namespace marigold::sports::board {
 
@@ -1165,7 +1166,13 @@ std::optional<Whip> whipNamed(std::string_view name) {
   if (has("redzone") || has("red zone")) return Whip{"NFL", "NFL", "NFL RedZone", "Every game, every score", 1, true};
   if (has("strike zone")) return Whip{"MLB", "MLB", "MLB Strike Zone", "Every big moment", 2, false};
   if (has("big inning")) return Whip{"MLB", "MLB", "MLB Big Inning", "Every big moment", 2, false};
-  if (has("konferenz") || has("goal zone") || has("goal rush") || has("multiplex")) {
+  // "Multiplex" alone is a word movie channels use too ("VIX Golden
+  // Multiplex"): only a football one is a match-day conference.
+  bool footballMultiplex =
+      has("multiplex") && rx::test("\\b(football|futbol|fútbol|soccer|ligue|liga|bundesliga|serie a|premier|"
+                                   "calcio|eredivisie|champions|europa|nations)\\b",
+                                   lower);
+  if (has("konferenz") || has("goal zone") || has("goal rush") || footballMultiplex) {
     return Whip{"Soccer", "SOC", "Conference feed", "Every match, one feed", 2, false};
   }
   return std::nullopt;

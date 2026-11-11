@@ -91,7 +91,8 @@ std::optional<Saved> readSaved(std::istream& in) {
 
 std::optional<std::string> countryPrefix(const std::optional<std::string>& group) {
   if (!group) return std::nullopt;
-  auto m = rx::first("^\\s*([A-Z]{2,4})\\s*\\|", *group);
+  // "US| ..." and, wrapped in bars, "|US| ...".
+  auto m = rx::first("^\\s*\\|?\\s*([A-Z]{2,4})\\s*\\|", *group);
   if (!m || !m->has(1)) return std::nullopt;
   return std::string(m->group(1));
 }

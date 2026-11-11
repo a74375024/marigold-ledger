@@ -58,12 +58,12 @@ Session::~Session() {
   }
 }
 
-void Session::logEvent(std::string_view event, std::string_view detail) {
+void Session::logEvent(std::string_view event, std::string_view detail, bool withFeed) {
   std::string channel, feed, provider;
   if (const GuideChannel* g = store_.channels()->find(entry_)) channel = g->name;
   else if (const EventTile* t = store_.eventTile(entry_)) channel = t->heroTitle.empty() ? t->title : t->heroTitle;
   size_t i = rec_.feedIndex();
-  if (i < feeds_.size()) {
+  if (withFeed && i < feeds_.size()) {
     feed = feeds_[i].label;
     provider = store_.providerName(feeds_[i].channelId);
   }
@@ -144,7 +144,9 @@ bool Session::begin(const std::string& entryId, std::vector<Feed> feeds, const s
   quickPending_.clear();
   noPicture_ = false;
   infos = feedInfos(entryId);
-  logEvent("tune", std::to_string(feeds_.size()) + (feeds_.size() == 1 ? " feed" : " feeds"));
+  // Before the recovery picks a version: the one it played last time isn't
+  // this channel's.
+  logEvent("tune", std::to_string(feeds_.size()) + (feeds_.size() == 1 ? " feed" : " feeds"), false);
   // Every caller has already waited (OK, a settled flip, a preview's dwell,
   // a typed number): no second settle.
   playback::TuneOptions options;
@@ -212,7 +214,7 @@ void Session::apply(const playback::Actions& actions) {
       case playback::Action::Kind::GiveUp:
         player_->stop();
         failMessage_ = a.text;
-        logEvent("gave up", a.text);
+        // The recovery's own "gave up" line is already in the log.
         MLOG_W("play", "gave up: %s", playback::safeMessage(a.text).c_str());
         break;
       case playback::Action::Kind::Note:

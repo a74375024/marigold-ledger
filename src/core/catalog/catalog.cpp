@@ -60,7 +60,8 @@ const std::unordered_set<std::string>& countryCodes() {
 const std::unordered_map<std::string, std::string>& threeLetterCodes() {
   static const std::unordered_map<std::string, std::string> kCodes = {
       {"USA", "US"}, {"MEX", "MX"}, {"CAN", "CA"}, {"GBR", "UK"}, {"ARG", "AR"}, {"ESP", "ES"},
-      {"FRA", "FR"}, {"DEU", "DE"}, {"GER", "DE"}, {"ITA", "IT"}, {"BRA", "BR"}, {"POR", "PT"}};
+      {"FRA", "FR"}, {"DEU", "DE"}, {"GER", "DE"}, {"ITA", "IT"}, {"BRA", "BR"}, {"POR", "PT"},
+      {"AUS", "AU"}, {"FIN", "FI"}, {"LBN", "LB"}, {"SWE", "SE"}, {"NOR", "NO"}, {"DNK", "DK"}};
   return kCodes;
 }
 
@@ -68,13 +69,16 @@ std::optional<std::string> countryFor(std::string_view name, std::string_view lo
                                       std::string_view rawGroup, std::string_view group,
                                       bool xtream) {
   if (xtream && hasAnyOf(rawGroup, "|")) {
-    if (auto code = text::firstGroup("^\\s*([A-Z0-9]{2,5})\\s*\\|", rawGroup, 1)) {
+    // "US| ..." and, wrapped in bars, "|US| ...", "|AUS| ...".
+    if (auto code = text::firstGroup("^\\s*\\|?\\s*([A-Z0-9]{2,5})\\s*\\|", rawGroup, 1)) {
       if (!code->empty() && (*code)[0] >= '0' && (*code)[0] <= '9') return std::nullopt;  // "4K|"
+      if (*code == "PPV") return std::nullopt;  // an event group, no country
       // Marigold: "USA|", "MEX|", "GBR|" are the same countries as "US|"
       // (tvOS kept "USA" as its own code, so those channels never counted
       // as US: no core networks, no locals, and no "US" in the country list).
       auto three = threeLetterCodes().find(*code);
       if (three != threeLetterCodes().end()) return three->second;
+      if (*code == "SW") return std::string("CH");  // "|SW| DAZN SWITZERLAND"
       return *code == "GB" ? std::string("UK") : *code;
     }
   }
@@ -97,7 +101,7 @@ std::optional<std::string> countryFor(std::string_view name, std::string_view lo
     const char* needs;  // one of these characters must be in the name
   };
   static const NamePattern kNamePatterns[] = {{"^\\s*\\(([A-Za-z]{2,3})\\)", "("},
-                                              {"^\\s*([A-Z]{2,3})\\s*[:|]", ":|"},
+                                              {"^\\s*\\|?\\s*([A-Z]{2,3})\\s*[:|]", ":|"},
                                               {"^\\s*(USA?)\\s", "U"}};
   for (const NamePattern& np : kNamePatterns) {
     if (!hasAnyOf(name, np.needs)) continue;
@@ -1711,7 +1715,7 @@ std::string cleanName(std::string_view name) {
   };
   static const Pattern kPatterns[] = {
       {"^\\s*(\\([A-Za-z0-9 ]{1,14}\\)\\s*)+", "("},          // (US) (A)
-      {"^\\s*\\|\\s*[A-Za-z]{2,3}\\s*\\|\\s*", "|"},          // |US|
+      {"^\\s*\\|\\s*[A-Za-z]{2,5}\\s*\\|\\s*", "|"},          // |US| |EGYPT|
       {"^\\s*(USA?|US|REG|MEX|MX|UK|CA)\\s*[:|]\\s*", ":|"},  // US: / USA |
       // US / USA, but not USA Network's own name.
       {"^\\s*(USA?|US)\\s+(?!network\\b)", "Uu"},

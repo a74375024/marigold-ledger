@@ -432,7 +432,7 @@ std::shared_ptr<ChannelRows> makeRows(const catalog::LineupOutput& lo, const Cat
     logos::LogoSpec spec = logos::spec(g.name, ei ? ei->core : std::nullopt, g.west, ei && local && ei->callsign,
                                        ei ? ei->callsign : std::nullopt, ei ? ei->virtualNumber : std::nullopt,
                                        e.imageUrl, member ? member->epgId : std::nullopt, category, iptvOrg,
-                                       directoryIptvOrg(ei));
+                                       directoryIptvOrg(ei), ei ? logos::referenceIdOf(ei->id) : std::string());
     g.logoUrl = logos::chain(spec.urls);
     g.logoSources = str::join(spec.sources, ", ");
     g.subtitle = spec.subtitle.value_or(catalog::genreTitle(category));
@@ -3396,11 +3396,21 @@ double Store::feedReliability(const std::string& channelId) const {
   return reliabilityOf(channelId);
 }
 
+namespace {
+// How copies of one kind start: by the provider's source tag ("(s)", "us")
+// within one account, since two providers' tags (or none) say nothing
+// about each other.
+std::string reliabilityKey(const std::string& channelId, const std::string& tag) {
+  size_t bar = channelId.find('|');
+  return bar == std::string::npos ? tag : tag + "@" + channelId.substr(0, bar);
+}
+}  // namespace
+
 double Store::reliabilityOf(const std::string& channelId) const {
   const Impl& m = *impl_;
   auto t = m.catalog->traits.find(channelId);
   std::string tag = t == m.catalog->traits.end() ? "" : t->second.sourceTag;
-  auto r = m.reliability.find(tag);
+  auto r = m.reliability.find(reliabilityKey(channelId, tag));
   int ok = r == m.reliability.end() || r->second.size() < 2 ? 0 : r->second[0];
   int bad = r == m.reliability.end() || r->second.size() < 2 ? 0 : r->second[1];
   return static_cast<double>(ok + 1) / static_cast<double>(ok + bad + 2);
@@ -3644,7 +3654,7 @@ void Store::recordFeed(const std::string& channelId, bool worked) {
   }
   auto t = m.catalog->traits.find(channelId);
   std::string tag = t == m.catalog->traits.end() ? "" : t->second.sourceTag;
-  auto& counts = m.reliability[tag];
+  auto& counts = m.reliability[reliabilityKey(channelId, tag)];
   if (counts.size() < 2) counts = {0, 0};
   ++counts[worked ? 0 : 1];
   if (t != m.catalog->traits.end() && t->second.familyKey) {
@@ -3843,7 +3853,8 @@ std::shared_ptr<const Channels> Store::channelsNow() const {
     logos::LogoSpec spec = logos::spec(
         g.name, ei ? ei->core : std::nullopt, g.west, ei && cat == catalog::LineupCategory::local && ei->callsign,
         ei ? ei->callsign : std::nullopt, ei ? ei->virtualNumber : std::nullopt, e.imageUrl,
-        member ? member->epgId : std::nullopt, cat, m.iptvOrg.get(), directoryIptvOrg(ei));
+        member ? member->epgId : std::nullopt, cat, m.iptvOrg.get(), directoryIptvOrg(ei),
+        ei ? logos::referenceIdOf(ei->id) : std::string());
     g.logoUrl = logos::chain(spec.urls);
     g.logoSources = str::join(spec.sources, ", ");
     g.subtitle = spec.subtitle.value_or(catalog::genreTitle(cat));

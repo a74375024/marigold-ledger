@@ -20,6 +20,10 @@ TEST_CASE("normalize: comparable names, West kept apart") {
   CHECK(normalize("HBO 2 WEST HD") == "hbo2~west");
   CHECK(normalize("US: A&E (West)") == "aande~west");
   CHECK(normalize("Telemundo (WEST) \xe1\xb4\xb4\xe1\xb4\xb0") == "telemundo~west");
+  // A superscript marker after the word ("TBS WEST ᴿᴬᵂ ⁶⁰ᶠᵖˢ").
+  CHECK(normalize("TV: TBS WEST \xe1\xb4\xbf\xe1\xb4\xac\xe1\xb5\x82") == "tbs~west");
+  CHECK(namesWestFeed("at&t: hbo west \xe1\xb4\xbf\xe1\xb4\xac\xe1\xb5\x82 \xe2\x81\xb6\xe2\x81\xb0\xe1\xb6\xa0\xe1\xb5\x96\xcb\xa2"));
+  CHECK_FALSE(namesWestFeed("west ham \xe1\xb4\xb4\xe1\xb4\xb0 sports"));
   // Names with West or Pacific in them that aren't West feeds.
   CHECK(normalize("EPL West Ham") == "eplwestham");
   CHECK(normalize("Wild West TV") == "wildwest");

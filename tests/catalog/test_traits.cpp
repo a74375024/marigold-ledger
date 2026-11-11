@@ -87,6 +87,11 @@ TEST_CASE("West feeds cluster apart") {
 TEST_CASE("country from Xtream group prefix, group name, name prefix") {
   CHECK(traitsFor(channel("1", "Canal Prueba", "MX| Canales")).country == std::string("MX"));
   CHECK(traitsFor(channel("1", "Thing", "GB| News")).country == std::string("UK"));
+  // A provider that wraps the code in bars: "|FR| ...", "|US| ...".
+  CHECK(traitsFor(channel("1", "|FR| Discovery", "|FR| \xe2\x9c\xaa CHAINES FRANCAISES")).country == std::string("FR"));
+  CHECK(traitsFor(channel("1", "|US| Discovery", "|US| \xe2\x9c\xaa ENTERTAINMENT")).country == std::string("US"));
+  CHECK(traitsFor(channel("1", "Sport 1", "|SW| \xe2\x9c\xaa DAZN SWITZERLAND PPV")).country == std::string("CH"));
+  CHECK(traitsFor(channel("1", "Thing", "|AUS| Sport")).country == std::string("AU"));
   // "4K|" blocks say nothing, and stop the search.
   CHECK_FALSE(traitsFor(channel("1", "UK: Thing", "4K| Sports")).country);
   // The Xtream code is taken as written, except that three-letter group

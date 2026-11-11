@@ -65,11 +65,22 @@ std::vector<std::string> letterNumberTokens(std::string_view text) {
 bool namesWestFeed(std::string_view lowered) {
   // At the end ("HBO West", "HBO 2 WEST HD") or in brackets ("A&E (West)");
   // "EPL West Ham", "Wild West TV", "Pacific Blue" and West Palm Beach
-  // locals aren't West feeds.
-  return rx::test("[\\(\\[]\\s*(west|pacific)(\\s+feed)?\\s*[\\)\\]]", lowered) ||
-         rx::test("(?<!wild )\\b(west|pacific)(\\s+(hd|fhd|uhd|sd|4k|raw|feed))*"
+  // locals aren't West feeds. Cheap test first: most names say neither.
+  if (lowered.find("west") == std::string_view::npos && lowered.find("pacific") == std::string_view::npos)
+    return false;
+  if (rx::test("[\\(\\[]\\s*(west|pacific)(\\s+feed)?\\s*[\\)\\]]", lowered)) return true;
+  // Superscript markers after the word ("TBS WEST ᴿᴬᵂ ⁶⁰ᶠᵖˢ") are letters
+  // to the pattern below: they go first.
+  std::string plain(lowered);
+  if (std::any_of(plain.begin(), plain.end(), [](char c) { return static_cast<unsigned char>(c) >= 0xC2; })) {
+    plain = rx::replace(plain,
+                        "[\\x{1D2C}-\\x{1D6A}\\x{1D78}-\\x{1DBF}\\x{2070}-\\x{209F}\\x{2C7D}"
+                        "\\x{24B6}-\\x{24E9}\\x{02B0}-\\x{02FF}\\x{00B2}\\x{00B3}\\x{00B9}ⓧ]",
+                        "");
+  }
+  return rx::test("(?<!wild )\\b(west|pacific)(\\s+(hd|fhd|uhd|sd|4k|raw|feed))*"
                   "(\\s*[\\(\\[][^\\)\\]]*[\\)\\]])*[^\\p{L}\\p{N}]*$",
-                  lowered);
+                  plain);
 }
 
 std::string normalize(std::string_view name) {
