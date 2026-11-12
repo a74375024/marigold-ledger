@@ -278,7 +278,11 @@ jobs:
   # The scripts work on either; the app is built for the Apple TV's arm64
   # and the Simulator's slice matches the Mac.
   tvos:
-    runs-on: macos-15
+    # Intel Macs (Build 157): GitHub's Apple Silicon Macs (macos-15) were
+    # out of capacity for days, the jobs cancelled before a Mac took them.
+    # The apps are the same: the device build is always arm64, the simulator
+    # follows this Mac (build-tvos.sh), and the Mac app is universal.
+    runs-on: macos-15-intel
     timeout-minutes: 90
     env:
       MARIGOLD_REQUIRE_CHANNEL_DIRECTORY: "1"  # cmake/channel-directory.cmake
@@ -350,7 +354,7 @@ jobs:
   # with its VLC and quit cleanly (tools/mac-smoke.sh). Its own job, beside
   # the Apple TV's, so neither waits on the other.
   mac:
-    runs-on: macos-15
+    runs-on: macos-15-intel  # see tvos
     timeout-minutes: 90
     env:
       MARIGOLD_REQUIRE_CHANNEL_DIRECTORY: "1"  # cmake/channel-directory.cmake
