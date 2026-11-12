@@ -1,0 +1,95 @@
+name: Apple TV app
+
+# The Apple TV app: host tests with Apple clang, the preview tool, the
+# unsigned .ipa, and a start in the tvOS Simulator.
+# Called twice by ci.yml: on the first pool of Macs, and on the other pool
+# (Apple Silicon / Intel) only when the first didn't succeed, so a day
+# without one kind of Mac doesn't hold up the build and the release.
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: The Mac to run on (macos-15, macos-15-intel)
+        required: true
+        type: string
+      wiki:
+        description: The built-in Wikipedia data's cache key (ci.yml's wikidata job)
+        required: true
+        type: string
+      directory:
+        description: The built-in channel directory's cache key
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  tvos:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 90
+    env:
+      MARIGOLD_REQUIRE_CHANNEL_DIRECTORY: "1"  # cmake/channel-directory.cmake
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Built-in Wikipedia data
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: data/wiki-data.json
+          key: ${{ inputs.wiki }}
+          restore-keys: wikidata-v1-
+          fail-on-cache-miss: true
+      - name: Built-in channel directory
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: data/channel-directory.json
+          key: ${{ inputs.directory }}
+          restore-keys: |
+            channeldir-v7-
+            channeldir-v6-
+          fail-on-cache-miss: true
+      - name: Host tests with Apple clang
+        # Compiles at most one per core: these Macs have 3 cores and 7 GB,
+        # and an uncapped build ran ~100 compilers at once and crawled for
+        # an hour (Build 133). The step stops itself rather than wait 6 hours.
+        timeout-minutes: 45
+        env:
+          ASAN_OPTIONS: halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          cmake -S . -B build-host -DCMAKE_BUILD_TYPE=Debug -DMARIGOLD_SANITIZE="address,undefined"
+          cmake --build build-host --parallel "$(sysctl -n hw.ncpu)"
+          ctest --test-dir build-host --output-on-failure
+      - name: Build marigold-preview (Live Events from a channel report)
+        run: |
+          cmake -S . -B build-preview -DCMAKE_BUILD_TYPE=Release -DMARIGOLD_BUILD_TESTS=OFF \
+            -DCMAKE_OSX_ARCHITECTURES=arm64
+          cmake --build build-preview --target marigold-preview --parallel "$(sysctl -n hw.ncpu)"
+          mkdir -p marigold-preview-mac
+          cp build-preview/tools/preview/marigold-preview tools/preview/README.md marigold-preview-mac/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: marigold-preview-mac-${{ github.run_number }}
+          path: marigold-preview-mac
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/.cache/marigold-tvvlckit
+          key: tvvlckit-${{ hashFiles('tools/tvos.conf') }}
+      - name: Build the app
+        env:
+          MARIGOLD_BUILD_NUMBER: ${{ github.run_number }}
+        run: bash tools/build-tvos.sh device
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: marigold-tvos-${{ github.run_number }}
+          path: build-tvos/marigold-tvos-${{ github.run_number }}.ipa
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+      - name: Start it in the tvOS Simulator
+        env:
+          MARIGOLD_BUILD_NUMBER: ${{ github.run_number }}
+        run: bash tools/tvos-smoke.sh "$(bash tools/build-tvos.sh simulator | tail -n 1)"

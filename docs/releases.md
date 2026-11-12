@@ -54,3 +54,16 @@ in the repo. After editing it:
 Keep a row's ID when renaming or splitting it, so the viewer's picks and
 favourites follow; a new row gets a new ID. A US channel not on the list is
 Free Streaming when something calls it so, else Other (hidden unless shown).
+
+## Apple builds when GitHub has no Macs (Build 158)
+
+The Apple TV and Mac apps build on one pool of GitHub's Macs (Intel,
+`macos-15-intel`, since Build 157) and, only when that job doesn't succeed
+(usually: no Mac came in time, "not acquired by Runner"), once more in the
+same run on the other pool (Apple Silicon, `macos-15`). The release takes
+either. The jobs' steps live in `.github/workflows/apple-tv.yml` and
+`mac-app.yml`, called twice each from `ci.yml`.
+
+If both pools fail two runs in a row, swap the two runner names in `ci.yml`'s
+four Apple jobs, so the pool that has been working comes first. A real build
+failure fails on both pools and stops the release as before.

@@ -1,0 +1,70 @@
+name: Mac app
+
+# The Mac app: Apple Silicon and Intel in one, signed ad hoc, as a .dmg;
+# then started on this Mac, where it must draw, take keys, play a test file
+# with its VLC and quit cleanly (tools/mac-smoke.sh).
+# Called twice by ci.yml: on the first pool of Macs, and on the other pool
+# (Apple Silicon / Intel) only when the first didn't succeed, so a day
+# without one kind of Mac doesn't hold up the build and the release.
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: The Mac to run on (macos-15, macos-15-intel)
+        required: true
+        type: string
+      wiki:
+        description: The built-in Wikipedia data's cache key (ci.yml's wikidata job)
+        required: true
+        type: string
+      directory:
+        description: The built-in channel directory's cache key
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  mac:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 90
+    env:
+      MARIGOLD_REQUIRE_CHANNEL_DIRECTORY: "1"  # cmake/channel-directory.cmake
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Built-in Wikipedia data
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: data/wiki-data.json
+          key: ${{ inputs.wiki }}
+          restore-keys: wikidata-v1-
+          fail-on-cache-miss: true
+      - name: Built-in channel directory
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: data/channel-directory.json
+          key: ${{ inputs.directory }}
+          restore-keys: |
+            channeldir-v7-
+            channeldir-v6-
+          fail-on-cache-miss: true
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/.cache/marigold-vlckit-mac
+          key: vlckit-mac-${{ hashFiles('tools/mac.conf') }}
+      - name: Build the app
+        timeout-minutes: 60
+        env:
+          MARIGOLD_BUILD_NUMBER: ${{ github.run_number }}
+        run: bash tools/build-mac.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: marigold-mac-${{ github.run_number }}
+          path: build-mac/marigold-mac-${{ github.run_number }}.dmg
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+      - name: Start it on this Mac
+        timeout-minutes: 5
+        run: bash tools/mac-smoke.sh build-mac/src/platform/macos/Marigold.app
