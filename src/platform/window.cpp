@@ -201,7 +201,11 @@ bool Window::nextEvent(Event& out, int timeoutMs) {
       out.type = Event::Type::Quit;
       break;
     case SDL_WINDOWEVENT:
-      if (e.window.event == SDL_WINDOWEVENT_HIDDEN || e.window.event == SDL_WINDOWEVENT_FOCUS_LOST)
+      // Hidden only: losing focus is the TV putting its own menu over the
+      // app (the remote's Settings button on LG), and what plays keeps
+      // playing behind it (Build 159). Leaving the app hides the window or
+      // sends it to the background.
+      if (e.window.event == SDL_WINDOWEVENT_HIDDEN || e.window.event == SDL_WINDOWEVENT_MINIMIZED)
         out.type = Event::Type::Hidden;
       else if (e.window.event == SDL_WINDOWEVENT_SHOWN || e.window.event == SDL_WINDOWEVENT_EXPOSED ||
                e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED)

@@ -17,7 +17,7 @@ struct Event {
     None,         // nothing the app acts on
     Wake,         // wake() from a worker
     Quit,
-    Hidden,       // the window lost focus or was hidden
+    Hidden,       // the window was hidden (not when it only lost focus)
     Shown,        // shown, exposed or focused again: redraw
     Background,   // the app is going to the background
     KeyDown,
