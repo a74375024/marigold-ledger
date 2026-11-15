@@ -109,7 +109,9 @@ const std::vector<CoreChannel>& coreChannels() {
       {"HBO", LineupCategory::movies, {"hbo"}},
       {"HBO 2", LineupCategory::movies, {"hbo 2", "hbo2"}},
       {"HBO Signature", LineupCategory::movies, {"hbo signature"}},
-      {"HBO Family", LineupCategory::movies, {"hbo family"}},
+      // Build 161: shut down Aug 15, 2025, with no successor (its copies are hidden
+      // unless they have listings, or the viewer added one).
+      {"HBO Family", LineupCategory::movies, {"hbo family"}, "2025-08-15"},
       {"HBO Comedy", LineupCategory::movies, {"hbo comedy"}},
       {"HBO Zone", LineupCategory::movies, {"hbo zone"}},
       {"HBO Hits", LineupCategory::movies, {"hbo hits"}},
@@ -384,6 +386,23 @@ std::optional<std::vector<std::string>> regionalSportsPlaces(std::string_view na
     if (found) return found->places;
   }
   return std::nullopt;
+}
+
+bool regionalSportsBrand(std::string_view name) {
+  std::string key = wordsKey(name);
+  for (const char* brand : {"fanduel sports", "bally sports", "root sports", "at t sportsnet", "att sportsnet"}) {
+    if (startsWithWords(key, brand)) return true;
+  }
+  // "Fox Sports Ohio", "NBC Sports Chicago Plus"; not FS1, Fox Sports 2 or NBCSN.
+  for (const char* brand : {"fox sports ", "nbc sports "}) {
+    if (key.rfind(brand, 0) != 0) continue;
+    std::string rest = key.substr(std::char_traits<char>::length(brand));
+    if (rest == "network" || rest == "1" || rest == "2" || rest == "one" || rest == "two") return false;
+    return regionalSportsPlaces(name).has_value() || std::any_of(regionWords().begin(), regionWords().end(), [&](const std::string& w) {
+             return startsWithWords(rest, w);
+           });
+  }
+  return false;
 }
 
 }  // namespace marigold::catalog

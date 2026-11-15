@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "core/catalog/catalog.hpp"
 #include "core/catalog/core_channels.hpp"
 #include "core/catalog/markets.hpp"
 #include "core/catalog/reference.hpp"
@@ -383,6 +384,43 @@ std::optional<LineupPrefs> lineupPrefsFromJson(std::string_view textIn) {
   return p;
 }
 
+namespace {
+
+// Build 161: a US Spanish station by its network's name with a number or a
+// place but no call sign ("TELEMUNDO 47", "UNIVISION 65 [NEW JERSEY]"); not
+// the network's national feed ("UNIVISION", "TELEMUNDO EAST").
+bool spanishStationWithoutSign(const EntryInfo& entry) {
+  if (entry.callsign || !str::startsWith(entry.scope, "regional") || !networkWord(entry.name)) return false;
+  return entry.virtualNumber.has_value() || entry.scope != "regional:?";
+}
+
+bool spanishStationHere(const EntryInfo& entry, const LineupPrefs& prefs, std::string_view name, bool namesCity) {
+  std::string place = entry.scope.size() > 9 ? entry.scope.substr(9) : std::string();
+  if (place == "?") {
+    if (namesCity) return true;
+  } else {
+    std::set<std::string> places = prefs.marketPlaces();
+    for (std::string_view p : str::split(place, '|'))
+      if (places.count(std::string(p))) return true;
+  }
+  // "TELEMUNDO 48": the network's station on that number in the user's markets.
+  std::optional<std::string> network = networkWord(name);
+  if (!entry.virtualNumber || !network) return false;
+  std::set<std::string> signs = prefs.marketCallsigns();
+  for (const reference::Index::Carrier& c : reference::builtInIndex().stationsOf(*network)) {
+    if (text::toInt(c.number.substr(0, c.number.find('.'))) == entry.virtualNumber &&
+        signs.count(reference::bareCallsign(c.station->callsign)))
+      return true;
+  }
+  return false;
+}
+
+}  // namespace
+
+bool isOverflowId(const std::string& entryId) {
+  return str::startsWith(entryId, "e|r:") && entryId.find("~x") != std::string::npos;
+}
+
 bool suggests(const EntryInfo& entry, const LineupPrefs& prefs, bool hasGuide,
               std::string_view name, const CoastFeeds& coasts) {
   // Only the chosen countries / languages.
@@ -413,15 +451,6 @@ bool suggests(const EntryInfo& entry, const LineupPrefs& prefs, bool hasGuide,
   // Core national networks: always, in the categories picked.
   if (entry.core) return on(entry.category);
   if (entry.scope == "team") return false;
-  // Other countries / US Spanish: the user chose them; channels with a guide.
-  if (entry.market != std::string("US")) {
-    if (entry.callsign) {
-      // A station (Univision, Telemundo...): only the user's market's.
-      return on(LineupCategory::local) &&
-             prefs.marketCallsigns().count(baseSign(*entry.callsign)) > 0;
-    }
-    return hasGuide || !prefs.requireGuide;
-  }
   std::string lower = str::lower(name);
   auto namesMarketCity = [&] {
     for (const std::string& part : prefs.marketCityParts()) {
@@ -429,6 +458,22 @@ bool suggests(const EntryInfo& entry, const LineupPrefs& prefs, bool hasGuide,
     }
     return false;
   };
+  // Other countries / US Spanish: the user chose them; channels with a guide.
+  if (entry.market != std::string("US")) {
+    if (entry.callsign) {
+      // A station (Univision, Telemundo...): only the user's market's.
+      return on(LineupCategory::local) &&
+             prefs.marketCallsigns().count(baseSign(*entry.callsign)) > 0;
+    }
+    // Build 161: a US Spanish station whose call sign nothing told
+    // ("TELEMUNDO 47", "UNIVISION 65 [NEW JERSEY]") is its own market's,
+    // not national: only where its place is the user's market, or its
+    // network and number are one of the user's market's stations.
+    if (entry.market == std::string("US-ES") && spanishStationWithoutSign(entry)) {
+      return spanishStationHere(entry, prefs, name, namesMarketCity()) && (hasGuide || !prefs.requireGuide);
+    }
+    return hasGuide || !prefs.requireGuide;
+  }
   // Regional channels (another city's locals, regional sports) only for their market.
   if (str::startsWith(entry.scope, "regional")) {
     std::string place = entry.scope.size() > 9 ? entry.scope.substr(9) : std::string();

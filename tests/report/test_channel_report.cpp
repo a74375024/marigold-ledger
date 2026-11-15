@@ -190,6 +190,7 @@ Fixture sample() {
   EntryInfo entry;
   entry.id = "e|nbc4";
   entry.name = "NBC 4 New York";
+  entry.category = LineupCategory::local;
   entry.members = {"xt:a|1"};
   f.catalog.entries.push_back(entry);
   f.catalog.entryOf["xt:a|1"] = "e|nbc4";
@@ -236,9 +237,9 @@ Fixture sample() {
 
 TEST_CASE("channel report: header") {
   const auto& columns = channelReportColumns();
-  CHECK(columns.size() == 49);
+  CHECK(columns.size() == 51);
   CHECK(columns.front() == "number");
-  CHECK(columns.back() == "guide_rejected");
+  CHECK(columns.back() == "row_closed");
   std::string csv = channelReportCSV(ChannelReportInput());
   CHECK(csv ==
         "number,name,group,tags,hidden_group,favorite,callsign_in_name,station_lookup,match_key,"
@@ -249,7 +250,7 @@ TEST_CASE("channel report: header") {
         "provider_guide_genre_tagged_next_3h,now_genres,now_subtitle,now_description,"
         "outside_listings_end,now_start,outside_built_at,provider_built_at,outside_described_next_3h,"
         "provider_guide_described_next_3h,logo_sources,logo_status,directory_id,directory_match,"
-        "row_id,next_titles,guide_choice,guide_rejected\n");
+        "row_id,next_titles,guide_choice,guide_rejected,row_category,row_closed\n");
 }
 
 TEST_CASE("channel report: one row per channel with the Swift rules") {
@@ -258,7 +259,7 @@ TEST_CASE("channel report: one row per channel with the Swift rules") {
   std::string csv = channelReportCSV(f.input());
   auto rows = parseCsv(csv);
   REQUIRE(rows.size() == 6);
-  for (const auto& r : rows) CHECK(r.size() == 49);
+  for (const auto& r : rows) CHECK(r.size() == 51);
   CHECK(csv.back() == '\n');
 
   auto nbc = rowFor(rows, "US: NBC 4 WNBC");
@@ -306,6 +307,9 @@ TEST_CASE("channel report: one row per channel with the Swift rules") {
   CHECK(nbc["provider_built_at"] == "2026-10-26 18:00");
   CHECK(nbc["outside_described_next_3h"] == "1");
   CHECK(nbc["provider_guide_described_next_3h"] == "1");
+  // Build 161: the row's own category and whether it has shut down.
+  CHECK(nbc["row_category"] == "local");
+  CHECK(nbc["row_closed"] == "");
 
   auto fox = rowFor(rows, "FOX 2 Capital City");
   CHECK(fox["callsign_in_name"] == "");
@@ -349,6 +353,23 @@ TEST_CASE("channel report: one row per channel with the Swift rules") {
   CHECK(loop["server_guide"] == "not checked");
   CHECK(loop["now_title"] == "");  // its programme hasn't started
   CHECK(loop["provider"] == "");
+}
+
+TEST_CASE("channel report: the row's own category and closing (Build 161)") {
+  // A copy's `category` is its own; the row decides "other" and "free"
+  // together (catalog::build), and whether it has shut down.
+  Fixture f = sample();
+  f.catalog.entries[0].category = LineupCategory::other;
+  f.catalog.entries[0].closed = "2025-08-15";
+  auto rows = parseCsv(channelReportCSV(f.input()));
+  auto nbc = rowFor(rows, "US: NBC 4 WNBC");
+  CHECK(nbc["category"] == "local");
+  CHECK(nbc["row_category"] == "other");
+  CHECK(nbc["row_closed"] == "2025-08-15");
+  // A copy in no row has neither.
+  auto fox = rowFor(rows, "FOX 2 Capital City");
+  CHECK(fox["row_category"] == "");
+  CHECK(fox["row_closed"] == "");
 }
 
 TEST_CASE("channel report: provider guide notes") {

@@ -44,6 +44,12 @@ const std::vector<std::string>& regionWords();
 // new york; "NBC Sports California" -> the Bay Area and Sacramento), as
 // city parts of the markets it serves; nullopt for anything else.
 std::optional<std::vector<std::string>> regionalSportsPlaces(std::string_view name);
+// Build 161: a name of the regional sports network brands that shut down or
+// were sold off: FanDuel Sports / Bally Sports (and their "Plus" feeds),
+// Fox Sports <region>, NBC Sports <region>, Root Sports, AT&T SportsNet.
+// The free tier of the channel directory has their old streams without a
+// closing date; such a channel isn't free streaming.
+bool regionalSportsBrand(std::string_view name);
 // Other channels made for one area that don't name it the way locals do:
 // regional cable news and local cable channels ("NECN" -> boston, "OC16"
 // -> honolulu). "?" when the area isn't in the name ("Spectrum News 1" is

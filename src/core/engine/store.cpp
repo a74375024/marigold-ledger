@@ -2075,6 +2075,34 @@ void Store::rebuildEntries() {
   for (const auto& [id, list] : m.providerMatches) input->guideIDs.insert(id);
   for (const auto& [id, list] : m.serverPrograms)
     if (!list.empty()) input->guideIDs.insert(id);
+  // Build 161: the overflow rows' copies with a real programme in the next
+  // hours (a few dozen rows; "SIGN OFF" doesn't count).
+  {
+    const time::Seconds from = time::now();
+    const time::Seconds to = from + static_cast<time::Seconds>(catalog::kGuideHours * 3600);
+    auto rawLive = [&](const guide::SharedPrograms& map, const std::string& id) {
+      auto it = map.find(id);
+      if (it == map.end() || !it->second) return false;
+      return std::any_of(it->second->begin(), it->second->end(), [&](const guide::RawProgram& p) {
+        return static_cast<time::Seconds>(p.end()) * 60 > from && static_cast<time::Seconds>(p.s) * 60 < to &&
+               catalog::realProgramme(p.t);
+      });
+    };
+    for (const catalog::EntryInfo& info : m.catalog->entries) {
+      if (!catalog::isOverflowId(info.id)) continue;
+      for (const std::string& member : info.members) {
+        bool live = rawLive(m.providerMatches, member) || rawLive(m.outsideMatches, member);
+        if (!live) {
+          auto own = m.serverPrograms.find(member);
+          live = own != m.serverPrograms.end() &&
+                 std::any_of(own->second.begin(), own->second.end(), [&](const Program& p) {
+                   return p.end > from && p.start < to && catalog::realProgramme(p.title);
+                 });
+        }
+        if (live) input->liveGuideIDs.insert(member);
+      }
+    }
+  }
   // Local favourites count as favourites for the lineup rules, with the
   // server's own (Emby / Jellyfin) ones.
   std::unordered_set<std::string> favorites;

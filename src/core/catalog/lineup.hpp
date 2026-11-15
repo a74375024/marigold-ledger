@@ -134,6 +134,12 @@ struct CoastFeeds {
   bool skips(const EntryInfo& entry) const;
 };
 
+// Build 161: a row of a known channel's overflow or numbered feed
+// ("e|r:tennis-channel~x2", "e|r:bein-sports~x5"), dark most of the time:
+// lineup() suggests one only while it has real listings
+// (LineupInput::liveGuideIDs).
+bool isOverflowId(const std::string& entryId);
+
 // Whether an entry belongs in the suggested lineup (LineupEngine.suggests).
 // Marigold: only one of a channel's East and West versions, unless the user
 // asked for both.

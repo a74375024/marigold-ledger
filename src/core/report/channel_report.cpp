@@ -224,7 +224,8 @@ const std::vector<std::string>& channelReportColumns() {
       "now_subtitle", "now_description", "outside_listings_end",
       "now_start", "outside_built_at", "provider_built_at",
       "outside_described_next_3h", "provider_guide_described_next_3h", "logo_sources", "logo_status",
-      "directory_id", "directory_match", "row_id", "next_titles", "guide_choice", "guide_rejected"};
+      "directory_id", "directory_match", "row_id", "next_titles", "guide_choice", "guide_rejected",
+      "row_category", "row_closed"};
   return kColumns;
 }
 
@@ -298,10 +299,17 @@ std::string channelReportCSV(const ChannelReportInput& in,
     }
 
     std::string entryName;
+    // Build 161: the row's own category ("other", "free"), which the copy's
+    // `category` (its traits) doesn't show, and whether it has shut down.
+    std::string rowCategory, rowClosed;
     bool inLineup = false;
     if (entryId) {
       auto info = infoById.find(*entryId);
-      if (info != infoById.end()) entryName = info->second->name;
+      if (info != infoById.end()) {
+        entryName = info->second->name;
+        rowCategory = catalog::rawValue(info->second->category);
+        rowClosed = info->second->closed;
+      }
       inLineup = in.lineupIds && in.lineupIds->count(*entryId) > 0;
     }
 
@@ -426,6 +434,8 @@ std::string channelReportCSV(const ChannelReportInput& in,
         // aside (guide/choice.hpp); empty for rows not weighed.
         cell(choice ? choice->first : empty),
         cell(choice ? choice->second : empty),
+        cell(rowCategory),
+        cell(rowClosed),
     };
     out += str::join(row, ",");
     out += '\n';
