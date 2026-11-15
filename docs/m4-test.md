@@ -1789,7 +1789,7 @@ Multi-part events (UFC's early prelims, prelims and main card; a race weekend's 
 | No switching | Play a card while its part changes | Playback stays on what plays |
 | Speed (LG) | Open Live Events, press Watch, open Where to Watch | No slower than before |
 
-## Build 161: shut-down and duplicate channels
+## Build 161: 1.0.5, shut-down and duplicate channels
 
 Channels that have shut down no longer fill the guide, and several channels that showed twice (or inside another channel's row) are one row now.
 - **Shut down:** a channel that has closed (HBO Family, MovieMAX, OuterMAX, ThrillerMAX, Universal Kids, NBC Sports Chicago, NBC Sports Northwest, Fox College Sports, Circle) is out of the guide, All Channels, Search and channel up/down unless one of its copies has listings (GolTV still shows matches) or the viewer added it or made it a favourite. It's never suggested. A shut-down channel the list knows the parent of (HBO Family: HBO) joins only that channel's row, and only when the provider's guide files it there.
