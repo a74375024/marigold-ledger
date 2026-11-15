@@ -385,10 +385,10 @@ std::optional<std::string> referenceStation(const reference::Index& index, std::
       place = str::lower(std::string(str::trimUnicode(*rest)));
     }
   }
-  auto major = [](const std::string& n) { return text::toInt(n.substr(0, n.find('.'))); };
+  auto mainNumber = [](const std::string& n) { return text::toInt(n.substr(0, n.find('.'))); };
   std::vector<const reference::Index::Carrier*> byNumber, byPlace;
   for (const reference::Index::Carrier& c : carriers) {
-    bool numbered = number && major(c.number) == number;
+    bool numbered = number && mainNumber(c.number) == number;
     bool here = !place.empty() && placeInMarket(place, c.station->market);
     if (numbered) byNumber.push_back(&c);
     if (here) byPlace.push_back(&c);
