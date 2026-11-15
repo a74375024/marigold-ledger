@@ -95,6 +95,11 @@ struct LineupInput {
   LineupPrefs prefs;
   // Raw channel ids that have any guide data.
   std::set<std::string> guideIDs;
+  // Build 161: of the overflow rows' copies (isOverflowId), the raw ids
+  // with a real programme in the next kGuideHours: not a sign-off or a
+  // placeholder ("SIGN OFF", "Off Air"; realProgramme()). Such a row is
+  // suggested only with one.
+  std::set<std::string> liveGuideIDs;
   std::string otherGroup;
   // The coast whose East/West versions are suggested (resolveCoast(prefs)).
   Coast coast = Coast::both;
@@ -110,6 +115,10 @@ struct LineupInput {
   // added one or made one a favourite.
   bool showOther = false;
 };
+
+// Build 161: a listing's title that is a programme, not a sign-off or a
+// placeholder ("SIGN OFF", "Off Air", "No programming", "To Be Announced").
+bool realProgramme(std::string_view title);
 
 struct LineupOutput {
   std::set<std::string> lineupIDs;
@@ -127,7 +136,12 @@ struct LineupOutput {
   const std::string* areaSection(const std::string& entryId) const;
 };
 
-// Lineup membership and the entry list, in guide order: neighbourhoods
+// Lineup membership and the entry list, in guide order. Rows of the "other"
+// category and (Build 161) of channels that have shut down (EntryInfo::closed)
+// are left out of the list, so out of the guide, All Channels, Search and
+// channel up/down, unless the viewer added one or made one a favourite; a
+// shut-down one also shows while a copy has listings (guideIDs: GolTV
+// still shows matches). Neighbourhoods
 // (Local, News, Sports, Entertainment...), locals by their broadcast
 // number, everything else A-Z. With stations of two or more picked areas in
 // My Lineup, the locals go by area first (home, then the order picked; those

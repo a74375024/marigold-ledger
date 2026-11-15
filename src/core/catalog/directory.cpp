@@ -44,14 +44,23 @@ std::string plainLetters(std::string_view s) {
   return out;
 }
 
-std::vector<std::string> nameWords(std::string_view name) {
+NameCoast coastWord(std::string_view w) {
+  if (w == "west" || w == "pacific") return NameCoast::west;
+  return w == "east" ? NameCoast::east : NameCoast::none;
+}
+
+std::vector<std::string> nameWords(std::string_view name, NameCoast* coast = nullptr) {
+  // Build 161: "alt" is part of the name ("MLB Network Alt" is a channel of
+  // its own), not a quality tag.
   static const std::unordered_set<std::string> kQuality = {"hd",  "fhd",    "uhd",  "sd",    "4k",    "8k",
                                                            "hevc", "raw",   "vip",  "1080p", "720p",  "60fps",
-                                                           "50fps", "backup", "feed", "alt"};
+                                                           "50fps", "backup", "feed"};
   std::string lowered = str::lower(plainLetters(name));
   lowered = str::replaceAll(str::replaceAll(lowered, "&", " and "), "+", " plus ");
   std::vector<std::string> words;
   std::string word;
+  std::string bracket;  // the bracket being read
+  NameCoast said = NameCoast::none;
   int depth = 0;
   auto flush = [&] {
     if (!word.empty() && !kQuality.count(word)) words.push_back(word);
@@ -61,10 +70,13 @@ std::vector<std::string> nameWords(std::string_view name) {
     if (c == '(' || c == '[') {
       flush();
       ++depth;
+      bracket.clear();
     } else if (c == ')' || c == ']') {
+      // "A&E (West)": a coast in brackets.
+      if (depth == 1 && said == NameCoast::none) said = coastWord(str::trim(bracket));
       depth = std::max(0, depth - 1);
     } else if (depth > 0) {
-      continue;
+      bracket += c;
     } else if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
       word += c;
     } else {
@@ -73,13 +85,16 @@ std::vector<std::string> nameWords(std::string_view name) {
   }
   flush();
   // A feed's coast at the end, a US marker at either end.
-  while (words.size() > 1 && (words.back() == "east" || words.back() == "west" || words.back() == "pacific"))
+  while (words.size() > 1 && coastWord(words.back()) != NameCoast::none) {
+    if (said == NameCoast::none) said = coastWord(words.back());
     words.pop_back();
+  }
   auto marker = [](const std::string& w) { return w == "us" || w == "usa"; };
   if (words.size() > 1 && marker(words.back())) words.pop_back();
   // ("USA Network" keeps its own.)
   if (words.size() > 1 && marker(words.front()) && !(words.size() == 2 && words[1] == "network"))
     words.erase(words.begin());
+  if (coast) *coast = said;
   return words;
 }
 
@@ -113,12 +128,29 @@ bool Entry::operator==(const Entry& o) const {
 
 std::string exactKey(std::string_view name) { return str::join(nameWords(name), ""); }
 
+std::string exactKey(std::string_view name, NameCoast* coast) { return str::join(nameWords(name, coast), ""); }
+
+NameCoast nameCoast(std::string_view name) {
+  NameCoast coast = NameCoast::none;
+  nameWords(name, &coast);
+  return coast;
+}
+
+std::string coastSuffix(NameCoast coast) {
+  switch (coast) {
+    case NameCoast::east: return "~east";
+    case NameCoast::west: return "~west";
+    case NameCoast::none: break;
+  }
+  return std::string();
+}
+
 namespace {
 
 // A name's words without a leading "the" and trailing "tv", "network",
 // "channel" or "television".
-std::vector<std::string> looseWords(std::string_view name) {
-  std::vector<std::string> words = nameWords(name);
+std::vector<std::string> looseWords(std::string_view name, NameCoast* coast = nullptr) {
+  std::vector<std::string> words = nameWords(name, coast);
   if (words.size() > 1 && words.front() == "the") words.erase(words.begin());
   static const char* const kTails[] = {"television", "network", "channel", "tv"};
   for (bool again = true; again && !words.empty();) {
@@ -283,58 +315,94 @@ Index::Index(const Data& data) : data_(&data) {
     const Entry& e = data.entries[i];
     byId_.emplace(e.id, i);
     bool free = e.list == "free";
-    addUnique(free ? freeByName_ : byName_, exactKey(e.name), i);
-    addUnique(free ? freeByLoose_ : byLoose_, looseKey(e.name), i);
+    // Build 161: a name that says a coast ("Fox Sports West", "Max East") is
+    // filed under its key with that coast: only a name that says the same
+    // coast finds it, so "Fox Sports" isn't Fox Sports West.
+    auto exact = [](std::string_view n) {
+      NameCoast coast = NameCoast::none;
+      std::string key = str::join(nameWords(n, &coast), "");
+      return key + coastSuffix(coast);
+    };
+    auto loosely = [](std::string_view n) {
+      NameCoast coast = NameCoast::none;
+      std::string key = str::join(looseWords(n, &coast), "");
+      return key + coastSuffix(coast);
+    };
+    addUnique(free ? freeByName_ : byName_, exact(e.name), i);
+    addUnique(free ? freeByLoose_ : byLoose_, loosely(e.name), i);
     std::string own = looseKey(e.name);
     for (const std::string& alias : e.aliases) {
       // Its name and more ("GritXtra" leads to Grit's article) is a channel
       // of its own, not another name.
       std::string loose = looseKey(alias);
       if (!own.empty() && loose.size() > own.size() && str::startsWith(loose, own)) continue;
-      addUnique(free ? freeByAlias_ : byAlias_, exactKey(alias), i);
+      addUnique(free ? freeByAlias_ : byAlias_, exact(alias), i);
       // Loosely, an other name of one word is any channel's ("The Action
       // Channel" is no "Action").
-      if (looseWords(alias).size() > 1) addUnique(free ? freeByLoose_ : byLoose_, loose, i);
+      if (looseWords(alias).size() > 1) addUnique(free ? freeByLoose_ : byLoose_, loosely(alias), i);
     }
   }
   // A correction's channel: a listed one, else one of the free tier.
   for (const Correction& c : corrections()) {
-    std::string is = exactKey(c.is);
+    std::string is = exactKey(c.is) + coastSuffix(nameCoast(c.is));
     const std::vector<size_t>* target = nullptr;
     if (auto it = byName_.find(is); it != byName_.end()) {
       target = &it->second;
     } else if (auto free = freeByName_.find(is); free != freeByName_.end()) {
       target = &free->second;
     }
-    if (target && target->size() == 1) byCorrection_[exactKey(c.name)] = target->front();
+    if (target && target->size() == 1) byCorrection_[exactKey(c.name) + coastSuffix(nameCoast(c.name))] = target->front();
   }
 }
 
 Match Index::match(std::string_view name) const {
   Match m;
-  std::string key = exactKey(name);
+  NameCoast coast = NameCoast::none;
+  std::string key = str::join(nameWords(name, &coast), "");
   if (key.empty()) return m;
+  // A name that says a coast tries the names that say it first.
+  const std::string suffix = coastSuffix(coast);
+  auto find = [&](const std::unordered_map<std::string, std::vector<size_t>>& map,
+                  const std::string& k) -> const std::vector<size_t>* {
+    if (!suffix.empty()) {
+      if (auto it = map.find(k + suffix); it != map.end()) {
+        m.coastInName = true;
+        return &it->second;
+      }
+    }
+    auto it = map.find(k);
+    return it == map.end() ? nullptr : &it->second;
+  };
   auto pick = [&](const std::vector<size_t>& list, MatchKind kind) {
     if (list.size() == 1) {
       m.entry = &data_->entries[list.front()];
       m.kind = kind;
     } else {
       m.kind = MatchKind::ambiguous;
+      m.coastInName = false;
     }
     return m;
   };
+  if (!suffix.empty()) {
+    if (auto it = byCorrection_.find(key + suffix); it != byCorrection_.end()) {
+      m.entry = &data_->entries[it->second];
+      m.kind = MatchKind::alias;
+      m.coastInName = true;
+      return m;
+    }
+  }
   if (auto it = byCorrection_.find(key); it != byCorrection_.end()) {
     m.entry = &data_->entries[it->second];
     m.kind = MatchKind::alias;
     return m;
   }
-  if (auto it = byName_.find(key); it != byName_.end()) return pick(it->second, MatchKind::exact);
-  if (auto it = byAlias_.find(key); it != byAlias_.end()) return pick(it->second, MatchKind::alias);
+  if (const auto* list = find(byName_, key)) return pick(*list, MatchKind::exact);
+  if (const auto* list = find(byAlias_, key)) return pick(*list, MatchKind::alias);
   std::string loose = looseKey(name);
-  if (auto it = byLoose_.find(loose); it != byLoose_.end()) return pick(it->second, MatchKind::loose);
-  if (auto it = freeByName_.find(key); it != freeByName_.end()) return pick(it->second, MatchKind::exact);
-  if (auto it = freeByAlias_.find(key); it != freeByAlias_.end()) return pick(it->second, MatchKind::alias);
-  if (auto it = freeByLoose_.find(loose); it != freeByLoose_.end()) return pick(it->second, MatchKind::loose);
+  if (const auto* list = find(byLoose_, loose)) return pick(*list, MatchKind::loose);
+  if (const auto* list = find(freeByName_, key)) return pick(*list, MatchKind::exact);
+  if (const auto* list = find(freeByAlias_, key)) return pick(*list, MatchKind::alias);
+  if (const auto* list = find(freeByLoose_, loose)) return pick(*list, MatchKind::loose);
   if (auto it = data_->elsewhere.find(key); it != data_->elsewhere.end()) m.elsewhere = it->second;
   return m;
 }

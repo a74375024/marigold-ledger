@@ -54,10 +54,18 @@ struct Station {
   std::string simulcasts;           // the sister station it carries
 };
 
+// A channel that shut down and has no row ("HBO Family"), with the channel
+// it belonged to when the notes say ("hbo"; packed as {"n", "p"}, or the
+// name alone).
+struct Gone {
+  std::string name;
+  std::string parent;
+};
+
 struct Data {
   std::string made;
   std::vector<Channel> channels;
-  std::vector<std::string> gone;  // channels that shut down and have no row
+  std::vector<Gone> gone;  // channels that shut down and have no row
   std::vector<Station> stations;
 
   bool empty() const { return channels.empty() && stations.empty(); }
@@ -75,6 +83,11 @@ std::string bareCallsign(std::string_view sign);
 struct Match {
   const Channel* channel = nullptr;
   const Feed* feed = nullptr;  // a name only this feed goes by
+  // Build 161: the name matched one that says the same coast ("FanDuel
+  // Sports Network West", "Max East"): the coast is the name's, not a
+  // feed's. A name that says no coast never matches one that does
+  // (directory::NameCoast).
+  bool coastInName = false;
 };
 
 class Index {
@@ -88,6 +101,9 @@ class Index {
   Match match(std::string_view name) const;
   // A name of a channel that shut down: one without a row, or a closed row.
   bool gone(std::string_view name) const;
+  // The live channel a shut-down one without a row belonged to ("HBO
+  // Family" -> HBO); nullptr when the data doesn't say or it has closed too.
+  const Channel* goneParent(std::string_view name) const;
   // A station by call sign, bare or full; of two licences with one bare
   // sign (WBOC-TV, WBOC-LD) the full-power one.
   const Station* station(std::string_view callsign) const;
@@ -96,6 +112,13 @@ class Index {
   const Channel* channel(const std::string& id) const;
   // The stations in a market, by the app's market name.
   std::vector<const Station*> stationsIn(std::string_view market) const;
+  // Build 161: the stations of a network ("TELEMUNDO"), also those that
+  // carry it on a subchannel, with the channel number they carry it on.
+  struct Carrier {
+    const Station* station;
+    std::string number;  // "47", "12.2"
+  };
+  const std::vector<Carrier>& stationsOf(const std::string& network) const;
   const Data& data() const { return *data_; }
 
  private:
@@ -105,6 +128,8 @@ class Index {
   std::unordered_map<std::string, std::vector<std::pair<size_t, size_t>>> byFeed_;  // channel, feed
   std::unordered_map<std::string, size_t> byId_;
   std::unordered_map<std::string, size_t> gone_;
+  std::unordered_map<std::string, size_t> goneParent_;  // key -> the parent's channel index
+  std::unordered_map<std::string, std::vector<Carrier>> stationsByNetwork_;
   std::unordered_map<std::string, std::vector<size_t>> stationBySign_;
   std::unordered_map<std::string, size_t> stationByFormer_;
 };

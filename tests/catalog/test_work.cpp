@@ -400,3 +400,50 @@ TEST_CASE("lineup: the viewer's favourites join My Lineup but aren't marked as t
   CHECK(browse.count("e|b"));
   CHECK_FALSE(browse.count("e|c"));
 }
+
+TEST_CASE("lineup: a shut-down row is hidden without listings, shown with them or when chosen (Build 161)") {
+  std::vector<Channel> channels = {channel("1", "Open"), channel("2", "Closed A"), channel("3", "Closed B"),
+                                   channel("4", "Closed B backup")};
+  auto info = [](const std::string& id, std::vector<std::string> members, const std::string& closed) {
+    EntryInfo e;
+    e.id = id;
+    e.name = id;
+    e.category = LineupCategory::entertainment;
+    e.members = std::move(members);
+    e.market = "US";
+    e.closed = closed;
+    return e;
+  };
+  LineupInput input;
+  input.infos = {info("e|open", {"xt:1|1"}, ""), info("e|closed-a", {"xt:1|2"}, "2025-08-15"),
+                 info("e|closed-b", {"xt:1|3", "xt:1|4"}, "yes")};
+  input.channels = channels;
+  for (size_t i = 0; i < channels.size(); ++i) input.indexByID[channels[i].id] = i;
+  input.prefs.configured = true;
+  input.prefs.requireGuide = false;
+  input.otherGroup = "Other";
+  auto shown = [](const LineupOutput& out, const std::string& id) { return out.entryIndex.count(id) > 0; };
+  // No listings: out of the list (guide, All Channels, Search, channel up/down).
+  LineupOutput none = lineup(input);
+  CHECK(shown(none, "e|open"));
+  CHECK_FALSE(shown(none, "e|closed-a"));
+  CHECK_FALSE(shown(none, "e|closed-b"));
+  CHECK(none.lineupIDs.count("e|open"));
+  // One copy with listings: shown, still not suggested.
+  input.guideIDs = {"xt:1|4"};
+  LineupOutput listed = lineup(input);
+  CHECK(shown(listed, "e|closed-b"));
+  CHECK_FALSE(listed.lineupIDs.count("e|closed-b"));
+  CHECK_FALSE(shown(listed, "e|closed-a"));
+  // Added by the viewer.
+  input.prefs.added = {"e|closed-a"};
+  LineupOutput added = lineup(input);
+  CHECK(shown(added, "e|closed-a"));
+  CHECK(added.lineupIDs.count("e|closed-a"));
+  // A favourite.
+  input.prefs.added.clear();
+  input.favoriteIDs = std::unordered_set<std::string>{"xt:1|2"};
+  LineupOutput favorite = lineup(input);
+  CHECK(shown(favorite, "e|closed-a"));
+  CHECK(favorite.lineupIDs.count("e|closed-a"));
+}

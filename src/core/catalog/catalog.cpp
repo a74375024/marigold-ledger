@@ -257,6 +257,164 @@ bool isNationalish(std::string_view name) {
       name, true);
 }
 
+// Build 161: a station or a network's own feed by its network's name: a
+// network word and nothing that makes it another kind of channel
+// ("TELEMUNDO 52 [LOS ANGELES]", "UNIVISION EAST", "UNIMAS WEST"), or a
+// network's local news channel ("NBC LOS ANGELES NEWS", "CBS NEWS BAY
+// AREA"). Not a sports channel or event slot that names one ("Fox Sports
+// Tennessee", "...: Nbc Sports 06") or a team's ("WNBA ON ION 1").
+bool networkFeed(std::string_view name, const std::string& scope) {
+  if (scope == "team" || !networkWord(name)) return false;
+  if (!isNationalish(name)) return true;
+  return rx::test("\\b(ABC|CBS|NBC|FOX)\\b(?!.*\\bsports?\\b).*\\bnews\\b", name, true);
+}
+
+// Build 161: whether a provider's name the directory knows by an old name
+// may join the reference data's row for that channel. Not a brand alone
+// ("MAX", "FOX SPORTS": the directory's other names for one channel of the
+// brand), and only a name written like a channel's ("CSN BAY AREA HD",
+// "DIY Network"), not the page titles and people the directory has among
+// its other names ("Jennifer Lopez" for The Weather Channel).
+bool directoryNameJoins(std::string_view name) {
+  static const std::unordered_set<std::string> kBrands = {
+      "max", "foxsports", "nbcsports", "cbssports", "atandtsportsnet", "attsportsnet", "sportsnet",
+      "ballysports", "fanduelsports", "fanduelsportsnetwork"};
+  // (A coast makes it one channel: "FOX SPORTS WEST".)
+  directory::NameCoast coast = directory::NameCoast::none;
+  if (kBrands.count(directory::exactKey(name, &coast)) && coast == directory::NameCoast::none) return false;
+  return str::upper(name) == name ||
+         rx::test("\\b(tv|network|channel|sports?|sportsnet|news|net|plus|music|max|hd)\\b", name, true);
+}
+
+// Build 161: a square bracket that is the provider's tag, not part of which
+// channel it is: "[EVENT ONLY]", "[SLING]", "[MX]", "[400740]", a coast.
+bool bracketTag(std::string_view inner) {
+  if (inner.empty() || inner.size() > 30) return true;
+  return rx::test(
+      "^(events? only|live[- ]?events?|live|sling|multi(-audio)?|east|west|pacific|hd|fhd|uhd|sd|4k|8k|raw|vip|"
+      "backup|feed|usa?|arg|mex|esp|col|per|ven|ecu|uru|bra|can|gbr|aus|[a-z]{2}|[0-9 .:/-]+)$",
+      inner, true);
+}
+
+// Build 161: the name with what it says in square brackets written in, when
+// that says which channel it is ("NBC SPORTS HD [BAY AREA]" -> "NBC SPORTS
+// HD BAY AREA", "SPECTRUM SPORTSNET [LA DODGERS]", "UNIVISION 65 [NEW
+// JERSEY]", "NHL NETWORK [ALT]"); tags go. Empty when nothing is kept.
+std::string withBracketWords(std::string_view display) {
+  if (!hasAnyOf(display, "[")) return std::string();
+  std::string out;
+  bool kept = false;
+  size_t i = 0;
+  while (i < display.size()) {
+    size_t open = display.find('[', i);
+    size_t close = open == std::string_view::npos ? open : display.find(']', open);
+    if (close == std::string_view::npos) {
+      out.append(display.substr(i));
+      break;
+    }
+    out.append(display.substr(i, open - i));
+    std::string_view inner = str::trimUnicode(display.substr(open + 1, close - open - 1));
+    out += ' ';
+    if (!bracketTag(inner)) {
+      out.append(inner);
+      out += ' ';
+      kept = true;
+    }
+    i = close + 1;
+  }
+  if (!kept) return std::string();
+  return std::string(str::trimUnicode(rx::replace(out, "\\s{2,}", " ")));
+}
+
+// Build 161: every broadcast network named in a name, in order ("NBC (KVEA)
+// TELEMUNDO" -> NBC, TELEMUNDO), normalized as networkWord() does.
+std::vector<std::string> networkWords(std::string_view name) {
+  std::vector<std::string> out;
+  for (const rx::Match& m : rx::all("\\b(ABC|CBS|NBC|FOX|CW|PBS|MYTV|MyNetworkTV|MYNET|ION|Telemundo|Univision|UniMas|"
+                                    "Independent|IND|TMO|MY(?= ?\\d))(?=\\d|\\b)",
+                                    name, true)) {
+    if (auto word = networkWord(m.group(1))) out.push_back(*word);
+  }
+  return out;
+}
+
+// Build 161: whether a market's name names a place ("miami florida" is in
+// "Miami-Ft. Lauderdale", "san francisco" in "San Francisco-Oakland-San
+// Jose"). Lower-case `place`.
+bool placeInMarket(const std::string& place, std::string_view market) {
+  if (place.size() < 4) return false;
+  std::string lowered = str::lower(market);
+  std::string part;
+  auto test = [&] {
+    std::string p(str::trimUnicode(part));
+    part.clear();
+    if (p.size() < 4) return false;
+    return place == p || place.find(p) != std::string::npos || p.find(place) != std::string::npos;
+  };
+  for (size_t i = 0; i < lowered.size(); ++i) {
+    char c = lowered[i];
+    bool cut = c == '-' || c == '/' || c == ',' || c == '&' || c == '(' || c == ')' ||
+               (static_cast<unsigned char>(c) == 0xE2 && i + 2 < lowered.size());  // en / em dash
+    if (cut) {
+      if (test()) return true;
+      if (static_cast<unsigned char>(c) == 0xE2) i += 2;
+    } else {
+      part += c;
+    }
+  }
+  return test();
+}
+
+// Build 161: a US station the reference data knows by its network and
+// channel number or place, for a name without a call sign ("TELEMUNDO 48
+// [SAN FRANCISCO]" is KSTS, "UNIVISION 65 [NEW JERSEY]" WUVP). Its bare call
+// sign, or nullopt when the name fits no station or more than one.
+std::optional<std::string> referenceStation(const reference::Index& index, std::string_view display,
+                                            const std::optional<std::string>& city) {
+  std::optional<std::string> network = networkWord(display);
+  if (!network) return std::nullopt;
+  const auto& carriers = index.stationsOf(*network);
+  if (carriers.empty()) return std::nullopt;
+  std::optional<int> number = virtualNumber(display);
+  std::string place = city ? str::lower(*city) : std::string();
+  if (place.empty()) {
+    // "UNIVISION LOS ANGELES": the words after the network (and number).
+    if (auto rest = text::firstGroup("\\b(?:Telemundo|Univision|UniMas|TMO|ABC|CBS|NBC|FOX|CW|PBS|ION)\\s+(?:\\d{1,2}\\s+)?"
+                                     "([A-Za-z][A-Za-z .'-]{3,30})$",
+                                     display, 1, true)) {
+      place = str::lower(std::string(str::trimUnicode(*rest)));
+    }
+  }
+  auto mainNumber = [](const std::string& n) { return text::toInt(n.substr(0, n.find('.'))); };
+  std::vector<const reference::Index::Carrier*> byNumber, byPlace;
+  for (const reference::Index::Carrier& c : carriers) {
+    bool numbered = number && mainNumber(c.number) == number;
+    bool here = !place.empty() && placeInMarket(place, c.station->market);
+    if (numbered) byNumber.push_back(&c);
+    if (here) byPlace.push_back(&c);
+  }
+  std::vector<const reference::Index::Carrier*> picks;
+  if (number && !place.empty()) {
+    for (const auto* c : byNumber)
+      if (std::find(byPlace.begin(), byPlace.end(), c) != byPlace.end()) picks.push_back(c);
+    // A place that isn't a market ("New Jersey"): by the number alone.
+    if (picks.empty() && byPlace.empty()) picks = byNumber;
+  } else if (number) {
+    picks = byNumber;
+  } else if (!place.empty()) {
+    // The network's own station there, not a low-power one.
+    for (const auto* c : byPlace)
+      if (c->station->licence.empty() && c->number == c->station->number) picks.push_back(c);
+  }
+  std::optional<std::string> sign;
+  for (const auto* c : picks) {
+    std::string bare = reference::bareCallsign(c->station->callsign);
+    if (sign && *sign != bare) return std::nullopt;
+    sign = bare;
+  }
+  return sign;
+}
+
 // "team" (NFL Buffalo Bills), "regional:<place>" (FOX 5 [SAN DIEGO], NBC
 // Sports Boston), or "national".
 // `stationLike`: networkWord(display) && !isNationalish(display), worked out
@@ -363,7 +521,14 @@ LineupCategory categoryFor(std::string_view lower, std::string_view group,
 // "television" (also run into the name). Renamed channels are the channel
 // directory's (its corrections: "Starz Family" is Starz Encore Family).
 std::string sameChannelKey(const ChannelTraits& traits) {
-  std::string lowered = str::replaceAll(str::lower(traits.displayName), "&", " and ");
+  // Build 161: a US channel's bracketed place or team stays part of it
+  // ("NBC SPORTS [CHICAGO]" isn't "NBC SPORTS").
+  std::string bracketed;
+  if (traits.market == std::string("US") || traits.market == std::string("US-ES"))
+    bracketed = withBracketWords(traits.displayName);
+  std::string lowered =
+      str::replaceAll(str::replaceAll(str::lower(bracketed.empty() ? traits.displayName : bracketed), "&", " and "),
+                      "+", " plus ");  // Build 161: "ESPN+ 3" isn't "ESPN 3"
   lowered = rx::replace(lowered, "[\\(\\[][^\\)\\]]*[\\)\\]]", " ");
   static const std::unordered_set<std::string> kDrop = {"hd", "fhd", "uhd", "sd", "4k", "us", "usa",
                                                         "east", "west", "pacific", "feed"};
@@ -576,7 +741,8 @@ bool unknownChannel(const std::string& name, const ChannelTraits& traits, const 
   if (context.directory) {
     directory::Match m = context.directory->match(name);
     if (!m.elsewhere.empty()) return false;
-    if (m.entry) return m.entry->list == "free";
+    // Build 161: a regional sports network's old stream there is no free channel.
+    if (m.entry) return m.entry->list == "free" && !regionalSportsBrand(name);
   }
   // Marigold (Build 153): nothing knows it. With the channel list as the
   // backbone it isn't taken for free streaming on that alone (it's "other").
@@ -690,12 +856,19 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
     ChannelTraits own = it->second;
     clusterOfSame.emplace(sameChannelKey(own), own.clusterKey);
     own.displayName = cleanName(channel.name);
+    // Build 161: a West the row doesn't have is the name's ("FOX SPORTS
+    // WEST" for Angels Broadcast Television): "FOX SPORTS" isn't that row.
+    if (!own.isWest && guide::namesWestFeed(str::lower(own.displayName))) continue;
     clusterOfSame.emplace(sameChannelKey(own), own.clusterKey);
   }
   // A shut-down channel's copy the provider's guide files under a channel
   // the reference data knows ("ThrillerMAX" under Cinemax's listings) plays
   // that channel now: it joins that row, tried last. Others stay apart.
-  std::unordered_map<std::string, std::string> rowOfGuide;
+  struct GuideRow {
+    std::string key;
+    std::string scope;
+  };
+  std::unordered_map<std::string, GuideRow> rowOfGuide;
   std::unordered_set<std::string> borrowed;
   if (context.reference) {
     for (const Channel& channel : channels) {
@@ -703,10 +876,21 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
       if (it == result.traits.end() || !channel.epgId || channel.epgId->empty()) continue;
       const ChannelTraits& t = it->second;
       if (str::startsWith(t.clusterKey, "r:") && t.closed.empty() && !t.familyKey) {
-        rowOfGuide.emplace(str::lower(*channel.epgId), t.clusterKey);
+        rowOfGuide.emplace(str::lower(*channel.epgId), GuideRow{t.clusterKey, t.scope});
       }
     }
   }
+  // Build 161: a regional channel's places ("regional:detroit") share one
+  // with another's ("regional:los angeles|san diego"); "?" is any.
+  auto samePlace = [](const std::string& a, const std::string& b) {
+    if (!str::startsWith(a, "regional:") || !str::startsWith(b, "regional:")) return true;
+    if (a == "regional:?" || b == "regional:?") return true;
+    for (std::string_view p : str::split(std::string_view(a).substr(9), '|')) {
+      for (std::string_view q : str::split(std::string_view(b).substr(9), '|'))
+        if (p == q) return true;
+    }
+    return false;
+  };
   for (const Channel& channel : channels) {
     auto it = result.traits.find(channel.id);
     if (it == result.traits.end()) continue;
@@ -715,8 +899,26 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
     if (!traits.closed.empty() && !rowOfGuide.empty() && channel.epgId) {
       auto row = rowOfGuide.find(str::lower(*channel.epgId));
       if (row != rowOfGuide.end()) {
+        // Build 161: one the data knows the parent of ("HBO Family": HBO)
+        // joins only that channel's rows (a guide that files it elsewhere
+        // is wrong); without such listings it stays apart, closed, and is
+        // hidden like any shut-down row (lineup()).
+        if (const reference::Channel* parent = context.reference->goneParent(traits.displayName)) {
+          std::string own = "r:" + parent->id;
+          if (row->second.key != own && !str::startsWith(row->second.key, own + "~")) row = rowOfGuide.end();
+        }
+      }
+      // Build 161: nor does one region's network join another region's row
+      // by a guide id the provider gives them all ("FOX SPORTS DETROIT" and
+      // "FOX SPORTS WEST" both under "FOXSports.us").
+      // The regional sports networks that shut down (FanDuel, Bally, Fox
+      // Sports <region>) play nothing now, whatever their guide id says.
+      if (row != rowOfGuide.end() &&
+          (!samePlace(traits.scope, row->second.scope) || regionalSportsBrand(traits.displayName)))
+        row = rowOfGuide.end();
+      if (row != rowOfGuide.end()) {
         traits.formerKey = traits.clusterKey + (traits.formerKey.empty() ? "" : "\n" + traits.formerKey);
-        traits.clusterKey = row->second;
+        traits.clusterKey = row->second.key;
         traits.closed.clear();
         borrowed.insert(channel.id);
       }
@@ -831,7 +1033,10 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
       } else if (entry.kind == ChannelKind::channel &&
                  (freeStreamingName(entry.name) ||
                   std::any_of(ranked.begin(), ranked.end(), [](const Ranked& r) { return freeStreamingCopy(*r.channel); }) ||
-                  (listed && listed->list == "free") ||
+                  // Build 161: the directory's free tier (iptv-org) keeps the
+                  // regional sports networks' old streams ("FanDuel Sports
+                  // Network Ohio Plus") with no closing date: not free.
+                  (listed && listed->list == "free" && !regionalSportsBrand(entry.name)) ||
                   (context.reference && str::startsWith(key, "n:") && unknownChannel(entry.name, traits, ranked.front().channel,
                                                                                     context)))) {
         entry.kind = ChannelKind::fast;
@@ -843,10 +1048,13 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
       // unless the viewer shows other channels.
       bool usMarket = traits.market == std::string("US") || traits.market == std::string("US-ES");
       // A station or network feed by its network's name ("TELEMUNDO 52 [LOS
-      // ANGELES]", "UNIVISION EAST") stays what the rules made it.
+      // ANGELES]", "UNIVISION EAST", "NBC LOS ANGELES NEWS") stays what the
+      // rules made it. Build 161: only those; a sports channel, show or
+      // event slot that names a network ("Fox Sports Tennessee", "WNBA ON
+      // ION 1", "...: Nbc Sports 06") doesn't escape.
       if (context.reference && usMarket && entry.kind == ChannelKind::channel &&
           entry.category != LineupCategory::international && entry.category != LineupCategory::radio &&
-          entry.category != LineupCategory::free && !networkWord(entry.name)) {
+          entry.category != LineupCategory::free && !networkFeed(entry.name, traits.scope)) {
         entry.category = LineupCategory::other;
       }
     }
@@ -1173,7 +1381,14 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
       stationLikeMemo = networkWord(display).has_value() && !isNationalish(display);
     return *stationLikeMemo;
   };
-  std::optional<CoreHit> core = market == std::string("US") ? coreMatch(display) : std::nullopt;
+  // Build 161: a US name's bracketed place or team is part of which channel
+  // it is ("NBC SPORTS HD [BAY AREA]" is NBC Sports Bay Area, "NHL NETWORK
+  // [ALT]" isn't NHL Network); `named` has it written in.
+  const std::string bracketed = market == std::string("US") || market == std::string("US-ES")
+                                    ? withBracketWords(display)
+                                    : std::string();
+  const std::string& named = bracketed.empty() ? display : bracketed;
+  std::optional<CoreHit> core = market == std::string("US") ? coreMatch(named) : std::nullopt;
   ChannelKind kind = kindFor(name, lower, group, core.has_value());
   // A national channel's feed from a West city is its West feed.
   if (!isWest && bracketCity && !stationLike() && marketIsWest(*bracketCity).value_or(false)) isWest = true;
@@ -1212,33 +1427,58 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
   std::string overflow;
   if (context.reference && (kind == ChannelKind::channel || kind == ChannelKind::fast) && !familyKey &&
       (!country || *country == "US") && !rx::test("\\((?!WEST\\))[KW][A-Z]{2,3}(-[A-Z0-9]+)?\\)", display)) {
-    reference::Match m = context.reference->match(display);
+    const reference::Index& ref = *context.reference;
+    reference::Match m = ref.match(named);
     if (!m.channel) {
-      if (auto rest = text::firstGroup("^(?:NBC|ABC|CBS|FOX)\\s+(.{3,})$", display, 1)) {
-        reference::Match bare = context.reference->match(*rest);
+      if (auto rest = text::firstGroup("^(?:NBC|ABC|CBS|FOX)\\s+(.{3,})$", named, 1)) {
+        reference::Match bare = ref.match(*rest);
         // A station's own name ("FOX 5 ...") never: its rest is no channel.
         if (bare.channel && !text::firstMatch("^\\d", *rest)) m = bare;
       }
     }
-    if (!m.channel && core) m = context.reference->match(core->name);
+    if (!m.channel && core) m = ref.match(core->name);
     if (!m.channel) {
       static const char* const kOverflow =
           "(?i)^(.{3,}?)\\s+(\\d{1,2}|plus|\\+|xtra|extra|alt|alternate|overflow|latin|zona|zone)$";
-      if (auto stem = text::firstGroup(kOverflow, display, 1)) {
-        reference::Match parent = context.reference->match(*stem);
+      if (auto stem = text::firstGroup(kOverflow, named, 1)) {
+        reference::Match parent = ref.match(*stem);
+        std::string word = str::lower(std::string(str::trimUnicode(std::string_view(named).substr(stem->size()))));
+        if (parent.channel && (word == "alt" || word == "alternate")) {
+          // Build 161: "NHL NETWORK [ALT]" is the list's NHL Network
+          // Alternate when it has one.
+          reference::Match alternate = ref.match(*stem + " Alternate");
+          if (alternate.channel && alternate.channel != parent.channel) {
+            m = alternate;
+            parent = {};
+          }
+        }
+        if (parent.channel && !word.empty() && word.find_first_not_of("0123456789") == std::string::npos) {
+          // Build 161: a number after a brand with numbered channels of
+          // its own ("ESPN 3" beside ESPN2) is another channel, not the
+          // brand's overflow feed.
+          for (int n = 1; n <= 9 && parent.channel; ++n) {
+            if (std::to_string(n) == word) continue;
+            const reference::Channel* sister = ref.match(*stem + " " + std::to_string(n)).channel;
+            if (!sister) sister = ref.match(*stem + std::to_string(n)).channel;
+            if (sister && sister != parent.channel) parent = {};
+          }
+        }
         if (parent.channel) {
           m = parent;
-          overflow = str::lower(std::string(str::trimUnicode(display.substr(stem->size()))));
+          overflow = word;
         }
       }
     }
     refChannel = m.channel;
     refFeed = m.feed;
+    // "FanDuel Sports Network West": the coast is the channel's name.
+    if (m.channel && m.coastInName && !m.feed) isWest = false;
   }
 
   // Call sign: only real ones (station directory, local groups, or written
   // next to a network name), never for other countries.
   std::optional<std::string> callsign;
+  bool stationByReference = false;
   if (kind == ChannelKind::channel && !core && !familyKey && (!country || *country == "US")) {
     bool localGroup = contains(group, "local");
     std::vector<CallsignCandidate> candidates;
@@ -1269,6 +1509,14 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
       const std::optional<std::string>& city = bracketCity ? bracketCity : parenCity;
       callsign = guide::stationCallsign(city ? display + " " + *city : display, context.stationsByNetwork);
     }
+    // Build 161: a US Spanish station without its call sign ("TELEMUNDO 48
+    // [SAN FRANCISCO]", "UNIVISION 65 [NEW JERSEY]", "UNIVISION LOS
+    // ANGELES") by the reference data's stations: its network and channel
+    // number or place. It is then that market's local, not a national one.
+    if (!callsign && context.reference && market == std::string("US-ES") && stationLike()) {
+      callsign = referenceStation(*context.reference, display, bracketCity ? bracketCity : parenCity);
+      stationByReference = callsign.has_value();
+    }
     // A call sign the station has since given up ("WGCL" is WANF now).
     if (callsign && context.reference && !context.reference->station(*callsign)) {
       if (const reference::Station* now = context.reference->formerly(*callsign)) {
@@ -1287,13 +1535,15 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
   bool usMarket = market == std::string("US") || market == std::string("US-ES") || !country;
   if (context.directory && kind == ChannelKind::channel && !core && !familyKey && !callsign && usMarket &&
       !stationLike()) {
-    directory::Match m = context.directory->match(display);
+    directory::Match m = context.directory->match(named);
     listedNetwork = m.entry && m.entry->list != "free";
     if (m.entry && (m.kind == directory::MatchKind::exact || m.kind == directory::MatchKind::alias)) {
       if (m.entry->list == "local") {
         if (auto sign = text::firstGroup("^([KW][A-Z]{2,3})(-[A-Z]{2})?$", m.entry->name, 1)) callsign = *sign;
       } else {
         listed = m.entry;
+        // "Fox Sports West" (Prime Sports' later name): the coast is its name's.
+        if (m.coastInName) isWest = false;
         if (market == std::string("US")) {
           if (auto other = marketOfLanguage(listed->language)) market = *other;
         }
@@ -1304,6 +1554,24 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
       static const std::unordered_set<std::string> kApart = {"ur", "hi", "ar", "pa", "gu", "ta", "te", "ml", "bn",
                                                              "zh", "ko", "ja", "fa", "ru", "vi", "he", "el", "tr"};
       if (kApart.count(language)) market = place;
+    }
+  }
+  // Build 161: a channel the directory knows by an old name ("CSN Bay Area",
+  // "Fuel TV", "Max East") that the reference data knows by its name now:
+  // the reference data's row, not one of the directory's beside it.
+  if (listed && !refChannel && context.reference && directoryNameJoins(named)) {
+    const reference::Match byName = context.reference->match(listed->name);
+    refChannel = byName.channel;
+    if (!refChannel) {
+      for (const std::string& alias : listed->aliases) {
+        const reference::Channel* c = context.reference->match(alias).channel;
+        if (!c) continue;
+        if (refChannel && refChannel != c) {
+          refChannel = nullptr;  // other names of two channels: neither
+          break;
+        }
+        refChannel = c;
+      }
     }
   }
 
@@ -1318,6 +1586,14 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
     kind = ChannelKind::loop247;
   }
 
+  // The name's key under the rules alone (before Build 161: without its
+  // bracketed words), the row's earlier id where the key below differs.
+  auto nameKey = [&](std::string_view text) {
+    std::string normalized = guide::normalize(text);
+    return ":" + (normalized.empty() ? lower : normalized) +
+           (isWest && !str::endsWith(normalized, "~west") ? "~west" : "");
+  };
+  std::string earlier;  // the key the rules gave before Build 161, when it differs
   std::string key;
   if (kind == ChannelKind::event || kind == ChannelKind::placeholder ||
       kind == ChannelKind::separator) {
@@ -1327,18 +1603,33 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
   } else if (callsign) {
     // Subchannels and sister stations stay apart: WGBC-NBC != WGBC-FOX.
     std::string network;
-    if (auto word = networkWord(name)) {
+    std::optional<std::string> word = networkWord(name);
+    if (word) {
       network = *word;
     } else if (auto it = context.networkOf.find(*callsign); it != context.networkOf.end()) {
       network = it->second;
     }
+    // Build 161: a name that also names the station's own network is that
+    // network's ("NBC (KVEA) TELEMUNDO" is KVEA's Telemundo, as "TELEMUNDO
+    // 52 (KVEA)" is, not an NBC sister of it).
+    if (word && context.reference) {
+      if (const reference::Station* station = context.reference->station(*callsign)) {
+        std::vector<std::string> words = networkWords(name);
+        if (station->network != network && std::find(words.begin(), words.end(), station->network) != words.end()) {
+          earlier = "cs:" + *callsign + "|" + network;
+          network = station->network;
+        }
+      }
+    }
     key = "cs:" + *callsign + "|" + network;
+    if (stationByReference) earlier = "n:" + (market ? *market : std::string("?")) + nameKey(display);
   } else {
-    std::string normalized = guide::normalize(display);
     // Never merged across countries: a Mexican feed isn't a backup for a US one.
-    key = "n:" + (market ? *market : std::string("?")) + ":" +
-          (normalized.empty() ? lower : normalized) +
-          (isWest && !str::endsWith(normalized, "~west") ? "~west" : "");
+    key = "n:" + (market ? *market : std::string("?")) + nameKey(named);
+    if (!bracketed.empty()) {
+      std::string before = "n:" + (market ? *market : std::string("?")) + nameKey(display);
+      if (before != key) earlier = std::move(before);
+    }
   }
   // A directory channel's copies are one row, whatever each is called; the
   // key the rules alone gave stays as the row's earlier id.
@@ -1346,6 +1637,8 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
   if (str::startsWith(key, "n:") && (listed || market != marketBefore)) {
     formerKey = "n:" + (marketBefore ? *marketBefore : std::string("?")) + key.substr(key.find(':', 2));
     if (listed) key = "d:" + listed->id + (isWest ? "~west" : "");
+  } else if (!earlier.empty()) {
+    formerKey = earlier;
   }
 
   std::string scope;
@@ -1437,8 +1730,11 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
   // A core network that has shut down (Universal Kids) isn't suggested.
   if (core && !core->closed.empty() && traits.closed.empty()) traits.closed = core->closed;
   // A channel that shut down (and has no row of its own) isn't suggested.
+  // Build 161: and is hidden (lineup()), so only a US one by its name: the
+  // list is of US channels ("GOL TV" in the UK isn't GolTV).
+  bool usName = traits.market == std::string("US") || traits.market == std::string("US-ES") || !traits.market;
   if (context.reference && kind == ChannelKind::channel && !traits.callsign &&
-      (refChannel ? refChannel->closed : context.reference->gone(display))) {
+      (refChannel ? refChannel->closed : usName && context.reference->gone(named))) {
     traits.closed = "yes";
   }
   return traits;
@@ -1466,13 +1762,15 @@ bool premiumName(std::string_view name) {
 
 // Free streaming channels the lists and groups don't tell: ones the
 // provider files beside its cable channels ("US| AT&T"), and its own
-// movie loops ("CINEBOX: HORROR").
+// movie loops ("CINEBOX: HORROR"). Build 161: CBS Sports Golazo Network is
+// free (CBS Sports' apps, Pluto TV, Paramount+), with no pay-TV carriage
+// found, so it isn't on the channel list.
 bool freeStreamingName(std::string_view name) {
   return rx::test(
       "^(awe plus|horror machine|horror plus|westerns plus|big a anime|bowling tv|mayday:? air disaster|air (&|and) space channel|"
       "torque( by history)?|reelz famo?us( & infamous)?|tribeca festival\\+?|flixfling( now)?|earthx(tv)?|curiosity now|"
       "infast|travelxp|grjngo( - western movies)?|great american romcoms|moviesphere gold|frasier|the film detective|"
-      "family movie classics)( hd)?$",
+      "family movie classics|cbs sports g[ao]lazo( network)?)( hd| 4k)?$",
       name, true);
 }
 
@@ -1623,9 +1921,11 @@ std::optional<std::string> networkWord(std::string_view name) {
 }
 
 CoreKey coreKey(std::string_view display) {
+  // Build 161: "alt" is no longer dropped: "MLB NETWORK ALT" is MLB Network
+  // Alternate (or an overflow feed), not MLB Network.
   static const std::unordered_set<std::string> kDrop = {
       "hd",    "fhd",   "uhd",   "sd",   "4k",   "8k",  "hevc",   "h265", "h264", "raw", "vip",
-      "60fps", "50fps", "1080p", "720p", "1080", "720", "backup", "east", "feed", "alt"};
+      "60fps", "50fps", "1080p", "720p", "1080", "720", "backup", "east", "feed"};
   std::string lowered =
       str::replaceAll(str::replaceAll(str::lower(display), "&", " and "), "+", " plus ");
   CoreKey out;

@@ -77,6 +77,17 @@ const Data& builtIn();
 std::string exactKey(std::string_view name);
 std::string looseKey(std::string_view name);
 
+// The coast a name says, which its keys leave out: at the end ("Showtime
+// West", "Max East", "Fox College Sports Pacific") or in brackets ("A&E
+// (West)"). Build 161: the indexes file a name that says a coast under its
+// key plus coastSuffix() ("showtime~west"), so only a name that says the
+// same coast finds it: an East or unmarked copy never takes a West name.
+enum class NameCoast { none, east, west };
+NameCoast nameCoast(std::string_view name);
+// exactKey() and nameCoast() in one pass.
+std::string exactKey(std::string_view name, NameCoast* coast);
+std::string coastSuffix(NameCoast coast);  // "", "~east", "~west"
+
 enum class MatchKind { none, exact, alias, loose, ambiguous };
 const char* rawValue(MatchKind kind);
 
@@ -85,6 +96,9 @@ struct Match {
   MatchKind kind = MatchKind::none;
   // No entry, but the name is another country's channel ("PK:ur").
   std::string elsewhere;
+  // The name matched one that says the same coast ("Fox Sports West"): the
+  // coast is part of the channel's name, not a feed's.
+  bool coastInName = false;
 };
 
 // Our corrections, which win over the sources: a name that is another

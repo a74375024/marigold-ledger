@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <unordered_map>
 
+#include "core/catalog/catalog.hpp"
 #include "core/catalog/text.hpp"
 #include "core/guide/genre.hpp"
 #include "core/util/rx.hpp"
@@ -213,6 +214,15 @@ ProgramLists mergedListings(const std::set<std::string>& ids,
   return merged;
 }
 
+bool realProgramme(std::string_view title) {
+  std::string lower = str::lower(std::string(str::trimUnicode(title)));
+  if (lower.empty() || isPlaceholder(lower)) return false;
+  return !rx::test(
+      "^\\W*(sign[- ]?off|signed off|off[- ]?air|station off|no (programming|program|information|info|listings?|event)"
+      "|to be announced|tba|tbd|programming (unavailable|to be announced)|off the air)\\b",
+      lower);
+}
+
 const std::string* LineupOutput::areaSection(const std::string& entryId) const {
   if (areaOf.empty()) return nullptr;
   auto it = areaOf.find(entryId);
@@ -261,6 +271,12 @@ LineupOutput lineup(const LineupInput& input) {
       bool hasGuide =
           std::any_of(info.members.begin(), info.members.end(),
                       [&](const std::string& m) { return input.guideIDs.count(m) > 0; });
+      // Build 161: an overflow feed ("beIN SPORTS 5", "NBC Sports California
+      // 2") only while it has a real programme, not "SIGN OFF".
+      if (isOverflowId(info.id) &&
+          std::none_of(info.members.begin(), info.members.end(),
+                       [&](const std::string& m) { return input.liveGuideIDs.count(m) > 0; }))
+        continue;
       // Suggestions are worked out live, so channels join as their listings
       // load (and core networks / market locals always).
       if (suggests(info, prefs, hasGuide, info.name, coasts)) out.lineupIDs.insert(info.id);
@@ -328,6 +344,14 @@ LineupOutput lineup(const LineupInput& input) {
   std::unordered_map<std::string, std::string> marketOf;
   for (const EntryInfo* info : ordered) {
     if (info->category == LineupCategory::other && !input.showOther && !out.lineupIDs.count(info->id)) continue;
+    // Build 161: a channel that has shut down (HBO Family, Universal Kids)
+    // stays out unless a copy has listings (GolTV still shows matches) or
+    // the viewer added it or made it a favourite (both in lineupIDs: a
+    // closed row is never suggested).
+    if (!info->closed.empty() && !out.lineupIDs.count(info->id) &&
+        std::none_of(info->members.begin(), info->members.end(),
+                     [&](const std::string& m) { return input.guideIDs.count(m) > 0; }))
+      continue;
     std::vector<const Channel*> members;
     for (const std::string& m : info->members) {
       if (const Channel* c = member(m)) members.push_back(c);

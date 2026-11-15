@@ -1788,3 +1788,32 @@ Multi-part events (UFC's early prelims, prelims and main card; a race weekend's 
 | Race weekend | Qualifying on | Watch and Where to Watch start on qualifying's sources |
 | No switching | Play a card while its part changes | Playback stays on what plays |
 | Speed (LG) | Open Live Events, press Watch, open Where to Watch | No slower than before |
+
+## Build 161: shut-down and duplicate channels
+
+Channels that have shut down no longer fill the guide, and several channels that showed twice (or inside another channel's row) are one row now.
+- **Shut down:** a channel that has closed (HBO Family, MovieMAX, OuterMAX, ThrillerMAX, Universal Kids, NBC Sports Chicago, NBC Sports Northwest, Fox College Sports, Circle) is out of the guide, All Channels, Search and channel up/down unless one of its copies has listings (GolTV still shows matches) or the viewer added it or made it a favourite. It's never suggested. A shut-down channel the list knows the parent of (HBO Family: HBO) joins only that channel's row, and only when the provider's guide files it there.
+- **Stations:** a station is its own network's, whatever else the name says: "NBC (KVEA) TELEMUNDO" and "TELEMUNDO 52 (KVEA)" are one row (14 Telemundo stations had two). Sister stations on subchannels stay apart. A US Spanish station without its call sign ("TELEMUNDO 48 [SAN FRANCISCO]", "UNIVISION 65 [NEW JERSEY]") is found by its network and number or city and belongs to its own market; "TELEMUNDO 47" (two stations have 47) is suggested only where one of them is the viewer's.
+- **Brackets:** a place or team in brackets is part of the channel: "NBC SPORTS [BAY AREA]" is NBC Sports Bay Area, "SPECTRUM SPORTSNET [LA DODGERS]" is SportsNet LA, "FOX 5 [SAN DIEGO]" and "FOX 5 [LAS VEGAS]" are two rows. NBCSN (relaunched in 2025) keeps only its own copies. Tags in brackets ("[SLING]", "[EVENT ONLY]") still don't count.
+- **Old names:** a channel the channel directory knows by an old name ("CSN Bay Area", "Fuel TV", "DIY", "H2") joins the list's row for it.
+- **Other:** a network's name no longer lets a sports channel or event slot past the list ("Fox Sports Tennessee", "WNBA ON ION 1", "…: Nbc Sports 06"): only stations and network feeds ("UNIVISION EAST", "NBC LOS ANGELES NEWS"). FanDuel, Bally, Fox Sports and NBC Sports regional networks and Root Sports from the directory's free tier are Other, not Free. CBS Sports Golazo Network is free streaming (CBS Sports apps, Pluto TV, Paramount+): Free.
+- **Overflow feeds:** "ESPN 3" is no ESPN overflow (ESPN has ESPN2). "MLB NETWORK ALT" and "NHL NETWORK [ALT]" are the alternates, "NFL NETWORK ALT" an overflow feed. An overflow feed (beIN SPORTS 1–8, NBC Sports California 2) is suggested only while it has a real programme, not "SIGN OFF".
+- **Coasts:** a copy marked East, or with no coast, never joins a West row: "SHOWTIME EAST" and "|US| SHOWTIME" are Paramount+ with Showtime (East), not West. A coast that is part of a name ("FanDuel Sports Network West", "Max East") is matched only by a name that says it.
+- **Report:** the channel report has row_category (the row's own category: Other and Free rows show) and row_closed.
+- **Speed:** the lineup build no longer works out every TV market's first city for each bracketed city in a name: about a quarter faster on a 30,000-channel list.
+
+The list gains NBC Sports Chicago (and Plus), NBC Sports Northwest and Fox College Sports Atlantic, Central and Pacific as shut-down rows, Circle as shut down, and other names providers use: "Fuel TV", "CSN Bay Area / California / Boston / Philadelphia / Chicago (Plus)", "Max East" / "Max West" (Cinemax's feeds only), "Cinemax 5 Star Max", "Discovery Espanol", "Univision TUDN", "Fox Sports Deportes", "Epix Drive In", "NESN Boston", "SNY SportsNet New York", "AT&T SportsNet Pittsburgh", "Starz Black" (Starz in Black). tools/reference/pack.py flags a channel shut down when its notes say so anywhere ("wound down", "went dark", "ceased", "shut down") and keeps each shut-down name's parent.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Shut down | Guide, All Channels, Search: HBO Family, Universal Kids, MovieMAX | Not there; channel up/down skips them |
+| With listings | GolTV during a match | Shown, not in My Lineup |
+| Kept | A shut-down channel added to My Lineup or made a favourite | Still shown and in My Lineup |
+| Telemundo | Spanish: KVEA, KSTS | One row each, with every copy |
+| Other markets | California viewer, US Spanish on | No TELEMUNDO 47 or UNIVISION 65 [NEW JERSEY] in My Lineup |
+| NBC Sports | NBCSN, NBC Sports Bay Area, NBC Sports California | NBCSN has only NBCSN copies; the Bay Area and California copies are in their own rows |
+| Dodgers | SportsNet LA | Has the "[LA DODGERS]" copies; Spectrum SportsNet (Lakers) doesn't |
+| Showtime | West lineup | Paramount+ with Showtime West has only West copies; the East row has "SHOWTIME EAST" |
+| Overflow | beIN SPORTS 5 at night ("SIGN OFF") | Not added to My Lineup; joins when a match is listed |
+| Report | Help › channel report | row_category and row_closed filled |
+| Speed (LG) | Relaunch with the channel list cached, and a full refresh | Building your lineup takes no longer than Build 158 |

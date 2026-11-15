@@ -131,6 +131,26 @@ def region_markets(text):
         out += [a for a in app_markets if home_state.get(a) in states]
     return [m for m in dict.fromkeys(out) if m in app_markets]
 
+# Whether a row's Notes say the channel itself shut down, anywhere in them
+# ("Circle's broadcast network was wound down in 2023-24"), not only at the
+# start. Only where the sentence is about this channel: its name, "this
+# channel", "it" or nothing before the words; one about another channel
+# ("HBO Family was shut down", "FanDuel Sports Network shut down after the
+# 2025-26 season") is that channel's, and one it came back from ("resumed
+# operations") doesn't count.
+SHUT = re.compile(r'\b(wound down|went dark|ceased|shut down)\b', re.I)
+SELF = ('thischannel', 'thechannel', 'channel', 'it', 'thenetwork', 'thisnetwork')
+def shut_down(r):
+    if re.search(r'\b(resumed|relaunched|returned to the air)\b', r['Notes'], re.I): return False
+    own = [squash(r['Channel']), squash(r['Channel'].split(' / ')[0])]
+    for sent in re.split(r'(?<=[.;])\s+', r['Notes']):
+        m = SHUT.search(sent)
+        if not m: continue
+        subject = squash(re.sub(r'\b(was|were|has|had|is)\b', ' ', sent[:m.start()]))
+        if subject and subject not in SELF and not any(o and subject.startswith(o) for o in own): continue
+        return True
+    return False
+
 # Channels: one per name, its feed rows under it.
 # By the matrix's ID column (stable): "<id>", its feeds "<id>~west" etc.
 groups = collections.OrderedDict()
@@ -172,7 +192,7 @@ for cid, rs in groups.items():
         else: unplaced.append((base['Channel'], base['Market / region']))
     if base['Parent network'] and squash(base['Parent network']) != key:
         ch['p'] = id_of_name.get(squash(base['Parent network']), slug(base['Parent network']))
-    if re.match(r'(this )?(channel )?(was )?shut down', base['Notes'], re.I): ch['x'] = 1
+    if shut_down(base): ch['x'] = 1
     lg = logo_for([base['Channel']] + al)
     if lg: ch['L'] = lg
     names = {squash(n) for n in [base['Channel']] + al}
@@ -185,6 +205,8 @@ for cid, rs in groups.items():
     channels.append(ch)
 
 have = {squash(c['n']) for c in channels} | {squash(a) for c in channels for a in c.get('a', [])}
+# Shut-down channels without a row, with the channel whose row's notes name
+# them ("HBO Family" under HBO): packed as {"n": name, "p": that channel's id}.
 gone = {}
 for r in rows:
     for sent in re.split(r'(?<=[.;])\s+', r['Notes']):
@@ -192,20 +214,24 @@ for r in rows:
         if not m: continue
         for n in re.split(r',\s*|\s+and\s+', re.sub(r'\s*\(East/West\)', '', m.group(1))):
             n = n.strip()
+            if squash(n) in SELF: continue  # "This channel was shut down": the row's own
             if 2 <= len(n) <= 30 and n[0].isupper() and squash(n) not in have and not re.search(r'Network|Sports|FanDuel|Channel$', n):
-                gone[squash(n)] = n
+                pid = r['ID'].split('~')[0] if r['Scope'] != 'Local' else ''
+                gone[squash(n)] = {'n': n, 'p': pid} if pid else n
                 # Providers write the parent in front ("Cinemax ThrillerMAX").
                 parent = r['Channel'].split(' / ')[0]
                 if not n.lower().startswith(parent.lower()) and squash(parent + n) not in have:
-                    gone[squash(parent + n)] = parent + ' ' + n
+                    gone[squash(parent + n)] = {'n': parent + ' ' + n, 'p': pid} if pid else parent + ' ' + n
+def gone_name(g): return g['n'] if isinstance(g, dict) else g
 
 made = sys.argv[3] if len(sys.argv) > 3 else ''
-data = {'made': made, 'channels': channels, 'gone': sorted(gone.values()), 'stations': stations}
+data = {'made': made, 'channels': channels, 'gone': sorted(gone.values(), key=gone_name), 'stations': stations}
 raw = json.dumps(data, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
 buf = io.BytesIO()
 with gzip.GzipFile(fileobj=buf, mode='wb', mtime=0, compresslevel=9) as g: g.write(raw)
 open(sys.argv[2], 'wb').write(buf.getvalue())
-print('channels', len(channels), 'stations', len(stations), 'gone', sorted(gone.values()), 'bytes', len(raw), '->', len(buf.getvalue()))
+print('channels', len(channels), 'stations', len(stations), 'gone', sorted(gone.values(), key=gone_name), 'bytes', len(raw), '->', len(buf.getvalue()))
+print('shut down', sorted(c['i'] for c in channels if c.get('x')))
 print('stations without app market', sum(1 for s in stations if 'm' not in s), sorted({r['Market / region'] for r in rows if r['Scope']=='Local' and not app_market(r['Market / region'])}))
 print('regional without markets', len(unplaced), unplaced[:30])
 reg = [c for c in channels if 'm' in c]
