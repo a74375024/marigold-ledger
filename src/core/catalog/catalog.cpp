@@ -1730,8 +1730,11 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
   // A core network that has shut down (Universal Kids) isn't suggested.
   if (core && !core->closed.empty() && traits.closed.empty()) traits.closed = core->closed;
   // A channel that shut down (and has no row of its own) isn't suggested.
+  // Build 161: and is hidden (lineup()), so only a US one by its name: the
+  // list is of US channels ("GOL TV" in the UK isn't GolTV).
+  bool usName = traits.market == std::string("US") || traits.market == std::string("US-ES") || !traits.market;
   if (context.reference && kind == ChannelKind::channel && !traits.callsign &&
-      (refChannel ? refChannel->closed : context.reference->gone(named))) {
+      (refChannel ? refChannel->closed : usName && context.reference->gone(named))) {
     traits.closed = "yes";
   }
   return traits;

@@ -262,9 +262,14 @@ std::optional<bool> marketIsWest(std::string_view marketName) {
     return lower.find("oregon") != std::string::npos || lower.find(", or") != std::string::npos;
   }
   if (kWest.count(city)) return true;
-  for (const markets::Market& m : markets::builtinMarkets()) {
-    if (firstCity(m.name) == city) return false;
-  }
+  // Build 161: the built-in markets' first cities, worked out once (the
+  // catalog build asks for every city in brackets: a quarter of its time).
+  static const std::set<std::string> kKnown = [] {
+    std::set<std::string> out;
+    for (const markets::Market& m : markets::builtinMarkets()) out.insert(firstCity(m.name));
+    return out;
+  }();
+  if (kKnown.count(city)) return false;
   return std::nullopt;
 }
 

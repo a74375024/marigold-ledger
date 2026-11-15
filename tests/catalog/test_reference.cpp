@@ -461,6 +461,10 @@ TEST_CASE("Build 161: a shut-down row stays out of the lineup unless it has list
   in.favoriteIDs.reset();
   in.prefs.removed.insert(family->id);
   CHECK_FALSE(listed(lineup(in), family->id));
+  // Another country's channel of a shut-down US channel's name isn't it.
+  Built abroad({channel("1", "UK: GOL TV HD", "UK| SPORTS")});
+  REQUIRE(abroad.entryOf("1"));
+  CHECK(abroad.entryOf("1")->closed.empty());
 }
 
 TEST_CASE("Build 161: a shut-down channel's parent; its copy joins only the parent's row") {
