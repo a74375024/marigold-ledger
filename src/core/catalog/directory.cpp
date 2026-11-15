@@ -145,6 +145,11 @@ std::string coastSuffix(NameCoast coast) {
   return std::string();
 }
 
+bool leagueChannel(const std::vector<std::string>& words) {
+  static const std::unordered_set<std::string> kLeagues = {"nba", "nfl", "mlb", "nhl", "mls", "wnba", "nwsl"};
+  return words.size() == 2 && words.back() == "channel" && kLeagues.count(words.front()) > 0;
+}
+
 namespace {
 
 // A name's words without a leading "the" and trailing "tv", "network",
@@ -153,7 +158,7 @@ std::vector<std::string> looseWords(std::string_view name, NameCoast* coast = nu
   std::vector<std::string> words = nameWords(name, coast);
   if (words.size() > 1 && words.front() == "the") words.erase(words.begin());
   static const char* const kTails[] = {"television", "network", "channel", "tv"};
-  for (bool again = true; again && !words.empty();) {
+  for (bool again = true; again && !words.empty() && !leagueChannel(words);) {
     again = false;
     std::string& last = words.back();
     for (const char* tail : kTails) {

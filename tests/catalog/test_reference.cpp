@@ -59,6 +59,7 @@ const char* kSample = R"({
     {"i": "nhl-network", "n": "NHL Network", "g": "sports"},
     {"i": "nhl-network-alternate", "n": "NHL Network Alternate", "g": "sports", "p": "nhl-network"},
     {"i": "nfl-network", "n": "NFL Network", "g": "sports"},
+    {"i": "nba-tv", "n": "NBA TV", "g": "sports"},
     {"i": "fs2", "n": "FS2", "a": ["Fox Sports 2"], "g": "sports"},
     {"i": "angels-tv", "n": "Angels Broadcast Television", "a": ["FanDuel Sports Network West"], "g": "sports",
      "k": "regional", "m": ["Los Angeles"]},
@@ -113,7 +114,7 @@ TEST_CASE("reference: reads its channels, stations and shut-down names, also pac
   auto data = reference::fromJson(kSample);
   REQUIRE(data);
   CHECK(data->made == "2026-10-30");
-  REQUIRE(data->channels.size() == 28);
+  REQUIRE(data->channels.size() == 29);
   const reference::Channel& hits = data->channels[1];
   CHECK(hits.name == "HBO Hits");
   CHECK(hits.category == LineupCategory::movies);
@@ -143,7 +144,7 @@ TEST_CASE("reference: reads its channels, stations and shut-down names, also pac
   REQUIRE(deflate.finish());
   auto unpacked = reference::fromBytes(packed);
   REQUIRE(unpacked);
-  CHECK(unpacked->channels.size() == 28);
+  CHECK(unpacked->channels.size() == 29);
   CHECK_FALSE(reference::fromBytes("not json"));
 }
 
@@ -254,6 +255,21 @@ TEST_CASE("reference lineup: spellings join, overflow feeds and regional channel
   REQUIRE(b.entryOf("5"));
   CHECK(b.entryOf("5")->id == "e|r:yes-network~alternate");
   CHECK(b.entryOf("5")->name == "YES Network Overflow");
+}
+
+TEST_CASE("reference lineup: the leagues' free channels aren't their networks") {
+  Built b({channel("1", "TV: THE MLB CHANNEL ᴿᴬᵂ", "US| TV"), channel("2", "US: MLB NETWORK HD", "US| SPORTS"),
+           channel("3", "US| The NBA Channel FHD", "US| TV"), channel("4", "US: NBA TV HD", "US| SPORTS"),
+           channel("5", "US: NFL CHANNEL", "US| TV"), channel("6", "US: NFL NETWORK HD", "US| SPORTS"),
+           channel("7", "US: MLB NETWORK RAW", "US| SPORTS")});
+  for (const char* id : {"1", "2", "3", "4", "5", "6", "7"}) REQUIRE(b.entryOf(id));
+  CHECK(b.entryOf("2")->id == "e|r:mlb-network");
+  CHECK(b.entryOf("7") == b.entryOf("2"));
+  CHECK(b.entryOf("1") != b.entryOf("2"));
+  CHECK(b.entryOf("4")->id == "e|r:nba-tv");
+  CHECK(b.entryOf("3") != b.entryOf("4"));
+  CHECK(b.entryOf("6")->id == "e|r:nfl-network");
+  CHECK(b.entryOf("5") != b.entryOf("6"));
 }
 
 TEST_CASE("reference lineup: a shut-down channel isn't suggested unless the guide shows what it plays now") {

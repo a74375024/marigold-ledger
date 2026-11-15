@@ -1799,6 +1799,7 @@ Channels that have shut down no longer fill the guide, and several channels that
 - **Other:** a network's name no longer lets a sports channel or event slot past the list ("Fox Sports Tennessee", "WNBA ON ION 1", "…: Nbc Sports 06"): only stations and network feeds ("UNIVISION EAST", "NBC LOS ANGELES NEWS"). FanDuel, Bally, Fox Sports and NBC Sports regional networks and Root Sports from the directory's free tier are Other, not Free. CBS Sports Golazo Network is free streaming (CBS Sports apps, Pluto TV, Paramount+): Free.
 - **Overflow feeds:** "ESPN 3" is no ESPN overflow (ESPN has ESPN2). "MLB NETWORK ALT" and "NHL NETWORK [ALT]" are the alternates, "NFL NETWORK ALT" an overflow feed. An overflow feed (beIN SPORTS 1–8, NBC Sports California 2) is suggested only while it has a real programme, not "SIGN OFF".
 - **Coasts:** a copy marked East, or with no coast, never joins a West row: "SHOWTIME EAST" and "|US| SHOWTIME" are Paramount+ with Showtime (East), not West. A coast that is part of a name ("FanDuel Sports Network West", "Max East") is matched only by a name that says it.
+- **League channels:** "The NBA Channel", "The MLB Channel" and "NFL Channel" are the leagues' free streaming channels, not NBA TV, MLB Network or NFL Network: they no longer join those rows.
 - **Report:** the channel report has row_category (the row's own category: Other and Free rows show) and row_closed.
 - **Speed:** the lineup build no longer works out every TV market's first city for each bracketed city in a name: about a quarter faster on a 30,000-channel list.
 
@@ -1815,5 +1816,6 @@ The list gains NBC Sports Chicago (and Plus), NBC Sports Northwest and Fox Colle
 | Dodgers | SportsNet LA | Has the "[LA DODGERS]" copies; Spectrum SportsNet (Lakers) doesn't |
 | Showtime | West lineup | Paramount+ with Showtime West has only West copies; the East row has "SHOWTIME EAST" |
 | Overflow | beIN SPORTS 5 at night ("SIGN OFF") | Not added to My Lineup; joins when a match is listed |
+| League channels | NBA TV, MLB Network, NFL Network | Only their own copies; "The NBA Channel" etc. aren't in them |
 | Report | Help › channel report | row_category and row_closed filled |
 | Speed (LG) | Relaunch with the channel list cached, and a full refresh | Building your lineup takes no longer than Build 158 |

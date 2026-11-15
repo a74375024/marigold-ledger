@@ -553,7 +553,8 @@ std::string sameChannelKey(const ChannelTraits& traits) {
   std::string market = traits.market ? *traits.market : std::string("?");
   std::string west = traits.isWest ? "~west" : "";
   static const std::vector<std::string> kTails = {"television", "network", "channel", "tv"};
-  for (bool again = true; again && !words.empty();) {
+  // "The NBA Channel": a league's free channel, not NBA TV.
+  for (bool again = true; again && !words.empty() && !directory::leagueChannel(words);) {
     again = false;
     std::string& last = words.back();
     for (const std::string& tail : kTails) {

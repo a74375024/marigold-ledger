@@ -77,6 +77,10 @@ const Data& builtIn();
 std::string exactKey(std::string_view name);
 std::string looseKey(std::string_view name);
 
+// "The NBA Channel", "MLB Channel": a league's free streaming channel keeps
+// its "channel" ({"nba", "channel"}), so it isn't NBA TV / MLB Network.
+bool leagueChannel(const std::vector<std::string>& words);
+
 // The coast a name says, which its keys leave out: at the end ("Showtime
 // West", "Max East", "Fox College Sports Pacific") or in brackets ("A&E
 // (West)"). Build 161: the indexes file a name that says a coast under its
