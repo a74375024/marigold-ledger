@@ -4,11 +4,14 @@
 #include <cmath>
 #include <cstdlib>
 #include <set>
+#include <tuple>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "core/catalog/catalog.hpp"
 #include "core/sports/brands.hpp"
 #include "core/sports/languages.hpp"
+#include "core/sports/parts.hpp"
 #include "core/sports/text.hpp"
 #include "core/sports/titles.hpp"
 #include "core/util/json.hpp"
@@ -682,12 +685,25 @@ void leadServerVersions(std::vector<std::string>& list, const std::string& last,
   if (at != list.end() && firstServer < at) std::rotate(firstServer, at, at + 1);
 }
 
-std::vector<std::string> eventCandidates(const SportsEvent& event, const std::optional<std::string>& preferring,
-                                         const Resolver& resolver) {
-  std::vector<std::string> list;
-  auto add = [&](const std::vector<std::string>& ids) {
+namespace {
+
+// A candidate: a raw channel id and the event source it plays (its
+// position in event.sources).
+struct Candidate {
+  std::string id;
+  size_t source;
+};
+
+// Build 160: everything that can play an event, in order (eventCandidates).
+// `current`: the card's part on now, when it has parts.
+std::vector<Candidate> candidatesOf(const SportsEvent& event, const std::optional<std::string>& preferring,
+                                    const Resolver& resolver, std::optional<size_t>* current = nullptr) {
+  std::vector<Candidate> list;
+  std::unordered_set<std::string> seen;
+  seen.reserve(event.sources.size() * 2);
+  auto add = [&](const std::vector<std::string>& ids, size_t source) {
     for (const std::string& id : ids) {
-      if (std::find(list.begin(), list.end(), id) == list.end()) list.push_back(id);
+      if (seen.insert(id).second) list.push_back({id, source});
     }
   };
   auto resolve = [&](const EventSource& s) -> std::optional<ChannelRef> {
@@ -696,56 +712,110 @@ std::vector<std::string> eventCandidates(const SportsEvent& event, const std::op
   auto versions = [&](const std::string& id) {
     return resolver.baseVersions ? resolver.baseVersions(id) : std::vector<std::string>{id};
   };
+  // 1. The source picked in Where to Watch.
   if (preferring) {
     auto source = std::find_if(event.sources.begin(), event.sources.end(),
                                [&](const EventSource& s) { return s.channelID == *preferring; });
     if (source != event.sources.end()) {
       if (auto channel = resolve(*source)) {
-        add(source->kind == EventSource::Kind::provider ? std::vector<std::string>{channel->id} : versions(channel->id));
+        size_t at = static_cast<size_t>(source - event.sources.begin());
+        add(source->kind == EventSource::Kind::provider ? std::vector<std::string>{channel->id} : versions(channel->id),
+            at);
       }
     }
   }
-  std::vector<EventSource> channels = event.channels();
-  // Yours (My Lineup's, in your languages or not known) first: their
-  // channels, then their feeds; then another language's.
-  for (bool welcome : {true, false}) {
-    auto fits = [&](const EventSource& s) { return languages::welcome(s, resolver.languages) == welcome; };
-    for (const EventSource& source : channels) {
-      if (source.kind == EventSource::Kind::team || !fits(source)) continue;
-      if (auto channel = resolve(source)) add(versions(channel->id));
-    }
-    std::vector<std::string> feeds;
-    for (const EventSource& source : event.feeds()) {
-      if (!fits(source)) continue;
-      if (auto channel = resolve(source)) feeds.push_back(channel->id);
-    }
-    add(resolver.bestFeeds ? resolver.bestFeeds(feeds) : feeds);
+  // 2. By part (the part on now first: parts::sourceTiers), language
+  // (languages::tier), My Lineup / other channels / feeds, station rank, a
+  // feed's record and picture (bestFeeds), the order found. A team's own
+  // channel last: likely, not certain, to carry the game.
+  static const scores::Statuses kNone;
+  std::vector<int> partTiers = parts::sourceTiers(event, resolver.parts, resolver.now,
+                                                  resolver.statuses ? *resolver.statuses : kNone, current);
+  struct Key {
+    size_t at;
+    int team, part, lang, kind, rank;
+  };
+  std::vector<Key> keys;
+  keys.reserve(event.sources.size());
+  for (size_t i = 0; i < event.sources.size(); ++i) {
+    const EventSource& s = event.sources[i];
+    bool feed = s.kind == EventSource::Kind::provider;
+    keys.push_back({i, s.kind == EventSource::Kind::team ? 1 : 0, partTiers[i],
+                    static_cast<int>(languages::tier(s.lang, resolver.languages)), static_cast<int>(s.kind),
+                    feed ? 0 : s.rank.value_or(4)});
   }
-  // A team's own channel last: likely, not certain, to carry the game.
-  for (bool welcome : {true, false}) {
-    for (const EventSource& source : channels) {
-      if (source.kind != EventSource::Kind::team || languages::welcome(source, resolver.languages) != welcome) continue;
-      if (auto channel = resolve(source)) add(versions(channel->id));
+  auto group = [](const Key& k) { return std::make_tuple(k.team, k.part, k.lang, k.kind, k.rank); };
+  std::stable_sort(keys.begin(), keys.end(), [&](const Key& a, const Key& b) { return group(a) < group(b); });
+  for (size_t i = 0; i < keys.size();) {
+    const EventSource& first = event.sources[keys[i].at];
+    if (first.kind != EventSource::Kind::provider) {
+      if (auto channel = resolve(first)) add(versions(channel->id), keys[i].at);
+      ++i;
+      continue;
     }
+    // A run of feeds of one part and language: reliability and quality only
+    // order them among themselves.
+    size_t end = i;
+    std::vector<std::string> feeds;
+    std::unordered_map<std::string, size_t> sourceOf;
+    while (end < keys.size() && group(keys[end]) == group(keys[i])) {
+      if (auto channel = resolve(event.sources[keys[end].at])) {
+        if (sourceOf.emplace(channel->id, keys[end].at).second) feeds.push_back(channel->id);
+      }
+      ++end;
+    }
+    for (const std::string& id : resolver.bestFeeds ? resolver.bestFeeds(feeds) : feeds) {
+      auto at = sourceOf.find(id);
+      if (at != sourceOf.end()) add({id}, at->second);
+    }
+    i = end;
   }
   return list;
 }
 
+}  // namespace
+
+std::vector<std::string> eventCandidates(const SportsEvent& event, const std::optional<std::string>& preferring,
+                                         const Resolver& resolver) {
+  std::vector<std::string> out;
+  for (Candidate& c : candidatesOf(event, preferring, resolver)) out.push_back(std::move(c.id));
+  return out;
+}
+
 WatchPlan watchPlan(const SportsEvent& event, const std::optional<std::string>& preferring,
-                    const std::optional<std::string>& remembered, const Resolver& resolver) {
+                    const std::optional<std::string>& remembered, const Resolver& resolver,
+                    const std::string& rememberedPart) {
   WatchPlan plan;
-  plan.candidates = eventCandidates(event, preferring, resolver);
-  if (plan.candidates.empty()) {
+  std::optional<size_t> current;
+  std::vector<Candidate> candidates = candidatesOf(event, preferring, resolver, &current);
+  if (candidates.empty()) {
     plan.empty = true;
     return plan;
   }
+  // The source you were on, unless a card has moved on to another part
+  // since (Build 160): only when it was on this part, or is on every one.
+  auto stillFits = [&](const Candidate& c) {
+    if (!resolver.parts || resolver.parts->empty() || !current) return true;
+    const std::vector<SportsEvent>& parts = *resolver.parts;
+    // A race weekend's tile is its session on now: remembered per session.
+    if (parts.front().game && parts.front().game->isRacing()) return true;
+    if (!rememberedPart.empty() && parts::kind(parts[*current]) == rememberedPart) return true;
+    const std::string& channelID = event.sources[c.source].channelID;
+    return std::all_of(parts.begin(), parts.end(), [&](const SportsEvent& p) {
+      return std::any_of(p.sources.begin(), p.sources.end(),
+                         [&](const EventSource& s) { return s.channelID == channelID; });
+    });
+  };
   if (!preferring && remembered) {
-    auto at = std::find(plan.candidates.begin(), plan.candidates.end(), *remembered);
-    if (at != plan.candidates.end()) {
-      std::rotate(plan.candidates.begin(), at, at + 1);
+    auto at = std::find_if(candidates.begin(), candidates.end(),
+                           [&](const Candidate& c) { return c.id == *remembered; });
+    if (at != candidates.end() && stillFits(*at)) {
+      std::rotate(candidates.begin(), at, at + 1);
       plan.reason = "the source you were on";
     }
   }
+  plan.candidates.reserve(candidates.size());
+  for (Candidate& c : candidates) plan.candidates.push_back(std::move(c.id));
   if (preferring) {
     auto source = std::find_if(event.sources.begin(), event.sources.end(),
                                [&](const EventSource& s) { return s.channelID == *preferring; });
@@ -759,17 +829,8 @@ WatchPlan watchPlan(const SportsEvent& event, const std::optional<std::string>& 
 
 std::optional<LiveReminder> reminderTarget(const SportsEvent& event, const Resolver& resolver) {
   if (!event.start || !resolver.sourceChannel) return std::nullopt;
-  std::vector<EventSource> channels = event.channels();
-  std::vector<EventSource> feeds = event.feeds();
-  // As Watch: a channel in your languages, else a feed in them, else any.
-  auto welcome = [&](const EventSource& s) { return languages::welcome(s, resolver.languages); };
-  auto mine = std::find_if(channels.begin(), channels.end(), welcome);
-  auto mineFeed = std::find_if(feeds.begin(), feeds.end(), welcome);
-  const EventSource* source = mine != channels.end()      ? &*mine
-                              : mineFeed != feeds.end()   ? &*mineFeed
-                              : !channels.empty()         ? &channels.front()
-                              : !feeds.empty()            ? &feeds.front()
-                                                          : nullptr;
+  // As Watch (Build 160): languages::lead.
+  const EventSource* source = languages::lead(event.sources, resolver.languages);
   if (!source) return std::nullopt;
   auto channel = resolver.sourceChannel(*source);
   if (!channel) return std::nullopt;
@@ -942,45 +1003,60 @@ namespace {
 struct Stamp {
   std::string feedID;
   double time = 0;
+  std::string part;
 };
 
+// "feed|time", Build 160 "feed|time|@part" (a card's part it was on).
 std::optional<Stamp> stamp(const std::string& value) {
-  size_t bar = value.rfind('|');
-  if (bar == std::string::npos) return std::nullopt;
-  std::string number = value.substr(bar + 1);
+  std::string_view rest = value;
+  std::string part;
+  size_t bar = rest.rfind('|');
+  if (bar != std::string_view::npos && bar + 1 < rest.size() && rest[bar + 1] == '@') {
+    part = std::string(rest.substr(bar + 2));
+    rest = rest.substr(0, bar);
+    bar = rest.rfind('|');
+  }
+  if (bar == std::string_view::npos) return std::nullopt;
+  std::string number(rest.substr(bar + 1));
   if (number.empty()) return std::nullopt;
   char* end = nullptr;
   double t = std::strtod(number.c_str(), &end);
   if (!end || *end != '\0' || !std::isfinite(t)) return std::nullopt;
-  return Stamp{value.substr(0, bar), t};
+  return Stamp{std::string(rest.substr(0, bar)), t, std::move(part)};
 }
 
 }  // namespace
 
 std::string SourceMemory::key(const SportsEvent& event) { return event.game ? event.game->id : event.id; }
 
-std::optional<std::string> SourceMemory::remembered(const SportsEvent& event, Seconds now) const {
+std::optional<SourceMemory::Recalled> SourceMemory::recall(const SportsEvent& event, Seconds now) const {
   auto it = map_.find(key(event));
   if (it == map_.end()) return std::nullopt;
   auto s = stamp(it->second);
   if (!s || static_cast<double>(now) - s->time >= static_cast<double>(kLife)) return std::nullopt;
-  return s->feedID;
+  return Recalled{s->feedID, s->part};
 }
 
-bool SourceMemory::remember(const SportsEvent& event, const std::string& feedID, Seconds now) {
+std::optional<std::string> SourceMemory::remembered(const SportsEvent& event, Seconds now) const {
+  auto r = recall(event, now);
+  if (!r) return std::nullopt;
+  return r->feedID;
+}
+
+bool SourceMemory::remember(const SportsEvent& event, const std::string& feedID, Seconds now, const std::string& part) {
   const std::string k = key(event);
   const double t = static_cast<double>(now);
   auto existing = map_.find(k);
   if (existing != map_.end()) {
     auto s = stamp(existing->second);
     // Same source, saved in the last minute: nothing to write.
-    if (s && s->feedID == feedID && t - s->time < 60) return false;
+    if (s && s->feedID == feedID && s->part == part && t - s->time < 60) return false;
   }
   for (auto it = map_.begin(); it != map_.end();) {
     auto s = stamp(it->second);
     it = s && t - s->time < static_cast<double>(kLife) ? std::next(it) : map_.erase(it);
   }
-  map_[k] = feedID + "|" + std::to_string(now);
+  map_[k] = feedID + "|" + std::to_string(now) + (part.empty() ? std::string() : "|@" + part);
   if (map_.size() > kCap) {
     std::vector<std::pair<double, std::string>> byTime;
     for (const auto& [name, value] : map_) {

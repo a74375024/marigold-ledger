@@ -554,6 +554,31 @@ TEST_CASE("the source remembered per game: 6 hours, 40 games") {
   CHECK_FALSE(feedToRemember(false, std::string("xt|1"), std::string("xt|7"), {"xt|1", "xt|2"}));
 }
 
+TEST_CASE("Build 160: the source remembered on a card keeps the part it was on") {
+  Seconds now = utc(2026, 10, 25, 18, 0);
+  SportsGame g = game("UFC", "Fighting", "600|main", team("f1", "Max Stone"), team("f2", "Lee River"), now);
+  g.cardKey = "ufc|333|card";
+  SportsEvent card = sportsdata::eventOf(g);
+  SourceMemory memory;
+  CHECK(memory.remember(card, "xt|p", now, "prelims"));
+  CHECK(memory.stored().at("UFC|600|main") == "xt|p|" + std::to_string(now) + "|@prelims");
+  auto recalled = memory.recall(card, now + 600);
+  REQUIRE(recalled);
+  CHECK(recalled->feedID == "xt|p");
+  CHECK(recalled->part == "prelims");
+  CHECK(memory.remembered(card, now + 600) == "xt|p");
+  // The same source on another part is written.
+  CHECK(memory.remember(card, "xt|p", now + 30, "main"));
+  CHECK(memory.recall(card, now + 60)->part == "main");
+  CHECK_FALSE(memory.remember(card, "xt|p", now + 40, "main"));
+  // Saved by an older build: no part. Read back after a save.
+  SourceMemory old({{"UFC|600|main", "xt|p|" + std::to_string(now)}});
+  CHECK(old.recall(card, now + 60)->part.empty());
+  SourceMemory loaded(SourceMemory::fromJson(memory.toJson()));
+  CHECK(loaded.recall(card, now + 60)->part == "main");
+  CHECK_FALSE(loaded.recall(card, now + 7 * 3600));
+}
+
 TEST_CASE("store: a server-opened version that played last leads only the server-opened ones") {
   auto server = [](const std::string& id) { return id.rfind("jf:", 0) == 0; };
   std::vector<std::string> list = {"xt:1", "xt:2", "jf:a", "jf:b"};

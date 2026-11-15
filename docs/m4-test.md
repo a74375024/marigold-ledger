@@ -1765,3 +1765,26 @@ Leaving the app (home, another app, the Mac sleeping or hidden) pauses playback 
 | Mac sleep | Sleep the Mac while watching, wake it | Starts again on the same feed; nothing marked failed in Sources |
 | LG menus | The remote's Settings button while watching | Still plays behind the menu (no pause line); home and back starts it again |
 | Game gone while away | Leave the app on a game; come back after it left Live Events | Playback ends quietly (no failure card, no failure in the log) |
+
+## Build 160: sources in one language order; the part on now first
+
+A game's sources now follow one language order everywhere: the board's list, what Watch plays first and its automatic backups, Where to Watch (also the player's Sources panel), the tile's and the details card's channel, and a reminder. First the viewer's first language (English), then sources of no known language (mostly English channels with no mark), then the viewer's other languages (Spanish when picked), then every other language a source names. My Lineup, the kind of source, a station's rank and a feed's record and picture only order sources within one language; a French copy that starts reliably no longer jumps above an English feed, and a Spanish channel in My Lineup comes after an English one that isn't. Where to Watch lists your channels and the provider's feeds in English or no known language first, then "In Spanish", "In French"… below.
+
+Languages read better: a feed of Canada's (English and French) stays not known; a Quebec channel ("|CA| QUEBEC SPORT") is French, not English; a language named last in a feed's title ("em Português", "en Español", ": English", "- French") is read; a name's own country ("FR: …") counts where its group names none.
+
+Multi-part events (UFC's early prelims, prelims and main card; a race weekend's sessions) start on the part on now, decided when you press Watch or open Where to Watch, never while something plays. The part on now: the scoreboard's live part; else the first part not final, moved on by the clock once the next part has started and the one before had half an hour to finish (none when its listings ended); a part that's final moves on. Then each source: a pick in Where to Watch; the source you were on, only when it was on this part or is on every part; the part on now with the whole-night feeds on it, the next part, the parts over last; then the language order. A feed that names no part counts for the part it starts at and every later one. Where to Watch lists the part on now first. A boxing card with one part on the schedule: a "Prelims" slot hours before the main event's goes after it once the main event has run half an hour.
+
+| Area | How to check | Pass |
+|---|---|---|
+| English first | An NFL game with French and Portuguese DAZN copies and US feeds (Chiefs at Falcons) | Where to Watch: Your channels, Event feeds from your provider (the US feeds), then In French, In Portuguese; Watch starts on a US feed |
+| Unknown second | A game on an unmarked channel (\|AF\| DSTV) and US feeds | Watch starts on the US feed; the unmarked channel next |
+| Your others | Spanish picked too | English, unknown, then Spanish; "In Spanish" above other languages |
+| My Lineup | A Spanish channel in My Lineup and an English one that isn't | The tile names the English channel; Watch starts there |
+| Tile = Watch | Any game | The channel the tile and details card name is the one Watch opens |
+| Main card | UFC with the main card on | Watch opens a main card source; Where to Watch lists Main Card first, Prelims last |
+| Memory | Watch the prelims, leave, come back at the main card | A main card source, not the prelims feed; a whole-night feed you were on still leads |
+| Late prelims | The prelims running past the main card's time, no score status | Still the prelims for half an hour, then the main card |
+| Pick | Where to Watch › a Prelims source during the main card | That source plays |
+| Race weekend | Qualifying on | Watch and Where to Watch start on qualifying's sources |
+| No switching | Play a card while its part changes | Playback stays on what plays |
+| Speed (LG) | Open Live Events, press Watch, open Where to Watch | No slower than before |

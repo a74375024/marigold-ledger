@@ -13,6 +13,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "core/catalog/types.hpp"
 #include "core/sports/types.hpp"
@@ -53,8 +54,28 @@ std::string name(std::string_view code);
 // another.
 enum class Fit : uint8_t { yours = 0, unknown = 1, other = 2 };
 Fit fit(std::string_view lang, const std::set<std::string>& viewer);
-// A source a tile names and Watch starts on: in My Lineup (chosen, whatever
-// its language), or in one of your languages or an unknown one.
+// In My Lineup (chosen, whatever its language), or in one of your languages
+// or an unknown one (Build 132; Build 160 orders by tier() instead).
 bool welcome(const EventSource& source, const std::set<std::string>& viewer);
+
+// Build 160: the one language order of every list of a game's sources (the
+// board's, Watch's and its backups', Where to Watch's, the tile's and the
+// details card's): the viewer's first language, then not known (mostly
+// English channels with no mark), then the viewer's other languages, then
+// every other one the source names. My Lineup, kind, rank and reliability
+// only order sources within a tier.
+enum class Tier : uint8_t { first = 0, unknown = 1, yours = 2, other = 3 };
+// The viewer's first language: English when it's one of theirs (or they
+// have none), else the first of them.
+std::string_view firstLanguage(const std::set<std::string>& viewer);
+Tier tier(std::string_view lang, const std::set<std::string>& viewer);
+// English or not known: what's listed above Where to Watch's "In <language>"
+// sections.
+inline bool upTop(Tier t) { return t <= Tier::unknown; }
+
+// The source Watch starts on, part aside: of the best tier, My Lineup's
+// channel, else another channel, else a feed (in the order given within
+// each); a team's channel only when there's nothing else. nullptr: none.
+const EventSource* lead(const std::vector<EventSource>& sources, const std::set<std::string>& viewer);
 
 }  // namespace marigold::sports::languages

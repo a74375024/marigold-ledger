@@ -487,13 +487,17 @@ struct WherePanel {
   std::optional<std::string> moreStations;  // "More stations in your channels are showing it"
   std::string hint;
 };
-// Build 132: "Your channels" (in your languages, or not known, and My
-// Lineup's), then a section per other language ("In Spanish", "In Arabic"),
-// then the event feeds (another language's in its section). Headings never
-// count channels.
+// Build 160: "Your channels" and "Event feeds from your provider" in
+// English (your first language) or not known, then a section per other
+// language, yours first ("In Spanish", "In Arabic"), each with its channels
+// and feeds; sources in the board's order (languages::tier, My Lineup, kind,
+// rank). A card: a section per part, the part on now first (parts::onNow at
+// `now`, else the board's time, by `statuses` when given), the parts over
+// last. Headings never count channels.
 // `feedSummary`: extra detail for a provider feed (the store's), optional.
 WherePanel wherePanel(const Board& board, const SportsEvent& event, const ChannelFor& channelFor,
-                      const std::function<std::string(const std::string&)>& feedSummary = nullptr);
+                      const std::function<std::string(const std::string&)>& feedSummary = nullptr,
+                      const scores::Statuses* statuses = nullptr, std::optional<Seconds> now = std::nullopt);
 
 struct DetailCard {
   std::string leagueLine;
@@ -506,8 +510,8 @@ struct DetailCard {
   bool canRemind = false;
   std::optional<std::string> notInChannels;  // with the "if one picks it up" line
 };
-// Watch names a channel in your languages (`viewer`; Build 132), else
-// none when there are feeds in them, else the first channel.
+// Watch names the channel Watch starts on (Build 160: languages::lead of
+// `viewer`); none when that's a feed.
 DetailCard detailCard(const SportsEvent& event, Seconds now, const time::Zone& zone, const Settings& settings,
                       const ChannelFor& channelFor, const std::set<std::string>& viewer = {"en"});
 
