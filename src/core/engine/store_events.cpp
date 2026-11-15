@@ -24,6 +24,7 @@
 #include "core/sports/refusals.hpp"
 #include "core/sports/my_sports.hpp"
 #include "core/sports/network_map.hpp"
+#include "core/sports/parts.hpp"
 #include "core/sports/special_feeds.hpp"
 #include "core/util/log.hpp"
 #include "core/util/strings.hpp"
@@ -1797,11 +1798,14 @@ WhereToWatch Store::whereToWatch(const std::string& eventId) const {
   WhereToWatch w;
   auto ev = m.ev.board.events.find(eventId);
   if (ev == m.ev.board.events.end()) return w;
-  sb::WherePanel p = sb::wherePanel(m.ev.board, ev->second, makeChannelFor(m, channels_),
-                                    [this](const std::string& feed) {
-                                      std::vector<Feed> f = feedsFor({feed});
-                                      return f.empty() ? std::string() : f.front().label;
-                                    });
+  // Build 160: a card's part on now first, as of now (not the board's time).
+  sb::WherePanel p = sb::wherePanel(
+      m.ev.board, ev->second, makeChannelFor(m, channels_),
+      [this](const std::string& feed) {
+        std::vector<Feed> f = feedsFor({feed});
+        return f.empty() ? std::string() : f.front().label;
+      },
+      &m.ev.scores.statuses(), time::now());
   w.title = p.title;
   for (const sb::WhereSection& s : p.sections) {
     std::vector<WatchSource> list;
@@ -1908,9 +1912,18 @@ std::vector<Feed> Store::eventFeeds(const std::string& eventId, const std::strin
   };
   r.isEntry = [&m](const std::string& id) { return m.entryInfo.count(id) > 0; };
   r.languages = m.ev.board.languages;
+  // Build 160: a card's part on now decided now, from its parts and scores.
+  const time::Seconds now = time::now();
+  auto card = e.board.cards.find(eventId);
+  if (card != e.board.cards.end()) r.parts = &card->second;
+  r.statuses = &e.scores.statuses();
+  r.now = now;
   std::optional<std::string> preferring;
   if (!via.empty()) preferring = via;
-  ss::WatchPlan plan = ss::watchPlan(ev->second, preferring, e.memory.remembered(ev->second, time::now()), r);
+  auto recalled = e.memory.recall(ev->second, now);
+  ss::WatchPlan plan = ss::watchPlan(ev->second, preferring,
+                                     recalled ? std::optional<std::string>(recalled->feedID) : std::nullopt, r,
+                                     recalled ? recalled->part : std::string());
   if (plan.empty) return {};
   if (plan.entry) {
     // A guide channel picked: its own versions (and the game's feeds as
@@ -1932,7 +1945,15 @@ void Store::noteEventFeed(const std::string& eventId, const std::string& channel
   EventsState& e = impl_->ev;
   auto ev = e.board.events.find(eventId);
   if (ev == e.board.events.end() || channelId.empty() || !sawPicture) return;
-  if (e.memory.remember(ev->second, channelId, time::now())) saveEvents();
+  // Build 160: with a card's part on now, so it leads only on that part.
+  const time::Seconds now = time::now();
+  std::string part;
+  auto card = e.board.cards.find(eventId);
+  if (card != e.board.cards.end()) {
+    auto on = sports::parts::onNow(card->second, now, e.scores.statuses());
+    if (on) part = sports::parts::kind(card->second[*on]);
+  }
+  if (e.memory.remember(ev->second, channelId, now, part)) saveEvents();
 }
 
 bool Store::hasReminder(const std::string& id) const {

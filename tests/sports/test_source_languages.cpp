@@ -1,5 +1,6 @@
-// Build 132: a game's sources in the viewer's languages first (My Lineup
-// first whatever its language; stations folded per language; other
+// Build 132: a game's sources in the viewer's languages first (Build 160:
+// one order everywhere: English, not known, your other languages, any
+// other; My Lineup first within a language; stations folded per language; other
 // countries' sports channels last and two at most), what the tile names and
 // Watch starts on, Where to Watch's sections, the reminder, saved results
 // from before (the "spanish" flag), and other countries' sports channels as
@@ -7,6 +8,7 @@
 #include <algorithm>
 
 #include "core/sports/board.hpp"
+#include "core/sports/languages.hpp"
 #include "core/sports/matcher.hpp"
 #include "core/sports/network_map.hpp"
 #include "core/sports/store.hpp"
@@ -113,7 +115,7 @@ board::Tile tileOf(const std::vector<EventSource>& sources, std::set<std::string
 
 }  // namespace
 
-TEST_CASE("source order: My Lineup, then your language, unknown, another; then kind, rank, order found") {
+TEST_CASE("source order (Build 160): English, unknown, your others, another; then My Lineup, kind, rank, order found") {
   matcher::BuildInput in = input();
   in.listings = {listing("e|es", "es", station_rank::elsewhere), listing("e|unknown", "", station_rank::elsewhere),
                  listing("e|en", "en", station_rank::elsewhere), listing("e|lineup-es", "es", station_rank::lineup, true),
@@ -122,9 +124,10 @@ TEST_CASE("source order: My Lineup, then your language, unknown, another; then k
   in.languages = {"en"};
   auto out = matcher::build(in);
   REQUIRE(out);
-  // My Lineup's Spanish channel first (you chose it); English channels by
-  // rank, your English feed, then unknown, then Spanish.
-  CHECK(ids(theGame(*out).sources) == "e|lineup-es e|local e|en xt|en e|unknown e|es xt|es");
+  // English channels by rank and the English feed, then unknown, then
+  // Spanish (My Lineup's Spanish channel first of those: the language
+  // comes before the lineup).
+  CHECK(ids(theGame(*out).sources) == "e|local e|en xt|en e|unknown e|lineup-es e|es xt|es");
 
   // US Spanish only: Spanish first.
   in.languages = {"es"};
@@ -132,12 +135,12 @@ TEST_CASE("source order: My Lineup, then your language, unknown, another; then k
   REQUIRE(out);
   CHECK(ids(theGame(*out).sources) == "e|lineup-es e|es xt|es e|unknown e|local e|en xt|en");
 
-  // Both: one group, by kind and rank.
+  // Both: English first, then unknown, then Spanish (your other language).
   in.languages = {"en", "es"};
   out = matcher::build(in);
   REQUIRE(out);
-  CHECK(ids(theGame(*out).sources) == "e|lineup-es e|local e|es e|en xt|es xt|en");
-  CHECK(theGame(*out).moreStations == 1);  // three stations of yours listed: the unknown one counted
+  CHECK(ids(theGame(*out).sources) == "e|local e|en xt|en e|unknown e|lineup-es e|es xt|es");
+  CHECK_FALSE(theGame(*out).moreStations);  // English and unknown, Spanish apart: none over three
 }
 
 TEST_CASE("source order: stations folded per language, so another language's never push yours out") {
@@ -238,11 +241,19 @@ TEST_CASE("the tile names, and Watch starts on, a source in your languages") {
   CHECK(only.channelName == "Channel e|ar");
   CHECK(only.footer == "In Arabic");
   CHECK(only.watchable);
-  // My Lineup's is named whatever its language.
+  // Build 160: a Spanish channel in My Lineup and an English one that isn't:
+  // the English one (the language comes first); My Lineup's leads within it.
   board::Tile mine = tileOf({src("e|es", EventSource::Kind::lineup, "es", station_rank::lineup),
                              src("e|en", EventSource::Kind::guide, "en")});
-  CHECK(mine.channelName == "Channel e|es");
-  CHECK(mine.footer == "In your lineup");
+  CHECK(mine.channelName == "Channel e|en");
+  CHECK(mine.footer == "Also in Spanish");
+  board::Tile lineupEn = tileOf({src("e|en", EventSource::Kind::guide, "en"),
+                                 src("e|en-mine", EventSource::Kind::lineup, "en", station_rank::lineup)});
+  CHECK(lineupEn.channelName == "Channel e|en-mine");
+  CHECK(lineupEn.footer == "In your lineup");
+  // An unknown channel and an English feed: the feed (nothing named).
+  CHECK_FALSE(tileOf({src("e|x", EventSource::Kind::guide, ""), src("xt|en", EventSource::Kind::provider, "en")})
+                  .channelName);
   // A Spanish viewer: the Spanish channel, also in English.
   board::Tile spanish = tileOf({src("e|en", EventSource::Kind::guide, "en"), src("e|es", EventSource::Kind::guide, "es")},
                                {"US-ES"});
@@ -260,12 +271,13 @@ TEST_CASE("the tile names, and Watch starts on, a source in your languages") {
             .footer == "+ 1 backup feeds");
 }
 
-TEST_CASE("Where to Watch: your channels, a section per other language, then the feeds; no counts") {
+TEST_CASE("Where to Watch (Build 160): English and unknown channels and feeds, then a section per other language") {
   SportsEvent e = sportsdata::eventOf(
       nfl(), {src("e|lineup-ar", EventSource::Kind::lineup, "ar", station_rank::lineup),
               src("e|en", EventSource::Kind::guide, "en"), src("e|x", EventSource::Kind::guide, ""),
               src("xt|en", EventSource::Kind::provider, "en"), src("e|es", EventSource::Kind::guide, "es"),
               src("xt|es", EventSource::Kind::provider, "es"), src("e|ar", EventSource::Kind::guide, "ar", station_rank::abroad),
+              src("xt|x", EventSource::Kind::provider, ""), src("xt|fr", EventSource::Kind::provider, "fr"),
               src("e|zz", EventSource::Kind::guide, "zz", station_rank::abroad)});
   board::Input in;
   in.events = {e};
@@ -278,18 +290,31 @@ TEST_CASE("Where to Watch: your channels, a section per other language, then the
   board::WherePanel where = board::wherePanel(b, e, names());
   std::vector<std::string> titles;
   for (const auto& s : where.sections) titles.push_back(s.title);
-  CHECK(titles == std::vector<std::string>{"Your channels", "In Spanish", "In Arabic", "In another language",
-                                           "Event feeds from your provider"});
-  CHECK(where.sections[0].items.size() == 3);  // My Lineup's (Arabic), English, unknown
-  CHECK(where.sections[0].items[0].channelID == "e|lineup-ar");
-  CHECK(where.sections[1].items.size() == 2);  // the Spanish channel and feed
-  CHECK(where.sections[1].items[1].spanish);
-  CHECK(where.sections[2].items[0].detail == "From another country");
-  CHECK(where.sections[4].items.size() == 1);
+  // The French feeds no longer climb above the English ones.
+  CHECK(titles == std::vector<std::string>{"Your channels", "Event feeds from your provider", "In Arabic", "In Spanish",
+                                           "In French", "In another language"});
+  REQUIRE(where.sections[0].items.size() == 2);  // English, then unknown
+  CHECK(where.sections[0].items[0].channelID == "e|en");
+  CHECK(where.sections[0].items[1].channelID == "e|x");
+  REQUIRE(where.sections[1].items.size() == 2);  // the English feed, then the unknown one
+  CHECK(where.sections[1].items[0].channelID == "xt|en");
+  CHECK(where.sections[1].items[1].channelID == "xt|x");
+  CHECK(where.sections[2].items.size() == 2);  // My Lineup's Arabic channel, then another country's
+  CHECK(where.sections[2].items[0].channelID == "e|lineup-ar");
+  CHECK(where.sections[2].items[1].detail == "From another country");
+  CHECK(where.sections[3].items.size() == 2);  // the Spanish channel and feed
+  CHECK(where.sections[3].items[1].spanish);
+  // A Spanish speaker too: Spanish (yours) before Arabic.
+  in.countries = {"US", "US-ES"};
+  board::Board both = board::build(in);
+  titles.clear();
+  for (const auto& s : board::wherePanel(both, e, names()).sections) titles.push_back(s.title);
+  CHECK(titles == std::vector<std::string>{"Your channels", "Event feeds from your provider", "In Spanish", "In Arabic",
+                                           "In French", "In another language"});
   for (const auto& s : where.sections) CHECK(s.title.find_first_of("0123456789") == std::string::npos);
-  // The details card's Watch: your language's channel.
+  // The details card's Watch: the English channel (what Watch starts on).
   board::DetailCard card = board::detailCard(e, kNow, time::Zone::usEastern(), board::Settings(), names(), {"en"});
-  CHECK(card.watchSourceID == "e|lineup-ar");
+  CHECK(card.watchSourceID == "e|en");
   SportsEvent foreign = sportsdata::eventOf(nfl(), {src("e|ar", EventSource::Kind::guide, "ar", station_rank::abroad),
                                                     src("xt|en", EventSource::Kind::provider, "en")});
   CHECK_FALSE(board::detailCard(foreign, kNow, time::Zone::usEastern(), board::Settings(), names(), {"en"}).watchLabel);
@@ -442,4 +467,97 @@ TEST_CASE("provider feeds: each feed by its own channel's country in a group of 
   // A numbered family's country is its feeds' (their own say nothing else).
   CHECK(out[1].langOf("x|us") == "en");
   CHECK(out[1].langOf("x|bare") == "en");
+}
+
+TEST_CASE("Build 160: one language tier; English first, then not known, your others, every other") {
+  std::set<std::string> english = {"en"};
+  CHECK(languages::tier("en", english) == languages::Tier::first);
+  CHECK(languages::tier("", english) == languages::Tier::unknown);
+  CHECK(languages::tier("es", english) == languages::Tier::other);
+  CHECK(languages::tier("es", {"en", "es"}) == languages::Tier::yours);
+  CHECK(languages::tier("en", {"en", "es"}) == languages::Tier::first);
+  CHECK(languages::tier("en", {}) == languages::Tier::first);  // none given: English
+  // A Spanish-only viewer: Spanish first, English another's.
+  CHECK(languages::firstLanguage({"es"}) == "es");
+  CHECK(languages::tier("es", {"es"}) == languages::Tier::first);
+  CHECK(languages::tier("en", {"es"}) == languages::Tier::other);
+  CHECK(languages::firstLanguage({"hi", "en"}) == "en");
+}
+
+TEST_CASE("Build 160: a Spanish channel in My Lineup comes after an English one that isn't, everywhere") {
+  store::Resolver r;
+  r.sourceChannel = [](const EventSource& s) -> std::optional<store::ChannelRef> {
+    return store::ChannelRef{s.channelID, "Name of " + s.channelID};
+  };
+  r.languages = {"en"};
+  SportsEvent e = sportsdata::eventOf(nfl(), {src("e|lineup-es", EventSource::Kind::lineup, "es", station_rank::lineup),
+                                              src("e|en", EventSource::Kind::guide, "en"),
+                                              src("xt|x", EventSource::Kind::provider, ""),
+                                              src("e|lineup-x", EventSource::Kind::lineup, "", station_rank::lineup)});
+  CHECK(store::eventCandidates(e, std::nullopt, r) ==
+        std::vector<std::string>{"e|en", "e|lineup-x", "xt|x", "e|lineup-es"});
+  CHECK(store::reminderTarget(e, r)->channelID == "e|en");
+  CHECK(board::detailCard(e, kNow, time::Zone::usEastern(), board::Settings(), names(), {"en"}).watchSourceID == "e|en");
+  // The board's order agrees.
+  matcher::BuildInput in = input();
+  in.listings = {listing("e|lineup-es", "es", station_rank::lineup, true), listing("e|en", "en", station_rank::elsewhere)};
+  in.languages = {"en"};
+  auto out = matcher::build(in);
+  REQUIRE(out);
+  CHECK(ids(theGame(*out).sources) == "e|en e|lineup-es");
+  // A viewer who picked Spanish too: still English first.
+  r.languages = {"en", "es"};
+  CHECK(store::eventCandidates(e, std::nullopt, r).front() == "e|en");
+  CHECK(store::eventCandidates(e, std::nullopt, r).back() == "e|lineup-es");
+}
+
+TEST_CASE("Build 160: a feed's record and picture never move it across a language tier") {
+  store::Resolver r;
+  r.sourceChannel = [](const EventSource& s) -> std::optional<store::ChannelRef> {
+    return store::ChannelRef{s.channelID, "Name of " + s.channelID};
+  };
+  // The French and unknown copies play best, the English one worst.
+  std::map<std::string, double> record = {{"xt|en", 0.2}, {"xt|en2", 0.9}, {"xt|x", 0.9}, {"xt|fr1", 1.0}, {"xt|fr2", 1.0}};
+  r.bestFeeds = [&](const std::vector<std::string>& ids) {
+    return store::bestFeeds(ids, [](const std::string&) { return 2; },
+                            [&](const std::string& id) { return record.count(id) ? record.at(id) : 0.5; });
+  };
+  r.languages = {"en"};
+  SportsEvent e = sportsdata::eventOf(
+      nfl(), {src("xt|fr1", EventSource::Kind::provider, "fr"), src("xt|x", EventSource::Kind::provider, ""),
+              src("xt|fr2", EventSource::Kind::provider, "fr"), src("xt|en", EventSource::Kind::provider, "en"),
+              src("xt|en2", EventSource::Kind::provider, "en"), src("e|x", EventSource::Kind::guide, "")});
+  // Within English the record decides; an unknown channel never above an
+  // English feed.
+  CHECK(store::eventCandidates(e, std::nullopt, r) ==
+        std::vector<std::string>{"xt|en2", "xt|en", "e|x", "xt|x", "xt|fr1", "xt|fr2"});
+}
+
+TEST_CASE("Build 160: reading a source's language: Canada not known, Quebec French, names' own words") {
+  // A feed of Canada's (English and French): not known.
+  CHECK(languages::ofFeed("Chiefs vs. Falcons (2026-11-15 12:54:00)", "fam", std::string("CA")).empty());
+  CHECK(languages::ofFeed("Team Alpha vs Harbor City Gulls", "fam", std::string("CA")).empty());
+  // Quebec's channels are French, not English.
+  CHECK(languages::ofChannel("|CA| QUEBEC SPORT", std::string("CA"), LineupCategory::international) == "fr");
+  CHECK(languages::ofChannel("TSN 1", std::string("CA"), LineupCategory::international) == "en");
+  // A language named last in a feed's title.
+  CHECK(languages::ofFeed("Team Alpha vs Harbor City Gulls em Portugu\xC3\xAAs", "fam", std::string("US")) == "pt");
+  CHECK(languages::ofFeed("Team Alpha vs Harbor City Gulls en Espa\xC3\xB1ol", "fam", std::string("US")) == "es");
+  CHECK(languages::ofFeed("Team Alpha vs Harbor City Gulls: English", "fam", std::string("FR")) == "en");
+  CHECK(languages::ofFeed("Team Alpha vs Harbor City Gulls - French", "fam", std::string("US")) == "fr");
+  CHECK(languages::ofFeed("Team Alpha vs Harbor City Gulls (French)", "fam", std::string("US")) == "fr");
+  CHECK(languages::ofFeed("Team Alpha vs Harbor City Gulls in German", "fam", std::nullopt) == "de");
+  // Not a word on its own, nor a language that isn't last.
+  CHECK(languages::ofFeed("Harbor vs Valley Portuguesa", "fam", std::nullopt).empty());
+  CHECK(languages::ofFeed("Harbor vs Portugal", "fam", std::nullopt).empty());
+  CHECK(languages::ofFeed("French Open: Ann Player vs Bea Racket", "fam", std::nullopt).empty());
+  CHECK(languages::ofFeed("Harbor vs Valley English", "fam", std::nullopt).empty());
+  // A name's own country, where its group names none.
+  CHECK(languages::ofFeed("FR: Harbor vs Valley", "fam", std::nullopt) == "fr");
+  CHECK(languages::ofFeed("|DE| Harbor vs Valley", "fam", std::nullopt) == "de");
+  CHECK(languages::ofFeed("UK: Harbor vs Valley", "fam", std::nullopt) == "en");
+  CHECK(languages::ofFeed("FR: Harbor vs Valley", "fam", std::string("US")) == "en");  // the group's country wins
+  CHECK(languages::ofFeed("CL: Harbor vs Valley", "fam", std::nullopt).empty());     // a competition
+  CHECK(languages::ofFeed("NFL: Harbor vs Valley", "fam", std::nullopt).empty());
+  CHECK(languages::ofChannel("DE: Harbor Sport 1", std::nullopt, LineupCategory::international) == "de");
 }

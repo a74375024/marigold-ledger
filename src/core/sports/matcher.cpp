@@ -2144,30 +2144,28 @@ std::optional<BuildResult> build(const BuildInput& in) {
   }
   lap("3 assemble");
 
-  // Source order (Build 132): My Lineup first, whatever its language (you
-  // chose it); then by language: yours, not known, another; then other
+  // Source order (Build 160): by language tier (languages::tier: English,
+  // not known, your other languages, any other), then My Lineup, other
   // channels, provider feeds, team channels; then station rank and the
   // order found. Stations beyond the best few of a language (one game can
-  // be on 90 stations) are counted, not listed: yours and unknown ones
+  // be on 90 stations) are counted, not listed: English and unknown ones
   // together, each other language apart, so another language's stations
   // never push yours out. Other countries' sports channels past two go.
   for (SportsEvent& event : result) {
     if (event.sources.size() <= 1) continue;
     struct Keyed {
       size_t index;
-      int lineup, fit;
+      int tier;
       EventSource source;
     };
     std::vector<Keyed> keyed;
     keyed.reserve(event.sources.size());
     for (size_t i = 0; i < event.sources.size(); ++i) {
       EventSource& s = event.sources[i];
-      keyed.push_back({i, s.kind == EventSource::Kind::lineup ? 0 : 1,
-                       static_cast<int>(languages::fit(s.lang, in.languages)), std::move(s)});
+      keyed.push_back({i, static_cast<int>(languages::tier(s.lang, in.languages)), std::move(s)});
     }
     std::sort(keyed.begin(), keyed.end(), [](const Keyed& a, const Keyed& b) {
-      if (a.lineup != b.lineup) return a.lineup < b.lineup;
-      if (a.fit != b.fit) return a.fit < b.fit;
+      if (a.tier != b.tier) return a.tier < b.tier;
       if (a.source.kind != b.source.kind) return static_cast<int>(a.source.kind) < static_cast<int>(b.source.kind);
       int ra = a.source.rank.value_or(4), rb = b.source.rank.value_or(4);
       if (ra != rb) return ra < rb;
@@ -2175,7 +2173,7 @@ std::optional<BuildResult> build(const BuildInput& in) {
     });
     std::vector<EventSource> kept;
     kept.reserve(keyed.size());
-    std::map<std::string, int> stations;  // "" yours and unknown; else the language
+    std::map<std::string, int> stations;  // "" English and unknown; else the language
     int folded = 0, abroad = 0;
     for (Keyed& item : keyed) {
       EventSource& source = item.source;
@@ -2184,7 +2182,8 @@ std::optional<BuildResult> build(const BuildInput& in) {
         continue;
       }
       if (source.kind == EventSource::Kind::guide) {
-        int& count = stations[item.fit == static_cast<int>(languages::Fit::other) ? source.lang : std::string()];
+        int& count =
+            stations[languages::upTop(static_cast<languages::Tier>(item.tier)) ? std::string() : source.lang];
         if (++count > 3) {
           folded += 1;
           continue;
@@ -2334,7 +2333,10 @@ std::vector<int> fightTargets(const FightKey& key, std::optional<Seconds> start,
   if (!start) return {};
   if (*start <= game(first).start + 30 * 60 && *start >= game(first).start - 3 * 3600) return list;
   if (!nearest || gap(*nearest) > 3 * 3600) return {};
-  return {*nearest};
+  // Build 160: no part named: the part it starts at and every later one (a
+  // whole-night feed from the prelims shows the main card too).
+  auto from = std::find(list.begin(), list.end(), *nearest);
+  return std::vector<int>(from, list.end());
 }
 
 // MARK: Names

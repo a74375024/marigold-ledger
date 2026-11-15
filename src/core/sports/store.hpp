@@ -27,6 +27,7 @@
 #include "core/sports/matcher.hpp"
 #include "core/sports/network_map.hpp"
 #include "core/sports/reminders.hpp"
+#include "core/sports/scores.hpp"
 #include "core/sports/types.hpp"
 
 namespace marigold::sports::store {
@@ -308,14 +309,23 @@ struct Resolver {
   std::function<bool(const std::string&)> isEntry;
   // Build 132: the viewer's languages (languages::ofViewer).
   std::set<std::string> languages = {"en"};
+  // Build 160: a card's parts (Board::cards for the tile; a race weekend's
+  // sessions), in order, and what tells the part on now (parts::onNow) at
+  // `now`: the order is decided when you press play, not at board build.
+  const std::vector<SportsEvent>* parts = nullptr;
+  const scores::Statuses* statuses = nullptr;
+  Seconds now = 0;
 };
 
-// Everything that can play an event, in order (the automatic backup order):
-// the picked source (if any) first, then My Lineup / guide channels (each
-// with its versions), then provider feeds, a team's own channel last.
-// Build 132: My Lineup's and those in your languages (or not known) first:
-// their channels, then their feeds; then another language's channels and
-// feeds; team channels last. Raw channel ids, without repeats.
+// Everything that can play an event, in order (the automatic backup order),
+// Build 160: the source picked in Where to Watch; then by part (a card's
+// part on now and the whole-night feeds on it, the next part, the parts
+// over last: parts::sourceTiers); then by language (languages::tier:
+// English, not known, your other languages, any other); then My Lineup,
+// other channels (each with its versions), feeds; station rank; a feed's
+// record and picture (bestFeeds, only among feeds of one part and
+// language); the order found. A team's own channel last. Raw channel ids,
+// without repeats.
 std::vector<std::string> eventCandidates(const SportsEvent& event, const std::optional<std::string>& preferring,
                                          const Resolver& resolver);
 
@@ -333,13 +343,15 @@ struct WatchPlan {
   std::optional<std::string> reason;
 };
 // Back to a game watched in the last few hours: start on the remembered
-// source (when nothing was picked).
+// source (when nothing was picked). Build 160: on a card (Resolver::parts),
+// only when it was remembered on the part on now (`rememberedPart`, its
+// parts::kind), or it's on every part.
 WatchPlan watchPlan(const SportsEvent& event, const std::optional<std::string>& preferring,
-                    const std::optional<std::string>& remembered, const Resolver& resolver);
+                    const std::optional<std::string>& remembered, const Resolver& resolver,
+                    const std::string& rememberedPart = std::string());
 
-// What a reminder for an upcoming event points at: its best channel (a
-// channel, else a feed; Build 132: in your languages first, as Watch), for
-// the event's usual length.
+// What a reminder for an upcoming event points at: what Watch starts on
+// (Build 160: languages::lead), for the event's usual length.
 std::optional<LiveReminder> reminderTarget(const SportsEvent& event, const Resolver& resolver);
 
 // MARK: Saved result (shown instantly on the next launch)
@@ -404,10 +416,19 @@ class SourceMemory {
 
   // The game id, else the tile id.
   static std::string key(const SportsEvent& event);
+  // Build 160: with the card's part it was on (parts::kind; "" none, or
+  // saved before).
+  struct Recalled {
+    std::string feedID;
+    std::string part;
+  };
+  std::optional<Recalled> recall(const SportsEvent& event, Seconds now) const;
   std::optional<std::string> remembered(const SportsEvent& event, Seconds now) const;
-  // True when the map changed (save it). The same source saved in the last
-  // minute is not written again.
-  bool remember(const SportsEvent& event, const std::string& feedID, Seconds now);
+  // True when the map changed (save it). The same source (and part) saved
+  // in the last minute is not written again. Saved as "feed|time", with a
+  // part "feed|time|@part".
+  bool remember(const SportsEvent& event, const std::string& feedID, Seconds now,
+                const std::string& part = std::string());
   const std::map<std::string, std::string>& stored() const { return map_; }
 
   std::string toJson() const;

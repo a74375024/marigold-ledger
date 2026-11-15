@@ -243,6 +243,10 @@ TEST_CASE("fight targets: a named part, the part at its time, or the whole night
   // No part named, starting by the first part: the whole night.
   CHECK(fightTargets(key("UFC 333"), early - 3600, cards, games) == std::vector<int>{0, 1, 2});
   CHECK(fightTargets(key("UFC 333"), main + 600, cards, games) == std::vector<int>{2});
+  // Build 160: no part named, starting at the prelims: the prelims and every
+  // part after (a whole-night feed shows the main card too).
+  CHECK(fightTargets(key("UFC 333"), prelims + 300, cards, games) == std::vector<int>{1, 2});
+  CHECK(fightTargets(key("UFC 333"), early + 2 * 3600 - 600, cards, games) == std::vector<int>{1, 2});
   CHECK(fightTargets(key("UFC 333"), std::nullopt, cards, games).empty());
   CHECK(fightTargets(key("UFC 333"), main + 5 * 3600, cards, games).empty());
   CHECK(fightTargets(key("UFC 334"), main, cards, games).empty());
@@ -493,6 +497,7 @@ TEST_CASE("channel sources come first; previous tile ids are kept") {
   Fixture f;
   BuildInput in = f.input();
   EventSource station = sportsdata::source("e|fox13", EventSource::Kind::lineup, false, 0, "In My Lineup");
+  station.lang = "en";  // Build 160: an English feed comes before a channel of no known language
   in.channelSources["NFL|1"] = {station};
   in.events = {provider("ev1", "Team Alpha @ Harbor City Gulls", "NFL", f.nflGame.start, {"xt|1"})};
   in.previousIDs["NFL|1"] = "old-id";

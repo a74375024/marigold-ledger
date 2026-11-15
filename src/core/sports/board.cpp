@@ -10,6 +10,7 @@
 #include "core/sports/languages.hpp"
 #include "core/sports/leagues.hpp"
 #include "core/sports/matcher.hpp"
+#include "core/sports/parts.hpp"
 #include "core/sports/player_photos.hpp"
 #include "core/sports/profiles.hpp"
 #include "core/sports/schedule.hpp"
@@ -120,50 +121,11 @@ SportsEvent offAir(SportsEvent e, Seconds onAt) {
   return e;
 }
 
-// A race weekend: the session on now, else the next one not over (by its
-// status, else its usual length), else the last.
-const SportsEvent* raceCurrent(const std::vector<SportsEvent>& parts, Seconds now, const scores::Statuses& statuses) {
-  // Past its usual end (plus half an hour): a status nobody refreshed while
-  // it ran doesn't hold it.
-  auto over = [&](const SportsEvent& p) { return p.start && now > *p.start + p.expectedLength() + 30 * 60; };
-  auto stale = [&](const SportsEvent& p) { return p.start && now > *p.start + 12 * 3600; };
-  for (const SportsEvent& p : parts) {
-    if ((p.live == LivePhase::live || isLivePhase(phaseOf(p, statuses))) && !stale(p)) return &p;
-  }
-  for (const SportsEvent& p : parts) {
-    auto value = phaseOf(p, statuses);
-    if (value == LivePhase::final || value == LivePhase::postponed || (p.game && p.game->completed)) continue;
-    if ((!value || value == LivePhase::pre) && over(p)) continue;
-    if (isLivePhase(value) && stale(p)) continue;
-    return &p;
-  }
-  return parts.empty() ? nullptr : &parts.back();
-}
-
-// The part on now by its fights' status; without it, by start times.
+// The part on now (parts::onNow: by the fights' or sessions' status, else
+// by start times, a part running late kept for parts::kGrace).
 const SportsEvent* currentPart(const std::vector<SportsEvent>& parts, Seconds now, const scores::Statuses& statuses) {
-  if (parts.empty()) return nullptr;
-  const SportsEvent& first = parts.front();
-  if (first.game && first.game->isRacing()) return raceCurrent(parts, now, statuses);
-  std::vector<std::optional<LivePhase>> phases;
-  for (const SportsEvent& p : parts) phases.push_back(phaseOf(p, statuses));
-  if (std::any_of(phases.begin(), phases.end(), [](const auto& p) { return p.has_value(); })) {
-    for (size_t i = 0; i < phases.size(); ++i) {
-      if (isLivePhase(phases[i])) return &parts[i];
-    }
-    // Between parts: the first one not finished yet.
-    for (size_t i = 0; i < phases.size(); ++i) {
-      if (phases[i] != LivePhase::final && phases[i] != LivePhase::postponed) {
-        if (i > 0 || (parts[i].start && *parts[i].start <= now)) return &parts[i];
-        return &first;
-      }
-    }
-    return &parts.back();
-  }
-  for (auto it = parts.rbegin(); it != parts.rend(); ++it) {
-    if (it->start && *it->start <= now) return &*it;
-  }
-  return &first;
+  std::optional<size_t> at = parts::onNow(parts, now, statuses);
+  return at ? &parts[*at] : nullptr;
 }
 
 // A race weekend's tile: the session on now (or next) decides its time,
@@ -567,9 +529,9 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
   Place place;
   const SportsEvent* current = parts ? currentPart(*parts, now, in.statuses) : nullptr;
   const SportsEvent& basis = current ? *current : event;
-  std::vector<EventSource> basisFeeds = basis.feeds();
-  std::vector<EventSource> basisChannels = basis.channels();
-  place.feeds = static_cast<int>(basisFeeds.size());
+  place.feeds = static_cast<int>(std::count_if(basis.sources.begin(), basis.sources.end(), [](const EventSource& s) {
+    return s.kind == EventSource::Kind::provider;
+  }));
   place.favorite = event.game && isFavorite(in.prefs, *event.game);
   if (event.game) place.tag = event.game->note;
 
@@ -749,9 +711,11 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
     place.endedAt = endedAt;
   }
 
-  // Where to watch. Build 132: the tile names, and Watch starts on, a
-  // source in your languages (or My Lineup's, or one not known); a game only
-  // on another language's channels names the first of them.
+  // Where to watch. Build 160: the tile names what Watch starts on (part
+  // aside: `basis` is the part on now): of the best language tier
+  // (languages::tier), My Lineup's channel, else another channel, else
+  // nothing (a feed: the event feed pill); a team (or other "likely")
+  // channel only when there's nothing else.
   auto welcome = [&](const EventSource& s) { return languages::welcome(s, ctx.languages); };
   std::optional<std::string> streaming;
   if (event.game) {
@@ -762,25 +726,8 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
       }
     }
   }
-  // The tile names what plays first: a team (or other "likely") channel only
-  // when there's no feed for the game itself.
-  const EventSource* named = nullptr;
-  for (const EventSource& s : basisChannels) {
-    if (s.kind != EventSource::Kind::team && welcome(s)) {
-      named = &s;
-      break;
-    }
-  }
-  bool welcomeFeeds = std::any_of(basisFeeds.begin(), basisFeeds.end(), welcome);
-  if (!named && !welcomeFeeds) {
-    for (const EventSource& s : basisChannels) {
-      if (s.kind != EventSource::Kind::team) {
-        named = &s;
-        break;
-      }
-    }
-  }
-  if (!named && basisFeeds.empty() && !basisChannels.empty()) named = &basisChannels.front();
+  const EventSource* named = languages::lead(basis.sources, ctx.languages);
+  if (named && named->kind == EventSource::Kind::provider) named = nullptr;
   // "Also in Spanish": another language the game is on than the one named,
   // or than yours: English or Spanish (both on US channels) or one of yours,
   // never another country's channel (a game on a dozen countries' feeds
@@ -802,7 +749,9 @@ Place describe(const SportsEvent& event, const std::vector<SportsEvent>* parts, 
   if (channel) {
     place.channel = channel;
     place.inLineup = named->kind == EventSource::Kind::lineup;
-    std::string namedLanguage = welcome(*named) ? std::string() : languages::name(named->lang);
+    std::string namedLanguage = languages::tier(named->lang, ctx.languages) == languages::Tier::other
+                                    ? languages::name(named->lang)
+                                    : std::string();
     if (named->rank == station_rank::lineupHome || named->rank == station_rank::home) {
       place.footer = "Your local station";
     } else if (place.inLineup) {
@@ -2117,7 +2066,8 @@ std::string leagueLine(const SportsEvent& event) {
 }  // namespace
 
 WherePanel wherePanel(const Board& board, const SportsEvent& event, const ChannelFor& channelFor,
-                      const std::function<std::string(const std::string&)>& feedSummary) {
+                      const std::function<std::string(const std::string&)>& feedSummary,
+                      const scores::Statuses* statuses, std::optional<Seconds> now) {
   WherePanel panel;
   panel.title = event.game ? title(*event.game) : event.title;
   panel.hint = "Whichever you pick, the others stay as automatic backups.";
@@ -2142,40 +2092,59 @@ WherePanel wherePanel(const Board& board, const SportsEvent& event, const Channe
   };
   auto card = board.cards.find(event.id);
   if (card != board.cards.end()) {
-    // A fight card: each part's channels and feeds.
-    for (const SportsEvent& part : card->second) {
+    // A fight card: each part's channels and feeds; Build 160: the part on
+    // now first, then the ones after it, the parts over last.
+    const std::vector<SportsEvent>& parts = card->second;
+    static const scores::Statuses kNone;
+    std::optional<size_t> on = parts::onNow(parts, now.value_or(board.now), statuses ? *statuses : kNone);
+    std::vector<size_t> order(parts.size());
+    for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+    if (on) {
+      std::stable_sort(order.begin(), order.end(),
+                       [&](size_t a, size_t b) { return parts::tierOf(a, *on) < parts::tierOf(b, *on); });
+    }
+    for (size_t i : order) {
+      const SportsEvent& part = parts[i];
       if (!part.sources.empty()) section(partNames(part).second, part.sources, part.id);
     }
     return panel;
   }
-  // Yours (in your languages or not known, and My Lineup's), each other
-  // language in the order of its best source, then the feeds.
-  std::vector<EventSource> yours, feeds;
-  std::vector<std::pair<std::string, std::vector<EventSource>>> others;
+  // Build 160: English (your first language) and not known on top, their
+  // channels then their feeds; then a section per other language, yours
+  // first ("In Spanish", "In Arabic"), each in the order of its best source.
+  std::vector<EventSource> channels, feeds;
+  struct Other {
+    std::string lang;
+    languages::Tier tier;
+    std::vector<EventSource> sources;
+  };
+  std::vector<Other> others;
   for (const EventSource& s : event.sources) {
-    if (languages::welcome(s, board.languages)) {
-      (s.kind == EventSource::Kind::provider ? feeds : yours).push_back(s);
+    languages::Tier tier = languages::tier(s.lang, board.languages);
+    if (languages::upTop(tier)) {
+      (s.kind == EventSource::Kind::provider ? feeds : channels).push_back(s);
       continue;
     }
-    auto other = std::find_if(others.begin(), others.end(), [&](const auto& o) { return o.first == s.lang; });
+    auto other = std::find_if(others.begin(), others.end(), [&](const Other& o) { return o.lang == s.lang; });
     if (other == others.end()) {
-      others.emplace_back(s.lang, std::vector<EventSource>{});
+      others.push_back({s.lang, tier, {}});
       other = others.end() - 1;
     }
-    other->second.push_back(s);
+    other->sources.push_back(s);
   }
-  if (!yours.empty()) section("Your channels", yours, event.id);
+  std::stable_sort(others.begin(), others.end(), [](const Other& a, const Other& b) { return a.tier < b.tier; });
+  if (!channels.empty()) section("Your channels", channels, event.id);
+  if (!feeds.empty()) section("Event feeds from your provider", feeds, event.id);
   if (event.moreStations && *event.moreStations > 0) {
     int more = *event.moreStations;
     // Never how many: the product shows no channel counts.
     panel.moreStations = more == 1 ? std::string("Another station in your channels is showing it")
                                    : std::string("More stations in your channels are showing it");
   }
-  for (const auto& [lang, list] : others) {
-    std::string language = languages::name(lang);
-    section(language.empty() ? std::string("In another language") : "In " + language, list, event.id);
+  for (const Other& other : others) {
+    std::string language = languages::name(other.lang);
+    section(language.empty() ? std::string("In another language") : "In " + language, other.sources, event.id);
   }
-  if (!feeds.empty()) section("Event feeds from your provider", feeds, event.id);
   return panel;
 }
 
@@ -2204,18 +2173,11 @@ DetailCard detailCard(const SportsEvent& event, Seconds now, const time::Zone& z
     parts.push_back(day + " " + clockText(*event.start, zone, settings.twelveHour));
   }
   if (event.game && event.game->venue) parts.push_back(*event.game->venue);
-  std::vector<EventSource> channels = event.channels();
   std::vector<EventSource> feeds = event.feeds();
-  // In your languages (Build 132): such a channel, else none when there's
-  // such a feed, else the first channel.
-  auto welcome = [&](const EventSource& s) { return languages::welcome(s, viewer); };
-  auto mine = std::find_if(channels.begin(), channels.end(), welcome);
-  const EventSource* watch = nullptr;
-  if (mine != channels.end()) {
-    watch = &*mine;
-  } else if (!channels.empty() && std::none_of(feeds.begin(), feeds.end(), welcome)) {
-    watch = &channels.front();
-  }
+  // Build 160: what Watch starts on (languages::lead): a channel names it;
+  // a feed, none.
+  const EventSource* watch = languages::lead(event.sources, viewer);
+  if (watch && watch->kind == EventSource::Kind::provider) watch = nullptr;
   std::optional<ChannelLabel> channel = watch && channelFor ? channelFor(*watch) : std::nullopt;
   if (channel) {
     parts.push_back("On " + channel->name);

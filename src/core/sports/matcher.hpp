@@ -292,7 +292,8 @@ struct FightKey {
 std::optional<FightKey> fightKey(std::string_view title);
 
 // The scheduled card parts (game indices) a fight feed is for. `cards` is
-// "org|number" -> game indices.
+// "org|number" -> game indices. Build 160: a feed that names no part is for
+// the part it starts at and every later one.
 std::vector<int> fightTargets(const FightKey& key, std::optional<Seconds> start,
                               const std::map<std::string, std::vector<int>>& cards,
                               const std::vector<SportsGame>& games);

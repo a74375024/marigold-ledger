@@ -8,7 +8,9 @@
 
 #include "core/catalog/catalog.hpp"
 #include "core/sports/board.hpp"
+#include "core/sports/parts.hpp"
 #include "core/sports/race_data.hpp"
+#include "core/sports/store.hpp"
 #include "core/util/strings.hpp"
 #include "doctest.h"
 #include "sports/helpers.hpp"
@@ -619,10 +621,12 @@ TEST_CASE("Where to Watch and the details card") {
   REQUIRE(where.sections.size() == 3);
   CHECK(where.sections[0].title == "Your channels");
   CHECK(where.sections[0].items[0].name == "FOX 13 Harbor");
-  CHECK(where.sections[1].title == "In Spanish");  // Build 132: a section per other language
-  CHECK(where.sections[1].items.size() == 2);
-  CHECK(where.sections[2].title == "Event feeds from your provider");
-  CHECK(where.sections[2].items[0].detail == "Provider event channel \xC2\xB7 1080p");
+  // Build 160: the feeds not in another language before that language's section.
+  CHECK(where.sections[1].title == "Event feeds from your provider");
+  CHECK(where.sections[1].items.size() == 1);
+  CHECK(where.sections[1].items[0].detail == "Provider event channel \xC2\xB7 1080p");
+  CHECK(where.sections[2].title == "In Spanish");  // Build 132: a section per other language
+  CHECK(where.sections[2].items.size() == 2);
   CHECK(where.moreStations == "More stations in your channels are showing it");
   CHECK(where.hint == "Whichever you pick, the others stay as automatic backups.");
   DetailCard card = detailCard(e, kNow, time::Zone::usEastern(), Settings(), channels());
@@ -1187,4 +1191,186 @@ TEST_CASE("Build 125: tiles from the schedule; events no schedule has only in Mo
   in.scheduleLoaded.reset();
   in.settings.fromSchedule = false;
   CHECK(ids(build(in), "live") == std::vector<std::string>{"now", "sev|NFL|1"});
+}
+
+namespace {
+
+// Build 160: a UFC card's part, its sources as given.
+SportsEvent cardPart(const std::string& key, Seconds start, std::vector<EventSource> sources) {
+  SportsGame g = game("UFC", "Fighting", "600|" + key, team("f1", "Max Stone"), team("f2", "Lee River"), start);
+  g.cardKey = "ufc|333|" + key;
+  g.customTitle = key == "main" ? "UFC 333: Stone vs. River" : "UFC 333 " + key;
+  return eventOf(g, std::move(sources));
+}
+
+// What plays a tile: its raw ids are the sources' own; feeds by a record.
+store::Resolver playResolver(const Board& b, const std::string& tileID, const scores::Statuses& statuses, Seconds now,
+                             std::map<std::string, double> record = {}) {
+  store::Resolver r;
+  r.sourceChannel = [](const EventSource& s) -> std::optional<store::ChannelRef> {
+    return store::ChannelRef{s.channelID, "Name of " + s.channelID};
+  };
+  r.bestFeeds = [record](const std::vector<std::string>& ids) {
+    return store::bestFeeds(ids, [](const std::string&) { return 2; },
+                            [&record](const std::string& id) { return record.count(id) ? record.at(id) : 0.5; });
+  };
+  auto card = b.cards.find(tileID);
+  if (card != b.cards.end()) r.parts = &card->second;
+  r.statuses = &statuses;
+  r.now = now;
+  return r;
+}
+
+std::vector<std::string> sectionTitles(const WherePanel& where) {
+  std::vector<std::string> out;
+  for (const WhereSection& s : where.sections) out.push_back(s.title);
+  return out;
+}
+
+}  // namespace
+
+TEST_CASE("Build 160: the main card on, a main card source plays first, whatever the prelims' feeds' record") {
+  // The prelims (over) on two feeds that play well; the main card on one
+  // that plays worse, and a whole-night feed (no part named, from the
+  // prelims on: in both parts).
+  SportsEvent prelims = cardPart("prelims", kNow - 3 * 3600, {feed("xt|p1"), feed("xt|p2"), feed("xt|night")});
+  SportsEvent main = cardPart("main", kNow - 3600, {feed("xt|m"), feed("xt|night"), feed("xt|m2")});
+  Input in = baseInput({prelims, main});
+  in.statuses["UFC|600|prelims"] = status(LivePhase::final, "Final");
+  in.statuses["UFC|600|main"] = status(LivePhase::live, "fight 2 of 5");
+  Board b = build(in);
+  const std::string id = "card|UFC|600";
+  REQUIRE(b.cards.count(id));
+  const SportsEvent& card = b.events.at(id);
+  CHECK(tile(b, id).playID == main.id);
+  std::map<std::string, double> record = {{"xt|p1", 1.0}, {"xt|p2", 0.95}, {"xt|m", 0.3}, {"xt|night", 0.6}, {"xt|m2", 0.2}};
+  store::Resolver r = playResolver(b, id, in.statuses, kNow, record);
+  // The main card's feeds and the whole-night one by their record, then the
+  // prelims' (over).
+  CHECK(store::eventCandidates(card, std::nullopt, r) ==
+        std::vector<std::string>{"xt|night", "xt|m", "xt|m2", "xt|p1", "xt|p2"});
+  // Picked in Where to Watch: the pick first, whatever its part.
+  CHECK(store::eventCandidates(card, std::string("xt|p2"), r).front() == "xt|p2");
+  // Remembered during the prelims: not on the main card.
+  store::WatchPlan plan = store::watchPlan(card, std::nullopt, std::string("xt|p1"), r, "prelims");
+  CHECK(plan.candidates.front() == "xt|night");
+  CHECK_FALSE(plan.reason);
+  // Remembered before (no part known): not either.
+  CHECK(store::watchPlan(card, std::nullopt, std::string("xt|p1"), r).candidates.front() == "xt|night");
+  // Remembered on the main card: it leads.
+  plan = store::watchPlan(card, std::nullopt, std::string("xt|m2"), r, "main");
+  CHECK(plan.candidates.front() == "xt|m2");
+  CHECK(plan.reason == "the source you were on");
+  // A feed on every part leads wherever it was remembered.
+  CHECK(store::watchPlan(card, std::nullopt, std::string("xt|night"), r, "prelims").reason == "the source you were on");
+  // Where to Watch: the main card first, the prelims (over) after.
+  WherePanel where = wherePanel(b, card, channels(), nullptr, &in.statuses, kNow);
+  CHECK(sectionTitles(where) == std::vector<std::string>{"Main Card", "Prelims"});
+  CHECK(where.sections[0].playEventID == main.id);
+}
+
+TEST_CASE("Build 160: the part on now by status, else the clock with a grace for a part running late") {
+  Seconds prelimsAt = kNow - 2 * 3600, mainAt = kNow;
+  SportsEvent early = cardPart("early", prelimsAt - 2 * 3600, {feed("xt|e")});
+  SportsEvent prelims = cardPart("prelims", prelimsAt, {feed("xt|p")});
+  SportsEvent main = cardPart("main", mainAt, {feed("xt|m")});
+  std::vector<SportsEvent> parts = {early, prelims, main};
+  scores::Statuses none;
+  // No status: the prelims run late, still the prelims for half an hour.
+  CHECK(parts::onNow(parts, mainAt - 60, none) == size_t{1});
+  CHECK(parts::onNow(parts, mainAt + 10 * 60, none) == size_t{1});
+  CHECK(parts::onNow(parts, mainAt + 31 * 60, none) == size_t{2});
+  CHECK(parts::onNow(parts, prelimsAt - 3 * 3600, none) == size_t{0});  // nothing started: the first
+  // The prelims final: the main card at once.
+  scores::Statuses s;
+  s["UFC|600|prelims"] = status(LivePhase::final, "Final");
+  CHECK(parts::onNow(parts, mainAt + 60, s) == size_t{2});
+  // The prelims still being fought (the scoreboard): the prelims, however late.
+  s["UFC|600|prelims"] = status(LivePhase::live, "fight 5 of 5");
+  CHECK(parts::onNow(parts, mainAt + 50 * 60, s) == size_t{1});
+  // The main card not started by the scoreboard: not yet, past the grace.
+  s.erase("UFC|600|prelims");
+  s["UFC|600|main"] = status(LivePhase::pre, "");
+  CHECK(parts::onNow(parts, mainAt + 40 * 60, s) == size_t{1});
+  // The prelims' listing over: no grace.
+  EventSource listed = station("e|espn");
+  listed.from = prelimsAt;
+  listed.until = mainAt;
+  parts[1].sources.push_back(listed);
+  CHECK(parts::onNow(parts, mainAt + 60, none) == size_t{2});
+  parts[1].sources.pop_back();
+
+  // On the board and in the play order: within the grace the prelims, the
+  // main card next, the early prelims (over) last.
+  Input in = baseInput({early, prelims, main});
+  in.now = mainAt + 10 * 60;
+  Board b = build(in);
+  const std::string id = "card|UFC|600";
+  const Tile& t = tile(b, id);
+  REQUIRE(t.parts.size() == 3);
+  CHECK(t.parts[1].current);
+  CHECK(t.playID == prelims.id);
+  store::Resolver r = playResolver(b, id, in.statuses, mainAt + 10 * 60);
+  CHECK(store::eventCandidates(b.events.at(id), std::nullopt, r) == std::vector<std::string>{"xt|p", "xt|m", "xt|e"});
+  CHECK(sectionTitles(wherePanel(b, b.events.at(id), channels(), nullptr, &in.statuses, mainAt + 10 * 60)) ==
+        std::vector<std::string>{"Prelims", "Main Card", "Early Prelims"});
+  // Pressed again later: decided then, not when the board was built.
+  r.now = mainAt + 40 * 60;
+  CHECK(store::eventCandidates(b.events.at(id), std::nullopt, r) == std::vector<std::string>{"xt|m", "xt|p", "xt|e"});
+}
+
+TEST_CASE("Build 160: a one-part fight's slots: the prelims slot after the main event's once that's on") {
+  SportsGame g = game("BOX", "Fighting", "b1", team("b1a", "Ann One"), team("b1b", "Bea Two"), kNow - 3 * 3600);
+  EventSource prelims = feed("xt|prelims");
+  prelims.from = kNow - 3 * 3600;
+  EventSource main1 = feed("xt|main1");
+  main1.from = kNow - 3600;
+  EventSource main2 = feed("xt|main2");
+  main2.from = kNow - 3600 + 5 * 60;
+  SportsEvent e = eventOf(g, {prelims, main1, main2, feed("xt|untimed")});
+  Board b = build(baseInput({e}));
+  std::map<std::string, double> record = {{"xt|prelims", 1.0}};
+  store::Resolver r = playResolver(b, e.id, {}, kNow, record);
+  CHECK(store::eventCandidates(e, std::nullopt, r) ==
+        std::vector<std::string>{"xt|main1", "xt|main2", "xt|untimed", "xt|prelims"});
+  // Before the main event: the prelims slot leads by its record.
+  r.now = kNow - 2 * 3600;
+  CHECK(store::eventCandidates(e, std::nullopt, r).front() == "xt|prelims");
+  // Not a fight: slot times don't split it.
+  SportsEvent game2 = eventOf(nflAt("9", kNow - 3 * 3600), {prelims, main1});
+  r.now = kNow;
+  CHECK(store::eventCandidates(game2, std::nullopt, r).front() == "xt|prelims");
+}
+
+TEST_CASE("Build 160: a race weekend still plays and lists the session on now first") {
+  auto session = [](const std::string& kind, Seconds start) {
+    SportsGame g = game("F1", "Motorsport", "ev1|" + kind, team("gp", "Grand Prix Alpha"),
+                        team("gp", "Grand Prix Alpha"), start);
+    g.cardKey = "f1|ev1|" + kind;
+    g.racing = true;
+    return eventOf(g, {feed("xt|f1" + kind), feed("xt|both")});
+  };
+  SportsEvent fp1 = session("fp1", kNow - 26 * 3600);
+  SportsEvent qual = session("qual", kNow - 30 * 60);
+  SportsEvent race = session("race", kNow + 20 * 3600);
+  Input in = baseInput({fp1, qual, race});
+  in.statuses["F1|ev1|qual"] = status(LivePhase::live, "Q2");
+  Board b = build(in);
+  const std::string id = "card|F1|ev1";
+  REQUIRE(b.cards.count(id));
+  const Tile& t = tile(b, id);
+  CHECK(t.playID == qual.id);
+  const SportsEvent& tileEvent = b.events.at(id);
+  store::Resolver r = playResolver(b, id, in.statuses, kNow, {{"xt|both", 0.9}, {"xt|f1qual", 0.5}});
+  std::vector<std::string> order = store::eventCandidates(tileEvent, std::nullopt, r);
+  REQUIRE_FALSE(order.empty());
+  CHECK(std::find(order.begin(), order.end(), "xt|f1fp1") == order.end());  // only the session's own
+  CHECK(order == std::vector<std::string>{"xt|both", "xt|f1qual"});
+  // A source remembered on the session (per session: the tile is it).
+  CHECK(store::watchPlan(tileEvent, std::nullopt, std::string("xt|f1qual"), r).candidates.front() == "xt|f1qual");
+  WherePanel where = wherePanel(b, tileEvent, channels(), nullptr, &in.statuses, kNow);
+  REQUIRE(where.sections.size() == 3);
+  CHECK(where.sections[0].playEventID == qual.id);
+  CHECK(where.sections[1].playEventID == race.id);
+  CHECK(where.sections[2].playEventID == fp1.id);
 }

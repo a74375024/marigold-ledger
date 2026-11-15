@@ -1,6 +1,8 @@
 #include "core/sports/languages.hpp"
 
 #include <map>
+#include <string>
+#include <utility>
 
 #include "core/catalog/catalog.hpp"
 #include "core/sports/brands.hpp"
@@ -76,6 +78,76 @@ std::string argentinaOrArabic(const std::string& w) {
   return std::string();
 }
 
+// Build 160: a language named last in a feed's title, after a word that
+// says so or a mark ("em Portugu\xC3\xAAs", "en Espa\xC3\xB1ol", "in English",
+// ": English", "- Spanish", "(French)"): its code, else "". Never a language
+// word on its own at the end ("Harbor vs Valley Portuguesa"; "French Open"
+// isn't last). Plain string work: it runs for every provider event.
+std::string trailing(std::string_view title) {
+  static const std::pair<const char*, const char*> kWords[] = {
+      {" english ", "en"},    {" ingles ", "en"},     {" anglais ", "en"},    {" spanish ", "es"},
+      {" espanol ", "es"},    {" castellano ", "es"}, {" portuguese ", "pt"}, {" portugues ", "pt"},
+      {" french ", "fr"},     {" francais ", "fr"},   {" frances ", "fr"},    {" german ", "de"},
+      {" deutsch ", "de"},    {" aleman ", "de"},     {" italian ", "it"},    {" italiano ", "it"},
+      {" arabic ", "ar"},     {" arabe ", "ar"},      {" dutch ", "nl"},      {" polish ", "pl"},
+      {" turkish ", "tr"},    {" turkce ", "tr"},     {" russian ", "ru"},    {" hindi ", "hi"}};
+  size_t last = title.find_last_not_of(" )]\t");
+  if (last == std::string_view::npos || title.size() < 4) return std::string();
+  std::string w = brands::words(title);
+  const char* code = nullptr;
+  size_t wordAt = 0;
+  for (const auto& [word, lang] : kWords) {
+    size_t n = std::char_traits<char>::length(word);
+    if (w.size() >= n && w.compare(w.size() - n, n, word) == 0) {
+      code = lang;
+      wordAt = w.size() - n;
+      break;
+    }
+  }
+  if (!code) return std::string();
+  // A word before it that says it's the language ("em", "en", "in"...).
+  static const char* const kBefore[] = {" em ", " en ", " in ", " na ", " auf ", " lingua ", " idioma ", " audio "};
+  for (const char* before : kBefore) {
+    size_t n = std::char_traits<char>::length(before);
+    if (wordAt + 1 >= n && w.compare(wordAt + 1 - n, n, before) == 0) return code;
+  }
+  // Else a mark just before it in the title: ":", "-", "|", "(", "[".
+  size_t start = last;
+  while (start > 0 && title[start - 1] != ' ' && title[start - 1] != ':' && title[start - 1] != '-' &&
+         title[start - 1] != '|' && title[start - 1] != '(' && title[start - 1] != '[') {
+    --start;
+  }
+  if (start == 0) return std::string();
+  size_t mark = title.find_last_not_of(' ', start - 1);
+  if (mark == std::string_view::npos) return std::string();
+  char c = title[mark];
+  return c == ':' || c == '-' || c == '|' || c == '(' || c == '[' ? std::string(code) : std::string();
+}
+
+// Build 160: a name's own country prefix ("FR: ", "DE| ", "|PT| "): its
+// market's language, for a channel or feed whose group names no country.
+std::string prefixed(std::string_view name) {
+  size_t i = 0;
+  while (i < name.size() && name[i] == ' ') ++i;
+  if (i < name.size() && name[i] == '|') ++i;
+  if (i + 2 > name.size()) return std::string();
+  char a = name[i], b = name[i + 1];
+  if (a < 'A' || a > 'Z' || b < 'A' || b > 'Z') return std::string();
+  size_t j = i + 2;
+  while (j < name.size() && name[j] == ' ') ++j;
+  if (j >= name.size() || (name[j] != ':' && name[j] != '|')) return std::string();
+  std::string code{a, b};
+  // Countries lists put first, not competitions ("CL: " the Champions
+  // League, "NL: " a National League): only these.
+  static const std::set<std::string> kCountries = {"US", "UK", "IE", "AU", "NZ", "EN", "FR", "DE", "AT", "ES", "MX",
+                                                   "AR", "IT", "PT", "BR", "TR", "GR", "SE", "NO", "DK", "FI", "PL",
+                                                   "RO", "HU", "CZ", "HR", "RS", "BG", "RU", "UA"};
+  if (!kCountries.count(code)) return std::string();
+  if (code == "EN") return "en";
+  if (code == "AR") return argentinaOrArabic(brands::words(name));
+  return catalog::marketLanguage(code);
+}
+
 }  // namespace
 
 std::string marked(std::string_view name) {
@@ -94,11 +166,16 @@ std::string ofChannel(std::string_view name, const std::optional<std::string>& m
     if (*market == "AR") {
       lang = argentinaOrArabic(w);
     } else if (*market == "CA") {
-      lang = hasAny(w, {" rds ", " tva ", " tele quebec ", " ici ", " radio canada "}) ? "fr" : "en";
+      // Build 160: Quebec's ("|CA| QUEBEC SPORT", "QC") are French.
+      lang = hasAny(w, {" rds ", " tva ", " tele quebec ", " ici ", " radio canada ", " quebec ", " qc "}) ? "fr"
+                                                                                                         : "en";
     } else {
       lang = catalog::marketLanguage(*market);
     }
     if (!lang.empty()) return lang;
+  } else if (lang = prefixed(name); !lang.empty()) {
+    // Build 160: no country for its group: its name's own ("FR: ...").
+    return lang;
   }
   if (const brands::Brand* brand = brands::find(name)) return brand->lang;
   return std::string();
@@ -117,8 +194,12 @@ std::string ofFeed(std::string_view title, std::string_view family, const std::o
       if (!lang.empty()) return lang;
     }
   }
-  if (!market) return std::string();
+  // Build 160: a language named last ("em Portugu\xC3\xAAs", ": English").
+  if (std::string lang = trailing(title); !lang.empty()) return lang;
+  // Build 160: no country for the group: the title's own ("FR: ...").
+  if (!market) return prefixed(title);
   if (*market == "AR") return argentinaOrArabic(brands::words(title) + brands::words(family));
+  // "CA" (English and French) stays not known.
   return catalog::marketLanguage(*market);
 }
 
@@ -170,6 +251,35 @@ Fit fit(std::string_view lang, const std::set<std::string>& viewer) {
 
 bool welcome(const EventSource& source, const std::set<std::string>& viewer) {
   return source.kind == EventSource::Kind::lineup || fit(source.lang, viewer) != Fit::other;
+}
+
+std::string_view firstLanguage(const std::set<std::string>& viewer) {
+  if (viewer.empty() || viewer.count("en")) return "en";
+  return *viewer.begin();
+}
+
+Tier tier(std::string_view lang, const std::set<std::string>& viewer) {
+  if (lang.empty()) return Tier::unknown;
+  if (lang == firstLanguage(viewer)) return Tier::first;
+  for (const std::string& mine : viewer) {
+    if (mine == lang) return Tier::yours;
+  }
+  return Tier::other;
+}
+
+const EventSource* lead(const std::vector<EventSource>& sources, const std::set<std::string>& viewer) {
+  const EventSource* best = nullptr;
+  int bestKey = 0;
+  for (const EventSource& s : sources) {
+    if (s.kind == EventSource::Kind::team) continue;
+    int key = static_cast<int>(tier(s.lang, viewer)) * 4 + static_cast<int>(s.kind);
+    if (!best || key < bestKey) {
+      best = &s;
+      bestKey = key;
+    }
+  }
+  if (best) return best;
+  return sources.empty() ? nullptr : &sources.front();
 }
 
 }  // namespace marigold::sports::languages
