@@ -517,8 +517,8 @@ class PlayerScreen : public Screen {
       return true;
     }
     backAskUntil_ = ms + kBackAgainMs;
-    const std::string& prev = app_.playback().previousEntry();
-    std::string detail = app_.store().channels()->find(prev) ? "\xe2\x96\xb6 Back to " + nameOf(prev) : std::string();
+    std::string back = backName();
+    std::string detail = back.empty() ? std::string() : "\xe2\x96\xb6 Back to " + back;
     notice("Press Back again to leave", detail, kBackAgainMs);
     return true;
   }
@@ -549,7 +549,7 @@ class PlayerScreen : public Screen {
     pills_.push_back(Pill::Sources);
     if (!otherCoast().empty()) pills_.push_back(Pill::Coast);
     pills_.push_back(Pill::Guide);
-    if (app_.store().channels()->find(p.previousEntry())) pills_.push_back(Pill::Last);
+    if (!backName().empty()) pills_.push_back(Pill::Last);
     if (app_.store().channels()->find(p.entry())) pills_.push_back(Pill::Favorite);
     pills_.push_back(Pill::More);
     pill_ = std::clamp(pill_, -1, static_cast<int>(pills_.size()) - 1);
@@ -693,11 +693,12 @@ class PlayerScreen : public Screen {
     // Watching a game from Live Events: the event guide.
     app_.nav().push(app_.store().isEvent(p.entry()) ? makeEventGuide(app_) : makeMiniGuide(app_));
   }
+  // Right: back to what was viewed last, a channel or a game (the session
+  // says so when it can't, or when a game has ended and its channel plays).
   void goPrevious() {
     Playback& p = app_.playback();
     backAskUntil_ = 0;
-    std::string prev = p.previousEntry();
-    if (prev.empty()) {
+    if (!p.previousTarget()) {
       showBanner();
       return;
     }
@@ -735,8 +736,7 @@ class PlayerScreen : public Screen {
     // No picture anywhere, the sound playing: another source, or the sound.
     if (app_.playback().noPicture()) return {"Try another source", "Keep listening"};
     std::vector<std::string> out = {"Try again", "Pick a feed"};
-    if (app_.store().channels()->find(app_.playback().previousEntry()))
-      out.push_back("Back to " + nameOf(app_.playback().previousEntry()));
+    if (std::string back = backName(); !back.empty()) out.push_back("Back to " + back);
     return out;
   }
   bool failedKey(const KeyEvent& e) {
@@ -804,10 +804,30 @@ class PlayerScreen : public Screen {
     }
     bannerFrom_ = bannerUntil_ = app_.ms();
   }
+  // A channel's name, or a game's matchup ("Rams at Seahawks", never a
+  // score) or title.
   std::string nameOf(const std::string& id) const {
     auto ch = app_.store().channels();
-    const GuideChannel* g = ch->find(id);
-    return g ? g->name : std::string("the previous channel");
+    if (const GuideChannel* g = ch->find(id)) return g->name;
+    if (const EventTile* t = app_.store().eventTile(id)) return matchup(*t);
+    return app_.store().isEvent(id) ? std::string("the last game") : std::string("the previous channel");
+  }
+  // Where Right goes (Build 159), by name: a channel, a game (found again
+  // after the board was rebuilt), or the channel of a game that has ended;
+  // "" when nothing.
+  std::string backName() const {
+    Playback& p = app_.playback();
+    const engine::Session::Viewed* v = p.previousTarget();
+    if (!v) return {};
+    if (v->game) {
+      std::string id = p.gameNow(*v);
+      if (!id.empty()) return nameOf(id);
+      if (v->channel == p.entry()) return {};  // on it already: Right only says the game has ended
+      const GuideChannel* g = app_.store().channels()->find(v->channel);
+      return g ? g->name : std::string();
+    }
+    const GuideChannel* g = app_.store().channels()->find(v->entry);
+    return g ? g->name : std::string();
   }
   const Listing* current(const std::string& id, time::Seconds now, const Listing** next) const {
     listings_ = app_.store().listings();
@@ -1242,9 +1262,9 @@ class PlayerScreen : public Screen {
     }
     keyCap(c, x, y, "\xe2\x97\x80");
     item(40, app_.store().isEvent(p.entry()) ? "Games" : "Guide", "");
-    if (app_.store().channels()->find(p.previousEntry())) {
+    if (std::string back = backName(); !back.empty()) {
       keyCap(c, x, y, "\xe2\x96\xb6");
-      item(40, "Back to", nameOf(p.previousEntry()));
+      item(40, "Back to", back);
     }
     float okW = keyCap(c, x, y, keys.clickpad ? "Click" : "OK");
     item(okW, "Subtitles & more", "");
@@ -1297,7 +1317,7 @@ class PlayerScreen : public Screen {
         case Pill::Sources: it.title = "Sources"; it.extra = backups() > 0 ? feedLine() : std::string(); break;
         case Pill::Coast: it.title = g && g->west ? "Watch East \xe2\x86\x94" : "Watch West \xe2\x86\x94"; break;
         case Pill::Guide: it.title = app_.store().isEvent(p.entry()) ? "Games" : "Guide"; break;
-        case Pill::Last: it.title = "Back to " + nameOf(p.previousEntry()); break;
+        case Pill::Last: it.title = "Back to " + backName(); break;
         case Pill::Favorite: it.title = g && app_.store().isFavorite(g->id) ? "Unfavorite" : "Favorite"; break;
         case Pill::More: it.title = "Settings"; break;
       }
@@ -1371,9 +1391,8 @@ class PlayerScreen : public Screen {
     };
     edge({32, 460, 96, 160}, kHitGuide, zone_ == Zone::EdgeGuide, "\xe2\x97\x80",
          app_.store().isEvent(p.entry()) ? "Games" : "Guide");
-    if (app_.store().channels()->find(p.previousEntry()))
-      edge({gfx::kLayoutWidth - 128, 460, 96, 160}, kHitLast, zone_ == Zone::EdgeLast, "\xe2\x96\xb6",
-           nameOf(p.previousEntry()));
+    if (std::string back = backName(); !back.empty())
+      edge({gfx::kLayoutWidth - 128, 460, 96, 160}, kHitLast, zone_ == Zone::EdgeLast, "\xe2\x96\xb6", back);
   }
 
   // 1C: once, the first time a channel plays (Settings › Help & info shows

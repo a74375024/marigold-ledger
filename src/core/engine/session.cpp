@@ -26,8 +26,8 @@ constexpr uint32_t kLogSaveMs = 10000;
 constexpr uint32_t kMemoryEveryMs = 5 * 60 * 1000;
 // A picture that played this long is remembered for the feed's rows.
 constexpr uint32_t kMeasuredAfterMs = 20000;
-// Watched this long, a channel becomes the one "Back to" goes to.
-constexpr uint32_t kStayedMs = 10000;
+// What was viewed, kept for Right (one per entry, newest first).
+constexpr size_t kViewedKept = 4;
 
 // Wall clock in ms, for the log's times.
 int64_t wallMs() {
@@ -107,9 +107,14 @@ std::string Session::playingChannel() const {
 bool Session::tuneCamera(std::vector<Feed> feeds) {
   if (entry_.empty() || feeds.empty()) return false;
   std::string entry = entry_;
+  // The race's own source stays what Right plays it on.
+  std::string source = sourceNow();
   bool ok = begin(entry, std::move(feeds), {});
   camera_ = ok;
-  if (ok) logEvent("camera");
+  if (ok) {
+    cameraSource_ = source;
+    logEvent("camera");
+  }
   return ok;
 }
 
@@ -121,15 +126,29 @@ void Session::rememberGame() {
 }
 
 bool Session::begin(const std::string& entryId, std::vector<Feed> feeds, const std::vector<std::string>& flip) {
-  if (!flip.empty()) flip_ = flip;
   if (feeds.empty()) {
     MLOG_W("play", "no feeds for this channel");
     return false;
   }
+  // What is left becomes Right's target (before its source, flip list and
+  // feeds are replaced). Another source or a camera of the same entry
+  // isn't leaving it.
+  bool other = entryId != entry_;
+  if (other) leaving();
+  if (!flip.empty()) flip_ = flip;
   rememberGame();
   logMemory("before tuning");
   camera_ = false;
   hadPicture_ = false;
+  bouncing_ = false;
+  paused_ = false;
+  pausedAt_.reset();
+  if (other) {
+    shownFull_ = pictured_ = false;
+    gameId_ = store_.eventGameId(entryId);
+    game_ = store_.isEvent(entryId);
+  }
+  pictureChannel_.clear();
   backup_.reset();
   entry_ = entryId;
   picked_.clear();
@@ -157,8 +176,10 @@ bool Session::begin(const std::string& entryId, std::vector<Feed> feeds, const s
 }
 
 bool Session::tune(const std::string& entryId, const std::vector<std::string>& flip) {
-  if (!flip.empty()) flip_ = flip;
-  if (entryId == entry_ && !failed()) return true;
+  if (entryId == entry_ && !failed()) {
+    if (!flip.empty()) flip_ = flip;  // a list picked here takes over
+    return true;
+  }
   return begin(entryId, store_.feeds(entryId), flip);
 }
 
@@ -189,7 +210,9 @@ bool Session::useFeed(size_t index) {
 }
 
 void Session::stop() {
+  pausedAt_.reset();
   if (entry_.empty()) return;
+  leaving();
   rememberGame();
   apply(rec_.stop(ms()));
   player_->stop();
@@ -197,6 +220,8 @@ void Session::stop() {
   entry_.clear();
   picked_.clear();
   feeds_.clear();
+  gameId_.clear();
+  game_ = false;
 }
 
 void Session::apply(const playback::Actions& actions) {
@@ -395,16 +420,87 @@ void Session::keepListening() {
 }
 
 void Session::watched() {
-  if (entry_.empty() || entry_ == lastWatched_) return;
-  // The last channel: the one stayed on for a while, so a run of quick
-  // flips doesn't lose the game you started from. Jumping back and forth
-  // with previous() always swaps the two.
-  if (!lastWatched_.empty() && (bouncing_ || previous_.empty() || ms() - watchedAt_ >= kStayedMs))
-    previous_ = lastWatched_;
-  bouncing_ = false;
+  if (entry_.empty()) return;
+  shownFull_ = true;
+  if (entry_ == lastWatched_) return;
   lastWatched_ = entry_;
-  watchedAt_ = ms();
   store_.noteWatched(entry_);
+}
+
+std::string Session::sourceNow() const {
+  if (camera_) return cameraSource_;
+  if (pictureChannel_.empty()) return picked_;
+  std::string entry = store_.entryOfChannel(pictureChannel_);
+  // The pick while it plays (one of its versions for a channel picked)...
+  if (!picked_.empty() && (picked_ == pictureChannel_ || picked_ == entry)) return picked_;
+  // ... else the source whose picture showed: a guide channel's version
+  // stands for the channel, as Where to Watch lists it.
+  return entry.empty() ? pictureChannel_ : entry;
+}
+
+Session::Viewed Session::viewedNow() const {
+  Viewed v;
+  v.entry = entry_;
+  v.game = game_;
+  v.feed = camera_ ? std::string() : pictureChannel_;
+  if (v.game) {
+    v.source = sourceNow();
+    v.gameId = gameId_;
+    auto channels = store_.channels();
+    if (channels->find(v.source)) {
+      v.channel = v.source;
+    } else {
+      std::string raw = v.feed.empty() ? v.source : v.feed;
+      if (!raw.empty()) v.channel = store_.entryOfChannel(raw);
+    }
+  } else {
+    v.channel = entry_;
+  }
+  v.flip = flip_;
+  if (!flip_.empty() && flip_ == pickedFlip_) v.tab = pickedTab_;
+  return v;
+}
+
+void Session::leaving() {
+  // Full screen with a picture, however briefly (a run of quick flips is
+  // already one tune: the player waits for the channel stopped on).
+  if (entry_.empty() || !shownFull_ || !pictured_) return;
+  Viewed v = viewedNow();
+  viewed_.erase(std::remove_if(viewed_.begin(), viewed_.end(),
+                               [&v](const Viewed& o) {
+                                 return o.entry == v.entry || (!v.gameId.empty() && o.gameId == v.gameId);
+                               }),
+                viewed_.end());
+  viewed_.insert(viewed_.begin(), std::move(v));
+  if (viewed_.size() > kViewedKept) viewed_.resize(kViewedKept);
+}
+
+const Session::Viewed* Session::previousTarget() const {
+  for (const Viewed& v : viewed_) {
+    // Not what plays (nor the same game under a new id).
+    if (v.entry == entry_ || (!v.gameId.empty() && v.gameId == gameId_)) continue;
+    return &v;
+  }
+  return nullptr;
+}
+
+std::string Session::previousEntry() const {
+  const Viewed* v = previousTarget();
+  return v ? v->entry : std::string();
+}
+
+std::string Session::gameNow(const Viewed& v) const {
+  if (!v.game) return {};
+  if (store_.isEvent(v.entry)) return v.entry;
+  return v.gameId.empty() ? std::string() : store_.eventOfGame(v.gameId);
+}
+
+bool Session::replay(const std::string& entryId, std::vector<Feed> feeds, const std::string& feed,
+                     const std::vector<std::string>& flip) {
+  // The feed whose picture showed first, the rest after it as they were.
+  auto it = std::find_if(feeds.begin(), feeds.end(), [&feed](const Feed& f) { return f.channelId == feed; });
+  if (!feed.empty() && it != feeds.end()) std::rotate(feeds.begin(), it, it + 1);
+  return begin(entryId, std::move(feeds), flip);
 }
 
 std::string Session::flipTarget(const std::string& from, int step) const {
@@ -423,11 +519,118 @@ std::string Session::flip(int step) {
 }
 
 std::string Session::previous() {
-  if (previous_.empty()) return {};
-  std::string target = previous_;
+  const Viewed* target = previousTarget();
+  if (!target) return {};
+  Viewed v = *target;  // (begin() changes the list)
+  auto toast = [this](const std::string& text) {
+    if (hooks_.toast) hooks_.toast(text);
+  };
+  auto channels = store_.channels();
+  std::string tuned, how;
+  if (v.game) {
+    std::string id = gameNow(v);
+    if (!id.empty()) {
+      // The game on its last source, with its own flip list.
+      std::vector<std::string> flip = v.flip.empty() || id != v.entry ? store_.eventFlipList(id) : v.flip;
+      if (!replay(id, store_.eventFeeds(id, v.source), v.feed, flip)) {
+        toast("This game has no working feed right now");
+        return {};
+      }
+      picked_ = v.source;
+      tuned = id;
+      how = id == v.entry ? "game" : "game, found again";
+    } else {
+      // Off the board: the channel it played on (unless that's on already).
+      const GuideChannel* g = v.channel == entry_ ? nullptr : channels->find(v.channel);
+      std::string name = g ? g->name : std::string();
+      if (!g || !replay(v.channel, store_.feeds(v.channel), v.feed, views::lineupList(*channels, v.channel))) {
+        toast("That game has ended");
+        return {};
+      }
+      toast("That game has ended \xc2\xb7 back on " + name);
+      tuned = v.channel;
+      how = "its channel; the game has ended";
+      v.tab.reset();
+    }
+  } else {
+    const GuideChannel* g = channels->find(v.entry);
+    std::vector<std::string> flip = v.flip.empty() ? views::lineupList(*channels, v.entry) : v.flip;
+    if (!g || !replay(v.entry, store_.feeds(v.entry), v.feed, flip)) {
+      toast((g ? g->name : std::string("That channel")) + " has no working feed right now");
+      return {};
+    }
+    tuned = v.entry;
+    how = "channel";
+  }
+  // The guide list it was picked from, again.
+  if (v.tab) {
+    pickedTab_ = *v.tab;
+    pickedFlip_ = flip_;
+  }
   bouncing_ = true;
-  tune(target);
-  return target;
+  logEvent("back to", how);
+  return tuned;
+}
+
+void Session::suspend() {
+  if (paused_) return;
+  paused_ = true;
+  if (entry_.empty()) return;
+  Paused p;
+  p.restart = !failed();
+  p.ready = ready();
+  p.game = game_;
+  p.feed = feeds_.empty() ? 0 : std::min(rec_.feedIndex(), feeds_.size() - 1);
+  logEvent("paused", "app in background");
+  if (p.restart) {
+    // The recovery stops where it is: no timer falls due, an open still on
+    // the server is closed as it comes back, and nothing is charged to a
+    // feed. Its "stop" line isn't one: it plays again on return.
+    playback::Actions stopped = rec_.stop(ms());
+    stopped.erase(std::remove_if(stopped.begin(), stopped.end(),
+                                 [](const playback::Action& a) { return a.kind == playback::Action::Kind::Log; }),
+                  stopped.end());
+    apply(stopped);
+    quickPending_.clear();
+    measured_.reset();
+    backup_.reset();
+  }
+  player_->stop();
+  pausedAt_ = p;
+}
+
+void Session::resume() {
+  if (!paused_) return;
+  paused_ = false;
+  std::optional<Paused> p = pausedAt_;
+  pausedAt_.reset();
+  if (!p || entry_.empty()) return;
+  if (!p->restart) {
+    logEvent("resumed", "the message stays");
+    return;
+  }
+  // Gone meanwhile (a game off the board, a channel no longer listed):
+  // nothing to come back to, quietly.
+  bool gone = p->game ? !store_.isEvent(entry_) : !store_.channels()->find(entry_);
+  if (gone || feeds_.empty()) {
+    logEvent("resumed", p->game ? "the game is over; stopped" : "the channel is gone; stopped");
+    stop();
+    if (hooks_.changed) hooks_.changed();
+    return;
+  }
+  // The same source again, as a fresh start (its backups after it).
+  logEvent("resumed", "the same source again");
+  hadPicture_ = false;
+  failMessage_.clear();
+  noPicture_ = false;
+  player_->beginTune();
+  tunedAt_ = ms();
+  playback::TuneOptions options;
+  options.start = p->feed;
+  options.settle = 0;
+  options.game = p->game;
+  apply(rec_.tune(ms(), feedInfos(entry_), options));
+  if (hooks_.changed) hooks_.changed();
 }
 
 void Session::setShowingFull(bool full) {
@@ -456,7 +659,8 @@ bool Session::tick(uint32_t now) {
   }
   for (std::string& note : store_.takeEventsLog()) log_.add(wallMs(), "live events", 0, {}, {}, {}, note);
   saveLog(now);
-  if (entry_.empty()) return false;
+  // Paused in the background: the recovery waits for the app's return.
+  if (entry_.empty() || paused_) return false;
   PlayerState s = player_->state();
   // A picture is a frame drawn. Radio (or a channel kept as sound only)
   // plays when its clock runs; so does a stream whose frames the relay sees
@@ -468,6 +672,12 @@ bool Session::tick(uint32_t now) {
     quickPending_.clear();  // a quick start that worked
     sawPicture_ = true;
     hadPicture_ = true;
+    // Right's target: a picture of a feed handed to the player (not one
+    // the player still held from before).
+    if (rec_.phase() == playback::Recovery::Phase::Playing && rec_.feedIndex() < feeds_.size()) {
+      pictured_ = true;
+      pictureChannel_ = feeds_[rec_.feedIndex()].channelId;
+    }
     pictureAt_ = now;
     apply(rec_.firstFrame(now));
     if (hooks_.picture) hooks_.picture();

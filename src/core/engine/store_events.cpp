@@ -1559,7 +1559,11 @@ void Store::eventsTick(uint32_t ms) {
     sports::Reminders::Check c = e.reminders.check(time::now());
     if (c.changed) saveEvents();
     if (c.due) {
-      dueReminder_ = DueReminder{c.due->channelID, c.due->channelName, c.due->title, c.due->start};
+      dueReminder_ = DueReminder{c.due->channelID, c.due->channelName, c.due->title, c.due->start, {}};
+      // The game it is for, as hasReminder() matches them.
+      for (const auto& [id, ev] : e.board.events)
+        if (dueReminder_->eventId.empty() && ev.start && *ev.start == c.due->start && ev.title == c.due->title)
+          dueReminder_->eventId = id;
       dueReminderAt_ = ms;
     }
   }
@@ -1789,6 +1793,22 @@ std::vector<std::string> Store::eventNotes(const std::string& eventId) const {
 }
 
 bool Store::isEvent(const std::string& id) const { return impl_->ev.board.events.count(id) > 0; }
+
+std::string Store::eventGameId(const std::string& eventId) const {
+  const auto& events = impl_->ev.board.events;
+  auto ev = events.find(eventId);
+  return ev != events.end() && ev->second.game ? ev->second.game->id : std::string();
+}
+
+std::string Store::eventOfGame(const std::string& gameId) const {
+  if (gameId.empty()) return {};
+  const auto& events = impl_->ev.board.events;
+  // Its own id first ("sev|" + the game's), else an event that holds it.
+  if (auto ev = events.find("sev|" + gameId); ev != events.end()) return ev->first;
+  for (const auto& [id, e] : events)
+    if (e.game && e.game->id == gameId) return id;
+  return {};
+}
 
 const EventTile* Store::eventTile(const std::string& id) const { return events_->tile(id); }
 

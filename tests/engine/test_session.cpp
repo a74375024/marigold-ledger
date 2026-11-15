@@ -86,7 +86,9 @@ struct Rig {
       tv.pool.drain();
     }
   }
+  // The feed is handed to the player, then its picture comes up.
   void picture() {
+    run(250);
     player->state.picture = true;
     run(500);
   }
@@ -128,10 +130,11 @@ TEST_CASE("session: a tune plays the first feed and is watched once full screen"
   r.picture();
   CHECK(r.session->ready());
 
-  // A preview is not watched: no previous channel yet.
+  // A preview is not watched: nothing for Right yet.
   REQUIRE(r.session->tune(ids[1]));
   CHECK(r.session->previousEntry().empty());
   r.session->setShowingFull(true);
+  r.picture();
   REQUIRE(r.session->tune(ids[0]));
   CHECK(r.session->previousEntry() == ids[1]);
   CHECK(r.session->previous() == ids[1]);
@@ -303,25 +306,228 @@ TEST_CASE("session: a version this TV can't play is left at once and tried last 
   CHECK(r.store->feeds(ids[0]).back().channelId != feeds[0].channelId);
 }
 
-TEST_CASE("session: Back to is the last channel stayed on, and previous() swaps the two") {
+// --- Right goes back to what you watched (Build 159) ---------------------------
+
+TEST_CASE("session: Right goes back to what was left after a picture, however briefly") {
   Rig r;
   auto ids = r.entries(1);
-  REQUIRE(ids.size() >= 4);
+  REQUIRE(ids.size() >= 3);
   r.session->setShowingFull(true);
   REQUIRE(r.session->tune(ids[0]));
-  r.run(11000);  // watched for a while
+  r.picture();
+  r.run(1500);  // two seconds, not ten
   REQUIRE(r.session->tune(ids[1]));
   CHECK(r.session->previousEntry() == ids[0]);
-  r.run(2000);   // a quick flip past ids[1]...
+  r.picture();
+  r.run(1500);
   REQUIRE(r.session->tune(ids[2]));
-  r.run(2000);   // ...and ids[2]
-  REQUIRE(r.session->tune(ids[3]));
-  CHECK(r.session->previousEntry() == ids[0]);  // still the game you started from
-  CHECK(r.session->previous() == ids[0]);
-  CHECK(r.session->previousEntry() == ids[3]);  // bouncing swaps at once
-  r.run(1000);
-  CHECK(r.session->previous() == ids[3]);
+  CHECK(r.session->previousEntry() == ids[1]);  // the last one looked at
+  r.picture();
+  // Right plays it and says so in the log (no links).
+  CHECK(r.session->previous() == ids[1]);
+  CHECK(r.session->entry() == ids[1]);
+  CHECK(r.session->bouncing());
+  auto back = r.logged("back to");
+  REQUIRE(back.size() == 1);
+  CHECK(back[0] == "channel");
+  for (const auto& e : r.session->log().entries()) CHECK(e.detail.find("http") == std::string::npos);
+}
+
+TEST_CASE("session: something that never drew a picture is skipped by Right") {
+  Rig r;
+  auto ids = r.entries(1);
+  REQUIRE(ids.size() >= 3);
+  r.session->setShowingFull(true);
+  REQUIRE(r.session->tune(ids[0]));
+  r.picture();
+  REQUIRE(r.session->tune(ids[1]));
+  r.run(3000);  // still opening when left
+  CHECK_FALSE(r.session->ready());
+  REQUIRE(r.session->tune(ids[2]));
   CHECK(r.session->previousEntry() == ids[0]);
+  // A preview in the guide's corner, picture or not, isn't viewed either.
+  r.picture();
+  r.session->setShowingFull(false);
+  REQUIRE(r.session->tune(ids[1]));
+  CHECK(r.session->previousEntry() == ids[2]);  // ids[2] was full screen with a picture
+  r.picture();
+  REQUIRE(r.session->tune(ids[0]));
+  CHECK(r.session->previousEntry() == ids[2]);  // the preview of ids[1] is skipped
+}
+
+TEST_CASE("session: Right twice swaps back and forth") {
+  Rig r;
+  auto ids = r.entries(1);
+  REQUIRE(ids.size() >= 2);
+  r.session->setShowingFull(true);
+  REQUIRE(r.session->tune(ids[0]));
+  r.picture();
+  REQUIRE(r.session->tune(ids[1]));
+  r.picture();
+  for (int i = 0; i < 3; ++i) {
+    CHECK(r.session->previous() == ids[0]);
+    CHECK(r.session->previousEntry() == ids[1]);
+    r.picture();
+    CHECK(r.session->previous() == ids[1]);
+    CHECK(r.session->previousEntry() == ids[0]);
+    r.picture();
+  }
+  // Right again before the picture comes: still the swap.
+  CHECK(r.session->previous() == ids[0]);
+  r.run(1000);
+  CHECK(r.session->previous() == ids[1]);
+  CHECK(r.session->previousEntry() == ids[0]);
+}
+
+TEST_CASE("session: after Right, Up and Down go through the target's own list, from the guide list it came from") {
+  Rig r;
+  auto ids = r.entries(1);
+  REQUIRE(ids.size() >= 6);
+  std::vector<std::string> a(ids.begin(), ids.begin() + 3), b(ids.begin() + 3, ids.begin() + 6);
+  r.session->setShowingFull(true);
+  REQUIRE(r.session->tune(a[1], a));
+  r.session->pickedFrom(marigold::engine::views::Tab::Favorites);
+  r.picture();
+  REQUIRE(r.session->tune(b[0], b));
+  r.session->pickedFrom(marigold::engine::views::Tab::Recent);
+  r.picture();
+  CHECK(r.session->flipList() == b);
+  REQUIRE(r.session->previous() == a[1]);
+  CHECK(r.session->flipList() == a);
+  CHECK(r.session->flipTarget("", 1) == a[2]);
+  CHECK(r.session->pickedTab() == marigold::engine::views::Tab::Favorites);
+  CHECK(r.session->pickedFlip() == a);
+  r.picture();
+  REQUIRE(r.session->previous() == b[0]);
+  CHECK(r.session->flipList() == b);
+  CHECK(r.session->pickedTab() == marigold::engine::views::Tab::Recent);
+  // Up / Down from there walk b.
+  CHECK(r.session->flip(1) == b[1]);
+}
+
+TEST_CASE("session: a Right that can't tune leaves nothing half done") {
+  Rig r;
+  auto ids = r.entries(1);
+  REQUIRE(ids.size() >= 2);
+  r.session->setShowingFull(true);
+  REQUIRE(r.session->tune(ids[0]));
+  r.picture();
+  REQUIRE(r.session->tune(ids[1]));
+  r.picture();
+  REQUIRE(r.session->tune(ids[0]));
+  r.picture();
+  CHECK_FALSE(r.session->bouncing());
+  // The provider goes: ids[1] has no feeds any more.
+  auto accounts = r.store->accounts();
+  REQUIRE_FALSE(accounts.empty());
+  r.store->removeAccount(accounts[0].id);
+  fake::settle(*r.store, r.tv);
+  REQUIRE(r.store->feeds(ids[1]).empty());
+  r.toasts.clear();
+  CHECK(r.session->previous().empty());
+  CHECK_FALSE(r.session->bouncing());  // the tune that didn't happen isn't Right's
+  CHECK(r.session->entry() == ids[0]);
+  CHECK(r.session->previousEntry() == ids[1]);
+  REQUIRE(r.toasts.size() == 1);
+  CHECK(r.toasts[0].find("no working feed") != std::string::npos);
+  CHECK(r.logged("back to").empty());
+}
+
+// --- leaving the app mid-recovery (Build 159) ----------------------------------
+
+TEST_CASE("session: the app in the background pauses the recovery; back, the same feed starts again") {
+  Rig r;
+  auto ids = r.entries(2);
+  REQUIRE_FALSE(ids.empty());
+  auto feeds = r.store->feeds(ids[0]);
+  r.session->setShowingFull(true);
+  REQUIRE(r.session->tune(ids[0]));
+  r.picture();
+  r.run(30'000);
+  // It stalls; the app goes to the background while the recovery waits.
+  r.player->state.buffering = true;
+  r.run(4000);
+  CHECK_FALSE(r.session->note().empty());  // "Buffering…"
+  size_t plays = r.player->plays.size();
+  int stops = r.player->stops;
+  size_t lines = r.session->log().size();
+  r.session->suspend();
+  CHECK(r.session->paused());
+  CHECK(r.player->stops == stops + 1);
+  CHECK_FALSE(r.session->opening());
+  // Two hours asleep, woken now and then: nothing fires, nothing is charged.
+  r.run(2 * 3600 * 1000);
+  CHECK(r.player->plays.size() == plays);
+  CHECK_FALSE(r.session->failed());
+  CHECK_FALSE(r.session->feedProblem(feeds[0].channelId));
+  CHECK(r.store->feeds(ids[0])[0].channelId == feeds[0].channelId);
+  const auto& entries = r.session->log().entries();
+  for (size_t i = lines; i < entries.size(); ++i) {
+    CAPTURE(entries[i].event);
+    CHECK((entries[i].event == "paused" || entries[i].event == "memory" || entries[i].event == "live events"));
+  }
+  REQUIRE(r.logged("paused").size() == 1);
+  CHECK(r.logged("paused")[0] == "app in background");
+  CHECK(r.logged("stop").empty());
+  // Back: a clean start on the same feed, not a recovery.
+  r.player->state = {};
+  r.session->resume();
+  CHECK_FALSE(r.session->paused());
+  CHECK(r.session->opening());
+  r.run(250);
+  REQUIRE(r.player->plays.size() == plays + 1);
+  CHECK(r.player->plays.back() == feeds[0].channelId);
+  REQUIRE(r.logged("resumed").size() == 1);
+  CHECK(r.logged("resumed")[0] == "the same source again");
+  r.picture();
+  CHECK(r.session->ready());
+  r.run(60'000);
+  CHECK(r.player->plays.size() == plays + 1);
+  CHECK_FALSE(r.session->feedProblem(feeds[0].channelId));
+  // A second resume (focus back again) does nothing.
+  r.session->resume();
+  CHECK(r.logged("resumed").size() == 1);
+}
+
+TEST_CASE("session: back from the background on a backup, that backup starts again") {
+  Rig r;
+  auto ids = r.entries(2);
+  REQUIRE_FALSE(ids.empty());
+  auto feeds = r.store->feeds(ids[0]);
+  r.player->dead.insert(feeds[0].channelId);
+  r.session->setShowingFull(true);
+  REQUIRE(r.session->tune(ids[0]));
+  REQUIRE(r.runUntilFeed(1));
+  r.picture();
+  r.session->suspend();
+  r.session->suspend();  // Hidden, then Background: one pause
+  CHECK(r.logged("paused").size() == 1);
+  r.run(600'000);
+  size_t plays = r.player->plays.size();
+  r.player->dead.clear();
+  r.session->resume();
+  r.run(250);
+  REQUIRE(r.player->plays.size() == plays + 1);
+  CHECK(r.player->plays.back() == feeds[1].channelId);
+  CHECK(r.session->feedIndex() == 1);
+}
+
+TEST_CASE("session: a channel that had given up stays given up across the background") {
+  Rig r;
+  auto ids = r.entries(1);
+  REQUIRE_FALSE(ids.empty());
+  for (const Feed& f : r.store->feeds(ids[0])) r.player->dead.insert(f.channelId);
+  r.session->setShowingFull(true);
+  REQUIRE(r.session->tune(ids[0]));
+  for (int i = 0; i < 480 && !r.session->failed(); ++i) r.run(250);
+  REQUIRE(r.session->failed());
+  size_t plays = r.player->plays.size();
+  r.session->suspend();
+  r.run(60'000);
+  r.session->resume();
+  CHECK(r.session->failed());
+  CHECK(r.player->plays.size() == plays);
+  CHECK(r.logged("resumed").size() == 1);
 }
 
 // --- the picture check (Build 115) -------------------------------------------

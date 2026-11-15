@@ -383,7 +383,7 @@ void Playback::tickSubtitles(uint32_t ms) {
       }
     }
   }
-  if (!active()) return;
+  if (!active() || paused()) return;  // (in the background: the player is stopped)
   platform::Video& video = app_.video();
   std::string language = channelLanguage(app_);
   if (!s.fromStream()) {

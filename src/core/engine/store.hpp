@@ -118,6 +118,9 @@ struct AccountForm {
 struct DueReminder {
   std::string channelId, channelName, title;
   time::Seconds start = 0;
+  // The game it was set on, while it's on the board ("" none): OK plays
+  // the game on that channel (Build 159).
+  std::string eventId;
 };
 
 // A provider group, for hiding it from All Channels.
@@ -421,6 +424,11 @@ class Store {
   // guide channel). Cheap: call it when either changes.
   void eventsFocus(EventsScreen screen, const std::string& rowId, const std::string& playing = {});
   bool isEvent(const std::string& id) const;
+  // Build 159: a game's schedule game id ("" for an event built from a
+  // channel's title, or none), and the event on the board now for one ("").
+  // A game Right goes back to is found again by it after a rebuild.
+  std::string eventGameId(const std::string& eventId) const;
+  std::string eventOfGame(const std::string& gameId) const;
   const EventTile* eventTile(const std::string& id) const;
   WhereToWatch whereToWatch(const std::string& eventId) const;
   // The player's game banner for what plays: a game (its event id), or a

@@ -480,7 +480,7 @@ The guide in the player: In-player guide (Build 116).
 | Fire TV system captions | Settings › Accessibility › Captions on, back to the app | Subtitles turn on within a few seconds (and off when it's turned off) |
 | One layer | Banner up, then Left | Only the guide shows; no banner under it. Back from Sources/Quick settings returns to the plain picture |
 | Back | Back with the banner up, then on a clear picture | Hides the banner; on a clear picture "Press Back again to leave · ▶ Back to …"; a second Back leaves |
-| Back to | Watch A for 15 s, flip through B and C quickly, press Right | Goes to A, not C; Right again goes back to where you were |
+| Back to | Watch A, flip to B and wait for its picture (however briefly), press Right | Goes to A; Right again goes back to B. A channel left before its picture came up is skipped (Build 159) |
 | Exit (LG) | Exit while the controls are up | Everything clears, the channel keeps playing |
 | Numbers | Type 2, 0, 6 and press OK | Tunes 206 at once |
 | Play/pause | Press it while watching | "Live TV can't be paused" |
@@ -1740,3 +1740,28 @@ More rows show the channel's own logo instead of the provider's. The logo librar
 | Wikidata | A listed channel iptv-org has no logo for (NTN24, TyC Sports) | Its logo; logo_sources "Wikidata, provider" |
 | Wide | Syfy, Tennis Channel, Game Show Network | The horizontal logo fills the cell |
 | Log | marigold.log at launch | "fallback logos: … by id, … by name, … abroad (… KB)" |
+
+## Build 159: Right goes back to what you watched; sleep pauses recovery
+
+Right (Rewind on Fire TV, the Back to button, the right edge with the pointer, the failed card's last button) goes back to whatever was on screen last, a channel or a game, however briefly it was watched: anything that went full screen and showed a picture counts, and Up / Down zapping still stops on one channel before it tunes. Something that never showed a picture is skipped. A game comes back on the source it played from (the feed picked in Where to Watch, or the backup that took over), with Up and Down going through the games again; a channel comes back with its own list (the guide list it was picked from too). Pressing Right twice swaps the two. Another source of the same game and the cameras panel don't change where Right goes. A game no longer on the board is found again by its schedule game; if it's gone, its channel plays with a short note ("That game has ended · back on ESPN"). Each Right adds a "back to" line to the playback log (channel or game, no links). A reminder set on a game plays the game, on the channel it was set for.
+
+Leaving the app (home, another app, the Mac sleeping or hidden) pauses playback recovery: nothing is retried, logged as failed or held against a feed while the app is away. Back in the app, what was playing starts again on the same feed; a game that has left the board meanwhile ends quietly. The log says "paused" (app in background) and "resumed".
+
+| Area | How to check | Pass |
+|---|---|---|
+| Brief channel | Watch A, Down to B, wait for B's picture (2–3 s), Down to C, press Right | Goes to B, not A |
+| No picture | Watch A, Down to a channel that doesn't start, Down again before it does, press Right | Goes to A |
+| Swap | Right, then Right again, several times | Swaps between the same two each time |
+| Game and channel | Watch a channel, then a game from Live Events on a feed picked in Where to Watch, press Right, then Right again | The channel, then the game on the same feed (Sources ticks it); Up / Down go through the games |
+| Two games | Game A, then game B from the event guide, Right | Back to A on its source; Right again goes to B |
+| Hints | With a game as the target: the banner's key guide, OK (Back to button), the pointer's right edge, Back once on a clear picture | Each says "Back to Rams at Seahawks" (the matchup, no score) |
+| Source switch | On a game: Sources › another source, then Cameras on a race, press Right | Goes to what was on before the game, not to another source or camera |
+| Game ended | Watch a game on a channel, then another channel; after the game leaves Live Events, press Right | Its channel plays; "That game has ended · back on …" shows briefly |
+| Up / Down after Right | Favorites › a channel, then a game, Right, then Up / Down | Up / Down go through Favorites; the guide in the player opens on Favorites |
+| Reminder | Remind me on a game; OK on the reminder when it fires | The game plays (game banner), not just the channel |
+| Log | Help › Send a report › Playback log after a few Rights | One "back to" line each (channel or game), no links |
+| Apple TV home | While a channel stalls ("Buffering…"), press TV / home; come back after an hour | The channel starts again at once on the same feed; the log has "paused", then "resumed"; no "not recovered" or failure lines between them |
+| Fire TV / Android | Home while watching, back after a few minutes | Same channel, same feed; no failures logged |
+| Mac sleep | Sleep the Mac while watching, wake it | Starts again on the same feed; nothing marked failed in Sources |
+| LG menus | The remote's Settings button while watching | Still plays behind the menu (no pause line); home and back starts it again |
+| Game gone while away | Leave the app on a game; come back after it left Live Events | Playback ends quietly (no failure card, no failure in the log) |

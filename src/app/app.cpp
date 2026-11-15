@@ -101,8 +101,10 @@ void App::closeKeyboard() { window_.closeKeyboard(); }
 bool App::keyboardOpen() const { return window_.keyboardOpen(); }
 
 void App::suspend() {
-  // Leaving the app: the decoder goes back to the TV, and the playback log
-  // writes what it holds.
+  // Leaving the app: the playback session pauses (its recovery fires no
+  // timer, charges no feed and logs no failure until the app is back), the
+  // decoder goes back to the TV, and the playback log writes what it holds.
+  playback_->suspend();
   video_.stop();
   playback_->saveLogNow();
   dirty_ = true;
@@ -115,12 +117,15 @@ void App::dispatch(const KeyEvent& k) {
   // A reminder card takes OK (watch) and Back (dismiss) while it shows.
   if (const auto& due = store_->dueReminder()) {
     if (k.key == Key::Ok) {
-      std::string id = due->channelId;
+      std::string id = due->channelId, game = due->eventId;
       store_->dismissReminder();
       // Already watching full screen: the player tunes in place (no second
-      // player on top of it).
+      // player on top of it). A game's reminder plays the game, on the
+      // channel it was set for (Build 159), else the channel.
       bool watching = playback_->active() && playback_->full();
-      if (playback_->tune(id)) {
+      bool ok = !game.empty() && store_->isEvent(game) &&
+                playback_->tuneEventVia(game, id, store_->eventFlipList(game));
+      if (ok || playback_->tune(id)) {
         playback_->setFull();
         if (!watching) nav_.push(makePlayer(*this));
       }
@@ -191,7 +196,12 @@ void App::handle(const platform::Event& e) {
       }
       break;
     case Type::Shown:
+      // Back from the background (or a hidden window): what was playing
+      // starts again on the same source (a fresh start, not a recovery). A
+      // Shown with no pause before it (the window exposed, focus back)
+      // changes nothing.
       hidden_ = false;
+      playback_->resume();
       dirty_ = true;
       break;
     case Type::Background:

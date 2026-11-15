@@ -6,8 +6,12 @@
 // the backup that took over; a source is its own channels, never its
 // backups. And a feed picked stays first even if it failed lately. Every
 // name, team and link is made up.
+//
+// Build 159: Right goes back to what was viewed last, a channel or a game,
+// on the source it played from.
 #include <doctest.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <memory>
 #include <set>
@@ -56,15 +60,17 @@ struct FakePlayer final : Player {
 };
 
 // A game on now: on a guide channel (two versions, in the guide) and on two
-// provider event feeds.
+// provider event feeds. With `more`: a news channel, and a second game on a
+// provider feed of its own.
 struct Rig {
   fake::Tv tv;
   std::unique_ptr<Store> store;
   std::shared_ptr<FakePlayer::Shared> player = std::make_shared<FakePlayer::Shared>();
   std::unique_ptr<Session> session;
-  std::string game;
+  std::string game, other;
+  std::vector<std::string> toasts;
 
-  Rig() {
+  explicit Rig(bool more = false) {
     time::Seconds now = time::now();
     time::Seconds start = now - 30 * 60;
     sports::schedule::Saved s;
@@ -72,17 +78,27 @@ struct Rig {
     s.schema = sports::schedule::kSchema;
     s.games.push_back(sportsdata::game("NFL", "NFL", "401", sportsdata::team("1", "Harbor City Owls", "HCO"),
                                        sportsdata::team("2", "Valley Hawks", "VHK"), start, {"ESPN"}));
+    if (more)
+      s.games.push_back(sportsdata::game("NFL", "NFL", "402", sportsdata::team("3", "Lake Town Bears", "LTB"),
+                                         sportsdata::team("4", "River City Foxes", "RCF"), start));
     tv.files.write("sports-schedule.json", sports::schedule::toJson(s), false);
-    tv.pool.answer(kList,
-                   "#EXTM3U\n"
-                   "#EXTINF:-1 tvg-id=\"espn.us\" group-title=\"US| SPORTS\",US: ESPN\n"
-                   "http://mock.example.invalid:8080/1.ts\n"
-                   "#EXTINF:-1 tvg-id=\"espn.us\" group-title=\"US| SPORTS\",US: ESPN FHD\n"
-                   "http://mock.example.invalid:8080/2.ts\n"
-                   "#EXTINF:-1 group-title=\"US| NFL PPV\",NFL 01: Valley Hawks at Harbor City Owls\n"
-                   "http://mock.example.invalid:8080/3.ts\n"
-                   "#EXTINF:-1 group-title=\"US| NFL PPV\",NFL 02: Valley Hawks at Harbor City Owls (Away feed)\n"
-                   "http://mock.example.invalid:8080/4.ts\n");
+    std::string list =
+        "#EXTM3U\n"
+        "#EXTINF:-1 tvg-id=\"espn.us\" group-title=\"US| SPORTS\",US: ESPN\n"
+        "http://mock.example.invalid:8080/1.ts\n"
+        "#EXTINF:-1 tvg-id=\"espn.us\" group-title=\"US| SPORTS\",US: ESPN FHD\n"
+        "http://mock.example.invalid:8080/2.ts\n"
+        "#EXTINF:-1 group-title=\"US| NFL PPV\",NFL 01: Valley Hawks at Harbor City Owls\n"
+        "http://mock.example.invalid:8080/3.ts\n"
+        "#EXTINF:-1 group-title=\"US| NFL PPV\",NFL 02: Valley Hawks at Harbor City Owls (Away feed)\n"
+        "http://mock.example.invalid:8080/4.ts\n";
+    if (more)
+      list +=
+          "#EXTINF:-1 tvg-id=\"cnn.us\" group-title=\"US| NEWS\",US: CNN\n"
+          "http://mock.example.invalid:8080/5.ts\n"
+          "#EXTINF:-1 group-title=\"US| NFL PPV\",NFL 03: River City Foxes at Lake Town Bears\n"
+          "http://mock.example.invalid:8080/6.ts\n";
+    tv.pool.answer(kList, list);
     std::string xml =
         "<?xml version=\"1.0\"?>\n<tv>\n<channel id=\"espn.us\"><display-name>ESPN</display-name></channel>\n"
         "<programme start=\"" +
@@ -104,8 +120,12 @@ struct Rig {
       for (const EventGroup& g : r.groups)
         for (const EventTile& t : g.tiles)
           if (t.title.find("Harbor City Owls") != std::string::npos && game.empty()) game = t.id;
+          else if (t.title.find("Lake Town Bears") != std::string::npos && other.empty()) other = t.id;
     REQUIRE_FALSE(game.empty());
-    session = std::make_unique<Session>(*store, tv.host(), std::make_unique<FakePlayer>(player), Session::Hooks{});
+    if (more) REQUIRE_FALSE(other.empty());
+    Session::Hooks hooks;
+    hooks.toast = [this](const std::string& t) { toasts.push_back(t); };
+    session = std::make_unique<Session>(*store, tv.host(), std::make_unique<FakePlayer>(player), hooks);
   }
   ~Rig() { store->eventsOpen(false); }
 
@@ -129,6 +149,25 @@ struct Rig {
       session->tick(tv.ms);
       tv.pool.drain();
     }
+  }
+  // The feed is handed to the player, then its picture comes up.
+  void picture() {
+    run(250);
+    player->state.picture = true;
+    run(500);
+  }
+  // A guide channel by the name it shows.
+  std::string channel(const std::string& name) const {
+    for (const GuideChannel& g : store->channels()->all)
+      if (g.name == name) return g.id;
+    return "";
+  }
+  // Log lines of this kind, newest last.
+  std::vector<std::string> logged(const std::string& event) const {
+    std::vector<std::string> out;
+    for (const auto& e : session->log().entries())
+      if (e.event == event) out.push_back(e.detail);
+    return out;
   }
 };
 
@@ -238,4 +277,210 @@ TEST_CASE("views: the source playing is the one picked while it plays, else the 
   // Nothing playing, or a channel no source is: none.
   CHECK(title("", "rawA") == "-");
   CHECK(title("rawZ", "") == "-");
+}
+
+// --- Right goes back to what you watched (Build 159) ---------------------------
+
+namespace {
+
+// now() moved on for one test, and back after it.
+struct ClockAhead {
+  time::Seconds by = 0;
+  void move(time::Seconds s) {
+    time::advanceForTests(s);
+    by += s;
+  }
+  ~ClockAhead() { time::advanceForTests(-by); }
+};
+
+// Live Events made again, with the board as it is now.
+void rebuild(Rig& rig) {
+  rig.store->eventsOpen(false);
+  fake::settle(*rig.store, rig.tv);
+  rig.store->eventsOpen(true);
+  for (int i = 0; i < 4; ++i) fake::settle(*rig.store, rig.tv);
+}
+
+// The provider feed a game's Where to Watch lists first.
+std::string firstFeed(const Rig& rig, const std::string& eventId) {
+  for (const auto& section : rig.store->whereToWatch(eventId).sections)
+    for (const WatchSource& s : section.second)
+      if (!s.channelId.empty()) return s.channelId;
+  return "";
+}
+
+}  // namespace
+
+TEST_CASE("engine: Right goes from a game to the channel before it and back to the game, on the same source") {
+  Rig rig(true);
+  std::string cnn = rig.channel("CNN");
+  std::string away = rig.via(kAway);
+  REQUIRE_FALSE(cnn.empty());
+  REQUIRE_FALSE(away.empty());
+  std::vector<std::string> games = rig.store->eventFlipList(rig.game);
+  rig.session->setShowingFull(true);
+  REQUIRE(rig.session->tune(cnn));
+  rig.picture();
+  REQUIRE(rig.session->tuneEventVia(rig.game, away, games));
+  rig.picture();
+  CHECK(rig.session->previousEntry() == cnn);
+  // Right: the channel...
+  CHECK(rig.session->previous() == cnn);
+  CHECK(rig.session->entry() == cnn);
+  CHECK(rig.session->pickedSource().empty());
+  CHECK(std::find(rig.session->flipList().begin(), rig.session->flipList().end(), cnn) !=
+        rig.session->flipList().end());
+  rig.picture();
+  // ... and Right again: the game, on the feed it played from, with Up and
+  // Down through the games.
+  const Session::Viewed* back = rig.session->previousTarget();
+  REQUIRE(back);
+  CHECK(back->game);
+  CHECK(back->entry == rig.game);
+  CHECK(back->source == away);
+  CHECK(back->gameId == rig.store->eventGameId(rig.game));
+  CHECK(rig.session->previous() == rig.game);
+  CHECK(rig.session->pickedSource() == away);
+  CHECK(rig.session->playingChannel() == away);
+  CHECK(rig.ticked() == kAway);
+  CHECK(rig.session->flipList() == games);
+  rig.picture();
+  CHECK(rig.session->previous() == cnn);
+  CHECK(rig.logged("back to") == std::vector<std::string>{"channel", "game", "channel"});
+}
+
+TEST_CASE("engine: Right swaps two games, each on its own source") {
+  Rig rig(true);
+  std::string away = rig.via(kAway);
+  std::string foxes = firstFeed(rig, rig.other);
+  REQUIRE_FALSE(foxes.empty());
+  rig.session->setShowingFull(true);
+  REQUIRE(rig.session->tuneEventVia(rig.game, away, rig.store->eventFlipList(rig.game)));
+  rig.picture();
+  REQUIRE(rig.session->tuneEventVia(rig.other, foxes, rig.store->eventFlipList(rig.other)));
+  rig.picture();
+  for (int i = 0; i < 2; ++i) {
+    CHECK(rig.session->previous() == rig.game);
+    CHECK(rig.session->playingChannel() == away);
+    CHECK(rig.session->pickedSource() == away);
+    rig.picture();
+    CHECK(rig.session->previous() == rig.other);
+    CHECK(rig.session->playingChannel() == foxes);
+    rig.picture();
+  }
+  CHECK(rig.logged("back to") == std::vector<std::string>(4, "game"));
+}
+
+TEST_CASE("engine: another source or a camera of the game playing leaves Right's target alone") {
+  Rig rig(true);
+  std::string cnn = rig.channel("CNN");
+  std::string away = rig.via(kAway), home = rig.via(kHome);
+  std::vector<std::string> games = rig.store->eventFlipList(rig.game);
+  rig.session->setShowingFull(true);
+  REQUIRE(rig.session->tune(cnn));
+  rig.picture();
+  REQUIRE(rig.session->tuneEventVia(rig.game, away, games));
+  rig.picture();
+  CHECK(rig.session->previousEntry() == cnn);
+  // Where to Watch: another source, in place.
+  REQUIRE(rig.session->tuneEventVia(rig.game, home, games));
+  rig.picture();
+  CHECK(rig.session->previousEntry() == cnn);
+  // A camera (the cameras panel).
+  std::vector<Feed> camera = rig.store->eventFeeds(rig.game, away);
+  REQUIRE_FALSE(camera.empty());
+  camera.resize(1);
+  camera[0].channelId = "cam|onboard-1";
+  camera[0].label = "Onboard 1";
+  REQUIRE(rig.session->tuneCamera(camera));
+  rig.picture();
+  CHECK(rig.session->previousEntry() == cnn);
+  CHECK(rig.session->previous() == cnn);
+  rig.picture();
+  // Back to the game: on the source picked before the camera, not the camera.
+  const Session::Viewed* back = rig.session->previousTarget();
+  REQUIRE(back);
+  CHECK(back->entry == rig.game);
+  CHECK(back->source == home);
+  CHECK(rig.session->previous() == rig.game);
+  CHECK(rig.session->playingChannel() == home);
+  CHECK(rig.session->pickedSource() == home);
+}
+
+TEST_CASE("engine: a game that has left the board goes back to the channel it played on, with a note") {
+  Rig rig(true);
+  std::string espn = rig.via(kChannel);
+  std::string cnn = rig.channel("CNN");
+  REQUIRE(rig.store->eventOfGame(rig.store->eventGameId(rig.game)) == rig.game);
+  rig.session->setShowingFull(true);
+  REQUIRE(rig.session->tuneEventVia(rig.game, espn, rig.store->eventFlipList(rig.game)));
+  rig.picture();
+  REQUIRE(rig.session->tune(cnn));
+  rig.picture();
+  const Session::Viewed* back = rig.session->previousTarget();
+  REQUIRE(back);
+  CHECK(back->channel == espn);
+  // Two days on, the board made again: the game's tile is gone.
+  ClockAhead clock;
+  clock.move(2 * 86400);
+  rebuild(rig);
+  REQUIRE_FALSE(rig.store->isEvent(rig.game));
+  REQUIRE(rig.session->previousTarget());
+  CHECK(rig.session->gameNow(*rig.session->previousTarget()).empty());
+  CHECK(rig.store->eventOfGame(back->gameId).empty());
+  rig.toasts.clear();
+  CHECK(rig.session->previous() == espn);
+  CHECK(rig.session->entry() == espn);
+  CHECK(rig.session->bouncing());
+  REQUIRE(rig.toasts.size() == 1);
+  CHECK(rig.toasts[0] == "That game has ended \xc2\xb7 back on ESPN");
+  REQUIRE_FALSE(rig.logged("back to").empty());
+  CHECK(rig.logged("back to").back() == "its channel; the game has ended");
+  for (const auto& e : rig.session->log().entries()) CHECK(e.detail.find("http") == std::string::npos);
+}
+
+TEST_CASE("engine: a game on a provider feed alone that has left the board: Right only says so") {
+  Rig rig(true);
+  std::string away = rig.via(kAway);
+  std::string cnn = rig.channel("CNN");
+  rig.session->setShowingFull(true);
+  REQUIRE(rig.session->tuneEventVia(rig.game, away, rig.store->eventFlipList(rig.game)));
+  rig.picture();
+  REQUIRE(rig.session->tune(cnn));
+  rig.picture();
+  ClockAhead clock;
+  clock.move(2 * 86400);
+  rebuild(rig);
+  REQUIRE_FALSE(rig.store->isEvent(rig.game));
+  rig.toasts.clear();
+  CHECK(rig.session->previous().empty());
+  CHECK(rig.session->entry() == cnn);
+  CHECK_FALSE(rig.session->bouncing());
+  CHECK(rig.toasts == std::vector<std::string>{"That game has ended"});
+}
+
+TEST_CASE("engine: back from the background after the game left the board, playback ends quietly") {
+  Rig rig(true);
+  std::string away = rig.via(kAway);
+  rig.session->setShowingFull(true);
+  REQUIRE(rig.session->tuneEventVia(rig.game, away, rig.store->eventFlipList(rig.game)));
+  rig.picture();
+  size_t plays = rig.player->plays.size();
+  size_t lines = rig.session->log().size();
+  rig.session->suspend();
+  ClockAhead clock;
+  clock.move(2 * 86400);
+  rebuild(rig);
+  rig.run(60'000);
+  REQUIRE_FALSE(rig.store->isEvent(rig.game));
+  rig.session->resume();
+  CHECK_FALSE(rig.session->active());
+  CHECK(rig.player->plays.size() == plays);
+  CHECK(rig.logged("resumed") == std::vector<std::string>{"the game is over; stopped"});
+  const auto& entries = rig.session->log().entries();
+  for (size_t i = lines; i < entries.size(); ++i) {
+    CAPTURE(entries[i].event);
+    CHECK((entries[i].event == "paused" || entries[i].event == "resumed" || entries[i].event == "memory" ||
+           entries[i].event == "live events"));
+  }
 }

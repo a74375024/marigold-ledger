@@ -1,7 +1,8 @@
 // What is playing, decided once for every platform: one entry (a guide
-// channel or a game), its feeds, the flip list it was picked from and the
-// previous channel; when a tune counts as watched; the backup that took
-// over; why a feed failed; the playback log. The guide preview and full
+// channel or a game), its feeds, the flip list it was picked from and what
+// Right goes back to; when a tune counts as watched; the backup that took
+// over; why a feed failed; the playback log; a pause while the app is in
+// the background. The guide preview and full
 // screen share it, so OK on the previewed channel just grows the same
 // picture (no second tune).
 //
@@ -28,6 +29,7 @@
 #include "core/engine/host.hpp"
 #include "core/engine/model.hpp"
 #include "core/engine/quality.hpp"
+#include "core/engine/views.hpp"
 #include "core/media/picture.hpp"
 #include "core/playback/recovery.hpp"
 #include "core/report/log_journal.hpp"
@@ -118,8 +120,8 @@ class Session {
 
   // Starts `entryId` (or keeps it if it is already playing). `flip` is the
   // list CH+/CH- and Up/Down move through in the player. A tune in the
-  // guide corner is a preview: it is not "watched" (Recent, previous
-  // channel) until it goes full screen.
+  // guide corner is a preview: it is not "watched" (Recent, what Right goes
+  // back to) until it goes full screen.
   bool tune(const std::string& entryId, const std::vector<std::string>& flip = {});
   // A game, starting with the source `via` (an entry or a raw feed) picked
   // in Where to Watch; the others stay as backups.
@@ -146,8 +148,57 @@ class Session {
   // The channel `step` away from `from` (empty: the one playing) in the flip
   // list, without tuning it: the banner shows it while the viewer presses on.
   std::string flipTarget(const std::string& from, int step) const;
-  // Back to the previous channel (cable LAST).
+  // Right (cable LAST): back to what was viewed last, a channel or a game,
+  // as it played (its source, its flip list, the guide list it came from).
+  // Returns the entry tuned, or "" when nothing could be (a toast says why).
+  // A game no longer on the board is found again by its schedule game; else
+  // its channel plays, with a note that the game has ended.
   std::string previous();
+  // Build 159: what Right goes back to. Whatever was left after it showed
+  // full screen and drew a picture, however briefly; something that never
+  // drew one is skipped. A race camera never changes it.
+  struct Viewed {
+    std::string entry;    // a guide channel or a game (event id)
+    bool game = false;
+    // A game's source (Where to Watch's `via`: an entry or a raw feed) and
+    // the feed whose picture showed (a raw channel id).
+    std::string source, feed;
+    std::string channel;  // the guide channel it played on ("" none known)
+    std::string gameId;   // a game's schedule game ("" none)
+    std::vector<std::string> flip;  // its own flip list
+    // The guide list it was picked from (pickedFrom), while it played from
+    // that list.
+    std::optional<views::Tab> tab;
+  };
+  // What Right goes to now; null when nothing.
+  const Viewed* previousTarget() const;
+  // Its entry ("" none).
+  std::string previousEntry() const;
+  // A game's event id on the board now (found again by its schedule game
+  // after a rebuild), "" when it's gone.
+  std::string gameNow(const Viewed& v) const;
+  // This tune is Right's (it worked).
+  bool bouncing() const { return bouncing_; }
+
+  // The guide list the channel playing was picked from (a tune with its
+  // flip list just before): the guide in the player opens on it and names
+  // it while that flip list stands (views::playerOpen). Right restores it.
+  void pickedFrom(views::Tab tab) {
+    pickedTab_ = tab;
+    pickedFlip_ = flip_;
+  }
+  views::Tab pickedTab() const { return pickedTab_; }
+  const std::vector<std::string>& pickedFlip() const { return pickedFlip_; }
+
+  // Build 159: the app went to the background (or its window was hidden).
+  // The recovery stops where it is: no timers fire, nothing is charged to
+  // a feed and no failure is logged meanwhile ("paused" in the log).
+  void suspend();
+  // Back on screen: what was playing (or opening) starts again on the same
+  // source, as a fresh start; a game no longer on the board, or a channel
+  // gone, ends quietly ("resumed" in the log). Nothing when not paused.
+  void resume();
+  bool paused() const { return paused_; }
 
   // Full screen or a preview. Going full screen makes the tune "watched".
   void setShowingFull(bool full);
@@ -158,15 +209,16 @@ class Session {
   bool tick(uint32_t ms);
 
   const std::string& entry() const { return entry_; }
-  const std::string& previousEntry() const { return previous_; }
   const std::vector<Feed>& feeds() const { return feeds_; }
   const std::vector<std::string>& flipList() const { return flip_; }
   size_t feedIndex() const { return rec_.feedIndex(); }
   bool active() const { return !entry_.empty(); }
-  bool ready() const { return rec_.sawFirstFrame(); }
+  // (Paused in the background: as it was when the app left.)
+  bool ready() const { return pausedAt_ ? pausedAt_->ready : rec_.sawFirstFrame(); }
   bool failed() const { return rec_.phase() == playback::Recovery::Phase::Failed; }
   // A channel is opening: no picture yet, not given up (a spinner shows).
-  bool opening() const { return active() && !ready() && !failed(); }
+  // Not while paused in the background.
+  bool opening() const { return active() && !paused_ && !ready() && !failed(); }
   // What the screens show of playback. The app draws again when it changes
   // (a picture coming up, a note, giving up), not every frame meanwhile.
   struct Look {
@@ -236,6 +288,17 @@ class Session {
   void pictureCheck(uint32_t now, const PlayerState& s, bool picture);
   void watched();
   void rememberGame();
+  // What is playing as Right would play it again; whether it counts (shown
+  // full screen with a picture) is the caller's.
+  Viewed viewedNow() const;
+  // The source playing (Viewed::source): the pick, else the picture's feed.
+  std::string sourceNow() const;
+  // Leaving the entry playing: it becomes what Right goes back to, if it
+  // counts.
+  void leaving();
+  // Starts `entryId` with `feeds`, `feed` first when it's there.
+  bool replay(const std::string& entryId, std::vector<Feed> feeds, const std::string& feed,
+              const std::vector<std::string>& flip);
   void logEvent(std::string_view event, std::string_view detail = {}, bool withFeed = true);
   void saveLog(uint32_t ms, bool all = false);
   uint32_t ms() const { return host_.ms(); }
@@ -245,10 +308,30 @@ class Session {
   std::unique_ptr<Player> player_;
   Hooks hooks_;
   playback::Recovery rec_;
-  std::string entry_, previous_, lastWatched_;
+  std::string entry_, lastWatched_;
   std::string picked_;  // pickedSource()
-  uint32_t watchedAt_ = 0;  // when lastWatched_ began
   bool bouncing_ = false;   // this tune is previous()
+  // What was viewed (Right's targets), newest first, one per entry; Right
+  // goes to the newest that isn't playing.
+  std::vector<Viewed> viewed_;
+  // The entry playing has shown full screen / drawn a picture (any feed,
+  // any tune of it); the raw channel of the latest picture.
+  bool shownFull_ = false, pictured_ = false;
+  std::string pictureChannel_;
+  std::string gameId_;  // the game playing's schedule game ("" none)
+  bool game_ = false;   // the entry playing was a game when tuned
+  std::string cameraSource_;  // the race's source before its cameras
+  views::Tab pickedTab_ = views::Tab::Lineup;
+  std::vector<std::string> pickedFlip_;
+  // Paused in the background: what to start again on return.
+  bool paused_ = false;
+  struct Paused {
+    bool restart = false;  // something played or opened (not a card)
+    bool ready = false;    // it showed a picture
+    bool game = false;
+    size_t feed = 0;
+  };
+  std::optional<Paused> pausedAt_;
   std::vector<std::string> flip_;
   std::vector<Feed> feeds_;
   bool full_ = false;

@@ -2,7 +2,8 @@
 // the platform's video player (with the local TS proxy on webOS) behind
 // engine::Player, and where the picture sits (full screen or the guide
 // corner). Everything the session decides (feeds, backups, watched,
-// previous, the log) is the engine's.
+// what Right goes back to and the list it came from, the log) is the
+// engine's.
 #pragma once
 
 #include <cstdint>
@@ -75,16 +76,6 @@ class Playback : public engine::Session {
   // have gone through the relay (webOS, not a server-opened stream).
   void subtitlesBegin(unsigned relaySession, bool relayPossible);
 
-  // The guide list the channel playing was picked from (a tune with its
-  // flip list just before): the guide in the player opens on it and names
-  // it while that flip list stands (views::playerOpen).
-  void pickedFrom(engine::views::Tab tab) {
-    pickedTab_ = tab;
-    pickedFlip_ = flipList();
-  }
-  engine::views::Tab pickedTab() const { return pickedTab_; }
-  const std::vector<std::string>& pickedFlip() const { return pickedFlip_; }
-
   // The player's search (Build 132): what was typed there last, for
   // reopening it while the player stays open (the player clears it as it
   // closes).
@@ -113,8 +104,6 @@ class Playback : public engine::Session {
   uint32_t reapplyAt_[3] = {0, 0, 0};
   bool reapplyOnReady_ = false;
   bool placing_ = false;
-  engine::views::Tab pickedTab_ = engine::views::Tab::Lineup;
-  std::vector<std::string> pickedFlip_;
   std::string playerQuery_;
 };
 
