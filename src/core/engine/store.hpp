@@ -331,6 +331,20 @@ class Store {
   std::string entryOfChannel(const std::string& channelId) const;
   // Feeds for an entry, best first ("Always start with" honoured).
   std::vector<Feed> feeds(const std::string& entryId) const;
+  // Build 163, the catch-up test (test only). The days of catch-up the
+  // provider says a raw channel keeps (Xtream tv_archive_duration); 0 for
+  // none, and for every M3U or Emby channel (no test there).
+  uint16_t catchupDays(const std::string& channelId) const;
+  // A copy's archive from `from` (Unix time) until `now`, to play in place
+  // of `live`: the same channel, label and load mode, the provider's
+  // timeshift link (secret: for the player only) in its server's clock.
+  // nullopt when the copy keeps no archive or no link can be made.
+  struct CatchupFeed {
+    Feed feed;
+    std::optional<int> serverOffset;  // seconds east of UTC; nullopt: not known (asked as UTC)
+    int minutes = 0;                  // how much of the archive is asked for
+  };
+  std::optional<CatchupFeed> catchupFeed(const Feed& live, time::Seconds from, time::Seconds now) const;
   // Emby: asks the server to open a feed (needsOpen); `done` gets it with
   // its URL, or nothing. Closes the stream opened before.
   void open(const Feed& feed, std::function<void(std::optional<Feed>)> done);

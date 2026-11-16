@@ -200,6 +200,46 @@ class Session {
   void resume();
   bool paused() const { return paused_; }
 
+  // Build 163, the catch-up test (test only): does a provider's archive
+  // really play? A separate, throwaway playback of a copy from a moment
+  // back. The recovery stands aside meanwhile, as in the background: nothing
+  // reconnects or switches copies, nothing is charged to a feed, remembered
+  // as its source or saved, and what Right goes back to stays. No picture in
+  // 10 s, or an error, only says so. Every test is one "catch-up test" line
+  // in the playback log, worked or not (never a link). Back to live (or a
+  // channel change, or the app leaving) ends it.
+  enum class CatchupMoment { TenMinutesAgo, ProgrammeStart, Yesterday };
+  struct CatchupTest {
+    enum class Phase { Opening, Worked, Failed };
+    Phase phase = Phase::Opening;
+    CatchupMoment moment = CatchupMoment::TenMinutesAgo;
+    time::Seconds from = 0;    // the moment asked for (Unix time, to the minute)
+    time::Seconds behind = 0;  // how far behind live that was as it started, s
+    size_t feed = 0;           // the copy tested (feeds())
+    uint16_t days = 0;         // the archive its provider says it keeps
+    uint32_t startedAt = 0;    // ms
+    uint32_t pictureMs = 0;    // worked: how long the picture took
+    bool timedOut = false;     // failed: no picture in time (else `error`)
+    std::string error;         // failed: the player's error, safe to show
+    std::string size;          // worked: "1920x1080" once the player says
+  };
+  static constexpr uint32_t kCatchupTimeoutMs = 10000;
+  // The days of catch-up the copy playing keeps (or, during a test, the
+  // copy that played before it): an Xtream copy that drew a picture, not a
+  // race camera. 0: no test offered.
+  uint16_t catchupDays() const;
+  // Plays that copy from `from` (Unix time, taken to the minute); a test
+  // already on ends first. False when no test can start.
+  bool startCatchupTest(CatchupMoment moment, time::Seconds from);
+  // Another copy of the entry whose provider says it keeps an archive, not
+  // tried in this test yet (its index in feeds()).
+  std::optional<size_t> catchupOtherCopy() const;
+  // The same moment on that copy.
+  bool catchupTryOtherCopy();
+  // Back to live: the copy that played before the test, as a fresh start.
+  void endCatchupTest();
+  const std::optional<CatchupTest>& catchupTest() const { return test_; }
+
   // Full screen or a preview. Going full screen makes the tune "watched".
   void setShowingFull(bool full);
   bool full() const { return full_; }
@@ -213,21 +253,31 @@ class Session {
   const std::vector<std::string>& flipList() const { return flip_; }
   size_t feedIndex() const { return rec_.feedIndex(); }
   bool active() const { return !entry_.empty(); }
-  // (Paused in the background: as it was when the app left.)
-  bool ready() const { return pausedAt_ ? pausedAt_->ready : rec_.sawFirstFrame(); }
+  // (Paused in the background: as it was when the app left. A catch-up
+  // test: its picture.)
+  bool ready() const {
+    if (pausedAt_) return pausedAt_->ready;
+    if (test_) return test_->phase == CatchupTest::Phase::Worked;
+    return rec_.sawFirstFrame();
+  }
   bool failed() const { return rec_.phase() == playback::Recovery::Phase::Failed; }
   // A channel is opening: no picture yet, not given up (a spinner shows).
-  // Not while paused in the background.
-  bool opening() const { return active() && !paused_ && !ready() && !failed(); }
+  // Not while paused in the background, nor once a catch-up test failed.
+  bool opening() const {
+    return active() && !paused_ && !ready() && !failed() && !(test_ && test_->phase == CatchupTest::Phase::Failed);
+  }
   // What the screens show of playback. The app draws again when it changes
   // (a picture coming up, a note, giving up), not every frame meanwhile.
   struct Look {
     std::string entry, note;
     size_t feed = 0;
     bool full = false, ready = false, failed = false, noPicture = false, hadPicture = false, backup = false;
+    int test = 0;  // a catch-up test: 1 + its phase (0 none)
+    size_t testFeed = 0;
     bool operator==(const Look& o) const {
       return entry == o.entry && note == o.note && feed == o.feed && full == o.full && ready == o.ready &&
-             failed == o.failed && noPicture == o.noPicture && hadPicture == o.hadPicture && backup == o.backup;
+             failed == o.failed && noPicture == o.noPicture && hadPicture == o.hadPicture && backup == o.backup &&
+             test == o.test && testFeed == o.testFeed;
     }
     bool operator!=(const Look& o) const { return !(*this == o); }
   };
@@ -300,6 +350,14 @@ class Session {
   bool replay(const std::string& entryId, std::vector<Feed> feeds, const std::string& feed,
               const std::vector<std::string>& flip);
   void logEvent(std::string_view event, std::string_view detail = {}, bool withFeed = true);
+  // The catch-up test: a copy's archive handed to the player; its picture,
+  // error or time out; its log line (`ended`: how it ended before a
+  // result); leaving it (`live`: the copy before it plays again).
+  void playCatchup(size_t feed);
+  void tickCatchup(uint32_t now);
+  void failCatchup(bool timedOut, std::string error);
+  void logCatchup(std::string_view ended = {});
+  void closeCatchup(std::string_view why);
   void saveLog(uint32_t ms, bool all = false);
   uint32_t ms() const { return host_.ms(); }
 
@@ -360,6 +418,16 @@ class Session {
   uint64_t logSeen_ = 0;  // the log's revision when last saved (or found with nothing to save)
   uint32_t logSaveAt_ = 0;
   uint32_t memoryAt_ = 0;
+  // The catch-up test on now; the copy that played before it; the copies
+  // tried in it; its log line written; the server clock it asked in.
+  std::optional<CatchupTest> test_;
+  size_t testLive_ = 0;
+  std::set<size_t> testTried_;
+  bool testLogged_ = false;
+  std::optional<int> testOffset_;
+  // Back to live after a test: that copy's picture coming up again is not
+  // a new success for it (the first feed outcome after the return).
+  bool quietReturn_ = false;
 };
 
 }  // namespace marigold::engine

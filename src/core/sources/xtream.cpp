@@ -1,6 +1,8 @@
 #include "core/sources/xtream.hpp"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <utility>
 
 #include "core/net/lan_http.hpp"
@@ -53,6 +55,36 @@ bool contains(const std::vector<std::string>& list, std::string_view value) {
   return std::find(list.begin(), list.end(), value) != list.end();
 }
 
+// server_info's time_now: "YYYY-MM-DD HH:MM:SS" (or with a 'T'; the seconds
+// may be left out), read as if it were UTC.
+std::optional<time::Seconds> wallClock(const json::Value& v) {
+  if (!v.isString()) return std::nullopt;
+  std::string text = v.asString();
+  std::string_view s = trimWhitespaceAndNewlines(text);
+  auto number = [&s](size_t at, size_t n) -> int {
+    if (at + n > s.size()) return -1;
+    int out = 0;
+    for (size_t i = at; i < at + n; ++i) {
+      if (s[i] < '0' || s[i] > '9') return -1;
+      out = out * 10 + (s[i] - '0');
+    }
+    return out;
+  };
+  if (s.size() < 16 || s[4] != '-' || s[7] != '-' || (s[10] != ' ' && s[10] != 'T') || s[13] != ':')
+    return std::nullopt;
+  time::Civil c;
+  c.year = number(0, 4);
+  c.month = number(5, 2);
+  c.day = number(8, 2);
+  c.hour = number(11, 2);
+  c.minute = number(14, 2);
+  c.second = s.size() >= 19 && s[16] == ':' ? number(17, 2) : 0;
+  if (c.year < 2000 || c.month < 1 || c.month > 12 || c.day < 1 || c.day > time::daysInMonth(c.year, c.month) ||
+      c.hour < 0 || c.hour > 23 || c.minute < 0 || c.minute > 59 || c.second < 0 || c.second > 60)
+    return std::nullopt;
+  return time::secondsFromCivil(c);
+}
+
 }  // namespace
 
 std::optional<Error> checkStatus(int status) {
@@ -76,6 +108,39 @@ void applyAccountInfo(Account& account, const AccountInfo& info) {
   account.expires = info.expires;
   account.maxConnections = info.maxConnections;
   account.trial = info.trial;
+  if (info.utcOffset) account.serverOffset = info.utcOffset;
+}
+
+std::optional<int> serverOffset(std::optional<time::Seconds> timeNow, std::optional<time::Seconds> timestampNow,
+                                std::string_view timezone, time::Seconds at) {
+  constexpr time::Seconds kQuarter = 15 * 60, kMost = 14 * 3600;
+  if (timeNow && timestampNow && *timestampNow > 0) {
+    time::Seconds d = *timeNow - *timestampNow;
+    // To the nearest quarter hour (the two readings can be a second apart).
+    time::Seconds q = (d >= 0 ? d + kQuarter / 2 : d - kQuarter / 2) / kQuarter * kQuarter;
+    if (q >= -kMost && q <= kMost) return static_cast<int>(q);
+  }
+  if (std::optional<time::Zone> z = time::Zone::named(trimWhitespaceAndNewlines(timezone)))
+    return z->offsetAt(timestampNow.value_or(at));
+  return std::nullopt;
+}
+
+std::string offsetText(int seconds) {
+  if (seconds == 0) return "UTC";
+  int m = std::abs(seconds) / 60;
+  std::string out = seconds < 0 ? "UTC\xe2\x88\x92" : "UTC+";
+  out += std::to_string(m / 60);
+  if (m % 60) {
+    char buf[8];
+    std::snprintf(buf, sizeof buf, ":%02d", m % 60);
+    out += buf;
+  }
+  return out;
+}
+
+int timeshiftMinutes(time::Seconds start, time::Seconds now) {
+  time::Seconds back = std::max<time::Seconds>(0, now - start);
+  return static_cast<int>(std::clamp<time::Seconds>(back / 60 + 5, 1, kTimeshiftMaxMinutes));
 }
 
 bool endedStatus(const AccountInfo& info) { return str::lowerAscii(str::trim(info.status)) == "expired"; }
@@ -150,6 +215,15 @@ Result<AccountInfo> Client::parseAccountInfo(int status, std::string_view body) 
     for (const json::Value& f : formats.items()) info.formats.push_back(f.asString());
   info.maxConnections = toInt(lenientInt(user["max_connections"]));
   info.activeConnections = toInt(lenientInt(user["active_cons"]));
+  // The panel's clock, for catch-up links (asked for in its own local time).
+  const json::Value& server = (*root)["server_info"];
+  if (server.isObject()) {
+    if (server["timezone"].isString())
+      info.timezone = std::string(trimWhitespaceAndNewlines(server["timezone"].asString()));
+    if (std::optional<int64_t> ts = lenientInt(server["timestamp_now"]); ts && *ts > 0) info.timestampNow = *ts;
+    info.timeNow = wallClock(server["time_now"]);
+    info.utcOffset = serverOffset(info.timeNow, info.timestampNow, info.timezone, time::now());
+  }
   return info;
 }
 
@@ -202,6 +276,17 @@ std::optional<std::string> Client::streamURL(std::string_view streamId, const st
   const char* ext = (preferTS && allowsTS) || !allowsHLS ? "ts" : "m3u8";
   return base_ + "/live/" + percentEncode(account_.userName) + "/" + percentEncode(account_.password) + "/" +
          std::string(streamId) + "." + ext;
+}
+
+std::optional<std::string> Client::timeshiftURL(std::string_view streamId, time::Seconds start, int minutes,
+                                               int utcOffset) const {
+  if (!isSafeItemId(streamId)) return std::nullopt;
+  minutes = std::clamp(minutes, 1, kTimeshiftMaxMinutes);
+  time::Civil c = time::civilFromSeconds(start + utcOffset);
+  char when[40];
+  std::snprintf(when, sizeof when, "%04d-%02d-%02d:%02d-%02d", c.year, c.month, c.day, c.hour, c.minute);
+  return base_ + "/timeshift/" + percentEncode(account_.userName) + "/" + percentEncode(account_.password) + "/" +
+         std::to_string(minutes) + "/" + when + "/" + std::string(streamId) + ".ts";
 }
 
 CategoryNames parseCategories(int status, std::string_view body) {

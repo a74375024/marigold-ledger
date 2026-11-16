@@ -154,6 +154,9 @@ std::unique_ptr<Screen> makeWhereToWatch(App& app, const std::string& eventId);
 std::unique_ptr<Screen> makeEventGuide(App& app, bool sports = false);
 // Down while watching a race: its cameras.
 std::unique_ptr<Screen> makeCameraPanel(App& app);
+// Build 163 (test only): the player's "Test catch-up" button: the moments
+// to ask the copy playing for (the session's catch-up test).
+std::unique_ptr<Screen> makeCatchupPanel(App& app);
 // My Sports setup: leagues, favourite teams, review. `onboarding` is
 // first-run setup's Sports and Teams steps, which end on the summary.
 // `teams` starts on the teams (Settings › Live Events › My teams).

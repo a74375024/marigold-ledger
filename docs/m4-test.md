@@ -1832,3 +1832,33 @@ The same channel list also says, per Xtream copy, whether the provider marks it 
 | Provider fields | Same report | `adult`, `more_categories`, `added`, `direct_source` filled where the provider gives them; no address anywhere in the report |
 | Saved list | Relaunch with the channel list cached | Same values as before the relaunch |
 | No change | Guide, playback, Live Events | Same as Build 161 |
+
+## Build 163: 1.0.7, catch-up test and faster fallback
+
+### Catch-up test
+
+Build 162 reads which channels say they keep catch-up (on the exports, one provider says 662 channels keep 2 days, another 133 keep 3). This build finds out whether that archive really plays, before Start Over or rewinding is designed. It is a test only: nothing else changes, and nothing runs unless the viewer opens it.
+
+- **Offered:** OK in the player on a channel whose copy playing is an Xtream copy that says it keeps catch-up shows a "Catch-up: N days" pill in the info row and a "Test catch-up" button (with a small TEST tag) in the controls. Neither appears for a copy without catch-up, for M3U or Emby, before the picture, or on a race camera.
+- **Panel:** the button opens a small side panel: "Test catch-up", "<channel> · <provider>, version i of n · archive: N days", and three choices: "10 minutes ago" ("Plays from 7:52 PM"), "Start of this programme" ("<title> from 8:00 PM", only when the guide knows what's on and it started more than 2 minutes ago) and "Yesterday, same time".
+- **Playing:** a choice plays that copy's archive from that minute (`/timeshift/…/<minutes>/<YYYY-MM-DD:HH-MM>/<id>.ts`, MPEG-TS, from then until now plus 5 minutes, at most 3 hours). The top left says "CATCH-UP TEST" and how far behind live ("−10:00 behind live"). The picture: "Catch-up worked · picture in 2.3 s · playing from 7:52 PM · <provider>, version i of n", with Back to live (focused) and Test again.
+- **Not playing:** no picture in 10 s, or a player error: "Catch-up didn't play on this copy", what the provider claims and what happened, with "Try another copy with catch-up" (only when another version of the channel says it keeps catch-up; the same moment on that copy) and Back to live. Nothing reconnects and no other copy is tried by itself.
+- **Server clock:** the provider wants the start in its server's own time. The account check already made at every launch and refresh (`player_api.php`) gives `server_info` with `time_now` and `timestamp_now`: their difference, to 15 minutes, is the server's offset from UTC (else its `timezone` name, for the zones the app knows; else UTC). It is kept with the account, so it survives a restart.
+- **Log:** every test is one "catch-up test" line in the playback log, worked or not, with the channel and the feed as other lines name them: "10 min ago (archive says 2 days): worked, picture in 2.3 s, 1920x1080; server clock UTC−5", "start of programme 19:00 (archive says 2 days): failed, no picture after 10 s; …", or "ended before a result (back to live)". Never a link or a login: the archive link goes to the player only, like a live one.
+- **Leaving:** Back, Back to live or the same channel returns to it live on the copy that played before; channel up/down goes to the next channel live as usual; the app going to the background ends the test (live plays on return). A test never changes a feed's reliability, the source a channel starts with, what Right goes back to, the recovery or anything saved.
+- **LG:** the archive is a continuous .ts link and plays like a live one (directly, or through the in-app relay with subtitles on or Play through Marigold).
+
+| Area | How to check | Pass |
+|---|---|---|
+| Offered | OK on an Xtream channel whose report says `catchup_days` > 0 | "Catch-up: N days" pill and Test catch-up button |
+| Not offered | OK on a copy with `catchup_days` 0, an M3U or Emby channel | Neither shows |
+| Panel | Test catch-up | Channel, provider, version and days; times in your clock format; "Start of this programme" only with a listing that began over 2 min ago |
+| 10 minutes ago | Pick it | Tag "−10:… behind live"; the picture from about 10 minutes ago, or the card after 10 s |
+| Programme start | Pick it on a show that started a while ago | The show's start plays (the server's clock is right) |
+| Yesterday | Pick it | Yesterday's programme at this time, or the card |
+| Another copy | On the card, with a second copy that has catch-up | Same moment on that copy; the button goes once none is left |
+| Back to live | Back, Back to live, the same channel | Live on the copy before; banner as after a tune |
+| Channel keys | CH+ / Down during a test | The next channel, live |
+| Background | Home during a test, then back | Live plays |
+| Log | Send a report › Playback log | One "catch-up test" line per test with the result and the server clock; no link anywhere |
+| Nothing kept | After tests: Sources, Right, relaunch | Same feed order, same Right target, nothing new saved |
