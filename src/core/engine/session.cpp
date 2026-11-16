@@ -787,15 +787,30 @@ bool Session::tick(uint32_t now) {
 
 // ---------------------------------------------------------------- catch-up test
 
+std::optional<size_t> Session::catchupCopy() const {
+  if (entry_.empty() || paused_ || camera_ || feeds_.empty()) return std::nullopt;
+  if (!test_ && (!rec_.sawFirstFrame() || failed())) return std::nullopt;
+  size_t live = test_ ? testLive_ : rec_.feedIndex();
+  if (live < feeds_.size() && store_.catchupDays(feeds_[live].channelId) > 0) return live;
+  for (size_t i = 0; i < feeds_.size(); ++i) {
+    const std::string& id = feeds_[i].channelId;
+    if (store_.catchupDays(id) == 0) continue;
+    // A guide channel's own versions (not a game's backup on another channel).
+    if (!game_ && store_.entryOfChannel(id) != entry_) continue;
+    return i;
+  }
+  return std::nullopt;
+}
+
 uint16_t Session::catchupDays() const {
-  if (entry_.empty() || paused_ || camera_) return 0;
-  if (!test_ && (!rec_.sawFirstFrame() || failed())) return 0;
-  size_t i = test_ ? testLive_ : rec_.feedIndex();
-  return i < feeds_.size() ? store_.catchupDays(feeds_[i].channelId) : 0;
+  std::optional<size_t> i = catchupCopy();
+  return i ? store_.catchupDays(feeds_[*i].channelId) : 0;
 }
 
 bool Session::startCatchupTest(CatchupMoment moment, time::Seconds from) {
-  uint16_t days = catchupDays();
+  // Which copy replays: worked out before a test on now closes.
+  std::optional<size_t> copy = catchupCopy();
+  uint16_t days = copy ? store_.catchupDays(feeds_[*copy].channelId) : 0;
   if (!days) return false;
   time::Seconds now = time::now();
   from -= ((from % 60) + 60) % 60;  // the provider takes minutes
@@ -823,7 +838,7 @@ bool Session::startCatchupTest(CatchupMoment moment, time::Seconds from) {
   test_ = CatchupTest{};
   test_->moment = moment;
   test_->from = from;
-  playCatchup(testLive_);
+  playCatchup(*copy);
   return true;
 }
 

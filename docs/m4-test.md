@@ -1874,3 +1874,14 @@ Build 162 reads which channels say they keep catch-up (on the exports, one provi
 | Background | Home during a test, then back | Live plays |
 | Log | Send a report › Playback log | One "catch-up test" line per test with the result and the server clock; no link anywhere |
 | Nothing kept | After tests: Sources, Right, relaunch | Same feed order, same Right target, nothing new saved |
+
+## Build 164: 1.0.8, catch-up belongs to the channel
+
+The catch-up test is offered on a channel when any of its own copies keeps an archive, whichever copy plays live. The test replays on the copy playing when that one keeps an archive, else on the first of the channel's copies (in the order they're tried live) that does; "Try another copy" moves on to the next one that does. Back to live returns to the copy that played live. The panel names the copy the test replays on.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Offered on any copy | A channel playing live on an Xtream copy without catch-up, with a Dream copy that has it (ESPN, CNN) | "Catch-up: 2 days" and Test catch-up show |
+| Replays on the right copy | Test catch-up › 10 minutes ago | The panel and the log name the Dream copy; it plays from 10 minutes ago |
+| Back to live | Back to live | Live again on the copy that played before the test |
+| No copy with an archive | A channel none of whose copies has catch-up (KCBS) | Neither the pill nor the button |

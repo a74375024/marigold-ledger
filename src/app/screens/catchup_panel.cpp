@@ -55,9 +55,10 @@ std::unique_ptr<Screen> makeCatchupPanel(App& app) {
              "us which channels really go back.";
     uint16_t days = pb.catchupDays();
     const std::vector<Feed>& feeds = pb.feeds();
-    size_t i = pb.feedIndex();
+    // Build 164: the copy the test replays on, whichever is playing live.
+    size_t i = pb.catchupCopy().value_or(feeds.size());
     if (!days || i >= feeds.size()) {
-      p.items.push_back(ui::PanelItem::note("The copy playing keeps no catch-up."));
+      p.items.push_back(ui::PanelItem::note("No copy of this channel keeps catch-up."));
       return;
     }
     // "<channel> · <provider>, version i of n · archive: N days".

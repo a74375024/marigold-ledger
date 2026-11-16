@@ -206,9 +206,33 @@ TEST_CASE("catch-up test: the copies, the server clock and what is offered") {
   // The copy with an archive: offered, with its days.
   r.watchLive(espn, 501);
   CHECK(r.session->catchupDays() == 2);
+  REQUIRE(r.session->catchupCopy());
+  CHECK(*r.session->catchupCopy() == r.session->feedIndex());
+
+  // Build 164: the channel offers it whatever copy plays live. On the copy
+  // without an archive, the test replays on one that keeps one, and live
+  // comes back on the copy that played.
   r.watchLive(espn, 502);
-  CHECK(r.session->catchupDays() == 0);
-  CHECK_FALSE(r.session->startCatchupTest(Moment::TenMinutesAgo, mtime::now() - 600));
+  size_t live = r.session->feedIndex();
+  std::string liveId = r.session->feeds()[live].channelId;
+  REQUIRE(r.session->catchupCopy());
+  size_t copy = *r.session->catchupCopy();
+  CHECK(copy != live);
+  std::string copyId = r.session->feeds()[copy].channelId;
+  CHECK(r.store->catchupDays(copyId) > 0);
+  CHECK(r.session->catchupDays() == r.store->catchupDays(copyId));
+  size_t plays = r.player->plays.size();
+  REQUIRE(r.session->startCatchupTest(Moment::TenMinutesAgo, mtime::now() - 600));
+  REQUIRE(r.player->plays.size() == plays + 1);
+  CHECK(r.player->plays.back().channelId == copyId);
+  CHECK(r.session->catchupTest()->feed == copy);
+  // Tested again: still that copy, though live has stopped meanwhile.
+  REQUIRE(r.session->startCatchupTest(Moment::TenMinutesAgo, mtime::now() - 1200));
+  CHECK(r.player->plays.back().channelId == copyId);
+  r.session->endCatchupTest();
+  r.run(500);
+  CHECK(r.player->plays.back().channelId == liveId);
+  CHECK(r.session->feedIndex() == live);
 }
 
 TEST_CASE("catch-up test: plays the moment asked on the same copy, and a picture is \"worked\" with its time") {

@@ -224,9 +224,13 @@ class Session {
     std::string size;          // worked: "1920x1080" once the player says
   };
   static constexpr uint32_t kCatchupTimeoutMs = 10000;
-  // The days of catch-up the copy playing keeps (or, during a test, the
-  // copy that played before it): an Xtream copy that drew a picture, not a
-  // race camera. 0: no test offered.
+  // Build 164: catch-up belongs to the channel, not the copy playing. The
+  // copy a test replays on: the copy playing when its provider keeps an
+  // archive, else the first of the channel's own copies (in the order they
+  // are tried live) whose provider does. Offered once live has drawn a
+  // picture (or during a test), not on a race camera. nullopt: no copy keeps one.
+  std::optional<size_t> catchupCopy() const;
+  // The days of catch-up that copy keeps. 0: no test offered.
   uint16_t catchupDays() const;
   // Plays that copy from `from` (Unix time, taken to the minute); a test
   // already on ends first. False when no test can start.
