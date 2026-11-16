@@ -191,9 +191,11 @@ TEST_CASE("xtream: channel fields map like the Swift") {
   xtream::CategoryNames cats{{"1", "US| SPORTS"}, {"7", "UK| SPORTS"}};
   std::string body = R"([
     {"num":1,"name":" US: ESPN FHD ","stream_type":"live","stream_id":100000,"stream_icon":"http://logos.example.invalid/1.png",
-     "epg_channel_id":"espn.us","category_id":"1"},
-    {"num":"2","name":"UK| Sky Sports Main Event","stream_id":"100001","stream_icon":"","epg_channel_id":null,"category_id":7},
-    {"name":"RADIO: Jazz FM","stream_type":"radio_streams","stream_id":"100002","category_id":"99","epg_channel_id":""},
+     "epg_channel_id":"espn.us","category_id":"1","tv_archive":1,"tv_archive_duration":"7",
+     "is_adult":"0","added":"1761523200","direct_source":"","category_ids":[1,7,1,42]},
+    {"num":"2","name":"UK| Sky Sports Main Event","stream_id":"100001","stream_icon":"","epg_channel_id":null,"category_id":7,"tv_archive":"1","tv_archive_duration":3,
+     "is_adult":1,"added":1761523201,"direct_source":"http://elsewhere.example.invalid/x.ts"},
+    {"name":"RADIO: Jazz FM","stream_type":"radio_streams","stream_id":"100002","category_id":"99","epg_channel_id":"","tv_archive":0,"tv_archive_duration":5},
     {"name":"","stream_id":100003},
     {"name":"no id"},
     {"name":"bad id","stream_id":"1/../2"},
@@ -218,6 +220,11 @@ TEST_CASE("xtream: channel fields map like the Swift") {
     CHECK(espn.epgId == std::string("espn.us"));
     CHECK_FALSE(espn.isRadio);
     CHECK_FALSE(espn.isFavorite);
+    CHECK(espn.archiveDays == 7);  // Build 162: the catch-up archive
+    CHECK_FALSE(espn.isAdult);
+    CHECK_FALSE(espn.hasDirectSource);  // empty: none
+    CHECK(espn.added == 1761523200);
+    CHECK(espn.moreGroups == "UK| SPORTS");  // its first category isn't repeated; unknown ids are skipped
 
     const Channel& sky = list[1];
     CHECK(sky.id == "xt:acc1|100001");
@@ -225,6 +232,11 @@ TEST_CASE("xtream: channel fields map like the Swift") {
     CHECK(sky.imageUrl.empty());
     CHECK(sky.tags == std::vector<std::string>{"UK| SPORTS"});  // category id sent as a number
     CHECK_FALSE(sky.epgId);
+    CHECK(sky.archiveDays == 3);
+    CHECK(sky.isAdult);
+    CHECK(sky.hasDirectSource);  // only that there is one: the address isn't kept
+    CHECK(sky.added == 1761523201);
+    CHECK(sky.moreGroups.empty());
 
     const Channel& radio = list[2];
     CHECK(radio.isRadio);
@@ -232,9 +244,11 @@ TEST_CASE("xtream: channel fields map like the Swift") {
     CHECK_FALSE(radio.group);
     CHECK_FALSE(radio.epgId);
     CHECK_FALSE(radio.number);
+    CHECK(radio.archiveDays == 0);  // a duration without tv_archive: none
 
     CHECK(list[3].itemId == "100005");
     CHECK(list[3].number == std::string("3.5"));
+    CHECK(list[3].archiveDays == 0);
   }
 }
 

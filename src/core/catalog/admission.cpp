@@ -152,6 +152,19 @@ uint64_t fingerprint(const std::vector<Channel>& channels, const std::set<std::s
     mix(static_cast<unsigned char>(c.tags.size()));
     for (const std::string& t : c.tags) text(t);
     mix(c.isRadio ? 1 : 0);
+    // Only when there is one: lists without catch-up keep their fingerprint.
+    if (c.archiveDays) {
+      mix(0xfd);
+      mix(static_cast<unsigned char>(c.archiveDays & 0xff));
+      mix(static_cast<unsigned char>(c.archiveDays >> 8));
+    }
+    // The same for the other fields only reported (Build 162).
+    if (c.isAdult || c.hasDirectSource || c.added || !c.moreGroups.empty()) {
+      mix(0xfc);
+      mix(static_cast<unsigned char>((c.isAdult ? 1 : 0) | (c.hasDirectSource ? 2 : 0)));
+      for (int shift = 0; shift < 64; shift += 8) mix(static_cast<unsigned char>(static_cast<uint64_t>(c.added) >> shift));
+      text(c.moreGroups);
+    }
     opt(c.group);
     text(c.shortName);
     opt(c.epgId);

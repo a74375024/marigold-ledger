@@ -82,6 +82,7 @@ class Parser {
     bool info = false;
     std::string name, tvgId, tvgName, logo, group, number, extGroup;
     bool radio = false;
+    uint16_t archiveDays = 0;  // catchup-days
     std::optional<int> shift;
     std::vector<std::pair<std::string, std::string>> headers;
   };

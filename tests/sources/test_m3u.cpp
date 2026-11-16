@@ -122,6 +122,22 @@ TEST_CASE("m3u: a sample playlist") {
   }
 }
 
+TEST_CASE("m3u: catch-up days are read, only as a number") {
+  const char* list =
+      "#EXTM3U\n"
+      "#EXTINF:-1 tvg-id=\"a.us\" catchup=\"default\" catchup-days=\"5\",Channel A\n"
+      "http://pl.example.invalid/live/u/p/1.ts\n"
+      "#EXTINF:-1 catchup-days=\"two\",Channel B\n"
+      "http://pl.example.invalid/live/u/p/2.ts\n"
+      "#EXTINF:-1,Channel C\n"
+      "http://pl.example.invalid/live/u/p/3.ts\n";
+  Parsed r = parse(list, 0);
+  REQUIRE(r.channels.size() == 3);
+  CHECK(r.channels[0].archiveDays == 5);
+  CHECK(r.channels[1].archiveDays == 0);
+  CHECK(r.channels[2].archiveDays == 0);  // not carried over from the one before
+}
+
 TEST_CASE("m3u: ids are stable, never from the link, and unique") {
   std::string a = "#EXTM3U\n#EXTINF:-1 tvg-id=\"x\" group-title=\"G\",Same\nhttp://a.example.invalid/live/u/p/1.ts\n"
                   "#EXTINF:-1 tvg-id=\"x\" group-title=\"G\",Same\nhttp://a.example.invalid/live/u/p/2.ts\n"

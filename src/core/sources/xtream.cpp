@@ -27,6 +27,28 @@ std::optional<std::string> decodeText(const json::Value& v) {
   return text;
 }
 
+// A whole number sent as a number or as text ("7", 7); 0 otherwise.
+int64_t digits(const json::Value& v) {
+  std::optional<std::string> text = lenientString(v);
+  if (!text || text->empty() || text->size() > 12) return 0;
+  int64_t n = 0;
+  for (char ch : *text) {
+    if (ch < '0' || ch > '9') return 0;
+    n = n * 10 + (ch - '0');
+  }
+  return n;
+}
+
+// 1, "1", true.
+bool flag(const json::Value& v) { return digits(v) == 1; }
+
+// tv_archive (1 / "1") and tv_archive_duration (days, a number or text):
+// the provider's catch-up archive; 0 when it has none.
+uint16_t archiveDays(const json::Value& archive, const json::Value& duration) {
+  if (!flag(archive)) return 0;
+  return static_cast<uint16_t>(std::clamp<int64_t>(digits(duration), 0, 365));
+}
+
 bool contains(const std::vector<std::string>& list, std::string_view value) {
   return std::find(list.begin(), list.end(), value) != list.end();
 }
@@ -224,6 +246,21 @@ std::optional<Channel> channelFromStream(const json::Value& item, const std::str
   c.epgId = stringField(item["epg_channel_id"]);
   // Not in the Swift: Xtream marks radio streams in the same list.
   c.isRadio = item["stream_type"].isString() && item["stream_type"].asString() == "radio_streams";
+  c.archiveDays = archiveDays(item["tv_archive"], item["tv_archive_duration"]);
+  c.isAdult = flag(item["is_adult"]);
+  c.hasDirectSource = item["direct_source"].isString() && !trimWhitespaceAndNewlines(item["direct_source"].asString()).empty();
+  c.added = digits(item["added"]);
+  if (item["category_ids"].isArray()) {
+    for (const json::Value& id : item["category_ids"].items()) {
+      std::optional<std::string> key = lenientString(id);
+      if (!key) continue;
+      auto it = categories.find(*key);
+      if (it == categories.end() || (c.group && it->second == *c.group)) continue;
+      if (c.moreGroups.size() > 200) break;
+      if (!c.moreGroups.empty()) c.moreGroups += " | ";
+      c.moreGroups += it->second;
+    }
+  }
   return c;
 }
 

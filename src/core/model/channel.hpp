@@ -31,6 +31,18 @@ struct Channel {
   // Categories from the server (Emby tags, Xtream category, M3U group-title).
   std::vector<std::string> tags;
   bool isRadio = false;
+  // Days of the provider's catch-up archive (Xtream tv_archive_duration,
+  // M3U catchup-days); 0: none. Only reported, not played (Build 162).
+  uint16_t archiveDays = 0;
+  // Build 162, only reported for now (Xtream): the provider marks the
+  // channel adult (is_adult); it gives a second address for the stream
+  // (direct_source: only whether there is one, never the address); when it
+  // added the channel (added, Unix time; 0: not given); and the channel's
+  // other categories after its first (category_ids, " | " between them).
+  bool isAdult = false;
+  bool hasDirectSource = false;
+  int64_t added = 0;
+  std::string moreGroups;
   // Provider group ("US", "UK Sports"...), from tags or the name's prefix.
   std::optional<std::string> group;
   // Name without the group prefix ("US: NBC 4" -> "NBC 4").

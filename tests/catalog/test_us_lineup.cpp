@@ -8,6 +8,7 @@
 
 #include "catalog/helpers.hpp"
 #include "core/catalog/admission.hpp"
+#include "core/catalog/cache.hpp"
 #include "core/catalog/catalog.hpp"
 #include "core/catalog/lineup.hpp"
 #include "core/catalog/work.hpp"
@@ -349,6 +350,34 @@ TEST_CASE("channel list fingerprint: same list, same value; any change, another"
   CHECK(fingerprint(logo) != first);
   // What decides the sort: the countries, and whether free channels are on.
   CHECK(fingerprint(list, {"US", "free:on"}) != fingerprint(list, {"US", "free:off"}));
+  // Build 162: a catch-up archive is a change, so the saved list carries it.
+  std::vector<Channel> archived = list;
+  archived[0].archiveDays = 7;
+  CHECK(fingerprint(archived) != first);
+  std::vector<Channel> adult = list;
+  adult[1].isAdult = true;
+  CHECK(fingerprint(adult) != first);
+}
+
+TEST_CASE("saved channel list: keeps the catch-up archive") {
+  Channel c = channel("1", "ESPN", "US| SPORTS");
+  c.archiveDays = 7;
+  c.isAdult = true;
+  c.hasDirectSource = true;
+  c.added = 1761523200;
+  c.moreGroups = "US| NEWS";
+  auto back = cache::channelFromJson(cache::toJson(c));
+  REQUIRE(back);
+  CHECK(back->archiveDays == 7);
+  CHECK(back->isAdult);
+  CHECK(back->hasDirectSource);
+  CHECK(back->added == 1761523200);
+  CHECK(back->moreGroups == "US| NEWS");
+  auto none = cache::channelFromJson(cache::toJson(channel("2", "CNN", "US| NEWS")));
+  REQUIRE(none);
+  CHECK(none->archiveDays == 0);
+  CHECK_FALSE(none->isAdult);
+  CHECK(none->added == 0);
 }
 
 TEST_CASE("free streaming: decided by all of a channel's copies, premium channels never") {

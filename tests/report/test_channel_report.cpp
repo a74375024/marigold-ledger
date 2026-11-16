@@ -158,6 +158,11 @@ Fixture sample() {
   nbc.number = std::string("104");
   nbc.tags = {"US Locals", "HD"};
   nbc.epgId = std::string("wnbc.us");
+  nbc.archiveDays = 3;
+  nbc.isAdult = true;
+  nbc.hasDirectSource = true;
+  nbc.added = 1761523200;  // 2025-10-27 00:00 UTC
+  nbc.moreGroups = "US| NEWS | US| ENTERTAINMENT";
   nbc.isFavorite = true;
   f.channels.push_back(nbc);
   // A network-and-city name resolved through the station directory.
@@ -237,9 +242,9 @@ Fixture sample() {
 
 TEST_CASE("channel report: header") {
   const auto& columns = channelReportColumns();
-  CHECK(columns.size() == 51);
+  CHECK(columns.size() == 56);
   CHECK(columns.front() == "number");
-  CHECK(columns.back() == "row_closed");
+  CHECK(columns.back() == "direct_source");
   std::string csv = channelReportCSV(ChannelReportInput());
   CHECK(csv ==
         "number,name,group,tags,hidden_group,favorite,callsign_in_name,station_lookup,match_key,"
@@ -250,7 +255,7 @@ TEST_CASE("channel report: header") {
         "provider_guide_genre_tagged_next_3h,now_genres,now_subtitle,now_description,"
         "outside_listings_end,now_start,outside_built_at,provider_built_at,outside_described_next_3h,"
         "provider_guide_described_next_3h,logo_sources,logo_status,directory_id,directory_match,"
-        "row_id,next_titles,guide_choice,guide_rejected,row_category,row_closed\n");
+        "row_id,next_titles,guide_choice,guide_rejected,row_category,row_closed,catchup_days,adult,more_categories,added,direct_source\n");
 }
 
 TEST_CASE("channel report: one row per channel with the Swift rules") {
@@ -259,7 +264,7 @@ TEST_CASE("channel report: one row per channel with the Swift rules") {
   std::string csv = channelReportCSV(f.input());
   auto rows = parseCsv(csv);
   REQUIRE(rows.size() == 6);
-  for (const auto& r : rows) CHECK(r.size() == 51);
+  for (const auto& r : rows) CHECK(r.size() == 56);
   CHECK(csv.back() == '\n');
 
   auto nbc = rowFor(rows, "US: NBC 4 WNBC");
@@ -310,6 +315,20 @@ TEST_CASE("channel report: one row per channel with the Swift rules") {
   // Build 161: the row's own category and whether it has shut down.
   CHECK(nbc["row_category"] == "local");
   CHECK(nbc["row_closed"] == "");
+  // Build 162: the provider's catch-up archive, in days.
+  CHECK(nbc["catchup_days"] == "3");
+  CHECK(rowFor(rows, "FOX 2 Capital City")["catchup_days"] == "0");
+  CHECK(rowFor(rows, "Thing One")["catchup_days"] == "");  // Emby: none for live channels
+  CHECK(nbc["adult"] == "yes");
+  CHECK(nbc["more_categories"] == "US| NEWS | US| ENTERTAINMENT");
+  CHECK(nbc["added"].size() == 10);
+  CHECK(nbc["added"].substr(0, 7) == "2025-10");
+  CHECK(nbc["direct_source"] == "yes");
+  auto plain = rowFor(rows, "FOX 2 Capital City");
+  CHECK(plain["adult"] == "");
+  CHECK(plain["more_categories"] == "");
+  CHECK(plain["added"] == "");
+  CHECK(plain["direct_source"] == "");
 
   auto fox = rowFor(rows, "FOX 2 Capital City");
   CHECK(fox["callsign_in_name"] == "");

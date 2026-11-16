@@ -277,7 +277,19 @@ void Parser::line(std::string_view raw) {
     std::string radio = str::lowerAscii(get("radio"));
     pending_.radio = radio == "true" || radio == "1" || radio == "yes";
     if (std::optional<std::string> shift = attribute(attrs, "tvg-shift")) pending_.shift = shiftMinutes(*shift);
-    // catchup, catchup-source and catchup-days are not used (no archive playback).
+    // catchup-days: the provider's catch-up archive, only reported (no
+    // archive playback); catchup and catchup-source aren't read.
+    pending_.archiveDays = 0;
+    if (std::optional<std::string> days = attribute(attrs, "catchup-days")) {
+      std::string_view d = trimWhitespaceAndNewlines(*days);
+      int n = 0;
+      bool digits = !d.empty() && d.size() <= 3;
+      for (char ch : d) digits = digits && ch >= '0' && ch <= '9';
+      if (digits) {
+        for (char ch : d) n = n * 10 + (ch - '0');
+        pending_.archiveDays = static_cast<uint16_t>(std::min(n, 365));
+      }
+    }
     return;
   }
   if (startsWithNoCase(l, "#EXTGRP:")) {
@@ -373,6 +385,7 @@ void Parser::entry(std::string_view text) {
   if (!c.tags.empty()) c.group = c.tags.front();  // what LiveTVWork.annotated picks first
   if (!p.tvgId.empty()) c.epgId = p.tvgId;
   c.isRadio = p.radio;
+  c.archiveDays = p.archiveDays;
 
   StreamInfo s;
   s.url = std::string(link);

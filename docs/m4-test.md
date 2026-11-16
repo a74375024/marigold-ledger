@@ -1819,3 +1819,16 @@ The list gains NBC Sports Chicago (and Plus), NBC Sports Northwest and Fox Colle
 | League channels | NBA TV, MLB Network, NFL Network | Only their own copies; "The NBA Channel" etc. aren't in them |
 | Report | Help › channel report | row_category and row_closed filled |
 | Speed (LG) | Relaunch with the channel list cached, and a full refresh | Building your lineup takes no longer than Build 158 |
+
+## Build 162: 1.0.6, which channels have catch-up (and what else providers say)
+
+Xtream providers say per channel whether they keep a catch-up archive and for how many days (`tv_archive`, `tv_archive_duration` in the channel list the app already downloads); M3U playlists can say the same (`catchup-days`). The app now reads it and keeps it with the saved channel list. Nothing on screen changes and no archive is played: the channel report gains `catchup_days` (the days, 0 for none, empty for Emby, which has no catch-up for live channels).
+
+The same channel list also says, per Xtream copy, whether the provider marks it adult (`is_adult`), its other categories (`category_ids`), when the provider added it (`added`) and whether it gives a second address for the stream (`direct_source`; only that there is one: the address is never kept or reported). The report gains `adult`, `more_categories`, `added` (a date) and `direct_source` (yes or empty).
+
+| Area | How to check | Pass |
+|---|---|---|
+| Report | Help › channel report after a refresh | `catchup_days` filled for Xtream and M3U copies |
+| Provider fields | Same report | `adult`, `more_categories`, `added`, `direct_source` filled where the provider gives them; no address anywhere in the report |
+| Saved list | Relaunch with the channel list cached | Same values as before the relaunch |
+| No change | Guide, playback, Live Events | Same as Build 161 |

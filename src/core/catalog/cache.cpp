@@ -154,6 +154,11 @@ json::Value toJson(const Channel& c) {
   v.set("isFavorite", c.isFavorite);
   v.set("tags", strings(c.tags));
   v.set("isRadio", c.isRadio);
+  if (c.archiveDays) v.set("archiveDays", static_cast<int64_t>(c.archiveDays));
+  if (c.isAdult) v.set("isAdult", true);
+  if (c.hasDirectSource) v.set("directSource", true);
+  if (c.added) v.set("added", c.added);
+  if (!c.moreGroups.empty()) v.set("moreGroups", c.moreGroups);
   setOpt(v, "group", c.group);
   v.set("shortName", c.shortName);
   setOpt(v, "epgID", c.epgId);
@@ -172,6 +177,11 @@ std::optional<Channel> channelFromJson(const json::Value& v) {
   c.isFavorite = v["isFavorite"].asBool();
   c.tags = stringsFrom(v["tags"]);
   c.isRadio = v["isRadio"].asBool();
+  c.archiveDays = static_cast<uint16_t>(std::clamp<int64_t>(v["archiveDays"].asInt(0), 0, 365));
+  c.isAdult = v["isAdult"].asBool();
+  c.hasDirectSource = v["directSource"].asBool();
+  c.added = std::max<int64_t>(v["added"].asInt(0), 0);
+  c.moreGroups = v["moreGroups"].asString();
   c.group = optString(v, "group");
   c.shortName = v["shortName"].asString();
   c.epgId = optString(v, "epgID");
