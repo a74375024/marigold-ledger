@@ -1885,3 +1885,45 @@ The catch-up test is offered on a channel when any of its own copies keeps an ar
 | Replays on the right copy | Test catch-up › 10 minutes ago | The panel and the log name the Dream copy; it plays from 10 minutes ago |
 | Back to live | Back to live | Live again on the copy that played before the test |
 | No copy with an archive | A channel none of whose copies has catch-up (KCBS) | Neither the pill nor the button |
+
+## Build 165: replay (pause, rewind, start over, go live)
+
+The catch-up test becomes replay. It belongs to the channel: any of its own copies with an archive serves it (the one playing live when it has one, else the first in live order), and live stays on the best live copy. Channels with no copy that keeps catch-up look exactly as before; nothing new runs unless replay is used, apart from the guide keeping a few more hours for these channels.
+
+- **Controls (OK):** at the front of the row, Pause, Rewind (a counter-clockwise arrow) and Start over (only when the programme's start is known and inside the archive), then today's buttons. Over the row, a thin bar for the programme on now: its start at the left, its end at the right, a white dot at now. The info line says "8:00 – 9:00 PM · started 38 min ago". A full row shortens "Back to X" to "Back", then Subtitles' second words, then Rewind and Pause to their marks alone.
+- **Pause:** Play/Pause, Play or Pause (Space on a Mac, the Siri Remote's play/pause, Fire TV's play/pause, LG's Pause) or the Pause button. The picture holds where the player can (LG, Fire TV, Apple TV and Mac pause their player), dimmed, with a pause mark; about 3 s later the stream closes so the provider's connection is free (what stays on screen then is the platform's: a dark screen at worst). The panel: "Paused at 8:36 PM", "for 2:14 · CNN · <programme>", the programme's bar (where it paused, and live in red), and "Play from 8:36" (focused), "Go live", "Rewind". Play resumes from the paused minute (a few seconds early). On a channel without replay: "Live TV can't be paused", as before.
+- **Rewind (the timeline):** the Rewind button, or Fire TV's fast forward. The picture holds; at the bottom, the bar from the start of the programme before this one (or 2 h back, whichever is earlier) to live, programmes by title, live in red, and the playhead's bubble ("8:21 PM · −17 min" and the programme then). Left / Right: 1 minute; held, 5, then 15. Up / Down: the start of the programme before / after. OK: play from there (at live: live). Back: as before it opened (live, the replay where it was, or paused). Moving before the bar scrolls it back, as far as the archive (2 days on Dream) and never past it. With the pointer, a click on the bar picks that time; "Play from" plays it. The labels come from the guide (it keeps 6 hours back for these channels) and, a moment after the timeline opens, from the copy's own past (one `get_simple_data_table` request per channel; if it fails the timeline still works by minutes).
+- **Behind live:** a tag at the top right, the rewind mark and "−17:05 behind live". With OK: "Watching from 8:21 PM · live is 8:38 PM", the bar shows where it plays (blue) and live (red), and Go live (red dot) comes first, then (on LG) Pause, Rewind, Start over and the rest. The banner's tag says REPLAY in place of LIVE.
+- **Start over:** the button plays the programme on (behind live: the one playing) from its start; on a game whose source is a channel with replay, from the game's scheduled start. After a tune, when the programme began more than 3 minutes ago, the banner shows one focused-looking button, "Start over from 7:30", where "Hides in" sits: OK takes it; any other key, or the banner hiding, keeps live. Not offered while channel keys are still settling, nor during a replay.
+- **Playing a replay:** the archive copy from the minute asked, a stretch of up to 3 hours (or until now and 5 minutes more). When a stretch ends behind live the next one opens from where it ended, with no message. Reaching live (within a minute) goes live: "You're live". No picture in 10 s or an error: the next copy with an archive, same minute; none left: "Replay isn't available right now on this channel", and live.
+- **Channels:** Up / Down, CH+ / CH- and the guide play the next channel live. Right goes back to the replay at the moment you left it while the archive still holds it (straight to the archive, no live start first), else live. The app going to the background: a replay plays on from the same moment on return; a pause stays paused.
+- **Nothing charged:** live recovery stands aside during replay and comes back with live; a replay never counts for or against a feed, never becomes the source a channel or game starts with, and "Always start with" is unchanged.
+- **Log:** one "replay" line per action, with the copy's feed and provider and, when a stretch is asked, the server clock: "start over 19:30; server clock UTC−5", "rewind to 20:21", "paused at 20:36 (live)", "resumed 20:36", "back to 20:21" (Right), "next stretch from 21:21", "another copy from 20:21", "failed: no picture after 10 s; back to live", "caught up", "back to live", "past listings: 47 h, 31 in archive". Each guide read adds a "guide" line: "guide past: provider file reaches back 26 h", "guide past: outside US national 5 h, …". Never a link.
+- **LG relay:** a replay stretch through the relay (subtitles on, or Play through Marigold) is not reopened from its start when it ends; the session opens the next stretch.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Not offered | OK on KCBS (no copy with catch-up); Play/Pause there | The row as in 1.0.8, no bar; "Live TV can't be paused" |
+| Offered | OK on ESPN or CNN (Dream copy, 2 days) | Pause, Rewind, Start over first; the programme's bar over them; "started N min ago" |
+| Pause from live | Play/Pause (or the Pause button) | Picture held and dimmed, pause mark, "Paused at …"; after ~3 s the stream closes (the playback log, the provider's connection count) |
+| Resume | Play/Pause or "Play from 8:36" after a minute | Plays from the paused minute, the tag "−1:… behind live" |
+| Rewind | Rewind; Left a few times, hold Left, Up / Down, OK | 1 min steps, then 5 and 15 when held; programme starts; plays from the playhead |
+| Rewind far back | Hold Left for a long time | The bar scrolls back, stops at 2 days |
+| Rewind Back | Rewind, move, Back | As before: live, or the replay where it was |
+| Pointer | LG Magic Remote / Mac: click on the bar, then Play from | The playhead jumps there; it plays from there |
+| Apple TV swipes | Rewind, swipe left several times | Each swipe moves the playhead |
+| Labels | Rewind on a channel with listings | Titles on the bar, more after a moment (the copy's own past); "past listings: N h, M in archive" in the log |
+| Start over | Start over on a show begun 30 min ago | Plays from its start; tag and "Watching from …" |
+| Start over on the banner | Tune a channel whose show began over 3 min ago, OK while the banner shows | "Start over from 7:30" button; OK starts it; any other key leaves it live; not during fast channel flipping |
+| Game | Start over on a Live Events game on a Dream channel | From the game's scheduled start |
+| Go live | Go live (first button), or the channel again from the guide | Live on the live copy, as after a tune |
+| Next stretch | Replay from 4 h back, watch past 3 h (or check the log) | "next stretch from …", no message, the picture goes on |
+| Caught up | Replay 2 min back, pause a moment, resume, wait | Goes live with "You're live" (or "caught up" in the log) |
+| Failure | A channel whose archive doesn't play | Next copy tried; then "Replay isn't available right now on this channel" and live |
+| Channel keys | Up / Down during a replay | Next channel live |
+| Right | Replay ESPN, Down to CNN, then Right | ESPN's replay from where you left |
+| Background | Home during a replay, then back; during a pause | Plays on from the same moment; the pause stays |
+| Nothing charged | After replays: Sources, the source a channel starts with, relaunch | Unchanged |
+| Keys | Fire TV play/pause, fast forward; Siri Remote play/pause; Mac Space; LG Play / Pause | Pause and play on; fast forward opens Rewind on Fire TV |
+| Guide data | Send a report › Playback log after a guide update | "guide past: …" lines; memory readings as before |
+| Log | Playback log | One "replay" line per action; no link anywhere |
