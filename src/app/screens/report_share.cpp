@@ -48,6 +48,8 @@ void ReportShare::start(ExportKind kind) {
   stop();
   kind_ = kind;
   if (kind == ExportKind::PlaybackLog) {
+    // Build 166: the providers compared, as of now, at the end of the log.
+    app_.playback().logProviders(true);
     serve(app_.playback().log().csv(app_.zone()));
     return;
   }

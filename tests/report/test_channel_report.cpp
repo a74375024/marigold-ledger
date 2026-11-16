@@ -242,9 +242,9 @@ Fixture sample() {
 
 TEST_CASE("channel report: header") {
   const auto& columns = channelReportColumns();
-  CHECK(columns.size() == 56);
+  CHECK(columns.size() == 61);
   CHECK(columns.front() == "number");
-  CHECK(columns.back() == "direct_source");
+  CHECK(columns.back() == "measured_plays");
   std::string csv = channelReportCSV(ChannelReportInput());
   CHECK(csv ==
         "number,name,group,tags,hidden_group,favorite,callsign_in_name,station_lookup,match_key,"
@@ -255,7 +255,8 @@ TEST_CASE("channel report: header") {
         "provider_guide_genre_tagged_next_3h,now_genres,now_subtitle,now_description,"
         "outside_listings_end,now_start,outside_built_at,provider_built_at,outside_described_next_3h,"
         "provider_guide_described_next_3h,logo_sources,logo_status,directory_id,directory_match,"
-        "row_id,next_titles,guide_choice,guide_rejected,row_category,row_closed,catchup_days,adult,more_categories,added,direct_source\n");
+        "row_id,next_titles,guide_choice,guide_rejected,row_category,row_closed,catchup_days,adult,more_categories,added,direct_source,"
+        "measured_start_ms,measured_failures,measured_stalls_per_h,measured_picture,measured_plays\n");
 }
 
 TEST_CASE("channel report: one row per channel with the Swift rules") {
@@ -264,7 +265,7 @@ TEST_CASE("channel report: one row per channel with the Swift rules") {
   std::string csv = channelReportCSV(f.input());
   auto rows = parseCsv(csv);
   REQUIRE(rows.size() == 6);
-  for (const auto& r : rows) CHECK(r.size() == 56);
+  for (const auto& r : rows) CHECK(r.size() == 61);
   CHECK(csv.back() == '\n');
 
   auto nbc = rowFor(rows, "US: NBC 4 WNBC");
@@ -389,6 +390,29 @@ TEST_CASE("channel report: the row's own category and closing (Build 161)") {
   auto fox = rowFor(rows, "FOX 2 Capital City");
   CHECK(fox["row_category"] == "");
   CHECK(fox["row_closed"] == "");
+}
+
+TEST_CASE("channel report: what each copy's own plays showed (Build 166)") {
+  Fixture f = sample();
+  std::unordered_map<std::string, marigold::report::MeasuredCells> measured;
+  measured["xt:a|1"] = {"1850", "1.5", "0.4", "1080p \xc2\xb7 60", "7.2"};
+  ChannelReportInput in = f.input();
+  in.measured = &measured;
+  auto rows = parseCsv(channelReportCSV(in));
+  for (const auto& r : rows) CHECK(r.size() == 61);
+  auto nbc = rowFor(rows, "US: NBC 4 WNBC");
+  CHECK(nbc["measured_start_ms"] == "1850");
+  CHECK(nbc["measured_failures"] == "1.5");
+  CHECK(nbc["measured_stalls_per_h"] == "0.4");
+  CHECK(nbc["measured_picture"] == "1080p \xc2\xb7 60");
+  CHECK(nbc["measured_plays"] == "7.2");
+  // A copy never played: empty cells.
+  auto fox = rowFor(rows, "FOX 2 Capital City");
+  CHECK(fox["measured_start_ms"] == "");
+  CHECK(fox["measured_plays"] == "");
+  // No records at all: the same.
+  auto plain = parseCsv(channelReportCSV(f.input()));
+  CHECK(rowFor(plain, "US: NBC 4 WNBC")["measured_plays"] == "");
 }
 
 TEST_CASE("channel report: provider guide notes") {

@@ -20,6 +20,7 @@
 
 #include "core/engine/disk.hpp"
 #include "core/engine/events_model.hpp"
+#include "core/engine/feed_scores.hpp"
 #include "core/engine/host.hpp"
 #include "core/engine/membership.hpp"
 #include "core/engine/model.hpp"
@@ -383,6 +384,32 @@ class Store {
   // Build 136: the picture a raw channel's stream showed (the playback
   // log's "video" line), for its rows next time (pictures.json).
   void notePicture(const std::string& channelId, const quality::Picture& picture);
+  // Build 166: what each copy's real plays show (feed_scores.hpp), kept in
+  // feed-scores.json: a start's time to picture (ms from the request), a
+  // start that showed none, a stall, and the time its picture played.
+  // Never charged during a replay.
+  void noteStart(const std::string& channelId, uint32_t ms);
+  void noteStartFailed(const std::string& channelId);
+  void noteStall(const std::string& channelId);
+  void notePlayed(const std::string& channelId, uint32_t ms);
+  // For 1.0.11's "Test all sources" (one probe of every copy of every
+  // lineup channel): a probe's result goes into the same record.
+  void recordProbe(const std::string& channelId, const scores::Probe& probe);
+  const scores::Book& feedScores() const;
+  // A copy's score (0..1), null while it has too little history.
+  std::optional<double> feedScore(const std::string& channelId) const;
+  // The providers compared (feed_scores.hpp): every account, in the order
+  // they were added, with the lineup's coverage and replay.
+  scores::Rollup providerRollup() const;
+  // ... as the playback log's "providers" lines: (provider, detail).
+  // Percentages and plays; never a count of channels, never a link.
+  std::vector<std::pair<std::string, std::string>> providerLines(const scores::Rollup& rollup) const;
+  // When the roll-up last went into the playback log (0 never).
+  time::Seconds providersLoggedAt() const;
+  void markProvidersLogged(time::Seconds at);
+  // The records are written by tick() at most every 30 s; this writes what
+  // changed now (the app leaving for the background).
+  void saveScoresNow();
   // An event group ("grp:us| nfhs ppv") whose feeds mostly failed to start
   // this week: its tiles go after the others. The count for the report
   // ("1 of 4 started"; "" when none this week).
@@ -724,6 +751,7 @@ class Store {
   // else its name's or group's claim ("FHD"), else "".
   std::string qualityText(const std::string& channelId) const;
   void savePicturesLater();
+  void saveScoresLater();
   // Build 136: how likely a game's provider feed is to start (for bestFeeds):
   // 0 when it failed lately, else its group's starts this week, else
   // reliabilityOf.

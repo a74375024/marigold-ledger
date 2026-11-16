@@ -413,6 +413,7 @@ void Store::buildChannelReport(std::function<void(std::shared_ptr<std::string>)>
     std::map<std::string, guide::provider::Status> providerStates;
     guide::StationsByNetwork stations;
     std::unordered_map<std::string, std::pair<std::string, std::string>> logos, guideChoices;
+    std::unordered_map<std::string, report::MeasuredCells> measured;
     std::vector<std::string> privateWords;
     time::Seconds now = 0, windowStart = 0, outsideBuilt = 0;
     time::Zone zone = time::Zone::device();
@@ -474,6 +475,11 @@ void Store::buildChannelReport(std::function<void(std::shared_ptr<std::string>)>
   }
   for (const auto& [id, g] : m.rowGuides)
     if (g) job->guideChoices[id] = {g->why, g->rejected};
+  // Build 166: each copy's own plays (a few thousand records at most).
+  m.scores.each([&job, now](const std::string& id, const scores::Record& r) {
+    scores::Cells c = scores::cellsOf(&r, now);
+    job->measured[id] = {c.startMs, c.failures, c.stallsPerHour, c.picture, c.plays};
+  });
   job->now = now;
   job->windowStart = windowStart();
   job->zone = host_.zone();
@@ -499,6 +505,7 @@ void Store::buildChannelReport(std::function<void(std::shared_ptr<std::string>)>
         in.stations = &job->stations;
         in.logos = &job->logos;
         in.guideChoices = &job->guideChoices;
+        in.measured = &job->measured;
         in.now = job->now;
         in.windowStart = job->windowStart;
         in.zone = job->zone;

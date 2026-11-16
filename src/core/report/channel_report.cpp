@@ -225,7 +225,8 @@ const std::vector<std::string>& channelReportColumns() {
       "now_start", "outside_built_at", "provider_built_at",
       "outside_described_next_3h", "provider_guide_described_next_3h", "logo_sources", "logo_status",
       "directory_id", "directory_match", "row_id", "next_titles", "guide_choice", "guide_rejected",
-      "row_category", "row_closed", "catchup_days", "adult", "more_categories", "added", "direct_source"};
+      "row_category", "row_closed", "catchup_days", "adult", "more_categories", "added", "direct_source",
+      "measured_start_ms", "measured_failures", "measured_stalls_per_h", "measured_picture", "measured_plays"};
   return kColumns;
 }
 
@@ -377,6 +378,7 @@ std::string channelReportCSV(const ChannelReportInput& in,
     const std::string* provider = find(in.providerNames, channel.serverId);
     const std::pair<std::string, std::string>* logo = entryId ? find(in.logos, *entryId) : nullptr;
     const std::pair<std::string, std::string>* choice = entryId ? find(in.guideChoices, *entryId) : nullptr;
+    const MeasuredCells* measured = find(in.measured, channel.id);
     const std::string empty;
     std::vector<std::string> row = {
         cell(channel.number.value_or("")),
@@ -444,6 +446,12 @@ std::string channelReportCSV(const ChannelReportInput& in,
         cell(channel.moreGroups),
         cell(channel.added > 0 ? minuteStamp(static_cast<time::Seconds>(channel.added), in.zone).substr(0, 10) : empty),
         cell(channel.hasDirectSource ? std::string("yes") : empty),
+        // Build 166: what the copy's own plays showed (empty: never played).
+        cell(measured ? measured->startMs : empty),
+        cell(measured ? measured->failures : empty),
+        cell(measured ? measured->stallsPerHour : empty),
+        cell(measured ? measured->picture : empty),
+        cell(measured ? measured->plays : empty),
     };
     out += str::join(row, ",");
     out += '\n';

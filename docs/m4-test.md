@@ -1927,3 +1927,31 @@ The catch-up test becomes replay. It belongs to the channel: any of its own copi
 | Keys | Fire TV play/pause, fast forward; Siri Remote play/pause; Mac Space; LG Play / Pause | Pause and play on; fast forward opens Rewind on Fire TV |
 | Guide data | Send a report › Playback log after a guide update | "guide past: …" lines; memory readings as before |
 | Log | Playback log | One "replay" line per action; no link anywhere |
+
+## Build 166: 1.0.10, replay fixes and source scores
+
+A third provider (Trex) keeps a one-day archive on many lineup channels, next to Dream's two days; a request for exactly 24 hours back failed on it. Replay now keeps an hour clear of every archive's end, and plays on the copy with the longest archive that holds the moment asked. Each copy also keeps a record of how its real plays went, which orders a channel's copies when one is clearly better and lets the providers be compared in the playback log. No new connections are made for any of it.
+
+- **Replay margin:** the timeline, Rewind, Start over and Right's return stop at the archive's days less one hour (they stopped a minute short). On a one-day copy: 23 hours back at most. Start over isn't offered on a programme that began before that edge; Right goes live when the moment left is past it.
+- **Longest archive:** of the channel's own copies whose archive holds the moment, the longest archive plays it, then the copy playing, then a clearly better measured copy, then live order. The timeline reaches as far as the longest archive among the copies, whichever copy plays live. A copy that fails tries the next one whose archive holds the same minute; a moment only the longer archive holds goes live with "Replay isn't available right now on this channel" when that copy fails.
+- **Copy records:** every copy (a channel from one provider) keeps the median of its recent times to picture, its start failures, its stalls per hour played, its measured picture and when it was last seen. Older results count less: every figure halves each week. The records are saved in their own small file (the newest 3,000 copies; ids and numbers only, no links) and read at launch. A replay counts for nothing, as before.
+- **Order:** a copy whose record is clearly better than another measured copy goes ahead of it; a copy with no record keeps its place (the order as in 1.0.9), and "Always start with" or the copy that played last still goes first. After a failure the next copy still prefers another provider.
+- **Test all sources (1.0.11):** its probes go into the same records (a probe counts as half a play), with what the archive did.
+- **Providers in the log:** "providers" lines in the playback log, one per provider and one per pair of providers: plays, median time to picture, start failure rate, stalls per hour, share of plays at 1080p or more, and the shares of My Lineup with a copy from that provider, with a copy from it alone and with replay from it; for a pair, the share either covers, with and without replay. For example "Trex · plays 12.4, picture 2.1 s median, start failures 5%, stalls 0.5/h, 1080p+ 75%; lineup 70%, only here 20%, replay 50%" and "Dream + Trex · together: lineup 90%, replay 60%". Written when the playback log is sent, and once a day at most after the app starts (once My Lineup is known). Percentages and plays only; never a link.
+- **Channel report:** five new columns per copy: measured_start_ms, measured_failures, measured_stalls_per_h, measured_picture, measured_plays (empty for a copy never played).
+
+| Area | How to check | Pass |
+|---|---|---|
+| One-day edge | Rewind on a channel whose only archive is Trex's, hold Left | Stops at 23 h back, not 24 |
+| Two-day edge | The same on ESPN (Dream copy) | Stops at 47 h back |
+| Start over at the edge | A programme that began 23 h 30 min ago on a Trex-only channel | No Start over |
+| Longest archive | ESPN playing live on its Trex copy; Rewind past 24 h | The timeline reaches 47 h; the log's "rewind to" line names the Dream copy |
+| Failover | A replay whose Dream copy fails within the last 23 h | "another copy from …" on the Trex copy, same minute |
+| Past the shorter archive | A replay 30 h back whose Dream copy fails | "Replay isn't available right now on this channel", live |
+| Right at the edge | Replay on a Trex-only channel near 23 h back, change channel, wait 10 min, Right | Live, not the old moment |
+| Order unchanged without history | A channel never played since the update: Sources | Same order as 1.0.9 |
+| Clearly better first | A channel whose first copy keeps failing and another starts fast at 1080p, after a few plays | The good copy is tried first; a pinned copy still leads |
+| Records kept | Play a few channels, relaunch, send the channel report | measured_* columns filled for the copies played, empty elsewhere |
+| Providers lines | Send a report › Playback log | A "providers" line per provider and per pair, percentages only, no link |
+| Once a day | Relaunch twice within a day | One set of "providers" lines from the launches (more only when the log is sent) |
+| Replay charges nothing | Replays, then the channel report | measured_* for the replayed copies unchanged by them |

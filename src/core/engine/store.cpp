@@ -154,6 +154,7 @@ constexpr const char* kSettingsFile = "settings.json";
 constexpr const char* kListsFile = "lists.json";
 constexpr const char* kLineupFile = "lineup.json";
 constexpr const char* kPicturesFile = "pictures.json";  // measured pictures (Build 136)
+constexpr const char* kScoresFile = "feed-scores.json";  // what each copy's plays showed (Build 166)
 constexpr const char* kM3uStreamsFile = "m3u-streams.json";  // secret
 constexpr const char* kStationsFile = "stations-v2.json";  // v2: two-city cells, MyNetworkTV
 constexpr const char* kOldLogoIndexFile = "logo-index.json";  // downloaded by builds before 89
@@ -796,6 +797,7 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
     if (auto p = catalog::lineupPrefsFromJson(*text)) m.prefs = *p;
   }
   if (auto text = st.read(kPicturesFile)) m.pictures = quality::Memory::fromJson(*text);
+  if (auto text = st.read(kScoresFile)) m.scores = scores::Book::fromJson(*text);
   // The saved M3U links (tens of thousands) are read on a worker once the
   // first frame is up (tick): only a tune needs them.
   for (sources::Account& a : m.accounts) {
@@ -3458,34 +3460,121 @@ std::string Store::qualityText(const std::string& channelId) const {
 
 void Store::notePicture(const std::string& channelId, const quality::Picture& picture) {
   if (impl_->pictures.remember(channelId, picture)) savePicturesLater();
+  // Build 166: and in the copy's record (its score, the provider roll-up).
+  impl_->scores.picture(channelId, 0, picture.height, picture.fps, time::now());
+  impl_->scoresDirty = true;
 }
 
-void Store::savePicturesLater() {
-  Impl& m = *impl_;
-  std::shared_ptr<Impl::PicturesWriter> w = m.picturesWriter;
+namespace {
+// A small file of its own written on a worker, atomically, within the
+// folder's budget (a full partition leaves the old file); a burst of
+// changes is written once or twice.
+void writeLater(Host& host, const std::shared_ptr<disk::Keeper>& keeper,
+                const std::shared_ptr<Store::Impl::PicturesWriter>& w, const char* file, std::string text) {
   {
     std::lock_guard<std::mutex> lock(w->mu);
-    w->pending = m.pictures.toJson();
+    w->pending = std::move(text);
     w->pendingSeq = ++w->seq;
   }
-  // Atomic, within the folder's budget (a full partition leaves the old
-  // file); a burst of measurements is written once or twice.
-  std::string path = host_.files.path(kPicturesFile);
-  std::shared_ptr<disk::Keeper> keeper = m.disk;
-  host_.pool.post(
+  std::string path = host.files.path(file);
+  host.pool.post(
       [w, path, keeper] {
-        std::string text;
+        std::string body;
         uint64_t seq = 0;
         {
           std::lock_guard<std::mutex> lock(w->mu);
-          text.swap(w->pending);
+          body.swap(w->pending);
           std::swap(seq, w->pendingSeq);
         }
         std::lock_guard<std::mutex> lock(w->fileMu);
         if (seq <= w->written) return;
-        if (writeFileAtomic(path, text, false, keeper.get())) w->written = seq;
+        if (writeFileAtomic(path, body, false, keeper.get())) w->written = seq;
       },
       nullptr, http::Priority::Background);
+}
+}  // namespace
+
+void Store::savePicturesLater() {
+  Impl& m = *impl_;
+  writeLater(host_, m.disk, m.picturesWriter, kPicturesFile, m.pictures.toJson());
+}
+
+void Store::saveScoresLater() {
+  Impl& m = *impl_;
+  m.scoresDirty = false;
+  writeLater(host_, m.disk, m.scoresWriter, kScoresFile, m.scores.toJson());
+}
+
+void Store::saveScoresNow() {
+  if (impl_->scoresDirty) saveScoresLater();
+}
+
+void Store::noteStart(const std::string& channelId, uint32_t ms) {
+  impl_->scores.started(channelId, ms, time::now());
+  impl_->scoresDirty = true;
+}
+
+void Store::noteStartFailed(const std::string& channelId) {
+  impl_->scores.failed(channelId, time::now());
+  impl_->scoresDirty = true;
+}
+
+void Store::noteStall(const std::string& channelId) {
+  impl_->scores.stalled(channelId, time::now());
+  impl_->scoresDirty = true;
+}
+
+void Store::notePlayed(const std::string& channelId, uint32_t ms) {
+  if (ms < 1000) return;
+  impl_->scores.played(channelId, ms, time::now());
+  impl_->scoresDirty = true;
+}
+
+void Store::recordProbe(const std::string& channelId, const scores::Probe& probe) {
+  impl_->scores.recordProbe(channelId, probe, time::now());
+  impl_->scoresDirty = true;
+}
+
+const scores::Book& Store::feedScores() const { return impl_->scores; }
+
+std::optional<double> Store::feedScore(const std::string& channelId) const {
+  return impl_->scores.score(channelId, time::now());
+}
+
+scores::Rollup Store::providerRollup() const {
+  const Impl& m = *impl_;
+  std::vector<std::string> providers;
+  for (const sources::Account& a : m.accounts) providers.push_back(a.sourceId());
+  std::vector<scores::Row> rows;
+  if (m.catalog) {
+    for (const std::string& id : m.lineup.lineupIDs) {
+      auto info = m.entryInfo.find(id);
+      if (info == m.entryInfo.end() || info->second >= m.catalog->entries.size()) continue;
+      scores::Row row;
+      for (const std::string& member : m.catalog->entries[info->second].members) {
+        if (!m.indexByID.count(member)) continue;
+        row.push_back({std::string(scores::providerOf(member)), catchupDays(member) > 0});
+      }
+      rows.push_back(std::move(row));
+    }
+  }
+  return scores::rollup(m.scores, providers, rows, time::now());
+}
+
+std::vector<std::pair<std::string, std::string>> Store::providerLines(const scores::Rollup& rollup) const {
+  const Impl& m = *impl_;
+  return scores::rollupLines(rollup, [&m](const std::string& source) {
+    for (const sources::Account& a : m.accounts)
+      if (a.sourceId() == source) return redact(a.displayName);
+    return std::string();
+  });
+}
+
+time::Seconds Store::providersLoggedAt() const { return impl_->scores.rolledUpAt; }
+
+void Store::markProvidersLogged(time::Seconds at) {
+  impl_->scores.rolledUpAt = at;
+  impl_->scoresDirty = true;
 }
 
 double Store::feedReliability(const std::string& channelId) const {
@@ -3556,6 +3645,13 @@ std::vector<std::string> Store::versionsOf(const std::string& id) const {
   std::vector<std::string> out = sports::store::baseVersions(
       id, ei, pinned, [this](const std::string& c) { return reliabilityOf(c); },
       [&m](const std::string& c) { return m.indexByID.count(c) > 0; });
+  // Build 166: a copy whose own plays show it clearly better goes ahead of
+  // the others measured; copies with no history keep their places, and the
+  // pinned (or last played) copy stays first.
+  {
+    size_t keep = pinned && !out.empty() && out.front() == *pinned ? 1 : 0;
+    scores::orderMeasured(out, keep, [&m, now](const std::string& c) { return m.scores.score(c, now); });
+  }
   // Marigold (Build 136): the catalog lists direct versions first, but the
   // record of a source can move a server-opened one ahead of them; while a
   // direct version hasn't failed lately they stay ahead (the pinned or last
@@ -4072,6 +4168,12 @@ void Store::liveEventsOpened() {
 bool Store::tick(uint32_t ms) {
   Impl& m = *impl_;
   releaseMemoryWhenIdle(ms);
+  // Build 166: the copies' records, written at most every half minute
+  // (a play notes several things at once; saveScoresNow on leaving).
+  if (m.scoresDirty && ms >= m.scoresSaveAt) {
+    m.scoresSaveAt = ms + 30000;
+    saveScoresLater();
+  }
   uint64_t eventsVersion = events_->version;
   eventsTick(ms);
   *m.playingFull = host_.playingFull();

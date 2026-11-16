@@ -251,13 +251,17 @@ class Session {
   static constexpr uint32_t kReleaseMs = 3000;
   // A replay this close to live is live.
   static constexpr time::Seconds kLiveWithin = 60;
-  // The copy a replay plays on: the copy playing live when its provider
-  // keeps an archive, else the first of the channel's own copies (in the
-  // order they are tried live) whose provider does. Offered once live has
-  // drawn a picture (or during a replay), not on a race camera. nullopt:
-  // no copy keeps one (the controls look as they always did).
+  // The copy a replay plays on (during one: that copy). Build 166: of the
+  // channel's own copies whose provider keeps an archive covering the
+  // moment, the longest archive, then the copy playing, then a clearly
+  // better measured one (feed_scores.hpp), then live order; for now, that
+  // is the longest archive. Offered once live has drawn a picture (or
+  // during a replay), not on a race camera. nullopt: no copy keeps one
+  // (the controls look as they always did).
   std::optional<size_t> catchupCopy() const;
-  // The days of catch-up that copy keeps (0: no replay here).
+  // The longest archive among the channel's copies, in days (0: no replay
+  // here): the timeline's left edge (replay::archiveStart) and Start
+  // over's. A moment only a shorter archive misses plays on a longer one.
   uint16_t catchupDays() const;
   const std::optional<Replay>& replay() const { return replay_; }
   // The moment showing (live: now), and how far behind live it is (0 live).
@@ -364,7 +368,14 @@ class Session {
   void clearLog() { log_.clear(); }
   // Leaving the app (to the background): what the log has not saved yet,
   // memory readings too, written now (on a worker).
-  void saveLogNow() { saveLog(ms(), true); }
+  // Build 166: the copies' records too.
+  void saveLogNow();
+  // Build 166: the providers compared ("providers" lines: plays, time to
+  // picture, start failures, stalls, 1080p share, the lineup's coverage,
+  // alone and in pairs; see feed_scores.hpp). `force`: now (the log is
+  // being exported); else at most once a day, once the lineup is known.
+  // False when nothing was written.
+  bool logProviders(bool force);
   // A "memory" line in the log: the app's memory now, after `what` ("channels
   // sorted"; empty for the regular reading every few minutes).
   void logMemory(std::string_view what = {});
@@ -400,6 +411,18 @@ class Session {
   // standing aside; a stretch handed to the player (`what`: its log line);
   // a tick; a failed stretch; leaving it (`live`: live plays again).
   std::optional<size_t> archiveCopy(size_t live) const;
+  // Build 166: copy `i` can serve the replay of a channel playing live on
+  // `live` (its own copy, or the live one, keeping an archive).
+  bool keepsArchive(size_t i, size_t live) const;
+  // The longest archive among them (days).
+  uint16_t longestArchive(size_t live) const;
+  // The copy to replay `at` on (catchupCopy's order), `playing` preferred
+  // over others of the same archive, none in `skip`; nullopt: none covers it.
+  std::optional<size_t> archiveCopyFor(time::Seconds at, size_t live, size_t playing,
+                                       const std::set<size_t>* skip = nullptr) const;
+  // Build 166: what the copy playing taught (Store::noteStart and the rest):
+  // the time its picture played so far goes into its record.
+  void flushPlayed();
   void standAside();
   void playReplay(size_t feed, time::Seconds from, const std::string& what, bool next = false);
   void tickReplay(uint32_t now);
@@ -496,6 +519,16 @@ class Session {
   // Back to live after a replay: that copy's picture coming up again is
   // not a new success for it (the first feed outcome after the return).
   bool quietReturn_ = false;
+  // Build 166, the copies' records: when the current attempt was handed
+  // over, whether it is a reconnect of a feed that already showed its
+  // picture, a stall counted in it; the copy whose picture plays and since
+  // when (ms; 0 none); the daily roll-up looked at this run.
+  uint32_t attemptAt_ = 0;
+  bool attemptReconnect_ = false, feedPictured_ = false, stallCounted_ = false;
+  std::string playingId_;
+  uint32_t playingSince_ = 0;
+  bool providersLooked_ = false;
+  uint32_t providersLookAt_ = 0;
 };
 
 }  // namespace marigold::engine

@@ -30,6 +30,8 @@ constexpr uint32_t kMemoryEveryMs = 5 * 60 * 1000;
 constexpr uint32_t kMeasuredAfterMs = 20000;
 // What was viewed, kept for Right (one per entry, newest first).
 constexpr size_t kViewedKept = 4;
+// Build 166: a long play's time goes into its copy's record this often.
+constexpr uint32_t kPlayedFlushMs = 5 * 60 * 1000;
 
 // Wall clock in ms, for the log's times.
 int64_t wallMs() {
@@ -85,6 +87,24 @@ void Session::logMemory(std::string_view what) {
 }
 
 void Session::logLaunch(std::string_view detail) { log_.addLaunch(wallMs(), detail); }
+
+void Session::saveLogNow() {
+  saveLog(ms(), true);
+  store_.saveScoresNow();
+}
+
+bool Session::logProviders(bool force) {
+  scores::Rollup r = store_.providerRollup();
+  if (r.providers.empty()) return false;
+  // The daily lines wait for the lineup (its coverage is half the point).
+  bool lineup = std::any_of(r.providers.begin(), r.providers.end(),
+                            [](const scores::ProviderFigures& f) { return f.lineup > 0; });
+  if (!force && !lineup) return false;
+  for (const auto& [provider, detail] : store_.providerLines(r))
+    log_.add(wallMs(), "providers", 0, {}, {}, provider, detail);
+  store_.markProvidersLogged(time::now());
+  return true;
+}
 
 void Session::saveLog(uint32_t now, bool all) {
   if (logFile_->broken()) journal_.rewrite();  // a write was lost: the whole log next
@@ -244,8 +264,18 @@ bool Session::useFeed(size_t index) {
   return true;
 }
 
+void Session::flushPlayed() {
+  if (!playingId_.empty() && playingSince_ != 0) {
+    uint32_t now = ms();
+    if (now > playingSince_) store_.notePlayed(playingId_, now - playingSince_);
+  }
+  playingId_.clear();
+  playingSince_ = 0;
+}
+
 void Session::stop() {
   pausedAt_.reset();
+  flushPlayed();
   if (entry_.empty()) return;
   leaving();
   rememberGame();
@@ -265,6 +295,7 @@ void Session::apply(const playback::Actions& actions) {
     switch (a.kind) {
       case playback::Action::Kind::Play:
       case playback::Action::Kind::Reconnect:
+        attemptReconnect_ = a.kind == playback::Action::Kind::Reconnect;
         playFeed(a.feed, a.token);
         break;
       case playback::Action::Kind::CloseStream:
@@ -273,6 +304,7 @@ void Session::apply(const playback::Actions& actions) {
         if (a.token == 0) player_->streamClosed();
         break;
       case playback::Action::Kind::GiveUp:
+        flushPlayed();
         player_->stop();
         failMessage_ = a.text;
         // The recovery's own "gave up" line is already in the log.
@@ -301,9 +333,26 @@ void Session::apply(const playback::Actions& actions) {
           quietReturn_ = false;
           if (quiet) {
             problems_.erase(id);
+            feedPictured_ = true;
+            playingId_ = id;
+            playingSince_ = std::max<uint32_t>(1, ms());
             break;
           }
           store_.recordFeed(id, a.worked);
+          // Build 166: the copy's own record. A start: how long its picture
+          // took (a reconnect of a picture already shown is no new start);
+          // a failure: a start that showed none, or a picture that broke.
+          if (a.worked) {
+            if (!(attemptReconnect_ && feedPictured_)) store_.noteStart(id, ms() - attemptAt_);
+            feedPictured_ = true;
+            playingId_ = id;
+            playingSince_ = std::max<uint32_t>(1, ms());
+          } else {
+            bool broke = playingId_ == id && playingSince_ != 0;
+            flushPlayed();
+            if (!broke) store_.noteStartFailed(id);
+            else if (!stallCounted_) store_.noteStall(id);
+          }
           if (a.worked) {
             store_.rememberFeed(entry_, id);
             problems_.erase(id);
@@ -330,6 +379,13 @@ void Session::apply(const playback::Actions& actions) {
         break;
       case playback::Action::Kind::Log: {
         MLOG_I("play", "%s %s", a.text.c_str(), playback::safeMessage(a.detail).c_str());
+        // Build 166: a stall the viewer saw ("Buffering…") on the picture
+        // playing counts against its copy.
+        if (a.text == "stall" && !playingId_.empty() && rec_.feedIndex() < feeds_.size() &&
+            feeds_[rec_.feedIndex()].channelId == playingId_) {
+          store_.noteStall(playingId_);
+          stallCounted_ = true;
+        }
         std::string channel, feed, provider;
         if (const GuideChannel* g = store_.channels()->find(entry_)) channel = g->name;
         if (a.feed < feeds_.size()) {
@@ -345,6 +401,10 @@ void Session::apply(const playback::Actions& actions) {
 
 void Session::playFeed(size_t index, uint64_t token) {
   if (index >= feeds_.size()) return;
+  flushPlayed();
+  attemptAt_ = ms();
+  stallCounted_ = false;
+  if (!attemptReconnect_) feedPictured_ = false;
   sawPicture_ = sawBuffering_ = sawFailed_ = sawEnded_ = false;
   factsLogged_ = noPicture_ = false;
   measured_.reset();
@@ -629,6 +689,7 @@ std::string Session::previous() {
 void Session::suspend() {
   if (paused_) return;
   paused_ = true;
+  flushPlayed();
   if (entry_.empty()) return;
   Paused p;
   if (replay_ && replay_->phase == Replay::Phase::Paused) {
@@ -751,6 +812,18 @@ bool Session::tick(uint32_t now) {
   for (std::string& note : store_.takeEventsLog()) log_.add(wallMs(), "live events", 0, {}, {}, {}, note);
   for (std::string& note : store_.takeGuideLog()) log_.add(wallMs(), "guide", 0, {}, {}, {}, note);
   saveLog(now);
+  // Build 166: the providers compared, once a day at most, when the app
+  // has started and its lineup is known (looked at every minute until then).
+  if (!providersLooked_ && now >= providersLookAt_) {
+    providersLookAt_ = now + 60000;
+    time::Seconds last = store_.providersLoggedAt();
+    providersLooked_ = (last > 0 && time::now() - last < 86400) || logProviders(false);
+  }
+  // A long play goes into its copy's record every few minutes.
+  if (playingSince_ != 0 && now - playingSince_ >= kPlayedFlushMs) {
+    store_.notePlayed(playingId_, now - playingSince_);
+    playingSince_ = now;
+  }
   // Paused in the background: the recovery waits for the app's return.
   if (entry_.empty() || paused_) return false;
   if (replay_) {
@@ -826,17 +899,52 @@ bool Session::tick(uint32_t now) {
 
 // ---------------------------------------------------------------- replay
 
+bool Session::keepsArchive(size_t i, size_t live) const {
+  if (i >= feeds_.size()) return false;
+  const std::string& id = feeds_[i].channelId;
+  if (store_.catchupDays(id) == 0) return false;
+  // A guide channel's own versions (not a game's backup on another channel).
+  return i == live || game_ || store_.entryOfChannel(id) == entry_;
+}
+
+uint16_t Session::longestArchive(size_t live) const {
+  uint16_t best = 0;
+  for (size_t i = 0; i < feeds_.size(); ++i)
+    if (keepsArchive(i, live)) best = std::max(best, store_.catchupDays(feeds_[i].channelId));
+  return best;
+}
+
+std::optional<size_t> Session::archiveCopyFor(time::Seconds at, size_t live, size_t playing,
+                                              const std::set<size_t>* skip) const {
+  time::Seconds now = time::now();
+  std::optional<size_t> best;
+  uint16_t bestDays = 0;
+  std::optional<double> bestScore;
+  for (size_t i = 0; i < feeds_.size(); ++i) {
+    if (!keepsArchive(i, live) || (skip && skip->count(i))) continue;
+    uint16_t days = store_.catchupDays(feeds_[i].channelId);
+    if (!replay::covers(days, at, now)) continue;
+    std::optional<double> score = store_.feedScore(feeds_[i].channelId);
+    bool better = !best;
+    if (best) {
+      // The longest archive; then the copy playing; then a clearly better
+      // measured one; else live order (the first found).
+      if (days != bestDays) better = days > bestDays;
+      else if ((i == playing) != (*best == playing)) better = i == playing;
+      else if (score && bestScore) better = *score > *bestScore + scores::kClearlyBetter;
+    }
+    if (better) {
+      best = i;
+      bestDays = days;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
 std::optional<size_t> Session::archiveCopy(size_t live) const {
   if (feeds_.empty()) return std::nullopt;
-  if (live < feeds_.size() && store_.catchupDays(feeds_[live].channelId) > 0) return live;
-  for (size_t i = 0; i < feeds_.size(); ++i) {
-    const std::string& id = feeds_[i].channelId;
-    if (store_.catchupDays(id) == 0) continue;
-    // A guide channel's own versions (not a game's backup on another channel).
-    if (!game_ && store_.entryOfChannel(id) != entry_) continue;
-    return i;
-  }
-  return std::nullopt;
+  return archiveCopyFor(time::now(), live, live);
 }
 
 std::optional<size_t> Session::catchupCopy() const {
@@ -847,8 +955,8 @@ std::optional<size_t> Session::catchupCopy() const {
 }
 
 uint16_t Session::catchupDays() const {
-  std::optional<size_t> i = catchupCopy();
-  return i ? store_.catchupDays(feeds_[*i].channelId) : 0;
+  if (!catchupCopy()) return 0;
+  return longestArchive(replay_ ? replayLive_ : rec_.feedIndex());
 }
 
 time::Seconds Session::replayAt() const { return replay_ ? replay_->at() : time::now(); }
@@ -883,6 +991,7 @@ void Session::logReplay(std::string detail, size_t copy, bool clock) {
 }
 
 void Session::standAside() {
+  flushPlayed();
   // The recovery stops where it is, as in the background: no timer falls
   // due and nothing is charged to a feed; its "stop" line isn't one.
   playback::Actions stopped = rec_.stop(ms());
@@ -932,10 +1041,11 @@ void Session::playReplay(size_t index, time::Seconds from, const std::string& wh
 }
 
 bool Session::replayFrom(time::Seconds from, ReplayWhy why) {
-  // The copy replaying, else the channel's copy with an archive.
-  std::optional<size_t> copy = catchupCopy();
-  if (!copy) return false;
-  uint16_t days = store_.catchupDays(feeds_[*copy].channelId);
+  if (!catchupCopy()) return false;
+  // Inside the longest archive; the copy whose archive covers the moment
+  // (the longest, then the one replaying or playing live, ...).
+  size_t live = replay_ ? replayLive_ : rec_.feedIndex();
+  uint16_t days = longestArchive(live);
   if (!days) return false;
   time::Seconds now = time::now();
   from = std::max(replay::minuteOf(from), replay::archiveStart(now, days));
@@ -944,6 +1054,8 @@ bool Session::replayFrom(time::Seconds from, ReplayWhy why) {
     if (replay_) goLive();
     return true;
   }
+  std::optional<size_t> copy = archiveCopyFor(from, live, replay_ ? replay_->feed : live);
+  if (!copy) return false;
   if (!replay_) {
     replayLive_ = rec_.feedIndex();
     replayLiveReady_ = rec_.sawFirstFrame();
@@ -964,12 +1076,13 @@ bool Session::replayFrom(time::Seconds from, ReplayWhy why) {
 bool Session::startReplayInstead(time::Seconds at, ReplayWhy why, size_t live) {
   if (camera_ || feeds_.empty() || entry_.empty()) return false;
   live = std::min(live, feeds_.size() - 1);
-  std::optional<size_t> copy = archiveCopy(live);
-  if (!copy) return false;
-  uint16_t days = store_.catchupDays(feeds_[*copy].channelId);
   time::Seconds now = time::now();
   at = replay::minuteOf(at);
-  if (at < replay::archiveStart(now, days) || now - at < kLiveWithin) return false;
+  if (now - at < kLiveWithin) return false;
+  // A copy whose archive still holds the moment (the same edge as the
+  // timeline's: an hour in hand).
+  std::optional<size_t> copy = archiveCopyFor(at, live, live);
+  if (!copy) return false;
   standAside();
   replayLive_ = live;
   replayLiveReady_ = false;
@@ -1036,16 +1149,22 @@ bool Session::resumePaused(bool quiet) {
   if (!replay_ || replay_->phase != Replay::Phase::Paused || paused_) return false;
   Replay& r = *replay_;
   time::Seconds now = time::now();
-  // From the paused minute (a few seconds early), inside the archive.
-  time::Seconds from = std::max(replay::minuteOf(r.at()), replay::archiveStart(now, r.days));
+  // From the paused minute (a few seconds early), inside the longest
+  // archive, on the copy that covers it.
+  time::Seconds from = std::max(replay::minuteOf(r.at()), replay::archiveStart(now, longestArchive(replayLive_)));
   if (now - from < kLiveWithin) {
+    goLive(quiet);
+    return true;
+  }
+  std::optional<size_t> copy = archiveCopyFor(from, replayLive_, r.feed);
+  if (!copy) {
     goLive(quiet);
     return true;
   }
   if (!r.released) player_->stop();
   replayTried_.clear();
   shortStretches_ = 0;
-  playReplay(r.feed, from, "resumed " + localTime(from));
+  playReplay(*copy, from, "resumed " + localTime(from));
   return true;
 }
 
@@ -1088,17 +1207,11 @@ void Session::replayFailed(const std::string& why) {
   if (!replay_) return;
   Replay& r = *replay_;
   player_->stop();
-  // Another copy with an archive, for the same moment.
-  std::optional<size_t> other;
-  for (size_t k = 1; k < feeds_.size() && !other; ++k) {
-    size_t i = (r.feed + k) % feeds_.size();
-    if (replayTried_.count(i)) continue;
-    const std::string& id = feeds_[i].channelId;
-    if (store_.catchupDays(id) == 0) continue;
-    if (!game_ && store_.entryOfChannel(id) != entry_) continue;
-    other = i;
-  }
+  // Another copy whose archive holds the same moment (in the same order).
   time::Seconds at = replay::minuteOf(r.at());
+  std::set<size_t> tried = replayTried_;
+  tried.insert(r.feed);
+  std::optional<size_t> other = archiveCopyFor(at, replayLive_, r.feed, &tried);
   if (other) {
     logReplay("failed: " + why + "; another copy", r.feed);
     shortStretches_ = 0;

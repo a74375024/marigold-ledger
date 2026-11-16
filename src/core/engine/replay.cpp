@@ -8,6 +8,9 @@ namespace {
 
 constexpr time::Seconds kMinute = 60;
 constexpr time::Seconds kHalfHour = 30 * 60;
+// Build 166: an archive's oldest hour is left alone. A provider keeping one
+// day failed a request for exactly 24 h back (its clock, its trimming).
+constexpr time::Seconds kArchiveMargin = 3600;
 // A playhead this close after a programme's start is at its start.
 constexpr time::Seconds kAtStart = 30;
 // Repeat events before a held key moves faster: five minutes, then fifteen.
@@ -26,8 +29,12 @@ time::Seconds floorDiv(time::Seconds a, time::Seconds b) { return a >= 0 ? a / b
 time::Seconds minuteOf(time::Seconds t) { return floorDiv(t, kMinute) * kMinute; }
 
 time::Seconds archiveStart(time::Seconds now, uint16_t days) {
-  time::Seconds back = now - static_cast<time::Seconds>(days) * 86400 + kMinute;
+  time::Seconds back = now - static_cast<time::Seconds>(days) * 86400 + kArchiveMargin;
   return floorDiv(back + kMinute - 1, kMinute) * kMinute;
+}
+
+bool covers(uint16_t days, time::Seconds at, time::Seconds now) {
+  return days > 0 && at >= archiveStart(now, days);
 }
 
 int stepMinutes(int repeats) {

@@ -72,6 +72,14 @@ bool covers(const std::vector<guide::RawProgram>& raw, time::Seconds windowStart
 
 // MARK: The report
 
+// Build 166: what a copy's own plays showed (engine feed_scores), as the
+// report's measured_* cells: the median time to picture (ms), start
+// failures and plays (weighted: recent ones count most), stalls per hour
+// played, the picture ("1080p · 60"); "" when not known.
+struct MeasuredCells {
+  std::string startMs, failures, stallsPerHour, picture, plays;
+};
+
 // guideState of a channel's server / short guide.
 enum class ServerGuideState : uint8_t { NotChecked, Loading, Loaded, Failed };
 
@@ -113,6 +121,8 @@ struct ChannelReportInput {
   const std::unordered_map<std::string, std::pair<std::string, std::string>>* guideChoices = nullptr;
   // The station directory (tvOS read it from the outside guide's cache).
   const guide::StationsByNetwork* stations = nullptr;
+  // Build 166: the measured_* cells by raw channel id.
+  const std::unordered_map<std::string, MeasuredCells>* measured = nullptr;
 
   time::Seconds now = 0;
   // The guide grid's start (catalog::windowStart(now)).

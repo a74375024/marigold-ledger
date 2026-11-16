@@ -25,8 +25,12 @@ struct Programme {
 };
 
 // The earliest moment a copy keeping `days` of catch-up can replay at
-// `now`: `days` back, a minute in hand, to the next whole minute.
+// `now`: `days` back, an hour in hand (Build 166: a request for exactly a
+// day back failed on a one-day archive), to the next whole minute. The
+// timeline, Start over and Right's return all stop here.
 time::Seconds archiveStart(time::Seconds now, uint16_t days);
+// Whether a copy keeping `days` can replay `at` at `now`.
+bool covers(uint16_t days, time::Seconds at, time::Seconds now);
 // To the minute (down).
 time::Seconds minuteOf(time::Seconds t);
 

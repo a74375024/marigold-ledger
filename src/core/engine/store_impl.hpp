@@ -319,6 +319,12 @@ struct Store::Impl {
     uint64_t seq = 0, pendingSeq = 0, written = 0;
   };
   std::shared_ptr<PicturesWriter> picturesWriter = std::make_shared<PicturesWriter>();
+  // Build 166: what each copy's plays showed (feed-scores.json, its own
+  // file, written by the same kind of writer).
+  scores::Book scores;
+  std::shared_ptr<PicturesWriter> scoresWriter = std::make_shared<PicturesWriter>();
+  bool scoresDirty = false;   // changed since last written
+  uint32_t scoresSaveAt = 0;  // tick ms of the next write, at the soonest
   std::set<std::string> captionChannels;    // feed channel ids whose stream had captions
   std::set<std::string> hiddenGroups;  // provider groups left out of All Channels
   catalog::LineupPrefs prefs;

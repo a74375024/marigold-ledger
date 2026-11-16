@@ -74,10 +74,13 @@ std::string accountInfo() {
          R"("timestamp_now":)" + std::to_string(now) + R"(,"time_now":")" + when + R"("}})";
 }
 
-marigold::sources::xtream::Client mockClient() {
+// Build 166: a second provider ("Trex", a one-day archive), on its own host.
+constexpr const char* kTrexHost = "http://trex.example.invalid:8080";
+
+marigold::sources::xtream::Client mockClient(const std::string& host = std::string(mock::kHost)) {
   marigold::sources::Account a;
   a.kind = marigold::sources::AccountKind::Xtream;
-  a.serverUrl = std::string(mock::kHost);
+  a.serverUrl = host;
   a.userName = std::string(mock::kUser);
   a.password = std::string(mock::kPass);
   auto client = marigold::sources::xtream::Client::make(a);
@@ -100,11 +103,12 @@ struct Rig {
                    R"([{"category_id":"1","category_name":"US| SPORTS"},{"category_id":"2","category_name":"US| NEWS"}])");
     if (!guide.empty()) tv.pool.answer(c.guideURL(), guide);
     std::string espn = guide.empty() ? "" : "espn.us", cnn = guide.empty() ? "" : "cnn.us";
-    // ESPN: three copies, the first and the third with an archive; CNN:
-    // two copies, neither has one.
+    // ESPN: three copies, the first and the third with an archive (the
+    // same two days: Build 166 replays on the longest, see the two
+    // providers' cases); CNN: two copies, neither has one.
     tv.pool.answer(c.streamsRequest().url, "[" + stream(501, "US: ESPN FHD", 1, 2, espn) + "," +
                                                stream(502, "US: ESPN HD", 1, 0, espn) + "," +
-                                               stream(503, "US: ESPN SD", 1, 3, espn) + "," +
+                                               stream(503, "US: ESPN SD", 1, 2, espn) + "," +
                                                stream(504, "US: CNN HD", 2, 0, cnn) + "," +
                                                stream(505, "US: CNN FHD", 2, 0, cnn) + "]");
     store = std::make_unique<Store>(tv.host());
@@ -118,6 +122,40 @@ struct Rig {
     store->addAccount(form, [&](std::string p) { problem = std::move(p); });
     fake::settle(*store, tv);
     REQUIRE(problem.empty());
+    session = std::make_unique<Session>(*store, tv.host(), std::make_unique<Player>(player), Session::Hooks{});
+  }
+
+  // Build 166: two providers. Dream (the mock host): ESPN keeping two days,
+  // CNN none; Trex: ESPN and TNT keeping one day. `trexFirst`: Trex's
+  // account added first.
+  struct Two {};
+  Rig(Two, bool trexFirst) {
+    auto dream = mockClient(), trex = mockClient(kTrexHost);
+    for (auto* c : {&dream, &trex}) {
+      tv.pool.answer(c->accountInfoRequest().url, accountInfo());
+      tv.pool.answer(c->categoriesRequest().url,
+                     R"([{"category_id":"1","category_name":"US| SPORTS"},{"category_id":"2","category_name":"US| NEWS"}])");
+    }
+    tv.pool.answer(dream.streamsRequest().url,
+                   "[" + stream(601, "US: ESPN FHD", 1, 2) + "," + stream(604, "US: CNN HD", 2, 0) + "]");
+    tv.pool.answer(trex.streamsRequest().url,
+                   "[" + stream(701, "US: ESPN HD", 1, 1) + "," + stream(702, "US: TNT HD", 1, 1) + "]");
+    store = std::make_unique<Store>(tv.host());
+    auto add = [this](const std::string& name, const std::string& host) {
+      AccountForm form;
+      form.kind = AccountForm::Kind::Xtream;
+      form.name = name;
+      form.server = host;
+      form.user = std::string(mock::kUser);
+      form.password = std::string(mock::kPass);
+      std::string problem = "(not answered)";
+      store->addAccount(form, [&](std::string p) { problem = std::move(p); });
+      fake::settle(*store, tv);
+      REQUIRE(problem.empty());
+    };
+    if (trexFirst) add("Trex", kTrexHost);
+    add("Dream", std::string(mock::kHost));
+    if (!trexFirst) add("Trex", kTrexHost);
     session = std::make_unique<Session>(*store, tv.host(), std::make_unique<Player>(player), Session::Hooks{});
   }
 
@@ -186,12 +224,26 @@ struct Rig {
   // No line of the log carries a link or the login.
   void noLinks() const {
     for (const auto& e : session->log().entries()) {
-      CHECK(e.detail.find("timeshift") == std::string::npos);
-      CHECK(e.detail.find("://") == std::string::npos);
-      CHECK(e.detail.find("example.invalid") == std::string::npos);
-      CHECK(e.detail.find("/u/p/") == std::string::npos);
-      CHECK(e.feed.find("://") == std::string::npos);
+      for (const std::string* f : {&e.detail, &e.feed, &e.provider, &e.channel}) {
+        CHECK(f->find("timeshift") == std::string::npos);
+        CHECK(f->find("://") == std::string::npos);
+        CHECK(f->find("example.invalid") == std::string::npos);
+        CHECK(f->find("/u/p/") == std::string::npos);
+      }
     }
+  }
+  // Build 166: the raw channel of stream `id`, and its record (null: none).
+  std::string channelOf(int id) const {
+    std::string tail = "|" + std::to_string(id);
+    for (const auto& g : store->channels()->all)
+      for (const Feed& f : store->feeds(g.id))
+        if (f.channelId.size() > tail.size() && f.channelId.substr(f.channelId.size() - tail.size()) == tail)
+          return f.channelId;
+    return {};
+  }
+  const marigold::engine::scores::Record* record(int id) const {
+    std::string c = channelOf(id);
+    return c.empty() ? nullptr : store->feedScores().find(c);
   }
 
   // What the lists file says of feeds' reliability and the source each
@@ -713,8 +765,15 @@ TEST_CASE("replay timeline: minute steps, holding speeds up, programme jumps, th
   const mtime::Seconds live = 1'800'000'000 + 38 * 60 + 25;  // 20:38:25 or so
   const mtime::Seconds earliest = replay::archiveStart(live, 2);
   CHECK(earliest % 60 == 0);
-  CHECK(earliest >= live - 2 * 86400 + 60);
-  CHECK(earliest < live - 2 * 86400 + 120);
+  // Build 166: an hour in hand (a one-day archive failed exactly a day back).
+  CHECK(earliest >= live - 2 * 86400 + 3600);
+  CHECK(earliest < live - 2 * 86400 + 3660);
+  CHECK(replay::archiveStart(live, 1) >= live - 23 * 3600);
+  CHECK(replay::archiveStart(live, 1) < live - 23 * 3600 + 60);
+  CHECK(replay::covers(1, live - 23 * 3600 + 60, live));
+  CHECK_FALSE(replay::covers(1, live - 24 * 3600, live));
+  CHECK_FALSE(replay::covers(1, live - 23 * 3600 - 60, live));
+  CHECK_FALSE(replay::covers(0, live - 60, live));
   // Left from live: the minute it's in, then one minute at a time.
   mtime::Seconds at = replay::step(live, -1, 0, earliest, live);
   CHECK(at == live - 25);
@@ -776,4 +835,233 @@ TEST_CASE("replay timeline: minute steps, holding speeds up, programme jumps, th
   CHECK(all[1].title == "Before");
   CHECK(replay::behindMinutes(17 * 60) == "\xe2\x88\x92" "17 min");
   CHECK(replay::behindMinutes(62 * 60) == "\xe2\x88\x92" "1 h 02 min");
+}
+
+// ------------------------------------------------- Build 166: 1.0.10
+
+TEST_CASE("replay 1.0.10: Dream (2 days) and Trex (1 day) copies, either order: the longest archive serves") {
+  for (bool trexFirst : {false, true}) {
+    CAPTURE(trexFirst);
+    Rig r(Rig::Two{}, trexFirst);
+    std::string espn = r.entry("ESPN");
+    REQUIRE(!espn.empty());
+    // Live on the Trex copy: replay still reaches two days back, on Dream.
+    r.watchLive(espn, 701);
+    REQUIRE(r.session->feeds().size() == 2);
+    size_t dream = r.feedOf(601), trex = r.feedOf(701);
+    REQUIRE(r.session->catchupCopy());
+    CHECK(*r.session->catchupCopy() == dream);
+    CHECK(r.session->catchupDays() == 2);
+    // Thirty hours back: only Dream holds it.
+    mtime::Seconds far = minuteOf(mtime::now() - 30 * 3600);
+    REQUIRE(r.session->replayFrom(far, Why::Rewind));
+    CHECK(r.session->replay()->feed == dream);
+    CHECK(r.player->plays.back().url.rfind(std::string(mock::kHost) + "/timeshift/", 0) == 0);
+    // Dream fails there: Trex's day doesn't reach it, so live, with the notice.
+    r.player->state.failed = true;
+    r.run(250);
+    CHECK_FALSE(r.session->replay());
+    CHECK(r.session->takeReplayNotice() == "Replay isn\xe2\x80\x99t available right now on this channel");
+    r.run(250);
+    CHECK(r.session->feedIndex() == trex);
+    r.picture();
+    r.run(25000);
+    // Three hours back: Dream first (longest), and Trex takes over the same
+    // minute when Dream fails.
+    mtime::Seconds near = minuteOf(mtime::now() - 3 * 3600);
+    REQUIRE(r.session->replayFrom(near, Why::Rewind));
+    CHECK(r.session->replay()->feed == dream);
+    r.player->state.failed = true;
+    r.run(250);
+    REQUIRE(r.session->replay());
+    CHECK(r.session->replay()->feed == trex);
+    CHECK(r.player->plays.back().url.rfind(std::string(kTrexHost) + "/timeshift/", 0) == 0);
+    CHECK(r.player->plays.back().url.find("/" + serverMinute(near) + "/701.ts") != std::string::npos);
+    r.picture();
+    CHECK(r.session->replay()->phase == Phase::Playing);
+    // During the replay the timeline still reaches Dream's two days.
+    CHECK(r.session->catchupDays() == 2);
+    // Further back than three days: held at Dream's edge, an hour in hand.
+    mtime::Seconds now = mtime::now();
+    REQUIRE(r.session->replayFrom(now - 3 * 86400, Why::Rewind));
+    CHECK(r.session->replay()->feed == dream);
+    CHECK(r.session->replay()->from == replay::archiveStart(now, 2));
+    CHECK(r.session->replay()->from >= now - 47 * 3600);
+    r.noLinks();
+  }
+}
+
+TEST_CASE("replay 1.0.10: a one-day archive stops an hour short of a day, for rewind and Right") {
+  Rig r(Rig::Two{}, false);
+  std::string tnt = r.entry("TNT"), cnn = r.entry("CNN");
+  REQUIRE(!tnt.empty());
+  r.watchLive(cnn, 604);
+  r.watchLive(tnt, 702);
+  CHECK(r.session->catchupDays() == 1);
+  // Exactly a day back (what failed on the provider): an hour later than that.
+  mtime::Seconds now = mtime::now();
+  REQUIRE(r.session->replayFrom(now - 86400, Why::Rewind));
+  mtime::Seconds from = r.session->replay()->from;
+  CHECK(from == replay::archiveStart(now, 1));
+  CHECK(from >= now - 23 * 3600);
+  CHECK(from < now - 23 * 3600 + 60);
+  CHECK(r.player->plays.back().url.find("/" + serverMinute(from) + "/702.ts") != std::string::npos);
+  r.picture();
+  // Left at that moment for CNN; ten minutes on the moment is past the
+  // edge: Right plays TNT live, not from then.
+  REQUIRE(r.session->tune(cnn));
+  r.run(250);
+  r.picture();
+  r.run(25000);
+  REQUIRE(r.session->previousTarget());
+  REQUIRE(r.session->previousTarget()->replayAt);
+  mtime::advanceForTests(10 * 60);
+  CHECK(r.session->previous() == tnt);
+  CHECK_FALSE(r.session->replay());
+  r.run(250);
+  CHECK_FALSE(r.player->plays.back().replay);
+  r.noLinks();
+}
+
+TEST_CASE("feed scores in play: a start's time, stalls, failures and time played go into the copy's record") {
+  Rig r;
+  std::string espn = r.entry("ESPN"), cnn = r.entry("CNN");
+  CHECK(r.record(501) == nullptr);
+  r.watchLive(espn, 501);
+  const marigold::engine::scores::Record* rec = r.record(501);
+  REQUIRE(rec);
+  CHECK(rec->plays == doctest::Approx(1));
+  CHECK(rec->failures == 0);
+  REQUIRE(rec->startMs.size() == 1);
+  CHECK(rec->startMs[0] >= 250);
+  CHECK(rec->startMs[0] <= 2000);
+  // The picture measured on it (after 20 s of play).
+  r.player->state.facts = "1920x1080 59.94p \xc2\xb7 h264 \xc2\xb7 aac";
+  r.run(22000);
+  CHECK(r.record(501)->height == 1080);
+  CHECK(r.record(501)->fps == 60);
+  // A stall the viewer sees counts once.
+  r.player->state.buffering = true;
+  r.run(4000);
+  r.player->state.buffering = false;
+  r.run(1000);
+  CHECK(r.record(501)->stalls == doctest::Approx(1));
+
+  // A replay and back to live: nothing new counted for or against a copy.
+  auto counted = [&r](int id) {
+    const auto* x = r.record(id);
+    return x ? x->plays + x->failures + x->stalls : 0.0;
+  };
+  double c501 = counted(501), c503 = counted(503);
+  REQUIRE(r.session->replayFrom(minuteOf(mtime::now() - 1800), Why::Rewind));
+  r.picture();
+  r.run(30000);
+  r.session->goLive();
+  r.run(250);
+  r.picture();
+  r.run(5000);
+  CHECK(counted(501) == doctest::Approx(c501));
+  CHECK(counted(503) == doctest::Approx(c503));
+
+  // Leaving: the time its picture played goes in.
+  REQUIRE(r.session->tune(cnn));
+  r.run(250);
+  CHECK(r.record(501)->playedS >= 50);
+  // CNN never shows a picture: start failures on its copies, no plays.
+  r.player->state = {};
+  r.run(90000);
+  const auto* bad = r.record(504);
+  REQUIRE(bad);
+  CHECK(bad->failures >= 1);
+  CHECK(bad->plays == 0);
+
+  // Saved in its own file (at most every 30 s, and when the app leaves)
+  // and read back by the next run.
+  r.session->saveLogNow();
+  r.tv.pool.drain();
+  auto text = r.tv.files.read("feed-scores.json");
+  REQUIRE(text);
+  CHECK(text->find("://") == std::string::npos);
+  Store again(r.tv.host());
+  const auto* back = again.feedScores().find(r.channelOf(501));
+  REQUIRE(back);
+  CHECK(back->plays == doctest::Approx(r.record(501)->plays).epsilon(0.01));
+  CHECK(back->height == 1080);
+  r.noLinks();
+}
+
+TEST_CASE("feed scores in order: a clearly better copy goes first; none of it without history; pinned still first") {
+  Rig r;
+  std::string espn = r.entry("ESPN");
+  auto order = [&r, &espn] {
+    std::vector<std::string> out;
+    for (const Feed& f : r.store->feeds(espn)) out.push_back(f.channelId.substr(f.channelId.size() - 3));
+    return out;
+  };
+  CHECK(order() == std::vector<std::string>{"501", "502", "503"});
+  // 503 starts every time, fast, at 1080p60; 501 mostly fails.
+  std::string c501 = r.channelOf(501), c503 = r.channelOf(503);
+  for (int i = 0; i < 4; ++i) r.store->noteStart(c503, 1500);
+  r.store->notePicture(c503, marigold::engine::quality::Picture{1080, 60, false});
+  r.store->noteStart(c501, 9000);
+  for (int i = 0; i < 3; ++i) r.store->noteStartFailed(c501);
+  // 502 has no history: it keeps its place; the measured two swap.
+  CHECK(order() == std::vector<std::string>{"503", "502", "501"});
+  // "Always start with" 501: it stays first.
+  r.store->pinFeed(espn, c501);
+  CHECK(order() == std::vector<std::string>{"501", "502", "503"});
+  r.store->pinFeed(espn, "");
+  CHECK(order() == std::vector<std::string>{"503", "502", "501"});
+  // Probes (Test all sources, 1.0.11) feed the same records: 502 measured
+  // well now goes ahead of 501 too, and being about as good as 503 it
+  // keeps its catalog place ahead of it.
+  marigold::engine::scores::Probe p;
+  p.ok = true;
+  p.startMs = 1400;
+  p.height = 1080;
+  p.fps = 60;
+  for (int i = 0; i < 4; ++i) r.store->recordProbe(r.channelOf(502), p);
+  CHECK(order() == std::vector<std::string>{"502", "503", "501"});
+  CHECK(r.store->feedScore(r.channelOf(502)));
+}
+
+TEST_CASE("providers in the playback log: once a day after the app starts, and on export") {
+  Rig r(Rig::Two{}, false);
+  std::string espn = r.entry("ESPN"), tnt = r.entry("TNT"), cnn = r.entry("CNN");
+  // No lineup yet: the daily lines wait for it.
+  r.run(61000);
+  CHECK(r.logged("providers").empty());
+  r.store->addToLineup({espn, tnt, cnn});
+  fake::settle(*r.store, r.tv);
+  r.watchLive(espn, 701);
+  r.run(61000);
+  auto lines = r.logged("providers");
+  REQUIRE(lines.size() == 3);
+  CHECK(lines[0].provider == "Dream");
+  CHECK(lines[0].session == 0);
+  // Dream: ESPN and CNN (2 of 3), alone on CNN, replay on ESPN.
+  CHECK(lines[0].detail == "no plays yet; lineup 67%, only here 33%, replay 33%");
+  CHECK(lines[1].provider == "Trex");
+  CHECK(lines[1].detail.rfind("plays 1.0, picture ", 0) == 0);
+  CHECK(lines[1].detail.find("start failures 0%; lineup 67%, only here 33%, replay 67%") != std::string::npos);
+  CHECK(lines[2].provider == "Dream + Trex");
+  CHECK(lines[2].detail == "together: lineup 100%, replay 67%");  // CNN has none
+  // Not again the same day, in this run or the next.
+  r.run(120000);
+  CHECK(r.logged("providers").size() == 3);
+  {
+    r.session->saveLogNow();
+    r.tv.pool.drain();
+    Session next(*r.store, r.tv.host(), std::make_unique<Player>(r.player), Session::Hooks{});
+    size_t before = next.log().size();
+    next.tick(r.tv.ms + 1000);
+    next.tick(r.tv.ms + 70000);
+    size_t added = 0;
+    for (size_t i = before; i < next.log().size(); ++i) added += next.log().entries()[i].event == "providers";
+    CHECK(added == 0);
+  }
+  // On export: as of now, whatever the day.
+  CHECK(r.session->logProviders(true));
+  CHECK(r.logged("providers").size() == 6);
+  r.noLinks();
 }
