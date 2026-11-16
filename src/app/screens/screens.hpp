@@ -132,6 +132,17 @@ enum class LineupStep { Area, Countries, Kinds };
 std::unique_ptr<Screen> makeLineupStep(App& app, LineupStep step);
 // Sources for a channel (red key).
 std::unique_ptr<Screen> makeSources(App& app, const std::string& entryId);
+// Build 166, Test all sources (source_test_screens.cpp): the start
+// panel (over Settings), the testing screen (Back leaves the test running in
+// the app), the providers ranked, and "If you kept one or two". The Settings
+// row opens the testing screen while a test runs, the results once one has
+// ended, else the start panel; its second line says how it stands.
+std::unique_ptr<Screen> makeTestStart(App& app);
+std::unique_ptr<Screen> makeTesting(App& app);
+std::unique_ptr<Screen> makeTestResults(App& app);
+std::unique_ptr<Screen> makeKeepingPairs(App& app);
+void openTestAllSources(App& app);
+std::string testAllSourcesLine(App& app);
 // "Listings look wrong?": the channel's distinct schedules, to pick the
 // right one (Build 153).
 std::unique_ptr<Screen> makeGuideChoice(App& app, const std::string& entryId);

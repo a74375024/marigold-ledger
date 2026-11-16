@@ -95,6 +95,11 @@ class TsVideoProbe {
   const std::string& timeline() const { return timeline_; }
   bool sawPicture() const { return sawPicture_; }
   uint64_t packets() const { return packets_; }
+  // Build 166 (Test all sources): whole pictures read so far, and how many
+  // of them were key (I / IDR / IRAP) pictures. A picture counts once the
+  // next one starts (or its PES ends).
+  int pictures() const { return pictures_; }
+  int intraPictures() const { return intraPictures_; }
 
  private:
   struct Window {
@@ -167,6 +172,7 @@ class TsVideoProbe {
   Class last_ = Class::None;
   std::string timeline_;
   bool sawPicture_ = false;
+  int pictures_ = 0, intraPictures_ = 0;
   uint64_t lastIntra_ = 0;
   int lastIntraWindow_ = -1000;
   // The latest window's numbers, for detail().

@@ -112,8 +112,9 @@ public final class MarigoldActivity extends Activity implements SurfaceHolder.Ca
 
   // ---- Helpers ----
 
-  // While a picture plays the screen saver stays away (the TV holds it the
-  // same way); on the guide it may start as usual.
+  // While a picture plays (or Test all sources runs: Bridge.keepAwake) the
+  // screen saver stays away (the TV holds it the same way); on the guide it
+  // may start as usual.
   void keepScreenOn(boolean on) {
     if (on) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);

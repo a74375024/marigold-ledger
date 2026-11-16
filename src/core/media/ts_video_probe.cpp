@@ -668,8 +668,10 @@ void TsVideoProbe::endPicture() {
   if (!picOpen_) return;
   picOpen_ = false;
   ++cur_.pictures;
+  ++pictures_;
   if (picIntra_) {
     ++cur_.intra;
+    ++intraPictures_;
     lastIntra_ = picBytes_;
     lastIntraWindow_ = windows_;
   } else {

@@ -788,6 +788,18 @@ void providersRows(App& app, ui::ListPanel& p, SettingsPages& pages) {
                "Its login stays on this TV; the password is never shown. Open it to remove the provider.";
     p.items.push_back(it);
   }
+  // Build 166: Test all sources, and how it stands ("Last tested:
+  // today 1:12 AM", "Testing now · 38%"; the rows are built again every
+  // second here).
+  {
+    ui::PanelItem test = chevron("Test all sources", testAllSourcesLine(app), "", [&app] { openTestAllSources(app); });
+    test.about = "Checks every source of every channel in My Lineup, on all your providers: how fast it starts, "
+                 "whether it plays, its real picture and how far back replay goes. Then ranks your providers.\n"
+                 "It takes a few hours, one connection per provider at a time, and pauses while you watch.";
+    dim(test, !accounts.empty() && app.store().channels()->lineupConfigured,
+        accounts.empty() ? "Add a provider first" : "Set up My Lineup first");
+    p.items.push_back(test);
+  }
   ui::PanelItem add = chevron("Add a provider", "Xtream, Emby / Jellyfin or an M3U playlist", "",
                               [&app] { app.nav().push(makeAddProvider(app)); });
   add.about = "Channels from every provider you add are merged into one guide.";

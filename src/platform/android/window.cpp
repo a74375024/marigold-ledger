@@ -266,6 +266,13 @@ RemoteKeys Window::remoteKeys() const { return impl_->amazon ? RemoteKeys::fireT
 
 void Window::systemCursor(bool /*shown*/) {}
 
+void Window::keepAwake(bool on) {
+  JNIEnv* e = android::env();
+  static jmethodID keep = android::method("keepAwake", "(Z)V");
+  e->CallStaticVoidMethod(android::bridge(), keep, on ? JNI_TRUE : JNI_FALSE);
+  android::caught(e, "keepAwake");
+}
+
 int Window::drawableWidth() const { return impl_->drawableW; }
 int Window::drawableHeight() const { return impl_->drawableH; }
 const std::string& Window::runtime() const { return impl_->runtime; }

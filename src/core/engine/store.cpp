@@ -3543,6 +3543,89 @@ void Store::notePlayed(const std::string& channelId, uint32_t ms) {
 void Store::recordProbe(const std::string& channelId, const scores::Probe& probe) {
   impl_->scores.recordProbe(channelId, probe, time::now());
   impl_->scoresDirty = true;
+  // The picture it measured shows on the copy's rows, as a play's does.
+  if (probe.ok && probe.height > 0) {
+    quality::Picture picture;
+    picture.height = probe.height;
+    picture.fps = probe.fps;
+    if (impl_->pictures.remember(channelId, picture)) savePicturesLater();
+  }
+}
+
+std::vector<scores::LineupRow> Store::lineupRows() const {
+  const Impl& m = *impl_;
+  std::vector<scores::LineupRow> out;
+  if (!m.catalog) return out;
+  std::set<std::string> seen;
+  auto add = [&](const std::string& id) {
+    if (!m.lineup.lineupIDs.count(id) || !seen.insert(id).second) return;
+    auto info = m.entryInfo.find(id);
+    if (info == m.entryInfo.end() || info->second >= m.catalog->entries.size()) return;
+    const auto& entry = m.catalog->entries[info->second];
+    scores::LineupRow row;
+    row.entryId = id;
+    const GuideChannel* g = channels_ ? channels_->find(id) : nullptr;
+    row.name = g ? g->name : entry.name;
+    for (const std::string& member : entry.members) {
+      auto ci = m.indexByID.find(member);
+      if (ci == m.indexByID.end() || ci->second >= m.channels->size()) continue;
+      scores::LineupCopy c;
+      c.feedId = member;
+      c.provider = std::string(scores::providerOf(member));
+      c.name = (*m.channels)[ci->second].name;
+      c.days = catchupDays(member);
+      row.copies.push_back(std::move(c));
+    }
+    out.push_back(std::move(row));
+  };
+  // Guide order, then any the guide doesn't show.
+  if (channels_)
+    for (int i : channels_->lineup)
+      if (i >= 0 && static_cast<size_t>(i) < channels_->all.size()) add(channels_->all[static_cast<size_t>(i)].id);
+  for (const std::string& id : m.lineup.lineupIDs) add(id);
+  return out;
+}
+
+std::vector<std::pair<std::string, std::string>> Store::providerNames() const {
+  std::vector<std::pair<std::string, std::string>> out;
+  for (const sources::Account& a : impl_->accounts) out.emplace_back(a.sourceId(), redact(a.displayName));
+  return out;
+}
+
+bool Store::directCopy(const std::string& channelId) const {
+  return impl_->indexByID.count(channelId) > 0 && !serverOpened(channelId);
+}
+
+std::optional<Feed> Store::copyFeed(const std::string& channelId) const {
+  std::vector<Feed> f = feedsFor({channelId});
+  if (f.empty() || f.front().needsOpen || f.front().url.empty()) return std::nullopt;
+  return f.front();
+}
+
+std::string Store::claimedQuality(const std::string& channelId) const {
+  const Impl& m = *impl_;
+  auto ci = m.indexByID.find(channelId);
+  if (ci == m.indexByID.end() || ci->second >= m.channels->size()) return {};
+  const Channel& c = (*m.channels)[ci->second];
+  return quality::claimed(c.name, c.group ? std::string_view(*c.group) : std::string_view());
+}
+
+const std::vector<sourcetest::SameService>& Store::sameServices() const {
+  Impl& m = *impl_;
+  time::Seconds now = time::now();
+  bool stale = m.sameServiceCatalog != m.catalog.get() || m.sameServiceLineup != m.lineupSerial ||
+               m.sameServiceAccounts != m.accounts.size() || now - m.sameServiceAt >= 600;
+  if (stale) {
+    m.sameServiceCatalog = m.catalog.get();
+    m.sameServiceLineup = m.lineupSerial;
+    m.sameServiceAccounts = m.accounts.size();
+    m.sameServiceAt = now;
+    std::vector<std::string> ids;
+    for (const sources::Account& a : m.accounts) ids.push_back(a.sourceId());
+    m.sameService = ids.size() < 2 ? std::vector<sourcetest::SameService>()
+                                   : sourcetest::sameServices(lineupRows(), ids, m.scores, now);
+  }
+  return m.sameService;
 }
 
 const scores::Book& Store::feedScores() const { return impl_->scores; }
@@ -3555,20 +3638,9 @@ scores::Rollup Store::providerRollup() const {
   const Impl& m = *impl_;
   std::vector<std::string> providers;
   for (const sources::Account& a : m.accounts) providers.push_back(a.sourceId());
-  std::vector<scores::Row> rows;
-  if (m.catalog) {
-    for (const std::string& id : m.lineup.lineupIDs) {
-      auto info = m.entryInfo.find(id);
-      if (info == m.entryInfo.end() || info->second >= m.catalog->entries.size()) continue;
-      scores::Row row;
-      for (const std::string& member : m.catalog->entries[info->second].members) {
-        if (!m.indexByID.count(member)) continue;
-        row.push_back({std::string(scores::providerOf(member)), catchupDays(member) > 0});
-      }
-      rows.push_back(std::move(row));
-    }
-  }
-  return scores::rollup(m.scores, providers, rows, time::now());
+  // Test all sources: from the lineup's rows with their copies, which also fills in
+  // Test all sources' figures (the log's stay the same).
+  return scores::rollupLineup(m.scores, providers, lineupRows(), time::now());
 }
 
 std::vector<std::pair<std::string, std::string>> Store::providerLines(const scores::Rollup& rollup) const {
@@ -3661,6 +3733,14 @@ std::vector<std::string> Store::versionsOf(const std::string& id) const {
   {
     size_t keep = pinned && !out.empty() && out.front() == *pinned ? 1 : 0;
     scores::orderMeasured(out, keep, [&m, now](const std::string& c) { return m.scores.score(c, now); });
+  }
+  // Test all sources: the backup (the second copy) from a separate service when the
+  // first's provider and the second's look like one service underneath.
+  if (out.size() >= 3 && m.accounts.size() >= 3) {
+    const std::vector<sourcetest::SameService>& same = sameServices();
+    if (!same.empty())
+      sourcetest::preferSeparateBackup(
+          out, [&same](std::string_view a, std::string_view b) { return sourcetest::isSame(same, a, b); });
   }
   // Marigold (Build 136): the catalog lists direct versions first, but the
   // record of a source can move a server-opened one ahead of them; while a

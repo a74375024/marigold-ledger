@@ -324,6 +324,13 @@ struct Store::Impl {
   scores::Book scores;
   std::shared_ptr<PicturesWriter> scoresWriter = std::make_shared<PicturesWriter>();
   bool scoresDirty = false;   // changed since last written
+  // Test all sources: providers that look like one service (Store::sameServices) and
+  // what they were worked out from.
+  std::vector<sourcetest::SameService> sameService;
+  const void* sameServiceCatalog = nullptr;
+  uint64_t sameServiceLineup = 0;
+  size_t sameServiceAccounts = 0;
+  time::Seconds sameServiceAt = 0;
   uint32_t scoresSaveAt = 0;  // tick ms of the next write, at the soonest
   std::set<std::string> captionChannels;    // feed channel ids whose stream had captions
   std::set<std::string> hiddenGroups;  // provider groups left out of All Channels

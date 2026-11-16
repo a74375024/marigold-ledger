@@ -99,6 +99,13 @@ class Window {
   // A no-op where the TV's SDL lacks the call, and on other platforms.
   void systemCursor(bool shown);
 
+  // Build 166 (Test all sources): keeps the screen on, with no screen saver
+  // or display sleep, while nothing plays (a picture playing keeps it on by
+  // itself, as before). webOS: the TV's screen saver request is answered
+  // "hold" (as during video); Android: FLAG_KEEP_SCREEN_ON; Apple TV: the
+  // idle timer off; the Mac: a display sleep assertion. App thread.
+  void keepAwake(bool on);
+
   int drawableWidth() const;
   int drawableHeight() const;
   // What runs underneath, for Help and the logs: the TV's SDL version on

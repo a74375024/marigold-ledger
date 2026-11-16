@@ -41,10 +41,27 @@ final class Bridge {
     if (activity == a) activity = null;
   }
 
-  /** UI thread. */
+  // What keeps the screen on: a picture playing (Video), and the app asking
+  // while nothing plays (Build 166: Test all sources). UI thread only.
+  private static boolean videoAwake, appAwake;
+
+  /** UI thread: a picture plays (or stopped). */
   static void keepScreenOn(boolean on) {
+    videoAwake = on;
+    applyAwake();
+  }
+
+  /** The app thread (Build 166): kept on while Test all sources runs. */
+  static void keepAwake(boolean on) {
+    onUi(() -> {
+      appAwake = on;
+      applyAwake();
+    });
+  }
+
+  private static void applyAwake() {
     MarigoldActivity a = activity;
-    if (a != null) a.keepScreenOn(on);
+    if (a != null) a.keepScreenOn(videoAwake || appAwake);
   }
 
   static void onUi(Runnable r) {

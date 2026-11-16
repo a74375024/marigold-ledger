@@ -30,7 +30,7 @@ float ListPanel::rowHeight(Ctx& c, const PanelItem& it, float width) const {
 }
 
 std::string ListPanel::look() const {
-  std::string out = title + '\x1f' + subtitle + '\x1f' + hint;
+  std::string out = title + '\x1f' + subtitle + '\x1f' + hint + '\x1f' + corner;
   auto add = [&out](const std::string& s) {
     out += '\x1f';
     out += s;
@@ -50,6 +50,7 @@ std::string ListPanel::look() const {
     add(it.detail);
     add(it.value);
     add(it.tag);
+    add(std::to_string(it.tagStyle));
     add(it.why);
     add(it.about);
     add(it.preview);
@@ -185,7 +186,9 @@ void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
     y += 30;
   }
   if (!title.empty()) {
-    label(c, title, r.x, y, Weight::Bold, 38, theme::white(), r.w);
+    float cornerW = corner.empty() ? 0 : std::min(textWidth(c, corner, Weight::Regular, 20), r.w * 0.4f);
+    label(c, title, r.x, y, Weight::Bold, 38, theme::white(), r.w - (cornerW > 0 ? cornerW + 20 : 0));
+    if (cornerW > 0) label(c, corner, r.x + r.w - cornerW, y + 14, Weight::Regular, 20, theme::white(0.55f), cornerW);
     y += 66;
   }
   float hintH = hint.empty() ? 0 : 50;
@@ -339,7 +342,14 @@ void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
     float titleY = second.empty() ? row.y + (row.h - c.t.lineHeight(Weight::Bold, 25)) * 0.5f : row.y + 12;
     float titleW = label(c, it.title, x, titleY, Weight::Bold, 25, fg, tw);
     if (it.coast >= 0) coastChip(c, it.coast == 1, x + titleW + 12, titleY + 5, 13);
-    if (!it.tag.empty()) chip(c, it.tag, x + titleW + 12, titleY + 3, 14, theme::hex(theme::kNew), theme::white());
+    if (!it.tag.empty()) {
+      if (it.tagStyle == 2)
+        label(c, it.tag, x + titleW + 14, titleY + 6, Weight::Bold, 15, focused ? theme::black(0.55f) : theme::white(0.6f));
+      else if (it.tagStyle == 1)
+        chip(c, it.tag, x + titleW + 12, titleY + 3, 14, theme::hex(theme::kStar), theme::black());
+      else
+        chip(c, it.tag, x + titleW + 12, titleY + 3, 14, theme::hex(theme::kNew), theme::white());
+    }
     if (&second == &it.why) label(c, second, x, row.y + 46, Weight::Medium, 17, theme::hex(theme::kWarning), tw);
     else if (!second.empty() && it.warn)
       label(c, second, x, row.y + 46, Weight::Medium, 17,

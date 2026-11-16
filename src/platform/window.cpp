@@ -10,6 +10,7 @@
 
 #include "core/util/log.hpp"
 #include "entrada_texto.h"
+#include "esmaecer.h"
 #include "sdlcompat.h"
 
 namespace marigold::platform {
@@ -264,6 +265,10 @@ RemoteKeys Window::remoteKeys() const { return RemoteKeys::lg(); }
 void Window::systemCursor(bool shown) {
   if (impl_->cursorVisibility) impl_->cursorVisibility(shown ? SDL_TRUE : SDL_FALSE);
 }
+
+// The TV's screensaver request is answered "hold" (video.c, as while video
+// plays) for as long as the app asks.
+void Window::keepAwake(bool on) { esmaecer_segurar(on ? 1 : 0); }
 
 int Window::drawableWidth() const { return impl_->drawableW; }
 int Window::drawableHeight() const { return impl_->drawableH; }

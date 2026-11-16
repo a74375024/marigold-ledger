@@ -64,10 +64,17 @@ App::App(platform::Window& window, platform::Storage& storage, gfx::Renderer& g,
     host.installUpdate = platform::update::install;
   }
   updates_ = engine::updates::Updates::make(host, build_.version);
+  engine::Host testHost = host;
   store_ = std::make_unique<Store>(std::move(host));
   // The first-run setup: no update card in this run.
   firstRun_ = store_->accounts().empty();
   playback_ = std::make_unique<Playback>(*this);
+  // Build 166: Test all sources waits while anything plays, or the app is
+  // away; its lines go in the playback log.
+  sourceTest_ = std::make_unique<engine::sourcetest::Runner>(*store_, testHost);
+  sourceTest_->playing = [this] { return hidden_ || (playback_->active() && !playback_->paused()); };
+  sourceTest_->log = [this](std::string_view event, std::string_view detail) { playback_->logNote(event, detail); };
+  testEnded_ = sourceTest_->endedSerial();
   // The run's first line in the playback log: which build on what.
   playback_->logLaunch(report::launchDetail(build_.build, build_.version, build_.system, build_.device));
   // The previous run's crash, in the playback log Help exports (no links:
@@ -77,6 +84,8 @@ App::App(platform::Window& window, platform::Storage& storage, gfx::Renderer& g,
 
 App::~App() {
   nav_ = Navigator();  // screens first: they may still use playback and the store
+  sourceTest_.reset();  // its progress written; before playback (its log) and the store
+  if (keptAwake_) window_.keepAwake(false);
   playback_.reset();
   pool_.stop();
   updates_.reset();
@@ -107,6 +116,7 @@ void App::suspend() {
   playback_->suspend();
   video_.stop();
   playback_->saveLogNow();
+  sourceTest_->saveNow();
   dirty_ = true;
 }
 
@@ -462,6 +472,24 @@ void App::tickUpdates(wake::Due& due, bool& draw) {
   }
 }
 
+void App::tickSourceTest() {
+  if (sourceTest_->tick(ms_)) dirty_ = true;
+  bool awake = sourceTest_->running();
+  if (awake != keptAwake_) {
+    keptAwake_ = awake;
+    window_.keepAwake(awake);
+  }
+  int ended = sourceTest_->endedSerial();
+  if (ended != testEnded_) {
+    testEnded_ = ended;
+    // Its own screens show the results; elsewhere, a note says where.
+    Screen* top = nav_.top();
+    std::string shown = top ? top->name() : "";
+    if (shown != "testing" && shown != "test results")
+      toast("Test all sources is done. The results are in Settings \xe2\x80\xba Providers.");
+  }
+}
+
 void App::drawUpdateCard(ui::Ctx& c) {
   using Phase = engine::updates::Updates::Phase;
   namespace up = engine::updates;
@@ -593,6 +621,7 @@ void App::run() {
     t = Clock::now();
     bool stored = store_->tick(ms_);
     if (stored) dirty_ = true;
+    tickSourceTest();
     spent[Part::Store] = since(t);
     t = Clock::now();
     video_.pump();

@@ -54,6 +54,10 @@ Record Record::at(time::Seconds now) const {
 
 double Record::starts() const { return plays + failures + kProbeWeight * (probes + probeFailures); }
 
+bool Record::mostlyFails() const {
+  return failures + kProbeWeight * probeFailures > plays + kProbeWeight * probes;
+}
+
 std::optional<uint32_t> Record::medianStartMs() const {
   if (startMs.empty()) return std::nullopt;
   return median(startMs);
@@ -120,6 +124,7 @@ void Book::picture(const std::string& feedId, int width, int height, int fps, ti
 void Book::recordProbe(const std::string& feedId, const Probe& p, time::Seconds now) {
   if (feedId.empty()) return;
   Record& r = touch(feedId, now);
+  r.probedAt = now;
   if (p.ok) {
     r.probes += 1;
     r.startMs.push_back(p.startMs);
@@ -170,7 +175,7 @@ std::optional<double> Book::score(const std::string& feedId, time::Seconds now) 
   const Record* r = find(feedId);
   if (!r) return std::nullopt;
   Record d = r->at(now);
-  if (d.starts() < kEnoughStarts) return std::nullopt;
+  if (d.starts() < kEnoughStarts && d.probes + d.probeFailures < kEnoughProbes) return std::nullopt;
   return scoreOf(d);
 }
 
@@ -196,6 +201,7 @@ std::string Book::toJson() const {
     row.push(r.archiveOk);
     row.push(static_cast<int>(r.archiveDays));
     row.push(static_cast<int64_t>(r.archiveAt));
+    row.push(static_cast<int64_t>(r.probedAt));
     list.push(std::move(row));
   }
   json::Value v = json::Value::object();
@@ -232,6 +238,7 @@ Book Book::fromJson(std::string_view text) {
     r.archiveOk = static_cast<int>(row[size_t(12)].asInt(-1));
     r.archiveDays = static_cast<uint16_t>(std::clamp<int64_t>(row[size_t(13)].asInt(), 0, 3650));
     r.archiveAt = row[size_t(14)].asInt();
+    r.probedAt = row[size_t(15)].asInt();
     std::string id = row[size_t(0)].asString();
     auto old = b.byId_.find(id);
     if (old != b.byId_.end()) b.bySeq_.erase(old->second.seq);
@@ -273,12 +280,16 @@ std::string_view providerOf(std::string_view feedId) {
   return bar == std::string_view::npos ? feedId : feedId.substr(0, bar);
 }
 
-Rollup rollup(const Book& book, const std::vector<std::string>& providers, const std::vector<Row>& rows,
-              time::Seconds now) {
+namespace {
+Rollup rollupOf(const Book& book, const std::vector<std::string>& providers, const std::vector<Row>& rows,
+                const std::vector<LineupRow>* lineup, time::Seconds now) {
   Rollup out;
   struct Sums {
     double plays = 0, failures = 0, stalls = 0, playedS = 0, hdPlays = 0, measuredPlays = 0;
     std::vector<uint32_t> startMs;
+    // Test all sources: probes too, and the measured copies.
+    double tested = 0, testedBad = 0;
+    int measuredCopies = 0, hdCopies = 0;
   };
   std::map<std::string, Sums> sums;
   for (const std::string& p : providers) sums[p];
@@ -295,6 +306,12 @@ Rollup rollup(const Book& book, const std::vector<std::string>& providers, const
       if (d.height >= 1070) s->second.hdPlays += d.plays;
     }
     s->second.startMs.insert(s->second.startMs.end(), d.startMs.begin(), d.startMs.end());
+    s->second.tested += d.starts();
+    s->second.testedBad += d.failures + kProbeWeight * d.probeFailures;
+    if (d.height > 0) {
+      ++s->second.measuredCopies;
+      if (d.height >= 1070) ++s->second.hdCopies;
+    }
   });
   double total = static_cast<double>(rows.size());
   auto share = [total](size_t n) { return total > 0 ? static_cast<double>(n) / total : 0.0; };
@@ -325,6 +342,31 @@ Rollup rollup(const Book& book, const std::vector<std::string>& providers, const
     f.lineup = share(covered);
     f.only = share(alone);
     f.replay = share(replay);
+    // Test all sources: probes and plays together; the archive as the probes found it.
+    f.tested = s.tested;
+    if (s.tested > 0) f.startFailures = s.testedBad / s.tested;
+    if (s.measuredCopies > 0) f.fullHdCopies = static_cast<double>(s.hdCopies) / static_cast<double>(s.measuredCopies);
+    if (lineup) {
+      size_t works = 0;
+      std::vector<uint16_t> depths;
+      for (const LineupRow& row : *lineup) {
+        bool any = false;
+        for (const LineupCopy& c : row.copies) {
+          if (c.provider != p || c.days == 0) continue;
+          const Record* rec = c.feedId.empty() ? nullptr : book.find(c.feedId);
+          if (rec && rec->archiveOk == 0) continue;
+          any = true;
+          uint16_t days = rec && rec->archiveOk == 1 && rec->archiveDays > 0 ? rec->archiveDays : c.days;
+          if (days > 0) depths.push_back(days);
+        }
+        if (any) ++works;
+      }
+      f.replayWorks = share(works);
+      if (!depths.empty()) {
+        std::sort(depths.begin(), depths.end());
+        f.replayDays = depths[depths.size() / 2];
+      }
+    }
     out.providers.push_back(std::move(f));
   }
   for (size_t a = 0; a < providers.size(); ++a)
@@ -342,6 +384,25 @@ Rollup rollup(const Book& book, const std::vector<std::string>& providers, const
       out.pairs.push_back(std::move(pf));
     }
   return out;
+}
+
+}  // namespace
+
+Rollup rollup(const Book& book, const std::vector<std::string>& providers, const std::vector<Row>& rows,
+              time::Seconds now) {
+  return rollupOf(book, providers, rows, nullptr, now);
+}
+
+Rollup rollupLineup(const Book& book, const std::vector<std::string>& providers, const std::vector<LineupRow>& rows,
+                    time::Seconds now) {
+  std::vector<Row> plain;
+  plain.reserve(rows.size());
+  for (const LineupRow& r : rows) {
+    Row row;
+    for (const LineupCopy& c : r.copies) row.push_back({c.provider, c.days > 0});
+    plain.push_back(std::move(row));
+  }
+  return rollupOf(book, providers, plain, &rows, now);
 }
 
 std::vector<std::pair<std::string, std::string>> rollupLines(

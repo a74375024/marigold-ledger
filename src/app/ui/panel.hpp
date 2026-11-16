@@ -35,6 +35,9 @@ struct PanelItem {
   bool stepper = false;
   int coast = -1;  // an EAST (0) or WEST (1) tag after the title
   std::string tag;  // a small blue tag after the title ("NEW")
+  // Build 166: the tag's look: 0 blue (as "NEW"), 1 amber ("STARTS WITH"),
+  // 2 plain grey letters ("BACKUP").
+  int tagStyle = 0;
   // A row that can't be used is dimmed (never hidden, so rows stay put)
   // with why on its second line ("Turn on All Channels tab").
   std::string why;
@@ -76,6 +79,7 @@ class ListPanel {
  public:
   std::string title;
   std::string subtitle;  // small caps line above the title ("FILTER · My Lineup")
+  std::string corner;    // Build 166: a small line at the title's right ("tested today")
   std::string hint;      // bottom line
   std::vector<PanelItem> items;
 

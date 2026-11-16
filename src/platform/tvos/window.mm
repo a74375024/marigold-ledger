@@ -183,6 +183,10 @@ RemoteKeys Window::remoteKeys() const { return RemoteKeys::appleTv(); }
 void Window::systemCursor(bool /*shown*/) {}
 #endif
 
+void Window::keepAwake(bool on) {
+  tvos::onMain([on] { tvos::keepAwake(tvos::Awake::App, on); });
+}
+
 int Window::drawableWidth() const { return 1920; }
 int Window::drawableHeight() const { return 1080; }
 const std::string& Window::runtime() const { return impl_->runtime; }

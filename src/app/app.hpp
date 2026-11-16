@@ -10,6 +10,7 @@
 
 #include "app/screen.hpp"
 #include "core/engine/session.hpp"
+#include "core/engine/source_test.hpp"
 #include "core/engine/updates.hpp"
 #include "core/input/pointer_mode.hpp"
 #include "core/input/wake.hpp"
@@ -64,6 +65,9 @@ class App {
   // Build 148: updating the app itself; null where it can't (webOS, the
   // Apple TV).
   engine::updates::Updates* updates() { return updates_.get(); }
+  // Build 166: Test all sources. It runs in the app while nothing
+  // plays, whatever screen is up; the screen is kept on meanwhile.
+  engine::sourcetest::Runner& sourceTest() { return *sourceTest_; }
 
   // A short message in a capsule (3.5 s).
   void toast(const std::string& message, bool top = false);
@@ -101,6 +105,9 @@ class App {
   // The update card (Build 148): up when due, on the guide or Live Events;
   // its keys while it is.
   void tickUpdates(wake::Due& due, bool& draw);
+  // Test all sources: its next probes, the screen kept on while it runs, and
+  // a note when it ends away from its screen.
+  void tickSourceTest();
   bool updateCardKey(const KeyEvent& k);
   void drawUpdateCard(ui::Ctx& c);
 
@@ -118,6 +125,9 @@ class App {
   std::unique_ptr<Store> store_;
   std::unique_ptr<Playback> playback_;
   std::unique_ptr<engine::updates::Updates> updates_;
+  std::unique_ptr<engine::sourcetest::Runner> sourceTest_;
+  bool keptAwake_ = false;  // the window was asked to keep the screen on
+  int testEnded_ = 0;       // the test's endedSerial() last seen
   Navigator nav_;
 
   bool quit_ = false;
