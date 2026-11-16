@@ -111,6 +111,9 @@ class GuideScreen : public Screen {
   void select();
   void longPress();
   void watch(const std::string& entryId);
+  // Build 167: hold OK's Start over: the channel full screen from `from`
+  // in its archive (no live start first).
+  void startOver(const std::string& entryId, time::Seconds from);
   void openTimeMenu();
   void openFilter();
   void openSources();

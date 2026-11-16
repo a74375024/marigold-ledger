@@ -964,6 +964,8 @@ class MiniGuide : public Screen {
       if (rowFocused) c.g.stroke(cell, theme::white(), 14, 3);
       if (g.number) ui::label(c, std::to_string(*g.number), cell.x + 14, cell.y + 32, Weight::Bold, 24, theme::white(), 60);
       ui::logo(c, g.logoUrl, g.name, {cell.x + 74, cell.y + 18, 100, 60});
+      // Build 167: a channel with replay, the small blue mark under its number.
+      if (g.replayDays > 0) ui::replayMark(c, cell.x + 16, cell.y + kRowH - 26, 16);
       const std::vector<Listing>* v = listingsOf(row);
       int focusedProgram = rowFocused && v ? programIndex(*v, focusTime_) : -1;
       bool drewAny = false;

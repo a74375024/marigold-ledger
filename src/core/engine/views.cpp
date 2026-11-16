@@ -1,6 +1,7 @@
 #include "core/engine/views.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -54,6 +55,7 @@ bool passes(const GuideChannel& g, const Filter& filter, const Listings* li, tim
   if (filter.kind == K::None) return true;
   if (filter.kind == K::Section) return g.section == filter.name;
   if (filter.kind == K::Group) return g.group == filter.name;
+  if (filter.kind == K::CanGoBack) return g.replayDays > 0;
   uint8_t want = filter.kind == K::SportsNow ? kGenreSports
                  : filter.kind == K::NewsNow ? kGenreNews
                  : filter.kind == K::MoviesNow ? kGenreMovie
@@ -196,6 +198,43 @@ std::vector<Count> sectionCounts(const Channels& ch, const std::vector<int>& row
   return out;
 }
 
+bool anyReplay(const Channels& ch, const std::vector<int>& rows) {
+  for (int i : rows)
+    if (const GuideChannel* g = at(ch, i); g && g->replayDays > 0) return true;
+  return false;
+}
+
+Box fitted(Box area, float aspect) {
+  if (!(aspect > 0) || area.w <= 0 || area.h <= 0) return area;
+  float s = std::min(area.w / aspect, area.h);  // the fitted height
+  float w = std::round(s * aspect), h = std::round(s);
+  return {std::round(area.x + (area.w - w) * 0.5f), std::round(area.y + (area.h - h) * 0.5f), w, h};
+}
+
+Box replayMark(Box cell) { return {cell.x + 8, cell.y + cell.h - 22, 16, 16}; }
+
+Box replayCorner(Box cell) {
+  Box m = replayMark(cell);
+  return {m.x - 1, m.y - 1, m.w + 2, m.h + 2};
+}
+
+namespace {
+bool overlaps(Box a, Box b) { return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h; }
+}  // namespace
+
+Box logoArea(Box area, float aspect, Box corner, bool replay) {
+  if (!replay) return area;
+  Box f = fitted(area, aspect);
+  if (!overlaps(f, corner)) return area;
+  // Smaller by about 15%, centred across and at the top: enough when it
+  // clears the corner sideways (narrower than the gap) or from above.
+  float clearSide = (area.w - 2 * (corner.x + corner.w - area.x)) / f.w;
+  float clearTop = 2 * (corner.y - area.y) / (area.h + f.h);
+  float s = std::clamp(std::max(clearSide, clearTop), 0.5f, 0.85f);
+  float w = area.w * s, h = area.h * s;
+  return {area.x + (area.w - w) * 0.5f, area.y, w, h};
+}
+
 int programAt(const std::vector<Listing>& v, time::Seconds t, time::Seconds windowStart, time::Seconds windowEnd) {
   auto it = std::upper_bound(v.begin(), v.end(), t, [](time::Seconds x, const Listing& l) { return x < l.end; });
   if (it != v.end() && it->start < windowEnd) return static_cast<int>(it - v.begin());
@@ -238,6 +277,64 @@ GuideTop guideTop(const std::vector<Listing>& v, int focused, time::Seconds now)
 std::string minutesLeft(const Listing& l, time::Seconds now) {
   if (!l.isOn(now)) return {};
   return std::to_string(static_cast<long>((l.end - now + 59) / 60)) + " min left";
+}
+
+std::string behindLine(time::Seconds behind) {
+  long m = static_cast<long>(std::max<time::Seconds>(0, behind) / 60);
+  if (m < 60) return std::to_string(m) + " min behind";
+  return std::to_string(m / 60) + " h " + std::to_string(m % 60) + " min behind";
+}
+
+std::string replayAbout(const std::vector<std::pair<std::string, uint16_t>>& byProvider) {
+  std::string out;
+  for (const auto& [provider, days] : byProvider) {
+    if (!days) continue;
+    out += (out.empty() ? "" : ", ") + std::to_string(days) + (days == 1 ? " day" : " days");
+    if (!provider.empty()) out += " on " + provider;
+  }
+  if (out.empty()) return out;
+  return out + ". Pause, rewind and start over work on it, and its games can be watched from the start.";
+}
+
+std::vector<Listing> mergedListings(std::vector<Listing> base, const std::vector<Listing>& extra) {
+  std::stable_sort(base.begin(), base.end(), [](const Listing& a, const Listing& b) { return a.start < b.start; });
+  size_t kept = base.size();
+  for (const Listing& e : extra) {
+    if (e.end <= e.start) continue;
+    time::Seconds overlap = 0;
+    for (size_t i = 0; i < kept; ++i)
+      overlap += std::max<time::Seconds>(0, std::min(base[i].end, e.end) - std::max(base[i].start, e.start));
+    if (overlap * 2 > e.end - e.start) continue;
+    base.push_back(e);
+  }
+  std::stable_sort(base.begin(), base.end(), [](const Listing& a, const Listing& b) { return a.start < b.start; });
+  return base;
+}
+
+ReplayBanner replayBanner(const std::vector<Listing>& shows, const Listing* live, time::Seconds at,
+                          time::Seconds now) {
+  ReplayBanner out;
+  for (const Listing& l : shows)
+    if (l.isOn(at)) {
+      out.show = &l;
+      break;
+    }
+  if (out.show) {
+    const Listing& l = *out.show;
+    out.progress = static_cast<double>(at - l.start) / static_cast<double>(std::max<time::Seconds>(1, l.end - l.start));
+    long in = static_cast<long>((at - l.start) / 60);
+    long left = static_cast<long>((l.end - at + 59) / 60);
+    out.inLeft = std::to_string(in) + " min in";
+    if (left > 0) out.inLeft += " \xc2\xb7 " + std::to_string(left) + " min left";
+  }
+  time::Seconds after = out.show ? out.show->end : at;
+  for (const Listing& l : shows) {
+    if (out.next.size() == 3) break;
+    if (l.start >= after && &l != out.show) out.next.push_back(&l);
+  }
+  std::string behind = behindLine(now - at);
+  out.liveLine = live && !live->title.empty() ? "Live now: " + live->title + " \xc2\xb7 " + behind : behind + " live";
+  return out;
 }
 
 std::string startsIn(const Listing& l, time::Seconds now) {

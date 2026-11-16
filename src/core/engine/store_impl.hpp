@@ -236,11 +236,21 @@ struct EventsState {
 // out once per lineup on its worker. A publish copies them and sets what a
 // tune, a favourite or a lineup edit changes (Store::publishChannels).
 // Immutable once made.
+// Build 167: a tested copy's archive (scores::Record::archiveOk, archiveDays).
+using ArchiveSeen = std::unordered_map<std::string, std::pair<int, uint16_t>>;
+ArchiveSeen archiveSeen(const scores::Book& book);
+// A row's replayDays from its copies with an archive (ChannelRows::Row::archive).
+uint16_t rowReplayDays(const std::vector<std::pair<std::string, uint16_t>>& archive, const ArchiveSeen& seen);
+
 struct ChannelRows {
   struct Row {
     catalog::LineupCategory category = catalog::LineupCategory::entertainment;
     std::optional<int> number;    // a local's broadcast number
     bool serverFavorite = false;  // an Emby / Jellyfin favourite
+    // Build 167: its own copies whose Xtream provider says they keep an
+    // archive, with those days (the published row's replayDays weighs in
+    // what Test all sources found of each).
+    std::vector<std::pair<std::string, uint16_t>> archive;
   };
   std::vector<GuideChannel> all;  // favorite, inLineup, number and browsable unset
   std::vector<Row> rows;          // by `all` index
@@ -324,6 +334,10 @@ struct Store::Impl {
   scores::Book scores;
   std::shared_ptr<PicturesWriter> scoresWriter = std::make_shared<PicturesWriter>();
   bool scoresDirty = false;   // changed since last written
+  // Build 167: what Test all sources found of each tested copy's archive
+  // (Record::archiveOk, archiveDays), for the rows' replayDays; made again
+  // when the records are read or a probe's archive result comes in.
+  std::shared_ptr<const ArchiveSeen> archiveSeen = std::make_shared<const ArchiveSeen>();
   // Test all sources: providers that look like one service (Store::sameServices) and
   // what they were worked out from.
   std::vector<sourcetest::SameService> sameService;

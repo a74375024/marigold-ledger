@@ -47,6 +47,7 @@ std::string difference(const Channels& a, const Channels& b) {
     if (x.logoSources != y.logoSources) return "logo sources" + at;
     if (x.radio != y.radio) return "radio" + at;
     if (x.style != y.style) return "style" + at;
+    if (x.replayDays != y.replayDays) return "replay days" + at;
   }
   if (a.lineup != b.lineup) return "lineup";
   if (a.browse != b.browse) return "browse";

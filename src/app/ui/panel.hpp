@@ -51,6 +51,12 @@ struct PanelItem {
   std::string aboutLabel, aboutHeading;
   // The second line (a note's title) in amber: a membership's last week.
   bool warn = false;
+  // Build 167, a channel with replay: "· ↺ Replay" after the second line
+  // (the mark in replay blue, never a count), and in Settings' right column
+  // a "Replay" heading with the mark over `replayAbout` (its depth by
+  // provider).
+  bool replay = false;
+  std::string replayAbout;
   // A spinner at the right: something under way ("Updating…", Build 148).
   bool busy = false;
   // What OK does, for the key hints ("Remove…", "Stop sharing");

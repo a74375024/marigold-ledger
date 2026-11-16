@@ -44,6 +44,8 @@ constexpr uint32_t kKeyBlue = 0x1E88E5;
 constexpr uint32_t kNew = 0x1E88E5;
 constexpr uint32_t kStar = 0xE0A100;
 constexpr uint32_t kEast = 0x3D7BFF, kWest = 0xF59E0B;  // East/West version tags
+// Build 167: replay's blue (the player's REPLAY tag), for the replay mark.
+constexpr uint32_t kReplay = 0x3D7BFF;
 constexpr uint32_t kToggleOn = 0x34C759;
 constexpr uint32_t kWarning = 0xFF9F0A;
 constexpr uint32_t kWarningOnLight = 0x9A5B00;  // the amber line on a focused (white) row
@@ -109,6 +111,14 @@ float chip(Ctx& c, const std::string& s, float x, float y, int px, Color fill, C
 float chipWidth(Ctx& c, const std::string& s, int px, Weight w = Weight::Bold);
 // "EAST" (blue) or "WEST" (amber): which version of a channel with both.
 float coastChip(Ctx& c, bool west, float x, float y, int px);
+// Build 167: the replay mark, the app's replay icon (a counter-clockwise
+// arrow) `size` square at (x, y), in replay blue unless `ink` is given.
+// Never a count. Returns its width (0 when the icon isn't there).
+float replayMark(Ctx& c, float x, float y, float size, std::optional<Color> ink = std::nullopt);
+// The quiet outlined "Replay" chip (the guide's focused show), in the
+// "N feeds" chip's neutral look: the icon, then the word. Returns its width.
+float replayChip(Ctx& c, float x, float y, int px);
+float replayChipWidth(Ctx& c, int px);
 
 // A channel logo fitted inside `r` (aspect kept, centred), or the fallback
 // name in bold until the logo is ready (or if there is none, or the one

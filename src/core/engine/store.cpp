@@ -3,6 +3,7 @@
 // except the lambdas handed to pool().post() / afterTransfer / onChunk,
 // which only touch what they captured (by value or shared_ptr).
 #include "core/engine/store.hpp"
+#include "core/engine/replay.hpp"
 #include "core/engine/viewer_lists.hpp"
 #include "core/engine/store_impl.hpp"
 
@@ -375,14 +376,52 @@ void releaseLater(http::Pool& pool, std::shared_ptr<T> held) {
 
 // ---- guide rows
 
+// Build 167: the accounts whose copies can replay (Xtream: Store::catchupDays).
+std::unordered_set<std::string> xtreamServers(const std::vector<sources::Account>& accounts) {
+  std::unordered_set<std::string> out;
+  for (const sources::Account& a : accounts)
+    if (a.kind == sources::AccountKind::Xtream) out.insert(a.sourceId());
+  return out;
+}
+
+}  // namespace
+
+ArchiveSeen archiveSeen(const scores::Book& book) {
+  ArchiveSeen out;
+  book.each([&out](const std::string& id, const scores::Record& r) {
+    if (r.archiveOk >= 0) out[id] = {r.archiveOk, r.archiveDays};
+  });
+  return out;
+}
+
+uint16_t rowReplayDays(const std::vector<std::pair<std::string, uint16_t>>& archive, const ArchiveSeen& seen) {
+  uint16_t best = 0;
+  for (const auto& [id, claimed] : archive) {
+    auto it = seen.find(id);
+    uint16_t days = it == seen.end() ? replay::usableDays(claimed, -1, 0)
+                                     : replay::usableDays(claimed, it->second.first, it->second.second);
+    best = std::max(best, days);
+  }
+  return best;
+}
+
+namespace {
+
 // The rows' list-dependent fields from a lineup and the catalog and list it
 // was made from: on the lineup's worker, or on the spot when a publish finds
 // none for them. `entryAt` and `channelAt` are the store's own indexes when
-// they belong to `cat` and `list` (else made here).
+// they belong to `cat` and `list` (else made here). `xtream`: the accounts
+// whose copies' archives count (Build 167, a row's replay).
 std::shared_ptr<ChannelRows> makeRows(const catalog::LineupOutput& lo, const CatalogResult& cat,
                                       const std::vector<Channel>& list, const logos::IptvOrgIndex* iptvOrg,
                                       const std::unordered_map<std::string, size_t>* entryAt,
-                                      const std::unordered_map<std::string, size_t>* channelAt) {
+                                      const std::unordered_map<std::string, size_t>* channelAt,
+                                      const std::unordered_set<std::string>& xtream) {
+  // Build 167: the copies that say they keep an archive (few: one pass).
+  std::unordered_map<std::string_view, uint16_t> archived;
+  if (!xtream.empty())
+    for (const Channel& c : list)
+      if (c.archiveDays > 0 && xtream.count(c.serverId)) archived.emplace(c.id, c.archiveDays);
   std::unordered_map<std::string, size_t> ownEntries, ownChannels;
   if (!entryAt) {
     ownEntries.reserve(cat.entries.size());
@@ -468,6 +507,9 @@ std::shared_ptr<ChannelRows> makeRows(const catalog::LineupOutput& lo, const Cat
     }
     // Locals go by their broadcast number (the rest by blocks, at publish).
     if (ei && local && ei->virtualNumber) row.number = *ei->virtualNumber;
+    if (ei && !archived.empty())
+      for (const std::string& copy : ei->members)
+        if (auto a = archived.find(copy); a != archived.end()) row.archive.emplace_back(copy, a->second);
     out->byId.emplace(g.id, static_cast<int>(out->all.size()));
     out->all.push_back(std::move(g));
     out->rows.push_back(row);
@@ -502,17 +544,19 @@ struct RowFlags {
   const std::vector<std::string>* recents = nullptr;
   bool configured = false;
   size_t rawChannels = 0;
+  const ArchiveSeen* archiveSeen = nullptr;
 };
 
 RowFlags rowFlags(const Store::Impl& m) {
-  return RowFlags{&m.lineup.lineupIDs, &m.favorites,        &m.unfavorited, &m.hiddenGroups,
-                  &m.recents,          m.prefs.configured, m.channels->size()};
+  return RowFlags{&m.lineup.lineupIDs, &m.favorites,        &m.unfavorited,       &m.hiddenGroups,
+                  &m.recents,          m.prefs.configured, m.channels->size(), m.archiveSeen.get()};
 }
 
 // The same, copied (a few hundred ids) for a patch made on a worker.
 struct RowFlagsCopy {
   std::set<std::string> lineupIDs, favorites, unfavorited, hiddenGroups;
   std::vector<std::string> recents;
+  std::shared_ptr<const ArchiveSeen> archiveSeen;  // shared: never changed, only replaced
   RowFlags flags;
   explicit RowFlagsCopy(const Store::Impl& m)
       : lineupIDs(m.lineup.lineupIDs),
@@ -520,7 +564,9 @@ struct RowFlagsCopy {
         unfavorited(m.unfavorited),
         hiddenGroups(m.hiddenGroups),
         recents(m.recents),
-        flags{&lineupIDs, &favorites, &unfavorited, &hiddenGroups, &recents, m.prefs.configured, m.channels->size()} {}
+        archiveSeen(m.archiveSeen),
+        flags{&lineupIDs, &favorites,        &unfavorited,       &hiddenGroups,
+              &recents,   m.prefs.configured, m.channels->size(), archiveSeen.get()} {}
   RowFlagsCopy(const RowFlagsCopy&) = delete;
   RowFlagsCopy& operator=(const RowFlagsCopy&) = delete;
 };
@@ -541,6 +587,7 @@ std::shared_ptr<Channels> patchRows(const ChannelRows& r, const RowFlags& f) {
     const ChannelRows::Row& row = r.rows[i];
     g.inLineup = f.lineupIDs->count(g.id) > 0;
     g.favorite = favoriteNow(g.id, row.serverFavorite, *f.favorites, *f.unfavorited);
+    g.replayDays = row.archive.empty() || !f.archiveSeen ? 0 : rowReplayDays(row.archive, *f.archiveSeen);
     // Locals by their broadcast number; the rest by cable-style blocks.
     if (row.number) {
       g.number = row.number;
@@ -797,7 +844,10 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
     if (auto p = catalog::lineupPrefsFromJson(*text)) m.prefs = *p;
   }
   if (auto text = st.read(kPicturesFile)) m.pictures = quality::Memory::fromJson(*text);
-  if (auto text = st.read(kScoresFile)) m.scores = scores::Book::fromJson(*text);
+  if (auto text = st.read(kScoresFile)) {
+    m.scores = scores::Book::fromJson(*text);
+    m.archiveSeen = std::make_shared<const ArchiveSeen>(archiveSeen(m.scores));
+  }
   // The saved M3U links (tens of thousands) are read on a worker once the
   // first frame is up (tick): only a tune needs them.
   for (sources::Account& a : m.accounts) {
@@ -2147,12 +2197,13 @@ void Store::rebuildEntries() {
   std::shared_ptr<const CatalogResult> cat = m.catalog;
   std::shared_ptr<const std::vector<Channel>> list = m.channels;
   uint64_t gen = m.generation;
-  host_.pool.post([input, out, rows, rowsMs, lineupMs, cat, list, iptvOrg = m.iptvOrg] {
+  auto xtream = std::make_shared<const std::unordered_set<std::string>>(xtreamServers(m.accounts));
+  host_.pool.post([input, out, rows, rowsMs, lineupMs, cat, list, xtream, iptvOrg = m.iptvOrg] {
                      auto began = SteadyClock::now();
                      *out = catalog::lineup(*input);
                      *lineupMs = msSince(began);
                      auto started = SteadyClock::now();
-                     *rows = makeRows(*out, *cat, *list, iptvOrg.get(), nullptr, nullptr);
+                     *rows = makeRows(*out, *cat, *list, iptvOrg.get(), nullptr, nullptr, *xtream);
                      *rowsMs = msSince(started);
                    },
                    [this, gen, generation, out, rows, rowsMs, lineupMs, cat, list] {
@@ -3541,8 +3592,24 @@ void Store::notePlayed(const std::string& channelId, uint32_t ms) {
 }
 
 void Store::recordProbe(const std::string& channelId, const scores::Probe& probe) {
-  impl_->scores.recordProbe(channelId, probe, time::now());
-  impl_->scoresDirty = true;
+  Impl& m = *impl_;
+  uint16_t claimed = probe.archiveOk ? catchupDays(channelId) : 0;
+  auto usable = [&] {
+    auto it = m.archiveSeen->find(channelId);
+    return it == m.archiveSeen->end() ? replay::usableDays(claimed, -1, 0)
+                                      : replay::usableDays(claimed, it->second.first, it->second.second);
+  };
+  uint16_t before = usable();
+  m.scores.recordProbe(channelId, probe, time::now());
+  m.scoresDirty = true;
+  if (probe.archiveOk) {
+    // Build 167: what the archive did goes to the copy's row (its replay
+    // mark and depth); the rows are published again only when that changes.
+    auto seen = std::make_shared<ArchiveSeen>(*m.archiveSeen);
+    (*seen)[channelId] = {*probe.archiveOk ? 1 : 0, probe.archiveDays};
+    m.archiveSeen = std::move(seen);
+    if (usable() != before && !entryOfChannel(channelId).empty()) m.channelsDirty = true;
+  }
   // The picture it measured shows on the copy's rows, as a play's does.
   if (probe.ok && probe.height > 0) {
     quality::Picture picture;
@@ -4050,7 +4117,8 @@ void Store::publishChannels() {
   bool full = !rowsCurrent();
   if (full) {
     releaseLater(host_.pool, std::move(m.rows));
-    m.rows = makeRows(m.lineup, *m.catalog, *m.channels, m.iptvOrg.get(), &m.entryInfo, &m.indexByID);
+    m.rows = makeRows(m.lineup, *m.catalog, *m.channels, m.iptvOrg.get(), &m.entryInfo, &m.indexByID,
+                      xtreamServers(m.accounts));
     m.rowsFrom = {m.channels, m.catalog, m.lineupSerial};
   }
   m.patching.reset();  // one on its way is out of date
@@ -4139,6 +4207,12 @@ std::shared_ptr<const Channels> Store::channelsNow() const {
     if (std::string other = catalog::coastPartnerId(e.id); lo.entryIndex.count(other)) g.partner = other;
     g.inLineup = lo.lineupIDs.count(e.id) > 0;
     g.favorite = favoriteNow(e.id, e.isFavorite, m.favorites, m.unfavorited);
+    if (ei) {
+      std::vector<std::pair<std::string, uint16_t>> archive;
+      for (const std::string& member : ei->members)
+        if (uint16_t days = catchupDays(member)) archive.emplace_back(member, days);
+      g.replayDays = rowReplayDays(archive, *m.archiveSeen);
+    }
     // Which logo a row tries and how its cell reads (ChannelLogos.spec).
     const Channel* member = nullptr;
     if (ei && !ei->members.empty()) {

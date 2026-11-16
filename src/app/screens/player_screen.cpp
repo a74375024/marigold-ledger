@@ -1542,6 +1542,80 @@ class PlayerScreen : public Screen {
   // The banner and its row on one floating card (no fade over the picture).
   void drawScrim(ui::Ctx& c) { ui::floatingCard(c, {48, cardTop_, gfx::kLayoutWidth - 96, gfx::kLayoutHeight - 28 - cardTop_}); }
 
+  // Build 167: the channel banner during a replay names the programme at
+  // the moment shown (the guide's listings, the past it keeps for replay
+  // channels with their episodes and descriptions, and the copy's own past
+  // once Rewind asked for it), worked out when the minute shown, live's
+  // minute, the listings or the copy's past change; never per frame.
+  struct ReplayShown {
+    std::string entry;
+    time::Seconds at = -1, now = -1;
+    uint64_t listings = 0;
+    int past = -1;
+    std::vector<Listing> shows;
+    engine::views::ReplayBanner banner;
+  };
+  ReplayShown replayShown_;
+  const engine::views::ReplayBanner& replayBanner(const GuideChannel& g, time::Seconds at, time::Seconds now) {
+    Playback& p = app_.playback();
+    ReplayShown& r = replayShown_;
+    listings_ = app_.store().listings();
+    uint64_t version = listings_ ? listings_->version : 0;
+    if (r.entry == g.id && r.at == at / 60 && r.now == now / 60 && r.listings == version && r.past == p.pastSerial())
+      return r.banner;
+    r.entry = g.id;
+    r.at = at / 60;
+    r.now = now / 60;
+    r.listings = version;
+    r.past = p.pastSerial();
+    time::Seconds from = at - 6 * 3600;
+    std::vector<Listing> guide;
+    if (const std::vector<Listing>* v = listings_ ? listings_->forChannel(g.id) : nullptr) guide = *v;
+    r.shows = engine::views::mergedListings(std::move(guide), app_.store().pastListing(g.id, from));
+    std::vector<Listing> own;
+    for (const engine::replay::Programme& pr : p.timeline(from)) {
+      Listing l;
+      l.title = pr.title;
+      l.start = pr.start;
+      l.end = pr.end;
+      own.push_back(std::move(l));
+    }
+    r.shows = engine::views::mergedListings(std::move(r.shows), own);
+    r.banner = engine::views::replayBanner(r.shows, current(g.id, now, nullptr), at, now);
+    return r.banner;
+  }
+
+  // Build 167: the banner's times during a replay: the programme at the
+  // moment, its bar in replay blue where it plays and "21 min in · 39 min
+  // left" (or "Watching from 7:21 PM" when none is known), its description
+  // on one line, and live in one muted line under it.
+  void drawReplayTimes(ui::Ctx& c, const engine::views::ReplayBanner& rb, float rx, float y, float x, float top,
+                       float titleRight) {
+    Playback& p = app_.playback();
+    if (const Listing* l = rb.show) {
+      rx += shadowed(c, ui::range(c, l->start, l->end, true), rx, y, Weight::Medium, 22, theme::white(0.92f));
+      if (!l->episode.empty())
+        rx += 10 + shadowed(c, "\xc2\xb7 " + l->episode, rx + 10, y, Weight::Regular, 22, theme::white(0.65f), 360);
+      rx += 18;
+      ui::progress(c, {rx, y + 11, 420, 6}, rb.progress, theme::white(0.28f), theme::hex(kBlue));
+      rx += 420 + 22;
+      shadowed(c, rb.inLeft, rx, y, Weight::Regular, 22, theme::white(0.82f), titleRight - rx);
+    } else {
+      shadowed(c, "Watching from " + ui::clock(c, p.replayAt()), rx, y, Weight::Medium, 22, theme::white(0.92f),
+               titleRight - rx);
+    }
+    float dw = std::min(1200.0f, titleRight - x);
+    float ly = top + 144;
+    if (rb.show && !rb.show->overview.empty()) {
+      std::string about = rb.show->overview.string();
+      ui::paragraph(c, about, x, ly + 2, dw, Weight::Regular, 20, theme::black(0.55f * 0.7f), 1, 1.4f);
+      ui::paragraph(c, about, x, ly, dw, Weight::Regular, 20, theme::white(0.7f), 1, 1.4f);
+      ly += 34;
+    }
+    c.g.fill({x, ly + 8, 9, 9}, theme::hex(kRed), 4.5f);
+    shadowed(c, rb.liveLine, x + 18, ly, Weight::Regular, 20, theme::white(0.55f), dw - 18);
+  }
+
   void drawBanner(ui::Ctx& c, const GuideChannel* g, bool failed) {
     Playback& p = app_.playback();
     bool pending = !pendingFlip_.empty();
@@ -1562,9 +1636,16 @@ class PlayerScreen : public Screen {
     const Listing* l = g ? current(g->id, c.now, &next) : nullptr;
     std::string where = g ? (g->number ? std::to_string(*g->number) + " \xc2\xb7 " : std::string()) + g->name : std::string();
     if (const EventTile* t = pending ? nullptr : app_.store().eventTile(p.entry()); t && !g) where = t->leagueChip;
-    // Later on this channel, on the right; the title stops short of it.
+    // Build 167: behind live on a channel, what the replay shows (the
+    // programme at that moment) in place of the show on now.
+    bool behind = !pending && p.replay().has_value();
+    const engine::views::ReplayBanner* rb =
+        behind && g && !failed && !app_.store().eventTile(p.entry()) ? &replayBanner(*g, p.replayAt(), c.now) : nullptr;
+    // Later on this channel, on the right (behind live: next in the
+    // replay); the title stops short of it.
     float stripX = x + w - kStripW;
-    bool strip = g && drawLater(c, g->id, stripX, top - 36);
+    bool strip = rb ? drawLaterList(c, "NEXT IN THE REPLAY", rb->next, false, stripX, top - 36)
+                    : g && drawLater(c, g->id, stripX, top - 36);
     float titleRight = strip ? stripX - 36 : x + w;
     float whereW = shadowed(c, where, tx, top + 2, Weight::Bold, 22, theme::white(0.9f), w - (tx - x));
     // Which version plays, for channels with both.
@@ -1588,7 +1669,6 @@ class PlayerScreen : public Screen {
       return;
     }
     // Build 165: behind live, REPLAY in place of LIVE.
-    bool behind = !pending && p.replay().has_value();
     float lx = tx + (behind ? ui::chip(c, "REPLAY", tx, top + 42, 16, theme::hex(kBlue), theme::white())
                             : ui::chip(c, "LIVE", tx, top + 42, 16, theme::hex(kRed), theme::white())) +
                12;
@@ -1601,6 +1681,11 @@ class PlayerScreen : public Screen {
     }
     std::string title = l ? l->title : (g ? g->name : std::string());
     const Listing* show = l;  // the listing the title is (its episode and description)
+    if (rb) {
+      // No listing known for the moment: the channel's name.
+      show = rb->show;
+      title = show ? show->title : g->name;
+    }
     if (const EventTile* t = pending ? nullptr : app_.store().eventTile(p.entry())) {
       title = t->heroTitle.empty() ? t->title : t->heroTitle;
       show = nullptr;
@@ -1617,6 +1702,10 @@ class PlayerScreen : public Screen {
     if (replayInfo && behind) {
       shadowed(c, "Watching from " + ui::clock(c, p.replayAt()) + " \xc2\xb7 live is " + ui::clock(c, c.now), rx, y,
                Weight::Medium, 22, theme::white(0.92f), titleRight - rx);
+      return;
+    }
+    if (rb) {
+      drawReplayTimes(c, *rb, rx, y, x, top, titleRight);
       return;
     }
     if (replayInfo && l) {
@@ -1756,8 +1845,14 @@ class PlayerScreen : public Screen {
       if (l.start > c.now) later.push_back(&l);
       if (later.size() == 3) break;
     }
+    return drawLaterList(c, "LATER ON THIS CHANNEL", later, true, x, y);
+  }
+  // The strip's programmes under `heading`; `live`: the first says how soon
+  // it starts (Build 167: not for the replay's next ones).
+  bool drawLaterList(ui::Ctx& c, const char* heading, const std::vector<const Listing*>& later, bool live, float x,
+                     float y) {
     if (later.empty()) return false;
-    shadowed(c, "LATER ON THIS CHANNEL", x, y, Weight::Bold, 15, theme::white(0.6f));
+    shadowed(c, heading, x, y, Weight::Bold, 15, theme::white(0.6f));
     y += 28;
     for (size_t i = 0; i < later.size(); ++i) {
       const Listing& l = *later[i];
@@ -1769,7 +1864,7 @@ class PlayerScreen : public Screen {
                 theme::white(first ? 0.95f : 0.7f));
       tx += 118;
       std::string soon;
-      if (first) {
+      if (first && live) {
         long mins = static_cast<long>((l.start - c.now + 59) / 60);
         if (mins <= 5) soon = "Starts in " + std::to_string(std::max(1L, mins)) + " min";
         else if (mins <= 120) soon = "in " + std::to_string(mins) + " min";

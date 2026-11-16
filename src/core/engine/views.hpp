@@ -20,7 +20,8 @@ namespace marigold::engine::views {
 enum class Tab { Lineup, Favorites, Recent, Events, All };
 
 struct Filter {
-  enum class Kind { None, SportsNow, NewsNow, MoviesNow, KidsNow, Section, Group } kind = Kind::None;
+  // CanGoBack (Build 167): channels with replay (GuideChannel::replayDays).
+  enum class Kind { None, SportsNow, NewsNow, MoviesNow, KidsNow, Section, Group, CanGoBack } kind = Kind::None;
   std::string name;  // the neighborhood (Section) or provider group (Group)
   bool operator==(const Filter& o) const { return kind == o.kind && name == o.name; }
 };
@@ -31,7 +32,8 @@ struct Filter {
 const std::vector<int>& tabRows(const Channels& ch, Tab tab, const Filter& filter);
 
 // "On now": a show airing now or within 30 minutes with the genre tag; a
-// channel with no tagged shows counts by its neighborhood.
+// channel with no tagged shows counts by its neighborhood. "Can go back":
+// a channel with replay.
 bool passes(const GuideChannel& g, const Filter& filter, const Listings* li, time::Seconds now);
 
 struct Line {
@@ -107,6 +109,31 @@ struct Count {
 };
 std::vector<Count> onNowCounts(const Channels& ch, const std::vector<int>& rows, const Listings* li, time::Seconds now);
 std::vector<Count> sectionCounts(const Channels& ch, const std::vector<int>& rows);
+// Build 167: the guide filter's "Can go back", offered when any of the
+// rows has replay (never how many).
+constexpr const char* kCanGoBack = "Can go back";
+bool anyReplay(const Channels& ch, const std::vector<int>& rows);
+
+// Build 167, the replay mark on the guide's channel cells. Plain boxes in
+// layout points, so the decision is tested without a renderer.
+struct Box {
+  float x = 0, y = 0, w = 0, h = 0;
+};
+// A picture of shape `aspect` (width / height) fitted inside `area`, its
+// shape kept, centred and rounded to whole points: where ui::logo draws a
+// logo.
+Box fitted(Box area, float aspect);
+// The mark in a cell: 16 points at its bottom left (x + 8, y + h - 22), as
+// the star sits top right and EAST / WEST bottom right.
+Box replayMark(Box cell);
+// The mark's corner: the mark and a point round it.
+Box replayCorner(Box cell);
+// Where a logo-only cell fits its logo. `area`: the logo area (154 x 60 at
+// +14, +12 on the guide's 182 x 84 cell). As today, unless the channel has
+// replay and its logo fitted in the area would overlap the mark's corner:
+// then that logo is drawn about 15% smaller (more only when that isn't
+// enough to clear it), centred across, at the area's top.
+Box logoArea(Box area, float aspect, Box corner, bool replay);
 
 // The show at `t` in a guide window: airing then, else the next one that
 // starts inside the window, else the last one still visible; -1 for none.
@@ -136,6 +163,34 @@ std::string minutesLeft(const Listing& l, time::Seconds now);
 // "Starts in 18 min", "Starts in 1 h 20 min", "Starts in 2 h"; "" once it
 // has started.
 std::string startsIn(const Listing& l, time::Seconds now);
+// Build 167: the channel banner while a replay plays behind live, worked
+// out when the minute shown changes (never per frame). `shows`: the
+// channel's programmes around the moment, sorted (mergedListings() of the
+// guide's, the past it keeps for replay channels and the copy's own);
+// `live`: the programme on now (null: none known).
+struct ReplayBanner {
+  const Listing* show = nullptr;  // on at the moment (into `shows`); null: none known
+  double progress = 0;            // through `show` at the moment, 0..1
+  std::string inLeft;             // "21 min in · 39 min left"
+  std::string liveLine;           // "Live now: Anderson Cooper 360 · 59 min behind"
+  // "Next in the replay": up to three starting after `show` ends (after
+  // the moment when no show is known).
+  std::vector<const Listing*> next;
+};
+ReplayBanner replayBanner(const std::vector<Listing>& shows, const Listing* live, time::Seconds at,
+                          time::Seconds now);
+// Programme lists merged: `base`'s where it has them, `extra`'s filling
+// what it lacks (one that overlaps `base`'s by more than half of itself is
+// left out). Sorted by start.
+std::vector<Listing> mergedListings(std::vector<Listing> base, const std::vector<Listing>& extra);
+// "59 min behind", "1 h 5 min behind".
+std::string behindLine(time::Seconds behind);
+// Build 167, a channel's About in Edit My Lineup: its replay by provider
+// (Store::replayByProvider), "2 days on Dream, 1 day on Trex. Pause, rewind
+// and start over work on it, and its games can be watched from the start."
+// ("" when it has none). Never a count of channels.
+std::string replayAbout(const std::vector<std::pair<std::string, uint16_t>>& byProvider);
+
 // "Title · Episode", or the title alone.
 std::string titleAndEpisode(const Listing& l);
 // After the preview's "NOW": "Title · 18 min left".

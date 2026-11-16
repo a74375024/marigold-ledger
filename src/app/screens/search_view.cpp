@@ -1,5 +1,7 @@
 #include "app/screens/search_view.hpp"
 
+#include <cmath>
+
 #include "app/screens/events_ui.hpp"
 #include "core/engine/views.hpp"
 
@@ -102,6 +104,23 @@ std::string teamLine(const ui::Ctx& c, Store& s, const se::TeamEntry& t, bool& l
   return line + dot + "No game in the next week";
 }
 
+// A result's second line, with the replay mark after its first `at` bytes
+// (npos: none).
+void lineWithMark(ui::Ctx& c, const std::string& line, size_t at, float x, float y, int size, Color col,
+                  float maxW) {
+  if (at == std::string::npos || at >= line.size()) {
+    ui::label(c, line, x, y, Weight::Medium, size, col, maxW);
+    return;
+  }
+  float w = ui::label(c, line.substr(0, at), x, y, Weight::Medium, size, col, maxW);
+  float mark = std::round(static_cast<float>(size) * 0.8f);
+  float mx = x + w + std::round(static_cast<float>(size) * 0.3f);
+  if (mx + mark > x + maxW) return;
+  float mw = ui::replayMark(c, mx, y + std::round(static_cast<float>(size) * 0.25f), mark);
+  float rx = mx + mw;
+  if (x + maxW - rx > 20) ui::label(c, line.substr(at), rx, y, Weight::Medium, size, col, x + maxW - rx);
+}
+
 // Two side badges (or the sport's mark). Returns the width used.
 float badges(ui::Ctx& c, const Cell::Label& l, float x, float y, float size, float k) {
   if (l.sides.size() == 2) {
@@ -144,7 +163,13 @@ void drawTopCard(ui::Ctx& c, const Cell& cell, Rect box, bool white, bool ok, fl
   ui::paragraph(c, l.cardTitle, tx, ty, box.x + box.w - 22 * k - tx, Weight::Bold, px(32, k), ink, 2, 1.15f);
   float lx = box.x + 22 * k, ly = box.y + box.h - 48 * k;
   if (l.live) lx += ui::chip(c, "LIVE", lx, ly + 2 * k, px(18, k), theme::hex(theme::kLive), theme::white()) + 10 * k;
-  ui::label(c, ok ? l.cardLineOk : l.line, lx, ly, Weight::Medium, px(22, k), sub, box.x + box.w - 22 * k - lx);
+  if (ok) ui::label(c, l.cardLineOk, lx, ly, Weight::Medium, px(22, k), sub, box.x + box.w - 22 * k - lx);
+  else lineWithMark(c, l.line, l.replayAt, lx, ly, px(22, k), sub, box.x + box.w - 22 * k - lx);
+  // Build 167: a channel with replay, the mark after its tag line.
+  if (l.replay && cell.kind == CellKind::Channel) {
+    float tw = ui::textWidth(c, l.cardTag, Weight::Bold, px(18, k));
+    ui::replayMark(c, box.x + 22 * k + tw + 10 * k, box.y + 20 * k, std::round(18 * k));
+  }
 }
 
 }  // namespace
@@ -229,6 +254,7 @@ void label(const ui::Ctx& c, Store& s, const se::Index& index, Cell& cell, std::
       l.logoUrl = l.cornerLogo = g->logoUrl;
       l.logoName = l.cornerName = l.cornerTitle = g->name;
       l.title = l.cardTitle = g->name;
+      l.replay = g->replayDays > 0;
       l.line = channelLine(c, s, index, *g, l.live);
       if (cell.outside) {
         // "2401 · Outside your lineup".
@@ -255,6 +281,11 @@ void label(const ui::Ctx& c, Store& s, const se::Index& index, Cell& cell, std::
       l.live = x.isOn(c.now);
       l.tag = se::showTag(se::fold(x.title));
       l.line = showLine(c, s, cell, g);
+      if (g && g->replayDays > 0) {
+        // After its channel's name (and number) in the line.
+        std::string named = " \xc2\xb7 " + g->name + (g->number ? " " + std::to_string(*g->number) : "");
+        if (size_t at = l.line.find(named); at != std::string::npos) l.replayAt = at + named.size();
+      }
       if (cell.outside) l.line += std::string(" \xc2\xb7 ") + kOutside;
       l.cardTag = "SHOW" + (l.tag.empty() ? std::string() : " \xc2\xb7 " + l.tag);
       l.cornerLine = x.isOn(c.now) ? "Now until " + ui::clock(c, x.end) : whenText(c, x.start);
@@ -377,8 +408,11 @@ void drawCell(ui::Ctx& c, const Cell& cell, Rect box, bool f, float k) {
   if (l.west) lx += ui::coastChip(c, true, lx, ty + 4 * k, px(17, k)) + 10 * k;
   if (!l.tag.empty())
     lx += ui::chip(c, l.tag, lx, ty + 4 * k, px(17, k), white ? theme::black(0.15f) : theme::white(0.18f), ink) + 10 * k;
-  ui::label(c, l.title, lx, ty, Weight::Bold, px(26, k), ink, right - lx);
-  ui::label(c, l.line, tx, ty + 38 * k, Weight::Medium, px(22, k), sub, right - tx);
+  float titleW = ui::label(c, l.title, lx, ty, Weight::Bold, px(26, k), ink, right - lx);
+  // Build 167: the replay mark after a channel's name.
+  if (l.replay && cell.kind == CellKind::Channel && lx + titleW + 30 * k < right)
+    ui::replayMark(c, lx + titleW + 10 * k, ty + 6 * k, std::round(20 * k));
+  lineWithMark(c, l.line, l.replayAt, tx, ty + 38 * k, px(22, k), sub, right - tx);
 }
 
 }  // namespace marigold::app::search_view

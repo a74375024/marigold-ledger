@@ -563,7 +563,15 @@ class AllSettings : public Screen, public SettingsPages {
       y += ui::paragraph(c, f->why, x, y, w, Weight::Medium, 21, theme::hex(theme::kWarning), 3) + 14;
     if (!f->aboutHeading.empty())
       y += ui::paragraph(c, f->aboutHeading, x, y, w, Weight::Bold, 26, theme::white(), 3) + 12;
-    paragraphs(c, f->about.empty() ? f->detail : f->about, x, y, w, theme::white(0.68f));
+    y += paragraphs(c, f->about.empty() ? f->detail : f->about, x, y, w, theme::white(0.68f));
+    if (!f->replayAbout.empty()) {
+      // Build 167: the row's replay, the mark beside its heading.
+      y += 6;
+      float mw = ui::replayMark(c, x, y + 4, 22);
+      ui::label(c, "Replay", x + (mw > 0 ? mw + 10 : 0), y, Weight::Bold, 24, theme::white(), w);
+      y += 40;
+      paragraphs(c, f->replayAbout, x, y, w, theme::white(0.68f));
+    }
   }
 
   std::vector<SettingsCategory> cats_;

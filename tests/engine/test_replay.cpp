@@ -15,6 +15,7 @@
 #include "core/engine/replay.hpp"
 #include "core/engine/session.hpp"
 #include "core/engine/store.hpp"
+#include "core/engine/views.hpp"
 #include "core/sources/xtream.hpp"
 #include "core/util/base64.hpp"
 #include "core/util/json.hpp"
@@ -1063,5 +1064,108 @@ TEST_CASE("providers in the playback log: once a day after the app starts, and o
   // On export: as of now, whatever the day.
   CHECK(r.session->logProviders(true));
   CHECK(r.logged("providers").size() == 6);
+  r.noLinks();
+}
+
+// Build 167: a row's replay is the longest usable archive among its own
+// copies: what the providers say, less what Test all sources found broken,
+// lowered where it measured less. Published with the rows (and the same as
+// every row worked out again).
+TEST_CASE("replay marks 1.0.11: a row's replay days, its depth by provider, and what the test found") {
+  Rig r(Rig::Two{}, false);
+  std::string espn = r.entry("ESPN"), tnt = r.entry("TNT"), cnn = r.entry("CNN");
+  REQUIRE(!espn.empty());
+  REQUIRE(!tnt.empty());
+  REQUIRE(!cnn.empty());
+  auto days = [&](const std::string& id) {
+    const auto* g = r.store->channels()->find(id);
+    REQUIRE(g);
+    const auto* again = r.store->channelsNow()->find(id);
+    REQUIRE(again);
+    CHECK(again->replayDays == g->replayDays);
+    return static_cast<int>(g->replayDays);
+  };
+  // Claimed: ESPN two days (Dream) and one (Trex), TNT one, CNN none.
+  CHECK(days(espn) == 2);
+  CHECK(days(tnt) == 1);
+  CHECK(days(cnn) == 0);
+  using ByProvider = std::vector<std::pair<std::string, uint16_t>>;
+  CHECK(r.store->replayByProvider(espn) == ByProvider{{"Dream", 2}, {"Trex", 1}});
+  CHECK(r.store->replayByProvider(cnn).empty());
+  CHECK(marigold::engine::views::replayAbout(r.store->replayByProvider(espn)) ==
+        "2 days on Dream, 1 day on Trex. Pause, rewind and start over work on it, and its games can be watched "
+        "from the start.");
+  // The "Can go back" filter: ESPN and TNT, not CNN.
+  {
+    auto ch = r.store->channels();
+    marigold::engine::views::Filter back{marigold::engine::views::Filter::Kind::CanGoBack, {}};
+    CHECK(marigold::engine::views::passes(*ch->find(espn), back, nullptr, mtime::now()));
+    CHECK(marigold::engine::views::passes(*ch->find(tnt), back, nullptr, mtime::now()));
+    CHECK_FALSE(marigold::engine::views::passes(*ch->find(cnn), back, nullptr, mtime::now()));
+  }
+  auto probe = [&](int id, bool archiveOk, uint16_t depth) {
+    marigold::engine::scores::Probe p;
+    p.ok = true;
+    p.startMs = 1500;
+    p.archiveOk = archiveOk;
+    p.archiveDays = depth;
+    r.store->recordProbe(r.channelOf(id), p);
+    fake::settle(*r.store, r.tv);
+  };
+  // Dream's two-day archive measured at one day: ESPN goes back one day.
+  probe(601, true, 1);
+  CHECK(days(espn) == 1);
+  CHECK(r.store->replayByProvider(espn) == ByProvider{{"Dream", 1}, {"Trex", 1}});
+  // Trex's played (its depth not confirmed): its claim stands.
+  probe(701, true, 0);
+  CHECK(days(espn) == 1);
+  // Dream's didn't play at all: only Trex's day counts.
+  probe(601, false, 0);
+  CHECK(days(espn) == 1);
+  CHECK(r.store->replayByProvider(espn) == ByProvider{{"Trex", 1}});
+  // TNT's only archive is broken: no replay there, nothing in the filter.
+  probe(702, false, 0);
+  CHECK(days(tnt) == 0);
+  CHECK(r.store->replayByProvider(tnt).empty());
+  // A live probe without an archive result changes nothing.
+  marigold::engine::scores::Probe live;
+  live.ok = true;
+  live.startMs = 900;
+  r.store->recordProbe(r.channelOf(701), live);
+  fake::settle(*r.store, r.tv);
+  CHECK(days(espn) == 1);
+}
+
+TEST_CASE("replay marks 1.0.11: the guide's Start over tunes straight into the archive from the programme's start") {
+  Rig r(Rig::Two{}, false);
+  std::string espn = r.entry("ESPN"), cnn = r.entry("CNN");
+  REQUIRE(!espn.empty());
+  mtime::Seconds start = minuteOf(mtime::now() - 40 * 60);
+  // Nothing playing: the archive from the start, no live start first.
+  size_t plays = r.player->plays.size();
+  r.session->setShowingFull(true);
+  REQUIRE(r.session->startOverFrom(espn, start));
+  r.run(250);
+  REQUIRE(r.player->plays.size() == plays + 1);
+  CHECK(isReplay(r.player->plays.back()));
+  REQUIRE(r.session->replay());
+  CHECK(r.session->replay()->from == start);
+  CHECK(r.session->entry() == espn);
+  std::vector<std::string> lines = r.replayLines();
+  REQUIRE(!lines.empty());
+  CHECK(lines.back().rfind("start over " + hm(start), 0) == 0);
+  r.picture();
+  CHECK(r.session->replay()->phase == Phase::Playing);
+  // The channel playing (behind live): its replay from the new moment.
+  mtime::Seconds earlier = minuteOf(mtime::now() - 90 * 60);
+  REQUIRE(r.session->startOverFrom(espn, earlier));
+  REQUIRE(r.session->replay());
+  CHECK(r.session->replay()->from == earlier);
+  // A channel with no archive: live, as a tune.
+  REQUIRE(r.session->startOverFrom(cnn, start));
+  r.run(250);
+  CHECK_FALSE(r.session->replay());
+  CHECK(r.session->entry() == cnn);
+  CHECK_FALSE(isReplay(r.player->plays.back()));
   r.noLinks();
 }

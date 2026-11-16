@@ -37,6 +37,18 @@ bool covers(uint16_t days, time::Seconds at, time::Seconds now) {
   return days > 0 && at >= archiveStart(now, days);
 }
 
+uint16_t usableDays(uint16_t claimed, int archiveOk, uint16_t measuredDays) {
+  if (claimed == 0 || archiveOk == 0) return 0;
+  if (archiveOk == 1 && measuredDays > 0) return std::min(claimed, measuredDays);
+  return claimed;
+}
+
+bool startOverOffered(time::Seconds start, time::Seconds end, time::Seconds now, uint16_t days) {
+  if (days == 0 || !(start <= now && now < end)) return false;
+  if (now - start <= kStartOverAfter) return false;
+  return covers(days, start, now);
+}
+
 int stepMinutes(int repeats) {
   if (repeats >= kRepeatsToFifteen) return 15;
   if (repeats >= kRepeatsToFive) return 5;

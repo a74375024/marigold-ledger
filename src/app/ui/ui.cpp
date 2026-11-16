@@ -56,6 +56,32 @@ float coastChip(Ctx& c, bool west, float x, float y, int px) {
               : chip(c, "EAST", x, y, px, theme::hex(theme::kEast), theme::white());
 }
 
+float replayMark(Ctx& c, float x, float y, float size, std::optional<Color> ink) {
+  unsigned icon = c.icons ? c.icons->get("ui-replay") : 0;
+  if (!icon) return 0;
+  c.g.textureAlpha(icon, {x, y, size, size}, ink.value_or(theme::hex(theme::kReplay)));
+  return size;
+}
+
+float replayChipWidth(Ctx& c, int px) {
+  float icon = std::round(static_cast<float>(px) * 1.05f);
+  return std::round(c.t.measure("Replay", Weight::Bold, px) + icon + static_cast<float>(px) * 0.35f +
+                    static_cast<float>(px) * 0.9f);
+}
+
+float replayChip(Ctx& c, float x, float y, int px) {
+  float h = std::round(static_cast<float>(px) * 1.5f);
+  float width = replayChipWidth(c, px);
+  Rect r{x, y, width, h};
+  c.g.stroke(r, theme::white(0.5f), h * 0.5f, 2);
+  float icon = std::round(static_cast<float>(px) * 1.05f);
+  float ix = x + std::round(static_cast<float>(px) * 0.45f);
+  replayMark(c, ix, y + std::round((h - icon) * 0.5f), icon, theme::white(0.85f));
+  float tx = ix + icon + std::round(static_cast<float>(px) * 0.35f);
+  labelIn(c, "Replay", {tx, y, x + width - tx, h}, Weight::Bold, px, theme::white(0.85f));
+  return width;
+}
+
 Rect logoTexture(Ctx& c, const logos::Texture& tex, Rect r, bool dim, float opacity) {
   float s = std::min(r.w / static_cast<float>(tex.w), r.h / static_cast<float>(tex.h));
   float w = std::round(static_cast<float>(tex.w) * s), h = std::round(static_cast<float>(tex.h) * s);

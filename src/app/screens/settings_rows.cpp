@@ -17,6 +17,7 @@
 #include "app/store/store.hpp"
 #include "app/ui/panel.hpp"
 #include "core/catalog/lineup.hpp"
+#include "core/engine/views.hpp"
 #include "core/sports/my_sports.hpp"
 #include "core/util/memory.hpp"
 #include "core/util/strings.hpp"
@@ -195,6 +196,11 @@ SettingsPage editLineupPage(App& app) {
           it.aboutHeading = "In My Lineup";
           it.about = "OK takes it out. It stays out until you add it back here or from the guide.";
           break;
+      }
+      // Build 167: "Sports · ↺ Replay", and its depth by provider in the About.
+      if (g->replayDays > 0) {
+        it.replay = true;
+        it.replayAbout = engine::views::replayAbout(s.replayByProvider(id));
       }
       it.select = [&app, id] { app.store().toggleLineup(id); };
       p.items.push_back(it);

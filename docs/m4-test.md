@@ -2024,3 +2024,33 @@ Settings › Providers gets a "Test all sources" row. It checks every source (co
 | Backup | A channel whose first source is on one of two look-alike providers | Its second source is from the other provider |
 | Pointer | Magic Remote / Mac mouse on the buttons and the pairs; Apple TV swipes | Hover focuses, a click acts, the wheel moves through the pairs |
 | Log | Send a report › Playback log | "test" lines and a summary; no link, login or password |
+
+## Build 167: 1.0.11, replay marks and the replay banner
+
+Channels with replay now say so where channels are listed, quietly, and the banner tells you what you are watching during a replay instead of what is on live. A channel has replay when any of its own copies keeps an archive; its depth is the longest of them. Test all sources counts too: a copy whose archive didn't play there doesn't count, and a copy whose archive it found shallower than its provider says counts for what was found. Nothing changes for a channel without replay, and nothing new runs: the rows work this out once, when the lineup changes or a test result changes it.
+
+- **The mark:** the app's replay icon (the counter-clockwise arrow) in replay blue, about 16 points, never with a number. On a guide channel cell with a logo, it sits in the bottom-left corner (the star is top right, EAST / WEST bottom right). Only a logo whose fitted shape would reach that corner (one that fills the whole logo area) is drawn about 15% smaller, nudged up, to clear it; wide and square logos keep their size. On a named or local cell, the mark goes before the second line. Edit My Lineup's rows read "Sports · ↺ Replay"; Search shows the mark after a channel's name (and after the channel's name in a show's line); the guide in the player shows it under the channel's number.
+- **The focused show:** after the channel's name (star, feeds, EAST / WEST), one outlined chip "↺ Replay" in the same plain look as "2 feeds": white, no capitals, no days. The guide never mentions Start over.
+- **Can go back:** the guide's filter gets "Can go back" with the quick filters (shown when the list has a channel with replay): the channels with replay.
+- **Hold OK → Start over:** in the guide's hold-OK menu, after Watch: "Start over" with "Started 7:00 PM", only on a programme on now that began more than 3 minutes ago and whose start the archive still holds (its days less an hour). OK plays the channel full screen from the programme's start, straight from the archive with no live start first (the log says "start over 19:00"). A channel already playing in the guide's corner replays from there.
+- **About in Edit My Lineup:** under the row's usual text, "Replay" with the mark and "2 days on Dream, 1 day on Trex. Pause, rewind and start over work on it, and its games can be watched from the start." (provider names as you gave them; never how many channels).
+- **The banner during a replay:** behind live, the banner names the programme at the moment you're watching: its title (with REPLAY), times, episode and description (one line), the bar in replay blue where it plays, "21 min in · 39 min left" within that programme, and under it one muted line "● Live now: Anderson Cooper 360 · 59 min behind". The list at the right becomes "NEXT IN THE REPLAY", starting after the programme on screen. The programme comes from the guide's listings, the past the guide keeps for replay channels (now with episodes and descriptions) and, once Rewind has opened, the copy's own past. When none is known for that moment: the channel's name, "Watching from 7:21 PM" and the live line. With the controls open, "Watching from … · live is …" as before. Caught up or live: the banner as before.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Logo cells | Guide on ESPN, CNN, a logo filling its whole cell (Food Network), TBS (starred, EAST), KCBS | The mark bottom left on the first four; only the full one smaller and higher; star, EAST and the mark each in its own corner; KCBS as before |
+| Named cells | A channel with replay shown by name (no logo), a local station with replay | The mark before the second line; the line shifted, not cut short |
+| No replay | A channel none of whose copies keeps an archive | Exactly as in 1.0.10 everywhere |
+| Focused show | Focus ESPN in the guide | "↺ Replay" outlined chip after the name, white, no days; no Start over sentence |
+| Filter | Filter › Can go back | Only channels with the mark; the chip at the top says "Can go back"; Back clears it |
+| Start over (menu) | Hold OK on ESPN's programme begun 40 min ago | "Start over · Started 7:00 PM" after Watch; OK plays from 7:00 full screen, REPLAY on the banner |
+| Not offered | Hold OK on a later programme, on one begun 2 min ago, on KCBS, on a Trex-only channel's programme begun 23 h 30 min ago | No Start over |
+| Edit My Lineup | Settings › My Lineup › Edit My Lineup, focus ESPN | "Sports · ↺ Replay"; the About names each provider's depth ("2 days on Dream, 1 day on Trex") |
+| Search | Search "warriors", Search "ESPN" | The mark after ESPN in the show's line and after the channel's name |
+| Player guide | Left while watching | The mark under the numbers of channels with replay |
+| Tested | After Test all sources found a copy's archive broken (or a day short) | That channel's mark and depth follow what was found (gone when it was its only archive) |
+| Banner in a replay | Start over on CNN at 7:00 while 8:00 airs; Info at 7:21 | "Erin Burnett OutFront", 7:00 – 8:00 PM, blue bar, "21 min in · 39 min left", "● Live now: Anderson Cooper 360 · 59 min behind", NEXT IN THE REPLAY from 8:00 |
+| No listing | Rewind on a channel with no guide for that hour, OK, Info | The channel's name, "Watching from 7:21 PM" and the live line |
+| Caught up | Go live (or catch up) | The banner as before: the live show, LIVE, "Later on this channel" |
+| Controls | OK during a replay | "Watching from … · live is …" as before |
+| Log | Playback log after the menu's Start over | "replay: start over 19:00 …"; no link anywhere |

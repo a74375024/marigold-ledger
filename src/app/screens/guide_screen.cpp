@@ -10,6 +10,8 @@
 #include "app/screens/screens.hpp"
 #include "app/screens/top_bar.hpp"
 #include "app/store/store.hpp"
+#include "platform/logo_cache.hpp"
+#include "core/engine/replay.hpp"
 #include "core/engine/views.hpp"
 #include "core/input/hints.hpp"
 #include "core/model/channel.hpp"
@@ -568,6 +570,17 @@ void GuideScreen::watch(const std::string& entryId) {
   app_.nav().push(makePlayer(app_));
 }
 
+void GuideScreen::startOver(const std::string& entryId, time::Seconds from) {
+  Playback& p = app_.playback();
+  if (!p.startOverFrom(entryId, from, flipList())) {
+    app_.toast("This channel has no working feed right now");
+    return;
+  }
+  p.pickedFrom(tab_);
+  p.setFull();
+  app_.nav().push(makePlayer(app_));
+}
+
 void GuideScreen::select() {
   if (focusLine_ < 0) return;
   const Line& line = lines_[static_cast<size_t>(focusLine_)];
@@ -595,9 +608,16 @@ void GuideScreen::longPress() {
   App& app = app_;
   GuideScreen* self = this;
   std::optional<Listing> later;
-  if (const Listing* l = focusedListing(); l && l->start > time::now() + 60) later = *l;
+  time::Seconds pressed = time::now();
+  if (const Listing* l = focusedListing(); l && l->start > pressed + 60) later = *l;
+  // Build 167: Start over, on a programme on now begun over three minutes
+  // ago whose start the channel's archive still holds.
+  std::optional<time::Seconds> startOver;
+  if (const Listing* l = focusedListing();
+      l && engine::replay::startOverOffered(l->start, l->end, pressed, g->replayDays))
+    startOver = l->start;
   auto panel = std::make_unique<PanelScreen>(app_, PanelScreen::Side::Trailing, 640.0f,
-                                             [&app, self, id, later](ui::ListPanel& p) {
+                                             [&app, self, id, later, startOver](ui::ListPanel& p) {
     auto ch = app.store().channels();
     const GuideChannel* c = ch->find(id);
     if (!c) return;
@@ -608,6 +628,17 @@ void GuideScreen::longPress() {
       self->watch(id);
     };
     p.items.push_back(watchItem);
+    if (startOver) {
+      ui::PanelItem again{ui::PanelItem::Kind::Action, "Start over"};
+      ui::Ctx tmp{app.renderer(), app.textRenderer(), nullptr, nullptr, *startOver, 0, &app.zone()};
+      again.detail = "Started " + ui::clock(tmp, *startOver);
+      time::Seconds from = *startOver;
+      again.select = [&app, self, id, from] {
+        app.nav().pop();
+        self->startOver(id, from);
+      };
+      p.items.push_back(again);
+    }
     if (later) {
       bool set = app.store().hasShowReminder(id, later->start);
       ui::PanelItem remind{ui::PanelItem::Kind::Action, set ? "Remove Reminder" : "Remind Me"};
@@ -752,6 +783,9 @@ void GuideScreen::openFilter() {
     p.items.push_back(ui::PanelItem::header("ON NOW"));
     for (const engine::views::Count& n : engine::views::onNowCounts(*self->ch_, rows, self->li_.get(), time::now()))
       add(n.title, n.filter.kind, "");
+    // Build 167: channels with replay, when there are any here.
+    if (engine::views::anyReplay(*self->ch_, rows) || self->filter_ == Filter::CanGoBack)
+      add(engine::views::kCanGoBack, Filter::CanGoBack, "");
     p.items.push_back(ui::PanelItem::header("NEIGHBORHOODS"));
     for (const engine::views::Count& n : engine::views::sectionCounts(*self->ch_, rows))
       add(n.title, Filter::Section, n.title);
@@ -1312,11 +1346,11 @@ void GuideScreen::drawHero(ui::Ctx& c) {
           12;
   const Listing* l = focusedListing();
   const Top& t = top(c, *g, l);
-  if (!g->partner.empty()) {
-    nx += ui::coastChip(c, g->west, nx, y + 6, 16) + 14;
-    if (!t.also.empty() && right - nx > 60)
-      ui::label(c, t.also, nx, y + 4, Weight::Medium, 22, theme::white(0.7f), right - nx);
-  }
+  if (!g->partner.empty()) nx += ui::coastChip(c, g->west, nx, y + 6, 16) + 14;
+  // Build 167: a channel with replay, in one quiet chip (no days, no count).
+  if (g->replayDays > 0) nx += ui::replayChip(c, nx, y + 4, 18) + 12;
+  if (!g->partner.empty() && !t.also.empty() && right - nx > 60)
+    ui::label(c, t.also, nx, y + 4, Weight::Medium, 22, theme::white(0.7f), right - nx);
 
   ui::label(c, l ? l->title : g->name, x, 140, Weight::Bold, 50, theme::white(), kHeroW);
   // The status row: no live mark (the progress and time left say it's on);
@@ -1430,6 +1464,7 @@ float GuideScreen::drawChips(ui::Ctx& c, float right) {
                     : filter_ == Filter::SportsNow ? "Sports on now"
                     : filter_ == Filter::NewsNow ? "News on now"
                     : filter_ == Filter::MoviesNow ? "Movies on now"
+                    : filter_ == Filter::CanGoBack ? engine::views::kCanGoBack
                                                    : "Kids on now";
     std::string text = "\xe2\x97\x8f " + f + "  \xc3\x97";
     right -= ui::chipWidth(c, text, 19);
@@ -1611,15 +1646,40 @@ void GuideScreen::drawChannelCell(ui::Ctx& c, const GuideChannel& g, Rect r, boo
   GuideChannel::Style style = g.style;
   if (style == GuideChannel::Style::LogoOnly && ui::logoState(c, g.logoUrl) == ui::LogoState::Poor)
     style = GuideChannel::Style::Named;
+  // Build 167, replay: a small blue mark, never a count. Logo cells have it
+  // in the bottom-left corner (the star is top right, EAST / WEST bottom
+  // right); named and local cells before their second line.
+  namespace views = engine::views;
+  bool replay = g.replayDays > 0;
+  views::Box box{r.x, r.y, r.w, r.h};
+  bool cornerMark = false;
+  constexpr float kInlineMark = 15, kInlineGap = 6;
   switch (style) {
-    case GuideChannel::Style::LogoOnly:
-      ui::logo(c, g.logoUrl, g.name, {r.x + 14, r.y + 12, r.w - 28, r.h - 24});
+    case GuideChannel::Style::LogoOnly: {
+      Rect area{r.x + 14, r.y + 12, r.w - 28, r.h - 24};
+      if (replay) {
+        cornerMark = true;
+        // Only a logo whose fitted shape would reach the mark's corner is
+        // drawn smaller (views::logoArea).
+        logos::Texture tex = c.logos && !g.logoUrl.empty() ? c.logos->get(g.logoUrl) : logos::Texture{};
+        if (tex.id && tex.w > 0 && tex.h > 0) {
+          views::Box a = views::logoArea({area.x, area.y, area.w, area.h},
+                                         static_cast<float>(tex.w) / static_cast<float>(tex.h), views::replayCorner(box),
+                                         true);
+          area = {a.x, a.y, a.w, a.h};
+        }
+      }
+      ui::logo(c, g.logoUrl, g.name, area);
       break;
-    case GuideChannel::Style::Local:
+    }
+    case GuideChannel::Style::Local: {
       ui::logo(c, g.logoUrl, "", {r.x + 12, r.y + 24, 58, 36});
       ui::label(c, g.name, r.x + 80, r.y + 18, Weight::Bold, 20, fg, r.w - (g.favorite ? 108 : 88));
-      ui::label(c, g.subtitle, r.x + 80, r.y + 46, Weight::Regular, 15, sub, r.w - 88);
+      float sx = r.x + 80;
+      if (replay) sx += ui::replayMark(c, sx, r.y + 47, kInlineMark) + kInlineGap;
+      ui::label(c, g.subtitle, sx, r.y + 46, Weight::Regular, 15, sub, r.x + r.w - 8 - sx);
       break;
+    }
     case GuideChannel::Style::Named: {
       bool hasLogo = !g.logoUrl.empty();
       float tx = r.x + (hasLogo ? 80 : 14);
@@ -1632,9 +1692,21 @@ void GuideScreen::drawChannelCell(ui::Ctx& c, const GuideChannel& g, Rect r, boo
         ui::label(c, s, tx, ty, Weight::Bold, 18, fg);
         ty += 23;
       }
-      if (lines.size() < 2) ui::label(c, g.subtitle, tx, ty + 2, Weight::Regular, 15, sub, r.x + r.w - 10 - tx);
+      if (lines.size() < 2) {
+        float sx = tx;
+        if (replay) sx += ui::replayMark(c, sx, ty + 3, kInlineMark) + kInlineGap;
+        ui::label(c, g.subtitle, sx, ty + 2, Weight::Regular, 15, sub, r.x + r.w - 10 - sx);
+      } else if (replay) {
+        // A name on two lines: the corner (under the small logo, or clear
+        // of the two lines).
+        cornerMark = true;
+      }
       break;
     }
+  }
+  if (cornerMark) {
+    views::Box m = views::replayMark(box);
+    ui::replayMark(c, m.x, m.y, m.w);
   }
   if (g.favorite) ui::label(c, "\xe2\x98\x85", r.x + r.w - 24, r.y + 6, Weight::Bold, 16, theme::hex(theme::kStar));
   if (!g.partner.empty()) {

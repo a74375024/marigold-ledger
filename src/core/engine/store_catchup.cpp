@@ -5,6 +5,7 @@
 // live one: they go to the player only.
 #include "core/engine/store.hpp"
 #include "core/engine/store_impl.hpp"
+#include "core/engine/replay.hpp"
 #include "core/sources/xtream.hpp"
 
 #include <algorithm>
@@ -42,6 +43,10 @@ void addRaw(const std::vector<guide::RawProgram>& raw, time::Seconds from, time:
     if (!(p.end() > low && p.s < high)) continue;
     Listing l;
     l.title = p.t;
+    // Build 167: the banner during a replay names the episode and says
+    // what the programme is about, as on live.
+    l.episode = p.st.value_or("");
+    l.overview = p.d;
     l.start = static_cast<time::Seconds>(p.s) * 60;
     l.end = static_cast<time::Seconds>(p.end()) * 60;
     out.push_back(std::move(l));
@@ -61,6 +66,27 @@ uint16_t Store::catchupDays(const std::string& channelId) const {
   const Impl& m = *impl_;
   const Channel* c = nullptr;
   return xtreamAccount(m.accounts, *m.channels, m.indexByID, channelId, &c) ? c->archiveDays : 0;
+}
+
+std::vector<std::pair<std::string, uint16_t>> Store::replayByProvider(const std::string& entryId) const {
+  const Impl& m = *impl_;
+  std::vector<std::pair<std::string, uint16_t>> out;
+  auto info = m.entryInfo.find(entryId);
+  if (info == m.entryInfo.end() || info->second >= m.catalog->entries.size()) return out;
+  for (const std::string& member : m.catalog->entries[info->second].members) {
+    uint16_t claimed = catchupDays(member);
+    if (!claimed) continue;
+    auto seen = m.archiveSeen->find(member);
+    uint16_t days = seen == m.archiveSeen->end() ? replay::usableDays(claimed, -1, 0)
+                                                 : replay::usableDays(claimed, seen->second.first, seen->second.second);
+    if (!days) continue;
+    std::string provider = providerName(member);
+    auto it = std::find_if(out.begin(), out.end(), [&](const auto& p) { return p.first == provider; });
+    if (it == out.end()) out.emplace_back(std::move(provider), days);
+    else it->second = std::max(it->second, days);
+  }
+  std::stable_sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+  return out;
 }
 
 std::optional<Store::CatchupFeed> Store::catchupFeed(const Feed& live, time::Seconds from, time::Seconds now) const {
@@ -113,6 +139,8 @@ std::vector<Listing> Store::pastListing(const std::string& entryId, time::Second
           if (pr.end <= from || pr.start >= to) continue;
           Listing l;
           l.title = pr.title;
+          l.episode = pr.episodeTitle.value_or("");
+          l.overview = pr.overview;
           l.start = pr.start;
           l.end = pr.end;
           list.push_back(std::move(l));

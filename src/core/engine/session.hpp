@@ -271,6 +271,12 @@ class Session {
   // archive); within a minute of live, live. False when this channel has
   // no replay.
   bool replayFrom(time::Seconds from, ReplayWhy why);
+  // Build 167, the guide's Start over (hold OK on a programme on now):
+  // `entryId` from `from` in its archive, with no live start first (as
+  // Right's return to a replay); the channel already playing replays from
+  // there. When no copy's archive holds the moment it plays live, as a tune
+  // does. False when it can't be tuned at all.
+  bool startOverFrom(const std::string& entryId, time::Seconds from, const std::vector<std::string>& flip = {});
   // Pauses live or a replay (false: no replay here, nothing done).
   // `quiet`: no log line (the Rewind timeline holding the picture).
   bool pause(bool quiet = false);

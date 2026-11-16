@@ -1073,6 +1073,17 @@ bool Session::replayFrom(time::Seconds from, ReplayWhy why) {
   return true;
 }
 
+bool Session::startOverFrom(const std::string& entryId, time::Seconds from, const std::vector<std::string>& flip) {
+  if (entryId == entry_ && !failed() && catchupCopy()) {
+    if (!flip.empty()) flip_ = flip;
+    if (replayFrom(from, ReplayWhy::StartOver)) return true;
+  }
+  replayInstead_ = std::make_pair(from, ReplayWhy::StartOver);
+  bool ok = begin(entryId, store_.feeds(entryId), flip);
+  replayInstead_.reset();
+  return ok;
+}
+
 bool Session::startReplayInstead(time::Seconds at, ReplayWhy why, size_t live) {
   if (camera_ || feeds_.empty() || entry_.empty()) return false;
   live = std::min(live, feeds_.size() - 1);
@@ -1090,8 +1101,10 @@ bool Session::startReplayInstead(time::Seconds at, ReplayWhy why, size_t live) {
   replayTried_.clear();
   shortStretches_ = 0;
   std::string when = localTime(at);
-  playReplay(*copy, at, (why == ReplayWhy::Back ? "back to " : "resumed ") + when +
-                            (why == ReplayWhy::Resume ? " after the background" : ""));
+  playReplay(*copy, at,
+             why == ReplayWhy::StartOver ? "start over " + when
+                                         : (why == ReplayWhy::Back ? "back to " : "resumed ") + when +
+                                               (why == ReplayWhy::Resume ? " after the background" : ""));
   return true;
 }
 

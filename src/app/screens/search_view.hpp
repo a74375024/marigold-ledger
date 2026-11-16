@@ -39,6 +39,11 @@ struct Cell {
     std::vector<EventSide> sides;   // a game's two badges, or a team's one
     std::string cardTag, cardTitle, cardLineOk;  // the top result's card
     std::string cornerLogo, cornerName, cornerTitle, cornerLine;  // the Search screen's corner
+    // Build 167: the replay mark (a channel with replay): after a channel's
+    // name, or in a show's line after its channel's name (`replayAt`: the
+    // bytes of `line` before it; npos: none there).
+    bool replay = false;
+    size_t replayAt = std::string::npos;
   } label;
 };
 

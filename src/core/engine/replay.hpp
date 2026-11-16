@@ -34,6 +34,19 @@ bool covers(uint16_t days, time::Seconds at, time::Seconds now);
 // To the minute (down).
 time::Seconds minuteOf(time::Seconds t);
 
+// Build 167: what one copy's archive gives its channel row. `claimed`: the
+// days its provider says it keeps; `archiveOk`: what Test all sources found
+// (-1 not tested, 0 it didn't play, 1 it played) and `measuredDays` the
+// depth it confirmed (0 not known). A broken archive gives nothing; a
+// confirmed depth below the claim lowers it; otherwise the claim stands.
+uint16_t usableDays(uint16_t claimed, int archiveOk, uint16_t measuredDays);
+
+// Build 167: the guide's Start over (hold OK): offered on a programme on
+// now that began more than kStartOverAfter ago and whose start a channel
+// keeping `days` of usable archive still holds (covers()).
+constexpr time::Seconds kStartOverAfter = 3 * 60;
+bool startOverOffered(time::Seconds start, time::Seconds end, time::Seconds now, uint16_t days);
+
 // Left / Right: the minutes one press moves, after `repeats` repeat
 // events of the same key in a row (0: a single press).
 int stepMinutes(int repeats);

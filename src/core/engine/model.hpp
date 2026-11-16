@@ -39,6 +39,11 @@ struct GuideChannel {
   std::string logoSources;
   bool radio = false;
   Style style = Style::Named;
+  // Build 167: replay. The longest archive among the row's own copies, in
+  // days (0: none keeps one): what their providers say, less a copy Test
+  // all sources found broken, and a shallower depth where it measured one
+  // (replay::usableDays). Worked out with the rows, never per frame.
+  uint16_t replayDays = 0;
 };
 
 // One programme on one guide row.

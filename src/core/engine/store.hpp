@@ -337,6 +337,11 @@ class Store {
   // channel keeps (Xtream tv_archive_duration); 0 for none, and for every
   // M3U or Emby channel (no replay there).
   uint16_t catchupDays(const std::string& channelId) const;
+  // Build 167: a row's replay by provider, for its About: each provider
+  // (by the name it was given) with the longest usable archive among its
+  // copies of the row (replay::usableDays: Test all sources' findings
+  // weighed in), longest first. Empty: the row has no replay.
+  std::vector<std::pair<std::string, uint16_t>> replayByProvider(const std::string& entryId) const;
   // Build 165, replay: a copy's archive from `from` (Unix time) until `now`
   // plus five minutes (at most three hours), to play in place of `live`:
   // the same channel, label and load mode, the provider's timeshift link

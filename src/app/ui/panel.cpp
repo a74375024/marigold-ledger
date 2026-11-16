@@ -25,7 +25,7 @@ float ListPanel::rowHeight(Ctx& c, const PanelItem& it, float width) const {
       if (!it.detail.empty()) lines += c.t.wrap(it.detail, Weight::Regular, kNotePx, width - 16, kNoteLines).size();
       return std::max(44.0f, static_cast<float>(lines) * kNoteLineH + 20);
     }
-    default: return secondLine(it).empty() ? theme::kPanelRowHeight : 84;
+    default: return secondLine(it).empty() && !it.replay ? theme::kPanelRowHeight : 84;
   }
 }
 
@@ -45,6 +45,7 @@ std::string ListPanel::look() const {
     out += it.warn ? '1' : '0';
     out += it.busy ? '1' : '0';
     out += it.ask ? '1' : '0';
+    out += it.replay ? '1' : '0';
     add(std::to_string(it.choice) + ',' + std::to_string(it.coast));
     add(it.title);
     add(it.detail);
@@ -56,6 +57,7 @@ std::string ListPanel::look() const {
     add(it.preview);
     add(it.aboutLabel);
     add(it.aboutHeading);
+    add(it.replayAbout);
     add(it.okLabel);
     add(it.next);
     for (const std::string& c : it.choices) add(c);
@@ -339,7 +341,7 @@ void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
     }
     float tw = right - x;
     const std::string& second = secondLine(it);
-    float titleY = second.empty() ? row.y + (row.h - c.t.lineHeight(Weight::Bold, 25)) * 0.5f : row.y + 12;
+    float titleY = second.empty() && !it.replay ? row.y + (row.h - c.t.lineHeight(Weight::Bold, 25)) * 0.5f : row.y + 12;
     float titleW = label(c, it.title, x, titleY, Weight::Bold, 25, fg, tw);
     if (it.coast >= 0) coastChip(c, it.coast == 1, x + titleW + 12, titleY + 5, 13);
     if (!it.tag.empty()) {
@@ -354,7 +356,17 @@ void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
     else if (!second.empty() && it.warn)
       label(c, second, x, row.y + 46, Weight::Medium, 17,
             theme::hex(focused ? theme::kWarningOnLight : theme::kWarning), tw);
-    else if (!second.empty()) label(c, second, x, row.y + 46, Weight::Medium, 19, sub, tw);
+    else if (it.replay) {
+      // Build 167: "Sports · ↺ Replay".
+      float lx = x;
+      if (!second.empty()) {
+        lx += label(c, second, lx, row.y + 46, Weight::Medium, 19, sub, tw * 0.6f);
+        lx += label(c, " \xc2\xb7 ", lx, row.y + 46, Weight::Medium, 19, sub);
+      }
+      float mw = replayMark(c, lx, row.y + 49, 17);
+      lx += mw > 0 ? mw + 6 : 0;
+      label(c, "Replay", lx, row.y + 46, Weight::Medium, 19, sub, std::max(0.0f, x + tw - lx));
+    } else if (!second.empty()) label(c, second, x, row.y + 46, Weight::Medium, 19, sub, tw);
   }
   c.g.popClip();
   if (!hint.empty())
