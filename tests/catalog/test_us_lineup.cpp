@@ -323,14 +323,70 @@ TEST_CASE("over the channel cap: other countries' sports groups with games befor
   for (const Channel& c : list)
     if (*c.group == "SE| SVENSK HOCKEY PPV") se.push_back(&c);
   GroupPlace place = rank("SE| SVENSK HOCKEY PPV", se);
-  CHECK(place.rank == 2);
+  // Build 166: four in five or more empty: after everything else.
+  CHECK(place.rank == 4);
   CHECK(place.within == 900);
+  std::vector<const Channel*> de;
+  for (const Channel& c : list)
+    if (*c.group == "DE| SOCCER PPV") de.push_back(&c);
+  CHECK(rank("DE| SOCCER PPV", de).rank == 2);
+  CHECK(rank("DE| SOCCER PPV", de).within == 500);
   // A custom rank: ties keep the provider's order.
   Admission tied = admitGroups(list, 20, [](const std::string&, const std::vector<const Channel*>&) {
     return GroupPlace{1, 5};
   });
   CHECK(*tied.channels.front().group == "SE| SVENSK HOCKEY PPV");
   CHECK(tied.channels.size() == 20);
+}
+
+TEST_CASE("Build 166: groups named by a country's word; groups of empty slots and headings last") {
+  std::vector<Channel> list;
+  auto add = [&](const std::string& group, const std::string& name, int count) {
+    for (int i = 0; i < count; ++i)
+      list.push_back(channel(group + name + std::to_string(i), name + " " + std::to_string(i), group));
+  };
+  // Headed by a "#####" line, as one provider writes them.
+  add("SWEDEN HD & HEVC", "##### SWEDEN #####", 1);
+  add("SWEDEN HD & HEVC", "SWE| SVT", 9);
+  add("NORWAY SPORT", "##### NORWAY #####", 1);
+  add("NORWAY SPORT", "NOR| V SPORT", 9);
+  add("DENMARK SOCCER PPV", "##### DENMARK #####", 1);
+  add("DENMARK SOCCER PPV", "- NO EVENT STREAMING - | DK: SOCCER PPV", 9);
+  add("US| ENTERTAINMENT", "US: Channel", 10);
+  add("US| ESPN+ PPV", "- NO EVENT STREAMING - | US: ESPN+ PPV", 8);
+  add("US| ESPN+ PPV", "LIVE | TEAM A VS TEAM B", 2);
+  add("Mixed", "################", 1);
+  add("Mixed", "US: ESPN", 4);
+  auto members = [&](const std::string& group) {
+    std::vector<const Channel*> out;
+    for (const Channel& c : list)
+      if (*c.group == group) out.push_back(&c);
+    return out;
+  };
+  GroupRank rank = countryRank({"US"});
+  // Another country's: its other groups left out, its sports kept (the
+  // emptiest last).
+  CHECK(rank("SWEDEN HD & HEVC", members("SWEDEN HD & HEVC")).rank == -1);
+  CHECK(rank("NORWAY SPORT", members("NORWAY SPORT")).rank == 2);
+  CHECK(rank("DENMARK SOCCER PPV", members("DENMARK SOCCER PPV")).rank == 4);
+  CHECK(rank("DENMARK SOCCER PPV", members("DENMARK SOCCER PPV")).within == 1000);
+  // A heading first: the country is its channels'.
+  CHECK(rank("Mixed", members("Mixed")).rank == 0);
+  CHECK(rank("US| ENTERTAINMENT", members("US| ENTERTAINMENT")).rank == 0);
+  // The viewer's own country's group of mostly empty slots: last too...
+  CHECK(rank("US| ESPN+ PPV", members("US| ESPN+ PPV")).rank == 4);
+  CHECK(rank("US| ESPN+ PPV", members("US| ESPN+ PPV")).within == 800);
+  // ...unless My Lineup has one of its channels.
+  GroupRank kept = countryRank({"US"}, true, {members("US| ESPN+ PPV").back()->id});
+  CHECK(kept("US| ESPN+ PPV", members("US| ESPN+ PPV")).rank == 0);
+  // Over a cap: the empty groups go first.
+  Admission a = admitGroups(list, 30, rank);
+  std::set<std::string> groups;
+  for (const Channel& c : a.channels) groups.insert(*c.group);
+  CHECK(groups == std::set<std::string>{"NORWAY SPORT", "US| ENTERTAINMENT", "Mixed"});
+  CHECK(a.leftOut == 1);
+  CHECK(a.cutGroups == 2);
+  CHECK(kMaxChannels == 70000);
 }
 
 TEST_CASE("channel list fingerprint: same list, same value; any change, another") {

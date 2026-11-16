@@ -98,6 +98,39 @@ std::vector<std::string> nameWords(std::string_view name, NameCoast* coast = nul
   return words;
 }
 
+// Build 166: an other name a provider's name shares no word with is taken
+// only when the name is written like a channel's: one word ("Spike"), in
+// capitals ("EPIX HITS"), or with a number or a channel word ("Fuel TV",
+// "DIY HD"). Not a person's name or a page title the entry's article is
+// also reached by: "Jennifer Lopez" (a 24/7 loop of her films) isn't The
+// Weather Channel, whose meteorologist of that name redirects there.
+bool otherNameFits(std::string_view name, const Entry& entry) {
+  std::vector<std::string> words = nameWords(name);
+  if (words.size() < 2) return true;
+  static const std::unordered_set<std::string> kCommon = {"the", "and", "of", "tv", "channel", "network", "television"};
+  std::vector<std::string> own = nameWords(entry.name);
+  for (const std::string& w : words) {
+    if (!kCommon.count(w) && std::find(own.begin(), own.end(), w) != own.end()) return true;
+  }
+  // Its words run together ("Day STAR": Daystar Television Network).
+  if (str::join(own, "").find(str::join(words, "")) != std::string::npos) return true;
+  if (str::upper(name) == name) return true;
+  static const std::unordered_set<std::string> kChannelWords = {
+      "tv",  "network", "channel", "sport", "sports", "sportsnet", "news", "net",    "plus",
+      "hd",  "fhd",     "uhd",     "music", "max",    "movie",     "movies", "cinema", "kids"};
+  std::string word;
+  for (char ch : str::lower(name) + " ") {
+    if (ch >= '0' && ch <= '9') return true;
+    if (ch >= 'a' && ch <= 'z') {
+      word += ch;
+    } else {
+      if (kChannelWords.count(word)) return true;
+      word.clear();
+    }
+  }
+  return false;
+}
+
 void addUnique(std::unordered_map<std::string, std::vector<size_t>>& map, const std::string& key, size_t i) {
   if (key.empty()) return;
   std::vector<size_t>& list = map[key];
@@ -401,12 +434,18 @@ Match Index::match(std::string_view name) const {
     m.kind = MatchKind::alias;
     return m;
   }
+  // Build 166: an other name only for a name that fits it (otherNameFits);
+  // one that doesn't matches nothing.
+  auto byOtherName = [&](const std::vector<size_t>& list) {
+    Match picked = pick(list, MatchKind::alias);
+    return picked.entry && !otherNameFits(name, *picked.entry) ? Match() : picked;
+  };
   if (const auto* list = find(byName_, key)) return pick(*list, MatchKind::exact);
-  if (const auto* list = find(byAlias_, key)) return pick(*list, MatchKind::alias);
+  if (const auto* list = find(byAlias_, key)) return byOtherName(*list);
   std::string loose = looseKey(name);
   if (const auto* list = find(byLoose_, loose)) return pick(*list, MatchKind::loose);
   if (const auto* list = find(freeByName_, key)) return pick(*list, MatchKind::exact);
-  if (const auto* list = find(freeByAlias_, key)) return pick(*list, MatchKind::alias);
+  if (const auto* list = find(freeByAlias_, key)) return byOtherName(*list);
   if (const auto* list = find(freeByLoose_, loose)) return pick(*list, MatchKind::loose);
   if (auto it = data_->elsewhere.find(key); it != data_->elsewhere.end()) m.elsewhere = it->second;
   return m;

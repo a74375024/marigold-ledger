@@ -1,5 +1,6 @@
 // Markets from wikitext, the saved catalog's JSON and first-screen subset,
 // and whole-group admission.
+#include <algorithm>
 #include <sstream>
 
 #include "catalog/helpers.hpp"
@@ -217,6 +218,29 @@ TEST_CASE("catalog cache: JSON round trip, version and signature checks") {
   CHECK(cache::fileName("abc", cache::Part::full).find("-full.json") != std::string::npos);
 }
 
+TEST_CASE("catalog cache: Build 166: a list with Other rows reads back") {
+  // Before, an "other" row made the whole saved list unreadable, so every
+  // launch sorted the download again.
+  CHECK(categoryFromRaw("other") == LineupCategory::other);
+  std::vector<Channel> list = {channel("1", "US: CNN HD", "US| NEWS"), channel("2", "US: SOME SPORTS FEED", "US| SPORTS")};
+  cache::Saved saved;
+  saved.signature = "profile-1|xt:1";
+  saved.savedAt = wednesdayNoon();
+  saved.channels = list;
+  saved.catalog = build(list, wednesdayNoon());
+  saved.catalog.entries.back().category = LineupCategory::other;
+  std::string text = cache::toJson(saved);
+  auto back = cache::fromJson(text, saved.signature);
+  REQUIRE(back);
+  CHECK(back->catalog.entries.back().category == LineupCategory::other);
+  std::istringstream in(text);
+  auto streamed = cache::readSaved(in, saved.signature);
+  REQUIRE(streamed);
+  CHECK(streamed->catalog.entries.size() == saved.catalog.entries.size());
+  // Still not a category the viewer picks.
+  CHECK(std::find(kAllCategories.begin(), kAllCategories.end(), LineupCategory::other) == kAllCategories.end());
+}
+
 TEST_CASE("admitGroups admits whole groups in provider order") {
   std::vector<Channel> list;
   auto add = [&](const std::string& group, int count) {
@@ -251,5 +275,5 @@ TEST_CASE("admitGroups admits whole groups in provider order") {
   CHECK(big.channels.size() == 2);  // the ungrouped two fit; D's two then don't
   CHECK(big.channels[0].id == "xt:1|0");
   CHECK(admitGroups({}, 10).channels.empty());
-  CHECK(kMaxChannels == 30000);
+  CHECK(kMaxChannels == 70000);
 }

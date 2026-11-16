@@ -1,6 +1,7 @@
 // My Lineup: prefs (with tolerant JSON), market city parts and places, and
 // the suggestion rules.
 #include "core/catalog/lineup.hpp"
+#include "core/catalog/reference.hpp"
 #include "doctest.h"
 
 using namespace marigold;
@@ -44,7 +45,14 @@ TEST_CASE("prefs helpers") {
   CHECK(p.includes(std::string("US-ES")));
   CHECK_FALSE(p.includes(std::string("UK")));
   CHECK_FALSE(p.includes(std::nullopt));
-  CHECK(p.marketCallsigns() == std::set<std::string>{"KAAA", "KBBB"});
+  // Build 166: with the reference data's stations of the market, whatever
+  // dash its name has ("San Francisco–Oakland–San Jose" there with hyphens).
+  std::set<std::string> signs = p.marketCallsigns();
+  CHECK(signs.count("KAAA"));
+  CHECK(signs.count("KBBB"));
+  bool referenced = !reference::builtInIndex().stationsIn("San Francisco-Oakland-San Jose").empty();
+  CHECK(signs.count("KNTV") == (referenced ? 1u : 0u));
+  CHECK(signs.size() > (referenced ? 2u : 1u));
   std::set<std::string> places = p.marketPlaces();
   CHECK(places.count("bay area"));
   CHECK(places.count("norcal"));

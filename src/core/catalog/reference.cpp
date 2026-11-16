@@ -251,9 +251,31 @@ const Channel* Index::channel(const std::string& id) const {
 }
 
 std::vector<const Station*> Index::stationsIn(std::string_view market) const {
+  // Build 166: the station lists write a market's name with en dashes
+  // ("San Francisco–Oakland–San Jose"), this data with hyphens: a dash is
+  // a dash.
+  auto same = [](std::string_view a, std::string_view b) {
+    auto dash = [](std::string_view s, size_t i) {
+      return s.compare(i, 3, "\xe2\x80\x93") == 0 || s.compare(i, 3, "\xe2\x80\x94") == 0 ? 3 : s[i] == '-' ? 1 : 0;
+    };
+    size_t i = 0, j = 0;
+    while (i < a.size() && j < b.size()) {
+      int da = dash(a, i), db = dash(b, j);
+      if (da && db) {
+        i += static_cast<size_t>(da);
+        j += static_cast<size_t>(db);
+      } else if (!da && !db && a[i] == b[j]) {
+        ++i;
+        ++j;
+      } else {
+        return false;
+      }
+    }
+    return i == a.size() && j == b.size();
+  };
   std::vector<const Station*> out;
   for (const Station& s : data_->stations) {
-    if (s.market == market) out.push_back(&s);
+    if (same(s.market, market)) out.push_back(&s);
   }
   return out;
 }

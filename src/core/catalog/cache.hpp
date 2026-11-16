@@ -37,7 +37,11 @@ namespace marigold::catalog::cache {
 // 14: reference data decides rows, names and sections where it knows them.
 // 15: "... Sports", numbered ESPNs and conference channels are sports; a
 //     city in parentheses finds its station; Universal Kids shut down.
-constexpr int kVersion = 15;
+// 16: (Build 166) up to 70,000 channels; provider prefixes with a bar
+//     ("TV|"), more quality words, Nordic groups, regional sports, team,
+//     directory and US Spanish rows out of Other, numbered event feeds, US
+//     English stations by name ("NBC BAY AREA").
+constexpr int kVersion = 16;
 // The oldest version still read, to show until this version sorts the list
 // again (after an app update the guide opens on the old list).
 constexpr int kOldestShown = 9;

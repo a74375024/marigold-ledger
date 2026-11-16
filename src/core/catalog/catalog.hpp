@@ -135,6 +135,9 @@ bool sportsGroup(std::string_view group);
 // service's group, lower-cased ("us| roku", "us| prime", "pluto tv"); a
 // copy named as a free streaming service's ("RK: ...", "(Pluto TV) ...").
 bool placeholderName(std::string_view lower);
+// A heading the provider lists as a channel ("##### SWEDEN #####", "== NEWS
+// ==", "▬▬ SPORTS ▬▬"): kindFor()'s separator.
+bool separatorName(std::string_view name);
 bool loopName(std::string_view name, std::string_view lower);
 bool freeServiceGroup(std::string_view group);
 bool freeServiceName(std::string_view name);

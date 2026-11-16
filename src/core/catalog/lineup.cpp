@@ -132,14 +132,16 @@ std::vector<std::string> LineupPrefs::marketCityParts() const {
   return out;
 }
 
-std::set<std::string> LineupPrefs::marketPlaces() const {
-  std::vector<std::string> parts = marketCityParts();
-  std::set<std::string> places(parts.begin(), parts.end());
-  struct Alias {
-    const char* city;
-    std::vector<const char*> extra;
-  };
-  static const std::vector<Alias> kAliases = {
+namespace {
+
+// The names a market's region goes by, by the market's city.
+struct RegionAlias {
+  const char* city;
+  std::vector<const char*> extra;
+};
+
+const std::vector<RegionAlias>& regionAliases() {
+  static const std::vector<RegionAlias> kAliases = {
       {"san francisco", {"bay area", "northern california", "norcal", "california"}},
       {"sacramento", {"northern california", "norcal", "california"}},
       {"los angeles", {"southern california", "socal", "california"}},
@@ -159,14 +161,38 @@ std::set<std::string> LineupPrefs::marketPlaces() const {
       {"phoenix", {"arizona"}},
       {"detroit", {"michigan"}},
       {"minneapolis", {"minnesota"}}};
+  return kAliases;
+}
+
+// `places` with the names of the regions its cities are in.
+void addRegions(std::set<std::string>& places) {
   // Each alias tests the places as they grow (Swift mutates the set in the loop).
-  for (const Alias& alias : kAliases) {
+  for (const RegionAlias& alias : regionAliases()) {
     bool here = std::any_of(places.begin(), places.end(), [&](const std::string& p) {
       return p.find(alias.city) != std::string::npos;
     });
     if (here) places.insert(alias.extra.begin(), alias.extra.end());
   }
+}
+
+}  // namespace
+
+std::set<std::string> LineupPrefs::marketPlaces() const {
+  std::vector<std::string> parts = marketCityParts();
+  std::set<std::string> places(parts.begin(), parts.end());
+  addRegions(places);
   return places;
+}
+
+std::vector<std::string> regionCities(std::string_view region) {
+  std::vector<std::string> out;
+  for (const RegionAlias& alias : regionAliases()) {
+    if (region == alias.city) continue;
+    for (const char* name : alias.extra) {
+      if (region == name && std::find(out.begin(), out.end(), alias.city) == out.end()) out.emplace_back(alias.city);
+    }
+  }
+  return out;
 }
 
 const MarketChoice* LineupPrefs::home() const {
@@ -190,6 +216,21 @@ int LocalAreas::of(const std::optional<std::string>& callsign) const {
   return it == areaOf.end() ? -1 : it->second;
 }
 
+int LocalAreas::of(const std::optional<std::string>& callsign, const std::string& scope) const {
+  if (callsign || areaOf.empty()) return of(callsign);
+  if (!str::startsWith(scope, "regional:")) return -1;
+  int found = -1;
+  for (std::string_view place : str::split(std::string_view(scope).substr(9), '|')) {
+    if (place.empty() || place == "?") continue;
+    for (size_t a = 0; a < places.size(); ++a) {
+      if (!places[a].count(std::string(place))) continue;
+      if (found >= 0 && found != static_cast<int>(a)) return 0;  // two areas' place ("california"): home
+      found = static_cast<int>(a);
+    }
+  }
+  return found;
+}
+
 LocalAreas localAreas(const LineupPrefs& prefs) {
   LocalAreas out;
   if (prefs.markets.size() < 2) return out;
@@ -209,6 +250,10 @@ LocalAreas localAreas(const LineupPrefs& prefs) {
     for (const std::string& sign : m->callsigns) out.areaOf.emplace(reference::bareCallsign(sign), area);
     for (const reference::Station* s : index.stationsIn(m->name))
       out.areaOf.emplace(reference::bareCallsign(s->callsign), area);
+    std::vector<std::string> parts = m->cityParts();
+    std::set<std::string> places(parts.begin(), parts.end());
+    addRegions(places);
+    out.places.push_back(std::move(places));
   }
   return out;
 }

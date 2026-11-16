@@ -36,6 +36,10 @@ std::optional<LineupCategory> categoryFromRaw(std::string_view raw) {
   for (LineupCategory c : kAllCategories) {
     if (raw == rawValue(c)) return c;
   }
+  // Build 166: not offered as a category, but a row's all the same (a
+  // saved channel list with an "other" row was read as damaged, so every
+  // launch sorted the whole list again).
+  if (raw == rawValue(LineupCategory::other)) return LineupCategory::other;
   return std::nullopt;
 }
 

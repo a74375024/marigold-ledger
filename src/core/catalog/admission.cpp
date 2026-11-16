@@ -26,6 +26,16 @@ bool emptySlot(const Channel& c) {
   return placeholderName(lower) || text::contains(lower, "2098-12-31") || text::contains(lower, "2099-01-0");
 }
 
+// Build 166: a group of four in five or more empty slots and headings
+// ("#####", "== NORWAY =="): nothing to watch in it now. Its share of them
+// per thousand, or -1 when under four in five.
+int mostlyEmpty(const std::vector<const Channel*>& members) {
+  size_t empty = 0;
+  for (const Channel* c : members) empty += emptySlot(*c) || separatorName(c->name) ? 1 : 0;
+  if (empty * 5 < members.size() * 4) return -1;
+  return static_cast<int>(empty * 1000 / members.size());
+}
+
 }  // namespace
 
 Admission admitGroups(const std::vector<Channel>& channels, size_t cap, const GroupRank& rank) {
@@ -90,8 +100,8 @@ bool freeStreamingGroup(const std::string& group, const std::vector<const Channe
   return free * 4 >= members.size() * 3;
 }
 
-GroupRank countryRank(const std::set<std::string>& wanted, bool freeOn) {
-  return [wanted, freeOn](const std::string& group, const std::vector<const Channel*>& members) {
+GroupRank countryRank(const std::set<std::string>& wanted, bool freeOn, std::unordered_set<std::string> lineupCopies) {
+  auto ranked = [wanted, freeOn](const std::string& group, const std::vector<const Channel*>& members) {
     GroupPlace place;
     // Free streaming and 24/7 channels the viewer doesn't watch: after
     // every group Live Events finds games on.
@@ -113,7 +123,11 @@ GroupRank countryRank(const std::set<std::string>& wanted, bool freeOn) {
       place.rank = 3;
       return place;
     }
-    std::optional<std::string> country = groupCountry ? groupCountry : markedCountry(first);
+    // Build 166: by its first channel that isn't a heading ("#####
+    // SWEDEN #####" says no country; the channels under it do).
+    auto named = std::find_if(members.begin(), members.end(), [](const Channel* c) { return !separatorName(c->name); });
+    std::optional<std::string> country =
+        groupCountry ? groupCountry : markedCountry(named != members.end() ? **named : first);
     if (!country) {
       place.rank = 1;
     } else if (wanted.count(*country)) {
@@ -125,6 +139,20 @@ GroupRank countryRank(const std::set<std::string>& wanted, bool freeOn) {
       size_t empty = 0;
       for (const Channel* c : members) empty += emptySlot(*c) ? 1 : 0;
       place.within = static_cast<int>(empty * 1000 / members.size());
+    }
+    return place;
+  };
+  return [ranked, lineupCopies = std::move(lineupCopies)](const std::string& group,
+                                                          const std::vector<const Channel*>& members) {
+    GroupPlace place = ranked(group, members);
+    if (place.rank < 0) return place;
+    // Build 166: mostly empty slots and headings: after everything else,
+    // unless My Lineup has a channel from it.
+    int empty = mostlyEmpty(members);
+    if (empty >= 0 && std::none_of(members.begin(), members.end(),
+                                   [&](const Channel* c) { return lineupCopies.count(c->id) > 0; })) {
+      place.rank = 4;
+      place.within = empty;
     }
     return place;
   };

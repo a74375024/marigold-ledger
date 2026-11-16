@@ -11,13 +11,19 @@
 #include <functional>
 #include <set>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "core/model/channel.hpp"
 
 namespace marigold::catalog {
 
-constexpr size_t kMaxChannels = 30000;
+// Build 166: 70,000 (was 30,000). Three providers together list over
+// 64,000 channels a US viewer's rules admit; at 30,000 every other
+// country's sports group and some US ones were cut. Measured on such a
+// list (docs/m4-test.md, Build 166): about 130 MB more at the peak on a
+// desktop build, the sort 1.6 times as long.
+constexpr size_t kMaxChannels = 70000;
 
 struct Admission {
   std::vector<Channel> channels;  // admitted, in original order
@@ -51,8 +57,14 @@ Admission admitGroups(const std::vector<Channel>& channels, size_t cap = kMaxCha
 // group's own name leaves a group out (a mixed "Entertainment" group stays).
 // Free streaming and 24/7 groups (freeStreamingGroup()) come after all of
 // those (3) unless the viewer has free channels on (`freeOn`), when they
-// keep their country's rank.
-GroupRank countryRank(const std::set<std::string>& wanted, bool freeOn = true);
+// keep their country's rank. Build 166: a group of four in five or more
+// empty slots and headings ("NO EVENT STREAMING", "#####", a slot dated
+// at the providers' "nothing scheduled" mark) comes last of all (4, the
+// emptiest last), unless it holds a copy of a My Lineup row (`lineupCopies`,
+// raw channel ids). A group named by its country's word ("SWEDEN HD &
+// HEVC", "NORWAY SPORT") is that country's, as "SE|" is.
+GroupRank countryRank(const std::set<std::string>& wanted, bool freeOn = true,
+                      std::unordered_set<std::string> lineupCopies = {});
 
 // A group of free streaming or 24/7 channels, by cheap signals only (no
 // build has run yet): its name ("US| ROKU", "US| 24/7 COMEDY", "Pluto TV";
