@@ -1,0 +1,53 @@
+name: Retry Macs that never came
+
+# GitHub sometimes has no Mac free: a job waits about 15 minutes, is
+# cancelled before any step runs ("not acquired by Runner"), and the
+# release waits on it. When a CI run on master fails only because its
+# Apple TV / Mac jobs never got a machine (on both pools), this re-runs
+# those jobs, at most twice and ten minutes apart. A job that ran any step
+# and failed is a real failure and is never retried.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  retry:
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'master' &&
+      github.event.workflow_run.run_attempt < 3 }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Re-run the Mac jobs if no Mac ever came
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GH_REPO/actions/runs/$RUN/jobs?filter=latest&per_page=100" > jobs.json
+          verdict=$(python3 - <<'EOF'
+          import json
+          jobs = json.load(open("jobs.json"))["jobs"]
+          bad = ("failure", "cancelled", "timed_out")
+          apple = lambda j: "mac" in j["name"] or "tvos" in j["name"]
+          ran = lambda j: any(s.get("conclusion") not in (None, "skipped") for s in j.get("steps") or [])
+          real = [j["name"] for j in jobs if j["conclusion"] in bad and (ran(j) or not apple(j))]
+          never = [j["name"] for j in jobs if j["conclusion"] in bad and apple(j) and not ran(j)]
+          print("real: " + ", ".join(real) if real else ("retry: " + ", ".join(never) if never else "nothing"))
+          EOF
+          )
+          echo "$verdict"
+          case "$verdict" in
+            retry:*)
+              sleep 600
+              gh run rerun "$RUN" --failed
+              ;;
+          esac
