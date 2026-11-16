@@ -16,6 +16,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "core/guide/outside.hpp"
@@ -61,6 +62,9 @@ class XmltvReader : private xml::Handler {
 
   int guideChannelCount() const { return guideChannels_; }
   int programmeCount() const { return programmes_; }
+  // Build 165: the earliest programme end of your channels in the file, as
+  // read (before the window trimmed it).
+  std::optional<int> earliestEnd() const { return earliestEnd_; }
   uint64_t bytesFed() const { return tokenizer_.bytesFed(); }
 
   // "20261021200000 +0000" -> minutes since 1970 (no date formatter).
@@ -92,6 +96,10 @@ class XmltvReader : private xml::Handler {
   std::vector<std::string> channelOrder_;  // first-seen order of channelNames_
   std::optional<std::string> currentChannel_;
   std::optional<std::map<std::string, std::vector<Match>>> keep_;  // xmltv id -> user channels
+  // Build 165: the xmltv ids of channels with catch-up (Window::pastChannels),
+  // and the earliest end of a kept channel's programme, before trimming.
+  std::unordered_set<std::string> pastIds_;
+  std::optional<int> earliestEnd_;
   std::unordered_map<std::string, std::string> keepNames_;
   std::unordered_map<std::string, std::vector<RawProgram>> found_;  // xmltv id -> programmes
   TextPool texts_;  // a rerun's description is held once
@@ -99,6 +107,7 @@ class XmltvReader : private xml::Handler {
   std::optional<std::string> programmeChannel_;
   int programmeStart_ = 0;
   int programmeEnd_ = 0;
+  bool programmePast_ = false;  // ended before window_.low: kept for replay only
   std::optional<std::string> title_;
   std::optional<std::string> subtitle_;
   std::optional<std::string> desc_;

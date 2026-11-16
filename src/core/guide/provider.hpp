@@ -77,6 +77,9 @@ struct Outcome {
   Kind kind = Kind::failed;
   Saved saved;          // built
   std::string message;  // unavailable / failed
+  // Build 165, for the log: how far back the file reached ("guide past:
+  // provider file reaches back 26 h"); empty when it wasn't read.
+  std::string pastNote;
 };
 
 // "US| NBC ᴴᴰ" -> "US". Empty when the group has no country prefix.
@@ -109,6 +112,7 @@ struct ExactRead {
   int guideChannels = 0;
   int programmes = 0;
   int64_t bytes = 0;  // size of the downloaded (compressed) file
+  std::optional<int> earliestEnd;  // SourceResult::earliestEnd
 };
 struct ReadFailure {
   int httpStatus = 0;  // the server's answer, 0 for other failures

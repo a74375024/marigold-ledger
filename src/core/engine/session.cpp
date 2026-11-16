@@ -37,26 +37,10 @@ int64_t wallMs() {
   return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 }
 
-// The catch-up test: a picture's size waited for this long after it shows
-// before its log line goes without one.
-constexpr uint32_t kTestSizeWaitMs = 3000;
-
-// "1920x1080" from the player's facts ("1920x1080 59.94p · h264 ..."); ""
-// when they don't start with one.
-std::string pictureSize(const std::string& facts) {
-  std::string first = facts.substr(0, facts.find(' '));
-  size_t x = first.find('x');
-  if (x == std::string::npos || x == 0 || x + 1 >= first.size() || first.size() > 11) return {};
-  for (size_t i = 0; i < first.size(); ++i)
-    if (i != x && (first[i] < '0' || first[i] > '9')) return {};
-  return first;
-}
-
-// "2.3 s".
-std::string tenthsOfSeconds(uint32_t ms) {
-  uint32_t tenths = (ms + 50) / 100;
-  return std::to_string(tenths / 10) + "." + std::to_string(tenths % 10) + " s";
-}
+// Replay: a stretch that ends this soon after its picture came is short;
+// this many short ones in a row and the archive is taken as not working.
+constexpr uint32_t kShortStretchMs = 20000;
+constexpr int kShortStretchesTried = 3;
 
 }  // namespace
 
@@ -144,8 +128,11 @@ bool Session::tuneCamera(std::vector<Feed> feeds) {
 void Session::rememberGame() {
   // Leaving or switching a game: its source starts it next time (6 h).
   if (entry_.empty() || feeds_.empty() || camera_ || !store_.isEvent(entry_)) return;
-  size_t i = rec_.feedIndex();
-  if (i < feeds_.size()) store_.noteEventFeed(entry_, feeds_[i].channelId, ready());
+  // During a replay: the copy live played on, as it was (a replay is never
+  // a source's success or failure).
+  if (replay_ && !replayLiveReady_) return;
+  size_t i = replay_ ? replayLive_ : rec_.feedIndex();
+  if (i < feeds_.size()) store_.noteEventFeed(entry_, feeds_[i].channelId, replay_ ? true : ready());
 }
 
 bool Session::begin(const std::string& entryId, std::vector<Feed> feeds, const std::vector<std::string>& flip) {
@@ -153,15 +140,15 @@ bool Session::begin(const std::string& entryId, std::vector<Feed> feeds, const s
     MLOG_W("play", "no feeds for this channel");
     return false;
   }
-  // A catch-up test ends with the tune (it goes to live, as usual).
-  if (test_) closeCatchup("another channel");
   // What is left becomes Right's target (before its source, flip list and
-  // feeds are replaced). Another source or a camera of the same entry
-  // isn't leaving it.
+  // feeds are replaced), with the moment a replay showed. Another source or
+  // a camera of the same entry isn't leaving it.
   bool other = entryId != entry_;
   if (other) leaving();
   if (!flip.empty()) flip_ = flip;
   rememberGame();
+  // A replay ends with the tune: the channel tuned plays live.
+  if (replay_) endReplay(false);
   logMemory("before tuning");
   camera_ = false;
   quietReturn_ = false;
@@ -173,6 +160,9 @@ bool Session::begin(const std::string& entryId, std::vector<Feed> feeds, const s
     shownFull_ = pictured_ = false;
     gameId_ = store_.eventGameId(entryId);
     game_ = store_.isEvent(entryId);
+    // The copy's own past was for the channel left.
+    pastFor_.clear();
+    past_.reset();
   }
   pictureChannel_.clear();
   backup_.reset();
@@ -192,6 +182,13 @@ bool Session::begin(const std::string& entryId, std::vector<Feed> feeds, const s
   // Before the recovery picks a version: the one it played last time isn't
   // this channel's.
   logEvent("tune", std::to_string(feeds_.size()) + (feeds_.size() == 1 ? " feed" : " feeds"), false);
+  // Right to a replay left (Build 165): the archive from that moment, in
+  // place of a live start, while it still holds it.
+  if (replayInstead_) {
+    std::pair<time::Seconds, ReplayWhy> at = *replayInstead_;
+    replayInstead_.reset();
+    if (startReplayInstead(at.first, at.second, 0)) return true;
+  }
   // Every caller has already waited (OK, a settled flip, a preview's dwell,
   // a typed number): no second settle.
   playback::TuneOptions options;
@@ -202,10 +199,10 @@ bool Session::begin(const std::string& entryId, std::vector<Feed> feeds, const s
 }
 
 bool Session::tune(const std::string& entryId, const std::vector<std::string>& flip) {
-  // The channel under a catch-up test: back to it live.
-  if (test_ && entryId == entry_) {
+  // The channel replaying: back to it live.
+  if (replay_ && entryId == entry_) {
     if (!flip.empty()) flip_ = flip;
-    endCatchupTest();
+    goLive();
     return true;
   }
   if (entryId == entry_ && !failed()) {
@@ -222,7 +219,7 @@ bool Session::tuneEventVia(const std::string& eventId, const std::string& via, c
 }
 
 bool Session::restart(std::string_view why) {
-  if (entry_.empty() || feeds_.empty() || camera_ || test_) return false;
+  if (entry_.empty() || feeds_.empty() || camera_ || replay_) return false;
   std::vector<playback::FeedInfo> infos = feedInfos(entry_);
   logEvent("restart", why);
   playback::TuneOptions options;
@@ -237,10 +234,11 @@ bool Session::restart(std::string_view why) {
 
 bool Session::useFeed(size_t index) {
   if (index >= feeds_.size()) return false;
-  if (test_) {
-    // Out of the test first; another copy picked is a live pick like any.
-    endCatchupTest();
-    if (index != testLive_) quietReturn_ = false;
+  if (replay_) {
+    // Out of the replay first; another copy picked is a live pick like any.
+    size_t live = replayLive_;
+    goLive();
+    if (index != live) quietReturn_ = false;
   }
   apply(rec_.pick(ms(), index));
   return true;
@@ -249,9 +247,9 @@ bool Session::useFeed(size_t index) {
 void Session::stop() {
   pausedAt_.reset();
   if (entry_.empty()) return;
-  if (test_) closeCatchup("stopped");
   leaving();
   rememberGame();
+  if (replay_) endReplay(false);
   apply(rec_.stop(ms()));
   player_->stop();
   store_.closeStream();
@@ -296,8 +294,8 @@ void Session::apply(const playback::Actions& actions) {
       case playback::Action::Kind::RecordFeed:
         if (a.feed < feeds_.size()) {
           const std::string& id = feeds_[a.feed].channelId;
-          // Back to live after a catch-up test: the copy that played before
-          // it showing its picture again is no new success (nothing charged,
+          // Back to live after a replay: the copy that played before it
+          // showing its picture again is no new success (nothing charged,
           // nothing remembered). A failure there is live's own.
           bool quiet = quietReturn_ && a.worked;
           quietReturn_ = false;
@@ -505,6 +503,8 @@ Session::Viewed Session::viewedNow() const {
   }
   v.flip = flip_;
   if (!flip_.empty() && flip_ == pickedFlip_) v.tab = pickedTab_;
+  // (The timeline holding live's picture is no moment left.)
+  if (replay_ && !(replay_->fromLive && replay_->quiet)) v.replayAt = replay_->at();
   return v;
 }
 
@@ -574,6 +574,13 @@ std::string Session::previous() {
   };
   auto channels = store_.channels();
   std::string tuned, how;
+  // Left during a replay: the archive from that moment (begin() checks it
+  // still holds it; else live).
+  if (v.replayAt) replayInstead_ = std::make_pair(*v.replayAt, ReplayWhy::Back);
+  struct Clear {
+    std::optional<std::pair<time::Seconds, ReplayWhy>>& what;
+    ~Clear() { what.reset(); }
+  } clear{replayInstead_};
   if (v.game) {
     std::string id = gameNow(v);
     if (!id.empty()) {
@@ -621,15 +628,35 @@ std::string Session::previous() {
 
 void Session::suspend() {
   if (paused_) return;
-  // A catch-up test simply ends: live plays again on return.
-  if (test_) closeCatchup("app in background");
   paused_ = true;
   if (entry_.empty()) return;
   Paused p;
+  if (replay_ && replay_->phase == Replay::Phase::Paused) {
+    // A replay's pause stays a pause: its stream closes now.
+    if (!replay_->released) {
+      player_->stop();
+      replay_->released = true;
+    }
+    p.ready = true;
+    p.game = game_;
+    p.feed = replayLive_;
+    p.replayPaused = true;
+    logEvent("paused", "app in background");
+    pausedAt_ = p;
+    return;
+  }
+  size_t live = rec_.feedIndex();
+  if (replay_) {
+    // A replay playing: from the same moment on return. (The recovery
+    // already stands aside.)
+    p.replayAt = replay_->at();
+    live = replayLive_;
+    endReplay(false);
+  }
   p.restart = !failed();
-  p.ready = ready();
+  p.ready = p.replayAt ? true : ready();
   p.game = game_;
-  p.feed = feeds_.empty() ? 0 : std::min(rec_.feedIndex(), feeds_.size() - 1);
+  p.feed = feeds_.empty() ? 0 : std::min(live, feeds_.size() - 1);
   logEvent("paused", "app in background");
   if (p.restart) {
     // The recovery stops where it is: no timer falls due, an open still on
@@ -654,6 +681,11 @@ void Session::resume() {
   std::optional<Paused> p = pausedAt_;
   pausedAt_.reset();
   if (!p || entry_.empty()) return;
+  if (p->replayPaused) {
+    logEvent("resumed", "the replay stays paused");
+    if (hooks_.changed) hooks_.changed();
+    return;
+  }
   if (!p->restart) {
     logEvent("resumed", "the message stays");
     return;
@@ -674,6 +706,11 @@ void Session::resume() {
   noPicture_ = false;
   player_->beginTune();
   tunedAt_ = ms();
+  // A replay that was playing: on from the same moment.
+  if (p->replayAt && startReplayInstead(*p->replayAt, ReplayWhy::Resume, p->feed)) {
+    if (hooks_.changed) hooks_.changed();
+    return;
+  }
   playback::TuneOptions options;
   options.start = p->feed;
   options.settle = 0;
@@ -698,9 +735,10 @@ Session::Look Session::look() const {
   l.noPicture = noPicture_;
   l.hadPicture = hadPicture_;
   l.backup = backup_.has_value();
-  if (test_) {
-    l.test = 1 + static_cast<int>(test_->phase);
-    l.testFeed = test_->feed;
+  if (replay_) {
+    l.replay = 1 + static_cast<int>(replay_->phase);
+    l.replayFeed = replay_->feed;
+    l.replayReleased = replay_->released;
   }
   return l;
 }
@@ -711,13 +749,14 @@ bool Session::tick(uint32_t now) {
     memoryAt_ = now + kMemoryEveryMs;
   }
   for (std::string& note : store_.takeEventsLog()) log_.add(wallMs(), "live events", 0, {}, {}, {}, note);
+  for (std::string& note : store_.takeGuideLog()) log_.add(wallMs(), "guide", 0, {}, {}, {}, note);
   saveLog(now);
   // Paused in the background: the recovery waits for the app's return.
   if (entry_.empty() || paused_) return false;
-  if (test_) {
-    // The catch-up test's own short path: the recovery stands aside.
-    tickCatchup(now);
-    return test_ && test_->phase == CatchupTest::Phase::Opening;
+  if (replay_) {
+    // A replay's own path: the recovery stands aside.
+    tickReplay(now);
+    return replay_ && replay_->phase == Replay::Phase::Opening;
   }
   PlayerState s = player_->state();
   // A picture is a frame drawn. Radio (or a channel kept as sound only)
@@ -785,12 +824,10 @@ bool Session::tick(uint32_t now) {
   return (!ready() && !failed()) || !note().empty();
 }
 
-// ---------------------------------------------------------------- catch-up test
+// ---------------------------------------------------------------- replay
 
-std::optional<size_t> Session::catchupCopy() const {
-  if (entry_.empty() || paused_ || camera_ || feeds_.empty()) return std::nullopt;
-  if (!test_ && (!rec_.sawFirstFrame() || failed())) return std::nullopt;
-  size_t live = test_ ? testLive_ : rec_.feedIndex();
+std::optional<size_t> Session::archiveCopy(size_t live) const {
+  if (feeds_.empty()) return std::nullopt;
   if (live < feeds_.size() && store_.catchupDays(feeds_[live].channelId) > 0) return live;
   for (size_t i = 0; i < feeds_.size(); ++i) {
     const std::string& id = feeds_[i].channelId;
@@ -802,202 +839,393 @@ std::optional<size_t> Session::catchupCopy() const {
   return std::nullopt;
 }
 
+std::optional<size_t> Session::catchupCopy() const {
+  if (entry_.empty() || paused_ || camera_ || feeds_.empty()) return std::nullopt;
+  if (replay_) return replay_->feed;
+  if (!rec_.sawFirstFrame() || failed()) return std::nullopt;
+  return archiveCopy(rec_.feedIndex());
+}
+
 uint16_t Session::catchupDays() const {
   std::optional<size_t> i = catchupCopy();
   return i ? store_.catchupDays(feeds_[*i].channelId) : 0;
 }
 
-bool Session::startCatchupTest(CatchupMoment moment, time::Seconds from) {
-  // Which copy replays: worked out before a test on now closes.
-  std::optional<size_t> copy = catchupCopy();
-  uint16_t days = copy ? store_.catchupDays(feeds_[*copy].channelId) : 0;
-  if (!days) return false;
-  time::Seconds now = time::now();
-  from -= ((from % 60) + 60) % 60;  // the provider takes minutes
-  if (from >= now || now - from > (static_cast<time::Seconds>(days) + 1) * 86400) return false;
-  if (test_) {
-    // Tested again: the test on now ends (its line is written); the
-    // recovery is still aside.
-    closeCatchup("tested again");
-  } else {
-    testLive_ = rec_.feedIndex();
-    // The recovery stops where it is, as in the background: no timer falls
-    // due and nothing is charged to a feed; its "stop" line isn't one.
-    playback::Actions stopped = rec_.stop(ms());
-    stopped.erase(std::remove_if(stopped.begin(), stopped.end(),
-                                 [](const playback::Action& a) { return a.kind == playback::Action::Kind::Log; }),
-                  stopped.end());
-    apply(stopped);
-    quickPending_.clear();
-    measured_.reset();
-    backup_.reset();
-    noPicture_ = false;
-  }
-  quietReturn_ = false;
-  testTried_.clear();
-  test_ = CatchupTest{};
-  test_->moment = moment;
-  test_->from = from;
-  playCatchup(*copy);
-  return true;
+time::Seconds Session::replayAt() const { return replay_ ? replay_->at() : time::now(); }
+
+time::Seconds Session::behindLive() const {
+  return replay_ ? std::max<time::Seconds>(0, time::now() - replay_->at()) : 0;
 }
 
-void Session::playCatchup(size_t index) {
-  CatchupTest& t = *test_;
+std::string Session::localTime(time::Seconds t) const {
+  time::Zone zone = host_.zone ? host_.zone() : time::Zone::device();
+  time::Civil at = zone.toLocal(t);
+  char hm[8];
+  std::snprintf(hm, sizeof hm, "%02d:%02d", at.hour, at.minute);
+  return hm;
+}
+
+void Session::logReplay(std::string detail, size_t copy, bool clock) {
+  if (clock)
+    detail += "; server clock " + (replayOffset_ ? sources::xtream::offsetText(*replayOffset_)
+                                                 : std::string("not known, asked as UTC"));
+  std::string channel, feed, provider;
+  if (const GuideChannel* g = store_.channels()->find(entry_)) channel = g->name;
+  else if (const EventTile* e = store_.eventTile(entry_)) channel = e->heroTitle.empty() ? e->title : e->heroTitle;
+  if (copy < feeds_.size()) {
+    feed = feeds_[copy].label;
+    provider = store_.providerName(feeds_[copy].channelId);
+  }
+  // Never a link: the detail is ours, and goes through the log's filter too.
+  detail = playback::safeMessage(detail);
+  MLOG_I("play", "replay: %s", detail.c_str());
+  log_.add(wallMs(), "replay", session_, channel, feed, provider, detail);
+}
+
+void Session::standAside() {
+  // The recovery stops where it is, as in the background: no timer falls
+  // due and nothing is charged to a feed; its "stop" line isn't one.
+  playback::Actions stopped = rec_.stop(ms());
+  stopped.erase(std::remove_if(stopped.begin(), stopped.end(),
+                               [](const playback::Action& a) { return a.kind == playback::Action::Kind::Log; }),
+                stopped.end());
+  apply(stopped);
+  quickPending_.clear();
+  measured_.reset();
+  backup_.reset();
+  noPicture_ = false;
+  quietReturn_ = false;
+}
+
+void Session::playReplay(size_t index, time::Seconds from, const std::string& what, bool next) {
+  Replay& r = *replay_;
   index = std::min(index, feeds_.size() - 1);
   time::Seconds now = time::now();
-  t.phase = CatchupTest::Phase::Opening;
-  t.feed = index;
-  t.days = store_.catchupDays(feeds_[index].channelId);
-  t.behind = now - t.from;
-  t.startedAt = ms();
-  t.pictureMs = 0;
-  t.timedOut = false;
-  t.error.clear();
-  t.size.clear();
-  testLogged_ = false;
-  testTried_.insert(index);
+  r.phase = Replay::Phase::Opening;
+  r.feed = index;
+  r.days = store_.catchupDays(feeds_[index].channelId);
+  r.from = replay::minuteOf(from);
+  r.atMs = static_cast<int64_t>(r.from) * 1000;
+  r.startedAt = ms();
+  r.pictureAt = 0;
+  r.held = r.released = r.fromLive = false;
+  r.next = next;
+  replayTick_ = ms();
+  replayTried_.insert(index);
+  {
+    std::vector<playback::FeedInfo> infos = feedInfos(entry_);
+    r.video = index < infos.size() ? infos[index].expectVideo : true;
+  }
   // The link carries the login: to the player only, never the log.
-  std::optional<Store::CatchupFeed> f = store_.catchupFeed(feeds_[index], t.from, now);
-  testOffset_ = f ? f->serverOffset : std::nullopt;
+  std::optional<Store::CatchupFeed> f = store_.catchupFeed(feeds_[index], r.from, now);
+  replayOffset_ = f ? f->serverOffset : std::nullopt;
+  r.minutes = f ? f->minutes : 0;
   if (hooks_.changed) hooks_.changed();
   if (!f) {
-    failCatchup(false, "no catch-up link could be made for this copy");
+    logReplay(what, index);
+    replayFailed("no replay link could be made for this copy");
     return;
   }
-  MLOG_I("play", "catch-up test: feed %zu of %zu, %lld min back, %d min asked", index + 1, feeds_.size(),
-         static_cast<long long>(t.behind / 60), f->minutes);
+  logReplay(what, index, true);
   player_->attempt();
   player_->play(f->feed, false);
 }
 
-void Session::tickCatchup(uint32_t now) {
-  CatchupTest& t = *test_;
-  PlayerState s = player_->state();
-  // What the relay notes of its own belongs to live playback: read and left.
-  (void)player_->note();
-  (void)player_->sourceClosed();
-  if (t.phase == CatchupTest::Phase::Opening) {
-    bool picture = s.picture || (s.playing && s.streamChecked && s.stream == media::Verdict::Picture);
-    if (picture) {
-      t.phase = CatchupTest::Phase::Worked;
-      t.pictureMs = now - t.startedAt;
-      if (hooks_.picture) hooks_.picture();
-      if (hooks_.changed) hooks_.changed();
-    } else if (s.failed || s.ended) {
-      std::string error = s.failed ? playback::safeMessage(s.error) : std::string("the stream ended at once");
-      failCatchup(false, error.empty() ? std::string("the player reported an error") : error);
-      return;
-    } else if (now - t.startedAt >= kCatchupTimeoutMs) {
-      failCatchup(true, {});
-      return;
-    }
+bool Session::replayFrom(time::Seconds from, ReplayWhy why) {
+  // The copy replaying, else the channel's copy with an archive.
+  std::optional<size_t> copy = catchupCopy();
+  if (!copy) return false;
+  uint16_t days = store_.catchupDays(feeds_[*copy].channelId);
+  if (!days) return false;
+  time::Seconds now = time::now();
+  from = std::max(replay::minuteOf(from), replay::archiveStart(now, days));
+  if (now - from < kLiveWithin) {
+    // A minute from live is live.
+    if (replay_) goLive();
+    return true;
   }
-  if (t.phase == CatchupTest::Phase::Worked && !testLogged_) {
-    if (t.size.empty()) t.size = pictureSize(s.facts);
-    if (!t.size.empty() || now - t.startedAt - t.pictureMs >= kTestSizeWaitMs) logCatchup();
+  if (!replay_) {
+    replayLive_ = rec_.feedIndex();
+    replayLiveReady_ = rec_.sawFirstFrame();
+    standAside();
   }
-}
-
-void Session::failCatchup(bool timedOut, std::string error) {
-  CatchupTest& t = *test_;
-  t.phase = CatchupTest::Phase::Failed;
-  t.timedOut = timedOut;
-  t.error = std::move(error);
-  // Only said: no reconnect, no other copy unless the viewer asks.
-  player_->stop();
-  logCatchup();
-  if (hooks_.changed) hooks_.changed();
-}
-
-void Session::logCatchup(std::string_view ended) {
-  if (!test_ || testLogged_) return;
-  testLogged_ = true;
-  const CatchupTest& t = *test_;
-  std::string detail;
-  switch (t.moment) {
-    case CatchupMoment::TenMinutesAgo: detail = "10 min ago"; break;
-    case CatchupMoment::ProgrammeStart: {
-      time::Zone zone = host_.zone ? host_.zone() : time::Zone::device();
-      time::Civil at = zone.toLocal(t.from);
-      char hm[8];
-      std::snprintf(hm, sizeof hm, "%02d:%02d", at.hour, at.minute);
-      detail = std::string("start of programme ") + hm;
-      break;
-    }
-    case CatchupMoment::Yesterday: detail = "yesterday, same time"; break;
-  }
-  detail += " (archive says " + std::to_string(t.days) + (t.days == 1 ? " day): " : " days): ");
-  if (!ended.empty()) {
-    detail += "ended before a result (" + std::string(ended) + ")";
-  } else if (t.phase == CatchupTest::Phase::Worked) {
-    detail += "worked, picture in " + tenthsOfSeconds(t.pictureMs) + (t.size.empty() ? "" : ", " + t.size);
-  } else {
-    detail += "failed, " + (t.timedOut ? "no picture after " + std::to_string(kCatchupTimeoutMs / 1000) + " s" : t.error);
-  }
-  detail += "; server clock " + (testOffset_ ? sources::xtream::offsetText(*testOffset_) : "not known, asked as UTC");
-  std::string channel, feed, provider;
-  if (const GuideChannel* g = store_.channels()->find(entry_)) channel = g->name;
-  else if (const EventTile* e = store_.eventTile(entry_)) channel = e->heroTitle.empty() ? e->title : e->heroTitle;
-  if (t.feed < feeds_.size()) {
-    feed = feeds_[t.feed].label;
-    provider = store_.providerName(feeds_[t.feed].channelId);
-  }
-  detail = playback::safeMessage(detail);
-  MLOG_I("play", "catch-up test: %s", detail.c_str());
-  log_.add(wallMs(), "catch-up test", session_, channel, feed, provider, detail);
-}
-
-void Session::closeCatchup(std::string_view why) {
-  if (!test_) return;
-  // Every test has its line: one still opening ended before a result.
-  logCatchup(test_->phase == CatchupTest::Phase::Opening ? why : std::string_view());
-  test_.reset();
-  testTried_.clear();
-  testOffset_.reset();
-  if (hooks_.changed) hooks_.changed();
-}
-
-std::optional<size_t> Session::catchupOtherCopy() const {
-  if (!test_ || feeds_.empty()) return std::nullopt;
-  for (size_t k = 1; k < feeds_.size(); ++k) {
-    size_t i = (test_->feed + k) % feeds_.size();
-    if (testTried_.count(i)) continue;
-    const std::string& id = feeds_[i].channelId;
-    if (store_.catchupDays(id) == 0) continue;
-    // A guide channel's own versions (not a game's backup on another channel).
-    if (!game_ && store_.entryOfChannel(id) != entry_) continue;
-    return i;
-  }
-  return std::nullopt;
-}
-
-bool Session::catchupTryOtherCopy() {
-  std::optional<size_t> next = catchupOtherCopy();
-  if (!next) return false;
-  logCatchup("another copy");
-  playCatchup(*next);
+  replay_ = Replay{};
+  replayTried_.clear();
+  shortStretches_ = 0;
+  std::string at = localTime(from);
+  std::string what = why == ReplayWhy::StartOver ? "start over " + at
+                     : why == ReplayWhy::Rewind  ? "rewind to " + at
+                     : why == ReplayWhy::Back    ? "back to " + at
+                                                 : "resumed " + at;
+  playReplay(*copy, from, what);
   return true;
 }
 
-void Session::endCatchupTest() {
-  if (!test_) return;
-  closeCatchup("back to live");
-  if (entry_.empty() || feeds_.empty()) return;
-  // The copy before the test again, as a fresh start (its backups after
-  // it), like a return from the background.
+bool Session::startReplayInstead(time::Seconds at, ReplayWhy why, size_t live) {
+  if (camera_ || feeds_.empty() || entry_.empty()) return false;
+  live = std::min(live, feeds_.size() - 1);
+  std::optional<size_t> copy = archiveCopy(live);
+  if (!copy) return false;
+  uint16_t days = store_.catchupDays(feeds_[*copy].channelId);
+  time::Seconds now = time::now();
+  at = replay::minuteOf(at);
+  if (at < replay::archiveStart(now, days) || now - at < kLiveWithin) return false;
+  standAside();
+  replayLive_ = live;
+  replayLiveReady_ = false;
+  replay_ = Replay{};
+  replayTried_.clear();
+  shortStretches_ = 0;
+  std::string when = localTime(at);
+  playReplay(*copy, at, (why == ReplayWhy::Back ? "back to " : "resumed ") + when +
+                            (why == ReplayWhy::Resume ? " after the background" : ""));
+  return true;
+}
+
+bool Session::pause(bool quiet) {
+  if (entry_.empty() || paused_) return false;
+  if (replay_) {
+    Replay& r = *replay_;
+    if (r.phase == Replay::Phase::Paused) return true;
+    bool showing = r.phase == Replay::Phase::Playing;
+    r.phase = Replay::Phase::Paused;
+    r.pausedAt = ms();
+    r.fromLive = false;
+    r.next = false;
+    r.held = showing && player_->pause();
+    if (!r.held) {
+      player_->stop();
+      r.released = true;
+    }
+    if (!quiet) logReplay("paused at " + localTime(r.at()), r.feed);
+    if (hooks_.changed) hooks_.changed();
+    return true;
+  }
+  std::optional<size_t> copy = catchupCopy();
+  if (!copy) return false;
+  replayLive_ = rec_.feedIndex();
+  replayLiveReady_ = rec_.sawFirstFrame();
+  // The picture held first: the recovery then stands aside (closing what a
+  // server opened), and the stream itself closes a few seconds later.
+  bool held = player_->pause();
+  standAside();
+  replay_ = Replay{};
+  Replay& r = *replay_;
+  r.phase = Replay::Phase::Paused;
+  r.feed = *copy;
+  r.days = store_.catchupDays(feeds_[*copy].channelId);
+  r.atMs = static_cast<int64_t>(time::now()) * 1000;
+  r.from = replay::minuteOf(r.at());
+  r.pausedAt = ms();
+  r.fromLive = true;
+  r.quiet = quiet;
+  r.held = held;
+  replayTried_.clear();
+  shortStretches_ = 0;
+  if (!r.held) {
+    player_->stop();
+    r.released = true;
+  }
+  replayTick_ = ms();
+  if (!quiet) logReplay("paused at " + localTime(r.at()) + " (live)", replayLive_);
+  if (hooks_.changed) hooks_.changed();
+  return true;
+}
+
+bool Session::resumePaused(bool quiet) {
+  if (!replay_ || replay_->phase != Replay::Phase::Paused || paused_) return false;
+  Replay& r = *replay_;
+  time::Seconds now = time::now();
+  // From the paused minute (a few seconds early), inside the archive.
+  time::Seconds from = std::max(replay::minuteOf(r.at()), replay::archiveStart(now, r.days));
+  if (now - from < kLiveWithin) {
+    goLive(quiet);
+    return true;
+  }
+  if (!r.released) player_->stop();
+  replayTried_.clear();
+  shortStretches_ = 0;
+  playReplay(r.feed, from, "resumed " + localTime(from));
+  return true;
+}
+
+void Session::goLive(bool quiet) {
+  if (!replay_) return;
+  if (!quiet) logReplay("back to live", replayLive_);
+  endReplay(true);
+}
+
+void Session::endReplay(bool live) {
+  if (!replay_) return;
+  replay_.reset();
+  replayTried_.clear();
+  replayOffset_.reset();
+  shortStretches_ = 0;
+  if (hooks_.changed) hooks_.changed();
+  if (!live || entry_.empty() || feeds_.empty()) return;
+  // The copy live played on, as a fresh start (its backups after it), like
+  // a return from the background.
   hadPicture_ = false;
   failMessage_.clear();
   noPicture_ = false;
   player_->beginTune();
   tunedAt_ = ms();
   playback::TuneOptions options;
-  options.start = std::min(testLive_, feeds_.size() - 1);
+  options.start = std::min(replayLive_, feeds_.size() - 1);
   options.settle = 0;
   options.game = game_;
   apply(rec_.tune(ms(), feedInfos(entry_), options));
   quietReturn_ = true;
-  if (hooks_.changed) hooks_.changed();
+}
+
+std::string Session::takeReplayNotice() {
+  std::string out;
+  out.swap(replayNotice_);
+  return out;
+}
+
+void Session::replayFailed(const std::string& why) {
+  if (!replay_) return;
+  Replay& r = *replay_;
+  player_->stop();
+  // Another copy with an archive, for the same moment.
+  std::optional<size_t> other;
+  for (size_t k = 1; k < feeds_.size() && !other; ++k) {
+    size_t i = (r.feed + k) % feeds_.size();
+    if (replayTried_.count(i)) continue;
+    const std::string& id = feeds_[i].channelId;
+    if (store_.catchupDays(id) == 0) continue;
+    if (!game_ && store_.entryOfChannel(id) != entry_) continue;
+    other = i;
+  }
+  time::Seconds at = replay::minuteOf(r.at());
+  if (other) {
+    logReplay("failed: " + why + "; another copy", r.feed);
+    shortStretches_ = 0;
+    playReplay(*other, at, "another copy from " + localTime(at));
+    return;
+  }
+  logReplay("failed: " + why + "; back to live", r.feed);
+  replayNotice_ = "Replay isn\xe2\x80\x99t available right now on this channel";
+  endReplay(true);
+}
+
+void Session::tickReplay(uint32_t now) {
+  Replay& r = *replay_;
+  uint32_t dt = now - replayTick_;
+  replayTick_ = now;
+  if (r.phase == Replay::Phase::Paused) {
+    // The picture held a moment; then the stream closes (the provider's
+    // connection is free).
+    if (!r.released && now - r.pausedAt >= kReleaseMs) {
+      player_->stop();
+      r.released = true;
+      if (hooks_.changed) hooks_.changed();
+    }
+    return;
+  }
+  PlayerState s = player_->state();
+  // What the relay notes of its own belongs to live playback: read and left.
+  (void)player_->note();
+  (void)player_->sourceClosed();
+  bool picture = s.picture || (s.playing && (!r.video || (s.streamChecked && s.stream == media::Verdict::Picture)));
+  if (r.phase == Replay::Phase::Opening) {
+    if (picture) {
+      r.phase = Replay::Phase::Playing;
+      r.pictureAt = std::max<uint32_t>(1, now);
+      r.next = false;
+      // Watched, for Right: the channel counts as viewed (on its live copy).
+      pictured_ = true;
+      hadPicture_ = true;
+      if (pictureChannel_.empty() && replayLive_ < feeds_.size()) pictureChannel_ = feeds_[replayLive_].channelId;
+      if (hooks_.picture) hooks_.picture();
+      if (hooks_.changed) hooks_.changed();
+      return;
+    }
+    if (s.failed || s.ended) {
+      std::string error = s.failed ? playback::safeMessage(s.error) : std::string("the stream ended at once");
+      replayFailed(error.empty() ? std::string("the player reported an error") : error);
+      return;
+    }
+    if (now - r.startedAt >= kReplayTimeoutMs) replayFailed("no picture after " + std::to_string(kReplayTimeoutMs / 1000) + " s");
+    return;
+  }
+  // Playing: the moment showing moves on while the picture does.
+  if (!s.buffering && (s.playing || picture)) r.atMs += dt;
+  time::Seconds live = time::now();
+  if (live - r.at() <= kLiveWithin) {
+    logReplay("caught up", r.feed);
+    replayNotice_ = "You\xe2\x80\x99re live";
+    endReplay(true);
+    return;
+  }
+  if (s.failed || s.ended) {
+    // The stretch ended (or broke) behind live: the next one from where it
+    // ended, seamlessly. Several short ones in a row: it isn't working.
+    shortStretches_ = now - r.pictureAt < kShortStretchMs ? shortStretches_ + 1 : 0;
+    if (shortStretches_ >= kShortStretchesTried) {
+      replayFailed("the archive keeps stopping");
+      return;
+    }
+    time::Seconds at = replay::minuteOf(r.at());
+    replayTried_.clear();
+    playReplay(r.feed, at, "next stretch from " + localTime(at), true);
+  }
+}
+
+void Session::wantPast() {
+  std::optional<size_t> copy = catchupCopy();
+  if (!copy || pastFor_ == entry_) return;
+  pastFor_ = entry_;
+  past_.reset();
+  std::string entry = entry_;
+  std::weak_ptr<int> alive = alive_;
+  store_.archiveGuide(feeds_[*copy].channelId,
+                      [this, alive, entry](std::optional<std::vector<Store::PastProgramme>> list) {
+                        if (alive.expired() || entry != entry_ || pastFor_ != entry) return;
+                        ++pastSerial_;
+                        if (!list) {
+                          // Fine: the timeline works by minutes all the same.
+                          log_.add(wallMs(), "replay", session_, {}, {}, {}, "past listings: the request failed");
+                          return;
+                        }
+                        std::vector<replay::Programme> own;
+                        time::Seconds now = time::now(), earliest = now;
+                        int archived = 0;
+                        for (Store::PastProgramme& p : *list) {
+                          if (p.start >= now) continue;
+                          earliest = std::min(earliest, p.start);
+                          if (p.archived) ++archived;
+                          replay::Programme q;
+                          q.start = p.start;
+                          q.end = p.end;
+                          q.title = std::move(p.title);
+                          q.archived = p.archived;
+                          own.push_back(std::move(q));
+                        }
+                        log_.add(wallMs(), "replay", session_, {}, {}, {},
+                                 "past listings: " + std::to_string((now - earliest + 1800) / 3600) + " h, " +
+                                     std::to_string(archived) + " in archive");
+                        past_ = std::move(own);
+                        if (hooks_.changed) hooks_.changed();
+                      });
+}
+
+std::vector<replay::Programme> Session::timeline(time::Seconds from) const {
+  std::optional<size_t> copy = catchupCopy();
+  // A game's timeline is its channel's.
+  std::string entry = entry_;
+  if (game_ && copy) entry = store_.entryOfChannel(feeds_[*copy].channelId);
+  std::vector<replay::Programme> guide;
+  for (Listing& l : store_.pastListing(entry, from)) {
+    replay::Programme p;
+    p.start = l.start;
+    p.end = l.end;
+    p.title = std::move(l.title);
+    guide.push_back(std::move(p));
+  }
+  if (!past_ || pastFor_ != entry_) return guide;
+  return replay::merged(std::move(guide), *past_);
 }
 
 }  // namespace marigold::engine

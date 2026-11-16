@@ -450,6 +450,17 @@ void Video::stop() {
   if (started_) tvos::onMain([] { [gPlayer stop]; });
 }
 
+bool Video::pause(bool paused) {
+  // VLC's pause keeps the last picture in its view until the stream stops.
+  if (!started_) return false;
+  tvos::onMain([paused] {
+    if (!gPlayer.player.media) return;
+    if (paused) [gPlayer.player pause];
+    else [gPlayer.player play];
+  });
+  return true;
+}
+
 void Video::pump() {}
 
 void Video::setMuted(bool muted) {

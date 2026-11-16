@@ -934,6 +934,22 @@ std::vector<RawProgram> mergePrograms(const std::vector<RawProgram>& base,
   return result;
 }
 
+std::shared_ptr<const std::unordered_set<std::string>> replayChannels(const std::vector<Channel>& channels) {
+  auto ids = std::make_shared<std::unordered_set<std::string>>();
+  for (const Channel& c : channels)
+    if (c.archiveDays > 0) ids->insert(c.id);
+  if (ids->empty()) return nullptr;
+  return ids;
+}
+
+std::string pastHours(std::optional<int> earliestEnd, int now) {
+  if (!earliestEnd) return "nothing";
+  // Rounded to the hour; "0 h" for a file that starts with what's on now
+  // (or later).
+  int minutes = std::max(0, now - *earliestEnd);
+  return std::to_string((minutes + 30) / 60) + " h";
+}
+
 std::vector<Program> programs(const std::vector<RawProgram>& raw, const std::string& channelID,
                               time::Seconds from, time::Seconds to, std::string_view idPrefix,
                               bool outside) {
@@ -1002,7 +1018,12 @@ BuildResult build(const std::vector<Channel>& channels, const std::set<std::stri
   std::map<std::string, SourceState> states;
   if (previous && previous->sources) states = *previous->sources;
   const int now = static_cast<int>(nowSec / 60);
-  const Window window{now - 180, now + kKeepHours * 60, now + kDescHours * 60};
+  Window window{now - kPastMinutes, now + kKeepHours * 60, now + kDescHours * 60};
+  // Build 165: the channels with catch-up keep their last six hours.
+  window.pastChannels = replayChannels(channels);
+  window.pastLow = now - kReplayPastMinutes;
+  // How far back each file read reached, for one "guide past" line.
+  std::vector<std::string> past;
   std::vector<const Source*> chosen, mains, backups;
   for (const Source& s : sources()) {
     if (!s.appliesTo(on)) continue;
@@ -1129,6 +1150,7 @@ BuildResult build(const std::vector<Channel>& channels, const std::set<std::stri
         continue;
       }
       const SourceResult& found = *read.result;
+      past.push_back(source.name + " " + pastHours(found.earliestEnd, now));
       std::map<std::pair<const void*, const void*>, Schedule> memo;
       std::map<std::pair<const void*, const void*>, bool> apart;
       int keptApart = 0;
@@ -1268,12 +1290,15 @@ BuildResult build(const std::vector<Channel>& channels, const std::set<std::stri
       // A wider window, so times can still be moved into it.
       int shiftRoom = source.calibrate ? 16 * 60 : 0;
       Window wide{window.low - shiftRoom, window.high + shiftRoom, window.descUntil + shiftRoom};
+      wide.pastChannels = window.pastChannels;
+      wide.pastLow = window.pastLow - shiftRoom;
       BuildIO::ReadOutcome read =
           io.read ? io.read(source, fetched.file, targets, wide) : BuildIO::ReadOutcome{};
       if (!read.result) {
         failure = read.error.empty() ? "unreadable" : read.error;
       } else {
         const SourceResult& found = *read.result;
+        past.push_back(source.name + " " + pastHours(found.earliestEnd, now));
         SharedPrograms candidates;
         for (const auto& [id, entry] : found.programs)
           if (entry.programs) candidates[id] = entry.programs;
@@ -1400,6 +1425,8 @@ BuildResult build(const std::vector<Channel>& channels, const std::set<std::stri
     std::vector<std::string> staleList(staleShards.begin(), staleShards.end());
     done += "; stale: " + str::join(staleList, ", ") + ", next check in 2 h";
   }
+  // Build 165: how far back each file read reached (before trimming).
+  if (!past.empty()) log.push_back("guide past: outside " + str::join(past, ", "));
   log.push_back(done);
   result.programs = share(std::move(merged));
   result.problems = std::move(problems);

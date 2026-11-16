@@ -257,3 +257,58 @@ TEST_CASE("XMLTV time parser") {
   CHECK(XmltvReader::minutes("20261021200000 +xx00") == base);
   CHECK(stamp(base) == "20261021200000 +0000");
 }
+
+TEST_CASE("XMLTV: channels with catch-up keep six hours back, without descriptions; others three") {
+  // Build 165: a provider guide read with the replay channels' window.
+  std::unordered_map<std::string, std::vector<std::string>> ids = {{"espn.us", {"xt:a|501", "xt:a|502"}},
+                                                                    {"cnn.us", {"xt:a|504"}}};
+  Window window = kWindow;
+  window.descUntil = kNow + 24 * 60;
+  window.pastChannels = std::make_shared<std::unordered_set<std::string>>(std::unordered_set<std::string>{"xt:a|501"});
+  window.pastLow = kNow - kReplayPastMinutes;
+  XmltvReader reader = XmltvReader::exact(ids, window);
+  xmltvdata::Builder b;
+  b.channel("ESPN.us", {"ESPN"}).channel("CNN.us", {"CNN"});
+  const std::string desc = "<desc lang=\"en\">What happened.</desc>";
+  for (const char* ch : {"ESPN.us", "CNN.us"}) {
+    b.programme(ch, kNow - 9 * 60, 60, "Nine back", desc);  // ended 8 h ago: gone everywhere
+    b.programme(ch, kNow - 6 * 60, 60, "Six back", desc);   // ended 5 h ago: replay channels only
+    b.programme(ch, kNow - 4 * 60, 60, "Four back", desc);  // ended 3 h ago: the edge (replay channels only)
+    b.programme(ch, kNow - 3 * 60, 120, "Two back", desc);  // ended an hour ago: everyone, described
+    b.programme(ch, kNow - 60, 120, "On now", desc);
+  }
+  reader.feed(b.done());
+  reader.finish();
+  // How far back the file reached, before trimming.
+  REQUIRE(reader.earliestEnd());
+  CHECK(*reader.earliestEnd() == kNow - 8 * 60);
+  auto result = reader.result();
+  auto titles = [](const SourceResult::Entry& e) {
+    std::vector<std::string> out;
+    for (const RawProgram& p : *e.programs) out.push_back(p.t);
+    return out;
+  };
+  REQUIRE(result.count("xt:a|501"));
+  REQUIRE(result.count("xt:a|504"));
+  CHECK(titles(result.at("xt:a|501")) == std::vector<std::string>{"Six back", "Four back", "Two back", "On now"});
+  // ESPN's other copy shares its guide id: the same list.
+  CHECK(result.at("xt:a|502").programs.get() == result.at("xt:a|501").programs.get());
+  CHECK(titles(result.at("xt:a|504")) == std::vector<std::string>{"Two back", "On now"});
+  for (const RawProgram& p : *result.at("xt:a|501").programs) {
+    if (p.t == "Six back" || p.t == "Four back") CHECK(p.d.empty());
+    else CHECK_FALSE(p.d.empty());
+  }
+  CHECK(pastHours(reader.earliestEnd(), kNow) == "8 h");
+  CHECK(pastHours(std::nullopt, kNow) == "nothing");
+}
+
+TEST_CASE("XMLTV: the replay channels are the ones with an archive") {
+  std::vector<Channel> channels = {userChannel("a", "A"), userChannel("b", "B")};
+  bool none = replayChannels(channels) == nullptr;
+  CHECK(none);
+  channels[1].archiveDays = 2;
+  auto ids = replayChannels(channels);
+  REQUIRE(static_cast<bool>(ids));
+  CHECK(ids->size() == 1);
+  CHECK(ids->count("b"));
+}

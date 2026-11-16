@@ -73,7 +73,9 @@ class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
     const Settings& set = app_.store().settings();
     unsigned relay = 0;
     if (!asGiven && (hls || anySubtitles(set) || set.playThroughApp) && !proxyFailed_.count(f.channelId)) {
-      std::string local = proxy_.localUrl(url, headers, !hls);
+      // A replay stretch ends where it was asked to: the relay doesn't
+      // reopen it from its start (the session opens the next stretch).
+      std::string local = proxy_.localUrl(url, headers, !hls, !f.replay);
       if (!local.empty()) {
         url = local;
         headers.clear();  // the proxy sends them to the source
@@ -118,6 +120,10 @@ class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
   }
 
   void streamClosed() override { proxy_.stop(); }
+
+  // Replay's pause: the player holds the picture (the session stops the
+  // stream, and the relay with it, a few seconds later).
+  bool pause() override { return app_.video().pause(true); }
 
   void stop() override {
     app_.video().stop();

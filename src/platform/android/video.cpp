@@ -87,6 +87,14 @@ void Video::setMuted(bool muted) {
   e->CallStaticVoidMethod(android::bridge(), id, static_cast<jboolean>(muted));
   android::caught(e, "videoMuted");
 }
+bool Video::pause(bool paused) {
+  // ExoPlayer's playWhenReady: the SurfaceView keeps the last frame.
+  JNIEnv* e = android::env();
+  if (!e) return false;
+  static jmethodID id = android::method("videoPause", "(Z)V");
+  e->CallStaticVoidMethod(android::bridge(), id, static_cast<jboolean>(paused));
+  return !android::caught(e, "videoPause");
+}
 void Video::pump() {}
 void Video::setWindow(gfx::Rect r) { window(r, false); }
 void Video::reapplyWindow(gfx::Rect r) { window(r, true); }

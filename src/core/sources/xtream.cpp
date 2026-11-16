@@ -261,6 +261,39 @@ std::vector<Program> Client::parseShortEpg(int status, std::string_view body, co
   return out;
 }
 
+Request Client::simpleDataTableRequest(std::string_view streamId) const {
+  return get({{"action", "get_simple_data_table"}, {"stream_id", std::string(streamId)}});
+}
+
+std::vector<ArchiveProgramme> parseSimpleDataTable(int status, std::string_view body) {
+  std::vector<ArchiveProgramme> out;
+  if (checkStatus(status)) return out;
+  std::optional<json::Value> root = json::parse(body);
+  if (!root || !root->isObject() || !(*root)["epg_listings"].isArray()) return out;
+  constexpr time::Seconds kLongest = 24 * 3600;
+  for (const json::Value& item : (*root)["epg_listings"].items()) {
+    if (!item.isObject()) continue;
+    std::optional<int64_t> start = lenientInt(item["start_timestamp"]);
+    std::optional<int64_t> end = lenientInt(item["stop_timestamp"]);
+    if (!start || !end || *start <= 0 || *end <= *start || *end - *start > kLongest) continue;
+    std::string title = decodeText(item["title"]).value_or("");
+    if (title.empty()) continue;
+    ArchiveProgramme p;
+    p.start = *start;
+    p.end = *end;
+    p.title = std::move(title);
+    const json::Value& archive = item["has_archive"];
+    p.archived = archive.isBool() ? archive.asBool() : flag(archive);
+    out.push_back(std::move(p));
+  }
+  std::stable_sort(out.begin(), out.end(),
+                   [](const ArchiveProgramme& a, const ArchiveProgramme& b) { return a.start < b.start; });
+  out.erase(std::unique(out.begin(), out.end(),
+                        [](const ArchiveProgramme& a, const ArchiveProgramme& b) { return a.start == b.start; }),
+            out.end());
+  return out;
+}
+
 std::string Client::guideURL() const { return base_ + std::string(kGuidePath) + "?" + loginQuery(); }
 
 // "username=<user>&password=<password>", both percent-encoded. Secret.

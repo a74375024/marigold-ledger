@@ -44,8 +44,11 @@ class TsProxy {
   // headers too long for it). `headers`: "Name: value" lines, '\n'
   // separated, sent with every request to the source. Opens a new session.
   // `passThrough`: a continuous TS source is served through the proxy too
-  // (no redirect), so the tap sees it (subtitles).
-  std::string localUrl(const std::string& source, const std::string& headers, bool passThrough = false);
+  // (no redirect), so the tap sees it (subtitles). `reopen`: a continuous
+  // source that closes mid-stream is opened again (live); off for a replay
+  // stretch, which ends where it was asked to (the session opens the next).
+  std::string localUrl(const std::string& source, const std::string& headers, bool passThrough = false,
+                       bool reopen = true);
   // The session localUrl() opened last.
   unsigned session() const;
 

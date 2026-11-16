@@ -81,7 +81,7 @@ void TsProxy::setTap(Tap* tap) { proxyts_definir_espiao(tap ? tapBytes : nullptr
 
 unsigned TsProxy::session() const { return started_ ? proxyts_sessao() : 0; }
 
-std::string TsProxy::localUrl(const std::string& source, const std::string& headers, bool passThrough) {
+std::string TsProxy::localUrl(const std::string& source, const std::string& headers, bool passThrough, bool reopen) {
   if (!started_ || source.size() >= kSourceCap || !candidate(source) || isLocalUrl(source) ||
       !safeLink(source)) {
     return {};
@@ -93,6 +93,7 @@ std::string TsProxy::localUrl(const std::string& source, const std::string& head
   }
   proxyts_definir_cabecalhos(lines.c_str());
   proxyts_definir_passagem(passThrough ? 1 : 0);
+  proxyts_definir_reabrir(reopen ? 1 : 0);
   char out[kLocalUrlCap];
   if (!proxyts_url(source.c_str(), out, sizeof out)) {
     MLOG_W("proxy", "no session (the proxy is not listening)");

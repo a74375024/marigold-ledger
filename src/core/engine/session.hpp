@@ -29,6 +29,7 @@
 #include "core/engine/host.hpp"
 #include "core/engine/model.hpp"
 #include "core/engine/quality.hpp"
+#include "core/engine/replay.hpp"
 #include "core/engine/views.hpp"
 #include "core/media/picture.hpp"
 #include "core/playback/recovery.hpp"
@@ -99,6 +100,11 @@ class Player {
   };
   virtual std::vector<SourceClosed> sourceClosed() { return {}; }
   virtual void stop() = 0;
+  // Build 165, replay's pause: holds the picture where it is, the stream
+  // still open (the session stops it a few seconds later; what the screen
+  // then shows is the platform's). False when this player can't: the
+  // session stops it at once.
+  virtual bool pause() { return false; }
   virtual PlayerState state() const = 0;
 };
 
@@ -169,6 +175,9 @@ class Session {
     // The guide list it was picked from (pickedFrom), while it played from
     // that list.
     std::optional<views::Tab> tab;
+    // Build 165: left during a replay (or paused): the moment it showed
+    // then. Right replays from there while the archive still holds it.
+    std::optional<time::Seconds> replayAt;
   };
   // What Right goes to now; null when nothing.
   const Viewed* previousTarget() const;
@@ -200,49 +209,83 @@ class Session {
   void resume();
   bool paused() const { return paused_; }
 
-  // Build 163, the catch-up test (test only): does a provider's archive
-  // really play? A separate, throwaway playback of a copy from a moment
-  // back. The recovery stands aside meanwhile, as in the background: nothing
-  // reconnects or switches copies, nothing is charged to a feed, remembered
-  // as its source or saved, and what Right goes back to stays. No picture in
-  // 10 s, or an error, only says so. Every test is one "catch-up test" line
-  // in the playback log, worked or not (never a link). Back to live (or a
-  // channel change, or the app leaving) ends it.
-  enum class CatchupMoment { TenMinutesAgo, ProgrammeStart, Yesterday };
-  struct CatchupTest {
-    enum class Phase { Opening, Worked, Failed };
+  // Build 165, replay: the channel's own archive. Any of its copies whose
+  // Xtream provider keeps catch-up can serve it (catchupCopy()); live stays
+  // on the copy that played live. A replay plays a stretch of the archive
+  // (up to three hours, or until now and five minutes more) from a whole
+  // minute; when a stretch ends behind live the next one opens from where
+  // it ended, and reaching live (within a minute) goes live by itself
+  // ("You're live"). No picture in 10 s, or an error, tries the next copy
+  // with an archive, then says "Replay isn't available right now on this
+  // channel" and goes live. The recovery stands aside meanwhile, as in the
+  // background: nothing reconnects or switches copies, nothing is charged
+  // to a feed or remembered as its source. Every action is one "replay"
+  // line in the playback log (never a link).
+  //
+  // Paused (from live or a replay): the player holds the picture where it
+  // can, and the stream is closed a few seconds later, so the provider's
+  // connection is free; play resumes the archive from the paused minute.
+  struct Replay {
+    enum class Phase { Opening, Playing, Paused };
     Phase phase = Phase::Opening;
-    CatchupMoment moment = CatchupMoment::TenMinutesAgo;
-    time::Seconds from = 0;    // the moment asked for (Unix time, to the minute)
-    time::Seconds behind = 0;  // how far behind live that was as it started, s
-    size_t feed = 0;           // the copy tested (feeds())
-    uint16_t days = 0;         // the archive its provider says it keeps
-    uint32_t startedAt = 0;    // ms
-    uint32_t pictureMs = 0;    // worked: how long the picture took
-    bool timedOut = false;     // failed: no picture in time (else `error`)
-    std::string error;         // failed: the player's error, safe to show
-    std::string size;          // worked: "1920x1080" once the player says
+    size_t feed = 0;          // the copy replaying (feeds())
+    uint16_t days = 0;        // the archive its provider says it keeps
+    time::Seconds from = 0;   // the stretch playing or opening: its start, to the minute
+    int minutes = 0;          // how much of the archive it asks for
+    int64_t atMs = 0;         // the moment showing, ms since 1970 (paused: where it stopped)
+    uint32_t startedAt = 0;   // ms the stretch was handed to the player
+    uint32_t pictureAt = 0;   // ms its picture came (0: not yet)
+    uint32_t pausedAt = 0;    // ms the pause began
+    bool held = false;        // paused: the player kept the last picture
+    bool released = false;    // paused: the stream is closed
+    bool fromLive = false;    // paused while live played
+    bool quiet = false;       // ... by the Rewind timeline: still live, as far as Right goes
+    bool next = false;        // the stretch opening follows one that ended
+    bool video = true;        // the channel shows a picture (not radio)
+    time::Seconds at() const { return static_cast<time::Seconds>(atMs / 1000); }
   };
-  static constexpr uint32_t kCatchupTimeoutMs = 10000;
-  // Build 164: catch-up belongs to the channel, not the copy playing. The
-  // copy a test replays on: the copy playing when its provider keeps an
-  // archive, else the first of the channel's own copies (in the order they
-  // are tried live) whose provider does. Offered once live has drawn a
-  // picture (or during a test), not on a race camera. nullopt: no copy keeps one.
+  // Why a replay starts from a moment (its log line).
+  enum class ReplayWhy { StartOver, Rewind, Back, Resume };
+  static constexpr uint32_t kReplayTimeoutMs = 10000;
+  // Paused: the stream is closed this long after the picture was held.
+  static constexpr uint32_t kReleaseMs = 3000;
+  // A replay this close to live is live.
+  static constexpr time::Seconds kLiveWithin = 60;
+  // The copy a replay plays on: the copy playing live when its provider
+  // keeps an archive, else the first of the channel's own copies (in the
+  // order they are tried live) whose provider does. Offered once live has
+  // drawn a picture (or during a replay), not on a race camera. nullopt:
+  // no copy keeps one (the controls look as they always did).
   std::optional<size_t> catchupCopy() const;
-  // The days of catch-up that copy keeps. 0: no test offered.
+  // The days of catch-up that copy keeps (0: no replay here).
   uint16_t catchupDays() const;
-  // Plays that copy from `from` (Unix time, taken to the minute); a test
-  // already on ends first. False when no test can start.
-  bool startCatchupTest(CatchupMoment moment, time::Seconds from);
-  // Another copy of the entry whose provider says it keeps an archive, not
-  // tried in this test yet (its index in feeds()).
-  std::optional<size_t> catchupOtherCopy() const;
-  // The same moment on that copy.
-  bool catchupTryOtherCopy();
-  // Back to live: the copy that played before the test, as a fresh start.
-  void endCatchupTest();
-  const std::optional<CatchupTest>& catchupTest() const { return test_; }
+  const std::optional<Replay>& replay() const { return replay_; }
+  // The moment showing (live: now), and how far behind live it is (0 live).
+  time::Seconds replayAt() const;
+  time::Seconds behindLive() const;
+  // Plays the archive from `from` (taken to the minute, kept inside the
+  // archive); within a minute of live, live. False when this channel has
+  // no replay.
+  bool replayFrom(time::Seconds from, ReplayWhy why);
+  // Pauses live or a replay (false: no replay here, nothing done).
+  // `quiet`: no log line (the Rewind timeline holding the picture).
+  bool pause(bool quiet = false);
+  // Plays on from the paused minute (a few seconds early).
+  bool resumePaused(bool quiet = false);
+  // Back to live on the copy that played live, as a fresh start.
+  void goLive(bool quiet = false);
+  // A short notice for the player ("You're live", "Replay isn't available
+  // right now on this channel"), once; "" none.
+  std::string takeReplayNotice();
+  // The Rewind timeline's programmes from `from` on: the guide's (it keeps
+  // six hours back for these channels) and the copy's own past once asked
+  // for (wantPast), sorted.
+  std::vector<replay::Programme> timeline(time::Seconds from) const;
+  // Asks the copy's panel for its own past (one request, once per channel;
+  // dropped when the channel changes). Labels fill in as it lands.
+  void wantPast();
+  // Moves when the copy's own past has landed (or failed).
+  int pastSerial() const { return pastSerial_; }
 
   // Full screen or a preview. Going full screen makes the tune "watched".
   void setShowingFull(bool full);
@@ -257,31 +300,30 @@ class Session {
   const std::vector<std::string>& flipList() const { return flip_; }
   size_t feedIndex() const { return rec_.feedIndex(); }
   bool active() const { return !entry_.empty(); }
-  // (Paused in the background: as it was when the app left. A catch-up
-  // test: its picture.)
+  // (Paused in the background: as it was when the app left. A replay: its
+  // picture, held while paused, and kept while the next stretch opens.)
   bool ready() const {
     if (pausedAt_) return pausedAt_->ready;
-    if (test_) return test_->phase == CatchupTest::Phase::Worked;
+    if (replay_) return replay_->phase != Replay::Phase::Opening || replay_->next;
     return rec_.sawFirstFrame();
   }
   bool failed() const { return rec_.phase() == playback::Recovery::Phase::Failed; }
   // A channel is opening: no picture yet, not given up (a spinner shows).
-  // Not while paused in the background, nor once a catch-up test failed.
-  bool opening() const {
-    return active() && !paused_ && !ready() && !failed() && !(test_ && test_->phase == CatchupTest::Phase::Failed);
-  }
+  // Not while paused in the background.
+  bool opening() const { return active() && !paused_ && !ready() && !failed(); }
   // What the screens show of playback. The app draws again when it changes
   // (a picture coming up, a note, giving up), not every frame meanwhile.
   struct Look {
     std::string entry, note;
     size_t feed = 0;
     bool full = false, ready = false, failed = false, noPicture = false, hadPicture = false, backup = false;
-    int test = 0;  // a catch-up test: 1 + its phase (0 none)
-    size_t testFeed = 0;
+    int replay = 0;  // a replay: 1 + its phase (0 live)
+    size_t replayFeed = 0;
+    bool replayReleased = false;
     bool operator==(const Look& o) const {
       return entry == o.entry && note == o.note && feed == o.feed && full == o.full && ready == o.ready &&
              failed == o.failed && noPicture == o.noPicture && hadPicture == o.hadPicture && backup == o.backup &&
-             test == o.test && testFeed == o.testFeed;
+             replay == o.replay && replayFeed == o.replayFeed && replayReleased == o.replayReleased;
     }
     bool operator!=(const Look& o) const { return !(*this == o); }
   };
@@ -354,14 +396,20 @@ class Session {
   bool replay(const std::string& entryId, std::vector<Feed> feeds, const std::string& feed,
               const std::vector<std::string>& flip);
   void logEvent(std::string_view event, std::string_view detail = {}, bool withFeed = true);
-  // The catch-up test: a copy's archive handed to the player; its picture,
-  // error or time out; its log line (`ended`: how it ended before a
-  // result); leaving it (`live`: the copy before it plays again).
-  void playCatchup(size_t feed);
-  void tickCatchup(uint32_t now);
-  void failCatchup(bool timedOut, std::string error);
-  void logCatchup(std::string_view ended = {});
-  void closeCatchup(std::string_view why);
+  // Replay: the copy with an archive for live copy `live`; the recovery
+  // standing aside; a stretch handed to the player (`what`: its log line);
+  // a tick; a failed stretch; leaving it (`live`: live plays again).
+  std::optional<size_t> archiveCopy(size_t live) const;
+  void standAside();
+  void playReplay(size_t feed, time::Seconds from, const std::string& what, bool next = false);
+  void tickReplay(uint32_t now);
+  void replayFailed(const std::string& why);
+  void endReplay(bool live);
+  // Starts a replay at `at` in place of a live start (Right, the app's
+  // return); false when the archive no longer holds it.
+  bool startReplayInstead(time::Seconds at, ReplayWhy why, size_t live);
+  void logReplay(std::string detail, size_t copy, bool clock = false);
+  std::string localTime(time::Seconds t) const;
   void saveLog(uint32_t ms, bool all = false);
   uint32_t ms() const { return host_.ms(); }
 
@@ -392,6 +440,10 @@ class Session {
     bool ready = false;    // it showed a picture
     bool game = false;
     size_t feed = 0;
+    // Build 165: a replay was playing (it plays from there on return), or
+    // was paused (it stays paused).
+    std::optional<time::Seconds> replayAt;
+    bool replayPaused = false;
   };
   std::optional<Paused> pausedAt_;
   std::vector<std::string> flip_;
@@ -422,15 +474,27 @@ class Session {
   uint64_t logSeen_ = 0;  // the log's revision when last saved (or found with nothing to save)
   uint32_t logSaveAt_ = 0;
   uint32_t memoryAt_ = 0;
-  // The catch-up test on now; the copy that played before it; the copies
-  // tried in it; its log line written; the server clock it asked in.
-  std::optional<CatchupTest> test_;
-  size_t testLive_ = 0;
-  std::set<size_t> testTried_;
-  bool testLogged_ = false;
-  std::optional<int> testOffset_;
-  // Back to live after a test: that copy's picture coming up again is not
-  // a new success for it (the first feed outcome after the return).
+  // The replay on now; the copy that played live before it and whether it
+  // had a picture; the copies tried for this moment; the server clock the
+  // stretch was asked in; stretches in a row that ended early; the last
+  // tick; the notice for the player.
+  std::optional<Replay> replay_;
+  size_t replayLive_ = 0;
+  bool replayLiveReady_ = false;
+  std::set<size_t> replayTried_;
+  std::optional<int> replayOffset_;
+  int shortStretches_ = 0;
+  uint32_t replayTick_ = 0;
+  std::string replayNotice_;
+  // Right or the app's return replays this moment instead of a live start.
+  std::optional<std::pair<time::Seconds, ReplayWhy>> replayInstead_;
+  // The copy's own past (wantPast), for the entry it was asked for.
+  std::string pastFor_;
+  std::optional<std::vector<replay::Programme>> past_;
+  int pastSerial_ = 0;
+  std::shared_ptr<int> alive_ = std::make_shared<int>(0);
+  // Back to live after a replay: that copy's picture coming up again is
+  // not a new success for it (the first feed outcome after the return).
   bool quietReturn_ = false;
 };
 

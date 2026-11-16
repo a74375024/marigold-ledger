@@ -16,6 +16,12 @@
 // of the show's title, times and "Later on this channel". A show's banner
 // has the guide's episode after its times and its description in the band
 // under them, at today's height (Build 119).
+//
+// Build 165, replay (channels with a copy that keeps catch-up): Pause,
+// Rewind and Start over at the front of the controls, with the programme's
+// bar above them; the Rewind timeline; the paused panel; behind live, a tag
+// at the top right and Go live first; after a tune, "Start over from 7:30"
+// on the banner. Channels without catch-up look as they always did.
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -28,6 +34,7 @@
 #include "app/store/store.hpp"
 #include "core/captions/caption_style.hpp"
 #include "core/captions/sentence_case.hpp"
+#include "core/engine/replay.hpp"
 #include "core/engine/views.hpp"
 #include "core/input/countdown.hpp"
 #include "core/input/hints.hpp"
@@ -76,7 +83,14 @@ constexpr int kHitGuide = 50, kHitLast = 51;
 constexpr int kHitFail = 60;     // + button index
 constexpr int kHitTips = 70;
 constexpr int kHitPicture = 80;  // the picture itself (under everything)
-constexpr int kHitCatchup = 90;  // + a catch-up test button's index
+constexpr int kHitPaused = 90;   // + a paused panel button's index
+constexpr int kHitPlayHere = 99;  // the timeline's "Play from" button
+constexpr int kHitStartOver = 98;  // the banner's "Start over from 7:30"
+constexpr int kHitBar = 100;      // + a slice of the timeline's bar
+constexpr int kBarSlices = 160;
+// Build 165, replay.
+constexpr uint32_t kStartOverAfterS = 3 * 60;  // the banner offers Start over past this
+using ReplayPhase = engine::Session::Replay::Phase;
 
 class PlayerScreen : public Screen {
   bool cameras_ = false;  // the race on screen has cameras (a Cameras button)
@@ -102,6 +116,9 @@ class PlayerScreen : public Screen {
   bool key(const KeyEvent& e) override {
     Playback& p = app_.playback();
     if (e.key == Key::Ok) lastOkAt_ = app_.ms();
+    // The Rewind timeline: every swipe moves the playhead (a long one, as
+    // a held key does).
+    if (timeline_ && pendingFlip_.empty() && !tips_) return timelineKey(e);
     // One long swipe is one move here: one channel, one button.
     if (e.glide) {
       if (e.glide == glide_) return true;
@@ -117,7 +134,21 @@ class PlayerScreen : public Screen {
       clearScreen();
       return true;
     }
-    if (p.catchupTest() && pendingFlip_.empty()) return catchupKey(e);
+    if (pausedPanel() && pendingFlip_.empty()) return pausedKey(e);
+    // The banner's "Start over from 7:30" after a tune: OK takes it; any
+    // other key leaves it (and does what it does).
+    if (startOverOffer_) {
+      // (With the pointer, only a click on it.)
+      bool take = e.key == Key::Ok && !e.longPress && (!pointer_ || startOverHover_) && bannerVisible() &&
+                  zone_ == Zone::None && digits_.empty() &&
+                  pendingFlip_.empty();
+      time::Seconds at = *startOverOffer_;
+      startOverOffer_.reset();
+      if (take) {
+        startOver(at);
+        return true;
+      }
+    }
     if (p.failed() || p.noPicture()) return failedKey(e);
     if (zone_ == Zone::Row) return rowKey(e);
     if (zone_ == Zone::EdgeGuide || zone_ == Zone::EdgeLast) {
@@ -185,7 +216,11 @@ class PlayerScreen : public Screen {
       case Key::PlayPause:
       case Key::Play:
       case Key::Pause:
-        notice("Live TV can\xe2\x80\x99t be paused", "", 2500);
+        playPause(e.key);
+        return true;
+      case Key::FastForward:
+        // Fire TV: the Rewind timeline (its Rewind key goes back to the last).
+        openTimeline();
         return true;
       case Key::Back:
         return backKey();
@@ -195,12 +230,19 @@ class PlayerScreen : public Screen {
   }
 
   void hover(int id) override {
-    if (app_.playback().catchupTest()) {
-      // The catch-up test's buttons; over the picture, none.
-      if (id >= kHitCatchup && id < kHitCatchup + 3) catchupButton_ = id - kHitCatchup;
-      else if (id == kHitPicture) catchupButton_ = -1;
+    if (timeline_) {
+      // The bar picks a time; the "Play from" button plays.
+      barHover_ = id >= kHitBar && id < kHitBar + kBarSlices ? id - kHitBar : -1;
+      playHover_ = id == kHitPlayHere;
       return;
     }
+    if (pausedPanel()) {
+      if (id >= kHitPaused && id < kHitPaused + 3) pausedButton_ = id - kHitPaused;
+      else if (id == kHitPicture) pausedButton_ = -1;
+      return;
+    }
+    startOverHover_ = id == kHitStartOver;
+    if (id == kHitStartOver) return;
     if (id >= kHitPill && id < kHitPill + static_cast<int>(pills_.size())) {
       zone_ = Zone::Row;
       pill_ = id - kHitPill;
@@ -239,22 +281,7 @@ class PlayerScreen : public Screen {
       if (id != p.entry()) flipped(p.tune(id) ? id : std::string());
       changed = true;
     }
-    // A catch-up test: its own few states (the button focus starts over
-    // with each); a spinner only while it opens.
-    if (const auto& t = p.catchupTest(); t && pendingFlip_.empty()) {
-      int look = 1 + static_cast<int>(t->phase) + 4 * static_cast<int>(t->feed);
-      if (look != catchupLook_) {
-        catchupLook_ = look;
-        catchupButton_ = 0;
-        changed = true;
-      }
-      if (t->phase == engine::Session::CatchupTest::Phase::Opening) {
-        if (spinner_.moved(ms)) changed = true;
-        wake_.at(spinner_.next(ms));
-      }
-      return changed;
-    }
-    catchupLook_ = 0;
+    if (replayTick(ms)) changed = true;
     if (p.entry() != shownEntry_) {
       shownEntry_ = p.entry();
       // The banner is up while it loads; its few seconds start with the picture.
@@ -288,8 +315,22 @@ class PlayerScreen : public Screen {
       // A backup on the first start isn't "back on" anything: the banner
       // said it was still trying.
       if (!pictureSeen_) p.dismissBackupNotice();
-      if (!pictureSeen_) pictureAt_ = ms;
+      if (!pictureSeen_) {
+        pictureAt_ = ms;
+        // Build 165: a tune that settled on a channel with replay, the
+        // programme begun a while ago: the banner offers to start it over.
+        startOverOffer_.reset();
+        if (pendingFlip_.empty() && !p.replay()) {
+          std::optional<time::Seconds> at = startOverAt(false);
+          if (at && time::now() - *at > static_cast<time::Seconds>(kStartOverAfterS)) startOverOffer_ = at;
+        }
+      }
       pictureSeen_ = true;
+      changed = true;
+    }
+    // The offer goes with the banner.
+    if (startOverOffer_ && (!bannerVisible() || zone_ != Zone::None || !pendingFlip_.empty())) {
+      startOverOffer_.reset();
       changed = true;
     }
     // Subtitles on and none here: said once, quietly, while the banner is
@@ -367,8 +408,16 @@ class PlayerScreen : public Screen {
       if (!p.feeds().empty()) g = ch->find(app_.store().entryOfChannel(p.feeds()[std::min(p.feedIndex(), p.feeds().size() - 1)].channelId));
     }
     Rect screen{0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight};
-    if (p.catchupTest() && !pending) {
-      drawCatchup(c);
+    if (!pending && (timeline_ || pausedPanel())) {
+      // The picture held (or what the player leaves when the stream has
+      // closed), dimmed, under the timeline or the paused panel.
+      c.g.hole(screen);
+      if (c.covered) return;
+      pointer_ = c.pointerActive;
+      c.hit(screen, kHitPicture);
+      if (timeline_) drawTimeline(c, g);
+      else drawPaused(c, g);
+      drawNotice(c);
       return;
     }
     bool picture = p.ready() && !pending && !p.failed();
@@ -408,6 +457,7 @@ class PlayerScreen : public Screen {
     }
     if (picture) drawSubtitles(c, bannerVisible() || controls);
     if (pointer_ && picture) drawEdges(c);
+    if (!pending) drawBehindTag(c);
     if (!digits_.empty()) {
       Rect r{gfx::kLayoutWidth - 80 - 220, 60, 220, 90};
       c.g.fill(r, theme::black(0.75f), 20);
@@ -429,7 +479,7 @@ class PlayerScreen : public Screen {
 
  private:
   enum class Zone { None, Row, EdgeGuide, EdgeLast };
-  enum class Pill { Cameras, Subtitles, Style, Sources, Coast, Guide, Last, Favorite, Catchup, More };
+  enum class Pill { GoLive, Pause, Rewind, StartOver, Cameras, Subtitles, Style, Sources, Coast, Guide, Last, Favorite, More };
 
   // ---------------------------------------------------------- actions
   // A message while watching: in the banner's status line (brought up for
@@ -504,12 +554,16 @@ class PlayerScreen : public Screen {
       showBanner();
       return;
     }
+    // Build 165: where Start over goes, worked out once as the row opens.
+    startOverAt_ = startOverAt(true);
     buildPills();
     zone_ = Zone::Row;
     pill_ = -1;
+    // Subtitles first; behind live, Go live.
+    Pill first = app_.playback().replay() ? Pill::GoLive : Pill::Subtitles;
     if (focus)
       for (size_t i = 0; i < pills_.size(); ++i)
-        if (pills_[i] == Pill::Subtitles) pill_ = static_cast<int>(i);
+        if (pills_[i] == first) pill_ = static_cast<int>(i);
     controlsAt_ = app_.ms();
     backAskUntil_ = 0;
     touch();
@@ -571,6 +625,18 @@ class PlayerScreen : public Screen {
   void buildPills() {
     Playback& p = app_.playback();
     pills_.clear();
+    // Build 165: replay's buttons at the front, only where a copy keeps an
+    // archive. Behind live: Go live first (and, on LG, Pause after it).
+    if (p.catchupDays() > 0) {
+      if (p.replay()) {
+        pills_.push_back(Pill::GoLive);
+        if (app_.window().remoteKeys() == RemoteKeys::lg()) pills_.push_back(Pill::Pause);
+      } else {
+        pills_.push_back(Pill::Pause);
+      }
+      pills_.push_back(Pill::Rewind);
+      if (startOverAt_) pills_.push_back(Pill::StartOver);
+    }
     if (cameras_) pills_.push_back(Pill::Cameras);
     pills_.push_back(Pill::Subtitles);
     pills_.push_back(Pill::Style);
@@ -580,9 +646,6 @@ class PlayerScreen : public Screen {
     if (!backName().empty()) pills_.push_back(Pill::Last);
     if (app_.store().channels()->find(p.entry())) pills_.push_back(Pill::Favorite);
     pills_.push_back(Pill::More);
-    // Build 163 (test only): the copy playing says it keeps catch-up. Last,
-    // so a full row loses it before Settings.
-    if (p.catchupDays() > 0) pills_.push_back(Pill::Catchup);
     pill_ = std::clamp(pill_, -1, static_cast<int>(pills_.size()) - 1);
   }
   bool rowKey(const KeyEvent& e) {
@@ -653,7 +716,11 @@ class PlayerScreen : public Screen {
       case Key::PlayPause:
       case Key::Play:
       case Key::Pause:
-        notice("Live TV can\xe2\x80\x99t be paused", "", 2500);
+        playPause(e.key);
+        return true;
+      case Key::FastForward:
+        closeControls();
+        openTimeline();
         return true;
       default:
         return true;
@@ -668,6 +735,22 @@ class PlayerScreen : public Screen {
       app_.nav().push(std::move(s));
     };
     switch (pill) {
+      case Pill::GoLive:
+        closeControls();
+        p.goLive();
+        showBanner();
+        break;
+      case Pill::Pause:
+        playPause(Key::Pause);
+        break;
+      case Pill::Rewind:
+        closeControls();
+        openTimeline();
+        break;
+      case Pill::StartOver:
+        closeControls();
+        if (startOverAt_) startOver(*startOverAt_);
+        break;
       case Pill::Cameras: panel(makeCameraPanel(app_)); break;
       case Pill::Subtitles: {
         bool on = p.toggleSubtitles();
@@ -704,7 +787,6 @@ class PlayerScreen : public Screen {
         notice(was ? "Removed from Favorites" : "Added to Favorites", "OK again to undo", kNoticeMs);
         break;
       }
-      case Pill::Catchup: panel(makeCatchupPanel(app_)); break;
       case Pill::More: panel(makeQuickSettings(app_, QuickPlace::Player)); break;
     }
   }
@@ -823,34 +905,346 @@ class PlayerScreen : public Screen {
     }
   }
 
-  // ---------------------------------------------------------- catch-up test
-  // Build 163 (test only): the archive of the copy playing, from a moment
-  // back. A tag at the top left says what this is and how far back; once
-  // its picture comes, a notice at the bottom says how long it took; if it
-  // doesn't, a card in the middle says so. Back, Back to live or a channel
-  // key end it.
-  using CatchupPhase = engine::Session::CatchupTest::Phase;
+  // ---------------------------------------------------------- replay
+  // Build 165. The session plays the archive; this is what shows of it.
 
-  std::vector<std::string> catchupButtons() const {
-    const Playback& p = app_.playback();
-    const auto& t = p.catchupTest();
-    if (!t || t->phase == CatchupPhase::Opening) return {};
-    if (t->phase == CatchupPhase::Worked) return {"Back to live", "Test again"};
-    if (p.catchupOtherCopy()) return {"Try another copy with catch-up", "Back to live"};
-    return {"Back to live"};
+  // The paused panel: paused, with the Rewind timeline closed.
+  bool pausedPanel() const {
+    const auto& r = app_.playback().replay();
+    return r && r->phase == ReplayPhase::Paused && !timeline_;
   }
-  bool catchupKey(const KeyEvent& e) {
+
+  // Play/Pause, Play and Pause: on a channel with replay they pause and
+  // play on; elsewhere live TV can't be paused, as always.
+  void playPause(Key k) {
     Playback& p = app_.playback();
-    int n = static_cast<int>(catchupButtons().size());
+    const auto& r = p.replay();
+    if (r && r->phase == ReplayPhase::Paused) {
+      if (k != Key::Pause) resumeReplay();
+      return;
+    }
+    if (p.catchupDays() == 0) {
+      notice("Live TV can\xe2\x80\x99t be paused", "", 2500);
+      return;
+    }
+    if (k == Key::Play) return;  // playing already
+    closeControls();
+    if (!p.pause()) {
+      notice("Live TV can\xe2\x80\x99t be paused", "", 2500);
+      return;
+    }
+    pausedButton_ = 0;
+  }
+  void resumeReplay() {
+    app_.playback().resumePaused();
+    pausedButton_ = 0;
+    zone_ = Zone::None;
+    showBanner();
+  }
+  void startOver(time::Seconds at) {
+    Playback& p = app_.playback();
+    if (!p.replayFrom(at, engine::Session::ReplayWhy::StartOver)) return;
+    zone_ = Zone::None;
+    showBanner();
+  }
+
+  // Where Start over goes: a game's scheduled start (its source a channel
+  // with replay), else the start of the programme on (`behind`: at the
+  // moment watched, else now). Not when the archive doesn't reach it, nor
+  // a minute from now.
+  std::optional<time::Seconds> startOverAt(bool behind) const {
+    Playback& p = app_.playback();
+    uint16_t days = p.catchupDays();
+    if (!days) return std::nullopt;
+    time::Seconds now = time::now();
+    time::Seconds at = behind ? p.replayAt() : now;
+    std::optional<time::Seconds> start;
+    if (app_.store().isEvent(p.entry())) {
+      if (std::optional<GameBanner> b = app_.store().gameBanner(p.entry(), now); b && b->start && *b->start <= at)
+        start = *b->start;
+    }
+    if (!start) {
+      if (at >= now - 60) {
+        // On now: the guide's listing (a game's, its channel's).
+        std::string id = p.entry();
+        if (!app_.store().channels()->find(id) && !p.feeds().empty())
+          id = app_.store().entryOfChannel(p.feeds()[std::min(p.feedIndex(), p.feeds().size() - 1)].channelId);
+        if (const Listing* l = current(id, now, nullptr)) start = l->start;
+      } else {
+        std::vector<engine::replay::Programme> list = p.timeline(at - 6 * 3600);
+        if (const engine::replay::Programme* on = engine::replay::on(list, at)) start = on->start;
+      }
+    }
+    if (!start || *start > now - 60 || *start < engine::replay::archiveStart(now, days)) return std::nullopt;
+    return start;
+  }
+
+  // Every tick: the session's notices, the tag's text, the timeline's live
+  // edge and the paused panel's clock. True when something shown changed.
+  bool replayTick(uint32_t ms) {
+    Playback& p = app_.playback();
+    bool changed = false;
+    std::string said = p.takeReplayNotice();
+    if (!said.empty()) {
+      notice(said, "", 3000);
+      changed = true;
+    }
+    const auto& r = p.replay();
+    if (timeline_ && (!r || p.entry() != timelineEntry_)) {
+      timeline_ = false;  // the channel changed under it
+      changed = true;
+    }
+    if (!pausedPanel()) pausedButton_ = 0;
+    // What the screen shows of the replay's clocks, once a second.
+    std::string look;
+    if (r && r->phase != ReplayPhase::Paused) look = engine::replay::behindText(p.behindLive());
+    if (pausedPanel()) look = "p" + std::to_string((ms - r->pausedAt) / 1000);
+    if (timeline_) look = "t" + std::to_string(time::now());
+    if (look != replayLook_) {
+      replayLook_ = look;
+      changed = true;
+    }
+    if (timeline_) {
+      // Live moves on: the bar's right end with it, while it shows live.
+      time::Seconds now = time::now();
+      if (span_.to >= now - 2 && span_.to < now) span_.to = now;
+      if (p.pastSerial() != pastSerial_) {
+        pastSerial_ = p.pastSerial();
+        programmes_ = p.timeline(earliest_);
+        changed = true;
+      }
+    }
+    if (!look.empty()) wake_.at(ms + 1000 - ms % 1000);
+    return changed;
+  }
+
+  // ------------------------------------------- the Rewind timeline
+  enum class From { Live, Replay, Paused };
+  void openTimeline() {
+    Playback& p = app_.playback();
+    uint16_t days = p.catchupDays();
+    if (!days || !pendingFlip_.empty()) return;
+    const auto& r = p.replay();
+    timelineFrom_ = !r ? From::Live : r->phase == ReplayPhase::Paused ? From::Paused : From::Replay;
+    // The picture holds while the timeline is open (quietly: nothing is
+    // said in the log until a time is picked).
+    if (timelineFrom_ != From::Paused && !p.pause(true)) return;
+    p.wantPast();
+    time::Seconds now = time::now();
+    earliest_ = engine::replay::archiveStart(now, days);
+    head_ = timelineFrom_ == From::Live ? now : p.replayAt();
+    pastSerial_ = p.pastSerial();
+    programmes_ = p.timeline(earliest_);
+    span_ = engine::replay::opening(programmes_, now, earliest_);
+    span_ = engine::replay::follow(span_, head_, earliest_, now);
+    timelineEntry_ = p.entry();
+    timeline_ = true;
+    repeats_ = 0;
+    lastMove_ = Key::Unknown;
+    barHover_ = -1;
+    playHover_ = false;
+    zone_ = Zone::None;
+    bannerUntil_ = app_.ms();
+    startOverOffer_.reset();
+  }
+  bool timelineKey(const KeyEvent& e) {
+    Playback& p = app_.playback();
+    time::Seconds now = time::now();
+    // Held (repeat events, or one long swipe): faster.
+    bool again = e.key == lastMove_ && (e.repeat || (e.glide && e.glide == glide_));
+    if (e.glide) glide_ = e.glide;
+    auto moved = [&](time::Seconds to) {
+      head_ = to;
+      span_ = engine::replay::follow(span_, head_, earliest_, now);
+    };
     switch (e.key) {
-      case Key::Back:
-        backToLive();
-        return true;
       case Key::Left:
-        if (n > 0) catchupButton_ = std::max(0, catchupButton_ - 1);
+      case Key::Right:
+        repeats_ = again ? repeats_ + 1 : 0;
+        lastMove_ = e.key;
+        moved(engine::replay::step(head_, e.key == Key::Left ? -1 : 1, repeats_, earliest_, now));
+        return true;
+      case Key::Up:
+      case Key::Down:
+        if (e.wheel && app_.ms() - lastOkAt_ < kWheelAfterClickMs) return true;
+        lastMove_ = e.key;
+        moved(engine::replay::jump(programmes_, head_, e.key == Key::Up ? -1 : 1, earliest_, now));
+        return true;
+      case Key::Ok:
+        // With the pointer on the bar, a click picks that time.
+        if (pointer_ && barHover_ >= 0) {
+          double at = (static_cast<double>(barHover_) + 0.5) / kBarSlices;
+          moved(engine::replay::at(span_, at, earliest_, now));
+          return true;
+        }
+        playFromHead();
+        return true;
+      case Key::Play:
+      case Key::PlayPause:
+        playFromHead();
+        return true;
+      case Key::Back:
+        leaveTimeline();
+        return true;
+      case Key::ChannelUp:
+      case Key::ChannelDown:
+        // Another channel: it plays live (the replay ends with the tune).
+        timeline_ = false;
+        flipBy(e.key == Key::ChannelUp ? 1 : -1);
+        return true;
+      case Key::Exit:
+        leaveTimeline();
+        clearScreen();
+        return true;
+      default:
+        (void)p;
+        return true;
+    }
+  }
+  // OK: from the playhead (live, at live).
+  void playFromHead() {
+    Playback& p = app_.playback();
+    timeline_ = false;
+    if (time::now() - head_ < engine::Session::kLiveWithin) p.goLive(timelineFrom_ == From::Live);
+    else p.replayFrom(head_, engine::Session::ReplayWhy::Rewind);
+    showBanner();
+  }
+  // Back: as it was before the timeline opened.
+  void leaveTimeline() {
+    Playback& p = app_.playback();
+    timeline_ = false;
+    switch (timelineFrom_) {
+      case From::Live: p.goLive(true); break;
+      case From::Replay: p.resumePaused(true); break;
+      case From::Paused: break;
+    }
+    showBanner();
+  }
+
+  // A time on the bar, as x.
+  float barX(time::Seconds t, float x0, float w) const {
+    double f = static_cast<double>(t - span_.from) / static_cast<double>(std::max<time::Seconds>(1, span_.length()));
+    return x0 + static_cast<float>(std::clamp(f, 0.0, 1.0)) * w;
+  }
+  // "8:21 PM", on a clock face: what the guide shows.
+  std::string timeText(ui::Ctx& c, time::Seconds t) const { return ui::clock(c, t); }
+
+  void drawTimeline(ui::Ctx& c, const GuideChannel* g) {
+    Playback& p = app_.playback();
+    time::Seconds now = time::now();
+    c.g.fill({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight}, theme::black(0.35f));
+    const float top = 616;
+    ui::floatingCard(c, {48, top, gfx::kLayoutWidth - 96, gfx::kLayoutHeight - 28 - top});
+    const float x0 = kLeft + 8, w = gfx::kLayoutWidth - 2 * (kLeft + 8);
+    // Title: Rewind, the channel; at the right, live's time and Play.
+    float tx = kLeft;
+    if (unsigned icon = c.icons ? c.icons->get("ui-replay") : 0) {
+      c.g.textureAlpha(icon, {tx, top + 30, 36, 36}, theme::white());
+      tx += 48;
+    }
+    tx += shadowed(c, "Rewind", tx, top + 28, Weight::Bold, 34, theme::white());
+    std::string name = g ? g->name : std::string();
+    if (!name.empty()) shadowed(c, "\xc2\xb7 " + name, tx + 14, top + 34, Weight::Medium, 26, theme::white(0.8f), 520);
+    std::string play = "\xe2\x96\xb6  Play from " + timeText(c, head_);
+    if (now - head_ < engine::Session::kLiveWithin) play = "\xe2\x97\x8f  Go live";
+    float pw = ui::textWidth(c, play, Weight::Bold, 24) + 56;
+    Rect pr{gfx::kLayoutWidth - kLeft - pw, top + 22, pw, 56};
+    c.hit(pr, kHitPlayHere);
+    c.g.fill(pr, theme::white(), 28);
+    if (playHover_) c.g.stroke({pr.x - 4, pr.y - 4, pr.w + 8, pr.h + 8}, theme::black(0.85f), 32, 3);
+    ui::labelIn(c, play, pr, Weight::Bold, 24, theme::black(), Align::Center);
+    shadowed(c, "Live " + timeText(c, now), pr.x - 24 - ui::textWidth(c, "Live " + timeText(c, now), Weight::Medium, 22), top + 38,
+             Weight::Medium, 22, theme::white(0.7f));
+
+    // The programmes on the bar, by title.
+    const float blocksY = top + 190, blocksH = 50, barY = top + 256;
+    const engine::replay::Programme* under = engine::replay::on(programmes_, head_);
+    for (const engine::replay::Programme& pr2 : programmes_) {
+      if (pr2.end <= span_.from || pr2.start >= span_.to) continue;
+      float a = barX(pr2.start, x0, w), b = barX(pr2.end, x0, w);
+      if (b - a < 4) continue;
+      Rect r{a + 1, blocksY, b - a - 2, blocksH};
+      bool here = &pr2 == under;
+      c.g.fill(r, here ? theme::white(0.22f) : theme::hex(0x14161B, 0.85f), 10);
+      c.g.stroke(r, theme::white(here ? 0.5f : 0.2f), 10, 1);
+      if (r.w > 70) ui::label(c, pr2.title, r.x + 12, r.y + 13, Weight::Medium, 20, theme::white(here ? 1.0f : 0.8f),
+                              r.w - 24);
+    }
+    // The bar: what the archive can't reach is dim; live is red.
+    c.g.fill({x0, barY, w, 10}, theme::white(0.28f), 5);
+    if (earliest_ > span_.from) c.g.fill({x0, barY, barX(earliest_, x0, w) - x0, 10}, theme::black(0.6f), 5);
+    float hx = barX(head_, x0, w);
+    c.g.fill({x0, barY, hx - x0, 10}, theme::hex(kBlue), 5);
+    if (span_.to >= now - 1) {
+      float lx = barX(now, x0, w);
+      c.g.fill({lx - 9, barY - 4, 18, 18}, theme::hex(kRed), 9);
+      shadowed(c, "LIVE", lx - 60, barY + 22, Weight::Bold, 16, theme::hex(kRed), 0);
+    }
+    // Hour and half-hour marks under the bar.
+    time::Seconds step = span_.length() > 6 * 3600 ? 3 * 3600 : span_.length() > 3 * 3600 ? 3600 : 1800;
+    for (time::Seconds t = (span_.from / step + 1) * step; t < span_.to - step / 3; t += step) {
+      float mx = barX(t, x0, w);
+      c.g.fill({mx - 1, barY + 12, 2, 8}, theme::white(0.4f));
+      ui::label(c, timeText(c, t), mx - 60, barY + 24, Weight::Regular, 17, theme::white(0.6f), 120, Align::Center);
+    }
+    // Pointer: the bar in slices, each a time.
+    for (int i = 0; i < kBarSlices; ++i) {
+      float sw = w / kBarSlices;
+      c.hit({x0 + sw * static_cast<float>(i), blocksY, sw, barY + 30 - blocksY}, kHitBar + i);
+    }
+    // The playhead and its bubble: the time, how far back, the programme.
+    c.g.fill({hx - 1.5f, top + 160, 3, barY + 10 - (top + 160)}, theme::white());
+    c.g.fill({hx - 12, barY - 7, 24, 24}, theme::white(), 12);
+    std::string when = timeText(c, head_) + " \xc2\xb7 " +
+                       (now - head_ < engine::Session::kLiveWithin ? std::string("live")
+                                                                   : engine::replay::behindMinutes(now - head_));
+    std::string what = under ? under->title : std::string();
+    float bw = std::max(ui::textWidth(c, when, Weight::Bold, 24), std::min(520.0f, ui::textWidth(c, what, Weight::Regular, 20))) + 40;
+    float bx = std::clamp(hx - bw * 0.5f, 56.0f, gfx::kLayoutWidth - 56.0f - bw);
+    Rect bubble{bx, top + 92, bw, what.empty() ? 52.0f : 78.0f};
+    c.g.fill(bubble, theme::white(), 16);
+    ui::labelIn(c, when, {bubble.x, bubble.y + 8, bubble.w, 34}, Weight::Bold, 24, theme::black(), Align::Center);
+    if (!what.empty())
+      ui::labelIn(c, what, {bubble.x + 20, bubble.y + 42, bubble.w - 40, 28}, Weight::Regular, 20, theme::black(0.7f),
+                  Align::Center);
+    // How it's used.
+    shadowed(c,
+             "\xe2\x97\x80 \xe2\x96\xb6 1 minute (hold to speed up: 5, then 15) \xc2\xb7 \xe2\x96\xb2 \xe2\x96\xbc start of "
+             "the programme before / after \xc2\xb7 OK play from here \xc2\xb7 Back stay where you were",
+             kLeft, top + 330, Weight::Regular, 21, theme::white(0.78f), gfx::kLayoutWidth - 2 * kLeft);
+    (void)p;
+  }
+
+  // ------------------------------------------- the paused panel
+  std::vector<std::string> pausedButtons(ui::Ctx& c) const {
+    const auto& r = app_.playback().replay();
+    time::Seconds at = r ? r->at() : time::now();
+    return {"\xe2\x96\xb6  Play from " + ui::clock(c, at - at % 60, false), "Go live", "Rewind"};
+  }
+  bool pausedKey(const KeyEvent& e) {
+    Playback& p = app_.playback();
+    switch (e.key) {
+      case Key::Left:
+        pausedButton_ = std::max(0, pausedButton_ - 1);
         return true;
       case Key::Right:
-        if (n > 0) catchupButton_ = std::min(n - 1, catchupButton_ + 1);
+        pausedButton_ = pausedButton_ < 0 ? 0 : std::min(2, pausedButton_ + 1);
+        return true;
+      case Key::Ok:
+        if (pausedButton_ == 0) resumeReplay();
+        else if (pausedButton_ == 1) {
+          p.goLive();
+          showBanner();
+        } else if (pausedButton_ == 2) {
+          openTimeline();
+        }
+        return true;
+      case Key::Play:
+      case Key::PlayPause:
+        resumeReplay();
+        return true;
+      case Key::FastForward:
+        openTimeline();
         return true;
       case Key::Up:
       case Key::Down:
@@ -861,116 +1255,133 @@ class PlayerScreen : public Screen {
       case Key::ChannelDown:
         flipBy(e.key == Key::ChannelUp ? 1 : -1);
         return true;
-      case Key::Ok: {
-        std::vector<std::string> buttons = catchupButtons();
-        if (catchupButton_ < 0 || catchupButton_ >= n) return true;
-        const std::string& b = buttons[static_cast<size_t>(catchupButton_)];
-        if (b == "Back to live") backToLive();
-        else if (b == "Test again") app_.nav().push(makeCatchupPanel(app_));
-        else p.catchupTryOtherCopy();
+      case Key::Rewind:
+        goPrevious();
         return true;
-      }
+      case Key::Guide:
+        openGuide();
+        return true;
+      case Key::Back:
+        return backKey();
       default:
-        return true;  // nothing else during a test
+        return true;
     }
   }
-  void backToLive() {
-    app_.playback().endCatchupTest();
-    zone_ = Zone::None;
-    showBanner();
-  }
-  // "−10:00", "−1:05:00": how far behind live.
-  static std::string behindText(time::Seconds s) {
-    s = std::max<time::Seconds>(0, s);
-    char buf[32];
-    if (s >= 3600)
-      std::snprintf(buf, sizeof buf, "\xe2\x88\x92%lld:%02d:%02d", static_cast<long long>(s / 3600),
-                    static_cast<int>(s / 60 % 60), static_cast<int>(s % 60));
-    else
-      std::snprintf(buf, sizeof buf, "\xe2\x88\x92%d:%02d", static_cast<int>(s / 60), static_cast<int>(s % 60));
-    return buf;
-  }
-  // A row of buttons from `x`; returns its width (nothing drawn: `measure`).
-  float catchupRow(ui::Ctx& c, const std::vector<std::string>& buttons, float x, float y, bool measure) {
-    float start = x;
-    for (size_t i = 0; i < buttons.size(); ++i) {
-      float w = ui::textWidth(c, buttons[i], Weight::Bold, 24) + 60;
-      if (!measure) {
-        Rect r{x, y, w, 64};
-        c.hit(r, kHitCatchup + static_cast<int>(i));
-        bool f = static_cast<int>(i) == catchupButton_;
-        if (f) {
-          c.g.fill(r, theme::white(), 32);
-        } else {
-          c.g.fill(r, theme::hex(0x14161B, 0.75f), 32);
-          c.g.stroke(r, theme::white(0.22f), 32, 1);
-        }
-        ui::labelIn(c, buttons[i], r, Weight::Bold, 24, f ? theme::black() : theme::white(), Align::Center);
-      }
-      x += w + 16;
-    }
-    return buttons.empty() ? 0 : x - 16 - start;
-  }
-  void drawCatchup(ui::Ctx& c) {
+  void drawPaused(ui::Ctx& c, const GuideChannel* g) {
     Playback& p = app_.playback();
-    const engine::Session::CatchupTest& t = *p.catchupTest();
-    Rect screen{0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight};
-    if (t.phase == CatchupPhase::Worked) {
-      c.g.hole(screen);
-    } else {
-      c.g.fill(screen, theme::black());
-      if (t.phase == CatchupPhase::Opening) ui::spinner(c, gfx::kLayoutWidth * 0.5f, gfx::kLayoutHeight * 0.5f, 26);
+    const engine::Session::Replay& r = *p.replay();
+    time::Seconds now = time::now();
+    c.g.fill({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight}, theme::black(0.5f));
+    // The pause glyph.
+    float cx = gfx::kLayoutWidth * 0.5f, cy = 360;
+    c.g.fill({cx - 46, cy - 60, 30, 120}, theme::white(0.92f), 8);
+    c.g.fill({cx + 16, cy - 60, 30, 120}, theme::white(0.92f), 8);
+    const float top = 700;
+    ui::floatingCard(c, {48, top, gfx::kLayoutWidth - 96, gfx::kLayoutHeight - 28 - top});
+    time::Seconds at = r.at();
+    shadowed(c, "Paused at " + ui::clock(c, at), kLeft, top + 30, Weight::Bold, 40, theme::white());
+    // For how long, the channel, the programme.
+    uint32_t forS = (app_.ms() - r.pausedAt) / 1000;
+    char held[16];
+    if (forS >= 3600)
+      std::snprintf(held, sizeof held, "%u:%02u:%02u", forS / 3600, forS / 60 % 60, forS % 60);
+    else
+      std::snprintf(held, sizeof held, "%u:%02u", forS / 60, forS % 60);
+    std::string line = std::string("for ") + held;
+    if (g) line += " \xc2\xb7 " + g->name;
+    if (pausedTitleFor_ != at) {
+      pausedTitleFor_ = at;
+      std::vector<engine::replay::Programme> list = p.timeline(at - 6 * 3600);
+      const engine::replay::Programme* on = engine::replay::on(list, at);
+      pausedTitle_ = on ? on->title : std::string();
+      pausedStart_ = on ? on->start : at - 1800;
+      pausedEnd_ = on ? on->end : now;
     }
-    if (c.covered) return;  // "Test again" open over it: the picture only
-    c.hit(screen, kHitPicture);
-    std::string provider;
-    if (t.feed < p.feeds().size()) provider = app_.store().providerName(p.feeds()[t.feed].channelId);
-    if (provider.empty()) provider = "The provider";
-    std::string version = provider + ", version " + std::to_string(t.feed + 1) + " of " +
-                          std::to_string(p.feeds().size());
-    std::string from = ui::clock(c, t.from);
-
-    // Top left: what this is, and how far back.
-    float x = 64, y = 56;
-    float tagW = ui::chip(c, "CATCH-UP TEST", x, y, 18, theme::hex(theme::kStar), theme::black());
-    shadowed(c, behindText(t.behind) + " behind live", x + tagW + 16, y, Weight::Bold, 24, theme::white());
-    if (t.phase == CatchupPhase::Opening)
-      shadowed(c, "Asking for " + from + " \xc2\xb7 " + version, x, y + 44, Weight::Medium, 22, theme::white(0.85f));
-
-    std::vector<std::string> buttons = catchupButtons();
-    if (t.phase == CatchupPhase::Worked) {
-      // At the bottom: it worked, how fast, from when, on which copy.
-      float top = kRowY - 96;
-      ui::floatingCard(c, {48, top, gfx::kLayoutWidth - 96, gfx::kLayoutHeight - 28 - top});
-      float tx = kLeft;
-      ui::labelIn(c, "\xe2\x9c\x93", {tx, top + 26, 30, 40}, Weight::Bold, 30, theme::hex(kGreen), Align::Center);
-      tx += 42;
-      tx += shadowed(c, "Catch-up worked", tx, top + 26, Weight::Bold, 32, theme::white());
-      uint32_t tenths = (t.pictureMs + 50) / 100;  // as the log says it
-      std::string took = std::to_string(tenths / 10) + "." + std::to_string(tenths % 10);
-      std::string line = " \xc2\xb7 picture in " + took + " s \xc2\xb7 playing from " + from + " \xc2\xb7 " + version;
-      shadowed(c, line, tx, top + 32, Weight::Medium, 24, theme::white(0.85f), gfx::kLayoutWidth - kLeft - tx);
-      catchupRow(c, buttons, kLeft, kRowY, false);
-      return;
+    if (!pausedTitle_.empty()) line += " \xc2\xb7 " + pausedTitle_;
+    shadowed(c, line, kLeft, top + 88, Weight::Regular, 26, theme::white(0.85f), gfx::kLayoutWidth - 2 * kLeft);
+    // The programme's bar: where it paused, and live.
+    float bx = kLeft + 110, bw = gfx::kLayoutWidth - 2 * kLeft - 220, by = top + 148;
+    time::Seconds a = pausedStart_, b = std::max(pausedEnd_, at + 60);
+    auto x = [&](time::Seconds t) {
+      double f = static_cast<double>(t - a) / static_cast<double>(std::max<time::Seconds>(1, b - a));
+      return bx + static_cast<float>(std::clamp(f, 0.0, 1.0)) * bw;
+    };
+    shadowed(c, ui::clock(c, a), kLeft, by - 12, Weight::Medium, 20, theme::white(0.7f));
+    ui::label(c, ui::clock(c, b), gfx::kLayoutWidth - kLeft - 100, by - 12, Weight::Medium, 20, theme::white(0.7f), 100,
+              Align::Right);
+    c.g.fill({bx, by, bw, 8}, theme::white(0.25f), 4);
+    c.g.fill({bx, by, x(at) - bx, 8}, theme::hex(kBlue), 4);
+    c.g.fill({x(at) - 9, by - 5, 18, 18}, theme::white(), 9);
+    if (now <= b) c.g.fill({x(now) - 7, by - 3, 14, 14}, theme::hex(kRed), 7);
+    // The buttons.
+    std::vector<std::string> buttons = pausedButtons(c);
+    float bxx = kLeft, byy = top + 190;
+    for (size_t i = 0; i < buttons.size(); ++i) {
+      float dotW = i == 1 ? 30.0f : 0.0f;  // Go live's red dot
+      float w = ui::textWidth(c, buttons[i], Weight::Bold, 26) + 64 + dotW;
+      Rect rr{bxx, byy, w, 70};
+      c.hit(rr, kHitPaused + static_cast<int>(i));
+      bool f = static_cast<int>(i) == pausedButton_;
+      if (f) {
+        c.g.fill(rr, theme::white(), 35);
+      } else {
+        c.g.fill(rr, theme::hex(0x14161B, 0.85f), 35);
+        c.g.stroke(rr, theme::white(0.3f), 35, 1.5f);
+      }
+      if (dotW > 0) c.g.fill({rr.x + 30, rr.y + 26, 18, 18}, theme::hex(kRed), 9);
+      ui::labelIn(c, buttons[i], {rr.x + dotW, rr.y, rr.w - dotW, rr.h}, Weight::Bold, 26,
+                  f ? theme::black() : theme::white(), Align::Center);
+      bxx += w + 16;
     }
-    if (t.phase != CatchupPhase::Failed) return;
-    // In the middle: it didn't play, and why, in one line.
-    std::string days = std::to_string(t.days) + (t.days == 1 ? " day" : " days");
-    std::string why = provider + " says this copy keeps " + days + ", but asking for " + from +
-                      (t.timedOut ? " showed no picture after " + std::to_string(engine::Session::kCatchupTimeoutMs / 1000) +
-                                        " seconds."
-                                  : " failed: " + t.error + (t.error.empty() || t.error.back() == '.' ? "" : "."));
-    float w = 1120, h = 330;
-    Rect card{(gfx::kLayoutWidth - w) * 0.5f, (gfx::kLayoutHeight - h) * 0.5f, w, h};
-    c.g.fill(card, theme::hex(0x0C0E12, 0.94f), 30);
-    c.g.stroke(card, theme::white(0.18f), 30, 2);
-    ui::labelIn(c, "Catch-up didn\xe2\x80\x99t play on this copy", {card.x + 56, card.y + 40, card.w - 112, 56},
-                Weight::Bold, 40, theme::white(), Align::Center);
-    ui::paragraph(c, why, card.x + 72, card.y + 112, card.w - 144, Weight::Regular, 26, theme::white(0.85f), 3, 1.35f);
-    float rowW = catchupRow(c, buttons, 0, 0, true);
-    catchupRow(c, buttons, card.x + (card.w - rowW) * 0.5f, card.y + card.h - 100, false);
   }
 
+  // Behind live: the rewind icon and how far, at the top right.
+  void drawBehindTag(ui::Ctx& c) {
+    Playback& p = app_.playback();
+    const auto& r = p.replay();
+    if (!r || r->phase == ReplayPhase::Paused || c.covered) return;
+    std::string text = engine::replay::behindText(p.behindLive()) + " behind live";
+    float tw = ui::textWidth(c, text, Weight::Bold, 24);
+    float w = tw + 32 + 40;
+    Rect box{gfx::kLayoutWidth - 64 - w, 52, w, 52};
+    c.g.fill(box, theme::black(0.6f), 26);
+    float ix = box.x + 18;
+    if (unsigned icon = c.icons ? c.icons->get("ui-replay") : 0) c.g.textureAlpha(icon, {ix, box.y + 13, 26, 26}, theme::white());
+    ui::label(c, text, ix + 36, box.y + 11, Weight::Bold, 24, theme::white());
+  }
+
+  // The programme's bar above the controls (A1, A3): its start at the
+  // left, its end at the right; live a dot; behind live, where it plays.
+  void drawReplayBar(ui::Ctx& c, const GuideChannel* g) {
+    Playback& p = app_.playback();
+    time::Seconds now = c.now;
+    time::Seconds at = p.replayAt();
+    const Listing* l = g ? current(g->id, now, nullptr) : nullptr;
+    time::Seconds a = l ? l->start : now - 3600, b = l ? l->end : now + 1800;
+    if (p.replay() && at < a) {
+      a = at - 1800;
+      b = std::max(b, now);
+    }
+    float y = kRowY - 34;
+    float lw = 110;
+    shadowed(c, ui::clock(c, a), kLeft, y - 11, Weight::Medium, 18, theme::white(0.75f));
+    ui::label(c, ui::clock(c, b), gfx::kLayoutWidth - kLeft - lw, y - 11, Weight::Medium, 18, theme::white(0.75f), lw,
+              Align::Right);
+    float x0 = kLeft + lw, w = gfx::kLayoutWidth - 2 * kLeft - 2 * lw;
+    auto x = [&](time::Seconds t) {
+      double f = static_cast<double>(t - a) / static_cast<double>(std::max<time::Seconds>(1, b - a));
+      return x0 + static_cast<float>(std::clamp(f, 0.0, 1.0)) * w;
+    };
+    c.g.fill({x0, y, w, 4}, theme::white(0.28f), 2);
+    if (p.replay()) {
+      c.g.fill({x0, y, x(at) - x0, 4}, theme::hex(kBlue), 2);
+      c.g.fill({x(at) - 7, y - 5, 14, 14}, theme::hex(kBlue), 7);
+      c.g.fill({x(now) - 6, y - 4, 12, 12}, theme::hex(kRed), 6);
+    } else {
+      c.g.fill({x0, y, x(now) - x0, 4}, theme::white(0.7f), 2);
+      c.g.fill({x(now) - 7, y - 5, 14, 14}, theme::white(), 7);
+    }
+  }
   // ---------------------------------------------------------- helpers
   void flipped(const std::string& id) {
     if (id.empty()) return;
@@ -1176,19 +1587,17 @@ class PlayerScreen : public Screen {
       shadowed(c, why, x, y, Weight::Regular, 22, theme::white(0.82f), titleRight - x);
       return;
     }
-    float lx = tx + ui::chip(c, "LIVE", tx, top + 42, 16, theme::hex(kRed), theme::white()) + 12;
+    // Build 165: behind live, REPLAY in place of LIVE.
+    bool behind = !pending && p.replay().has_value();
+    float lx = tx + (behind ? ui::chip(c, "REPLAY", tx, top + 42, 16, theme::hex(kBlue), theme::white())
+                            : ui::chip(c, "LIVE", tx, top + 42, 16, theme::hex(kRed), theme::white())) +
+               12;
     // CC: this stream carries captions.
     if (!pending && p.subtitles().present()) {
       float ccW = ui::chipWidth(c, "CC", 15);
       c.g.stroke({lx, top + 42, ccW, 24}, theme::white(0.75f), 6, 2);
       ui::labelIn(c, "CC", {lx, top + 42, ccW, 24}, Weight::Bold, 15, theme::white(), Align::Center);
       lx += ccW + 12;
-    }
-    // Build 163 (test only), with the controls: the copy playing says it
-    // keeps catch-up.
-    if (uint16_t days = !pending && zone_ == Zone::Row ? p.catchupDays() : 0) {
-      std::string text = "Catch-up: " + std::to_string(days) + (days == 1 ? " day" : " days");
-      lx += ui::chip(c, text, lx, top + 42, 16, theme::white(0.16f), theme::white(0.9f)) + 12;
     }
     std::string title = l ? l->title : (g ? g->name : std::string());
     const Listing* show = l;  // the listing the title is (its episode and description)
@@ -1201,6 +1610,23 @@ class PlayerScreen : public Screen {
     // Sources, not here). The episode stops at 360 px, so the progress and
     // time left keep their place.
     float rx = x;
+    // Build 165, with the controls on a channel with replay: when the
+    // programme started, or where the replay is and where live is (the
+    // programme's bar is over the buttons, in the description's place).
+    bool replayInfo = !pending && zone_ == Zone::Row && p.catchupDays() > 0;
+    if (replayInfo && behind) {
+      shadowed(c, "Watching from " + ui::clock(c, p.replayAt()) + " \xc2\xb7 live is " + ui::clock(c, c.now), rx, y,
+               Weight::Medium, 22, theme::white(0.92f), titleRight - rx);
+      return;
+    }
+    if (replayInfo && l) {
+      long ago = static_cast<long>((c.now - l->start) / 60);
+      std::string started = ago >= 60 ? "started " + std::to_string(ago / 60) + " h " + std::to_string(ago % 60) + " min ago"
+                                      : "started " + std::to_string(std::max(0L, ago)) + " min ago";
+      shadowed(c, ui::range(c, l->start, l->end, true) + " \xc2\xb7 " + started, rx, y, Weight::Medium, 22,
+               theme::white(0.92f), titleRight - rx);
+      return;
+    }
     if (l) {
       rx += shadowed(c, ui::range(c, l->start, l->end, true), rx, y, Weight::Medium, 22, theme::white(0.92f));
       if (show && !show->episode.empty())
@@ -1376,6 +1802,9 @@ class PlayerScreen : public Screen {
     const Playback& p = app_.playback();
     if (!pendingFlip_.empty()) return {"Tuning in", true, false};
     if (p.failed()) return {};
+    // Build 165: a replay opening.
+    if (p.replay() && !p.ready())
+      return {"Opening the replay\xe2\x80\xa6", true, false};
     std::string q;
     if (!p.feeds().empty()) q = p.feeds()[std::min(p.feedIndex(), p.feeds().size() - 1)].quality;
     std::string withQ = q.empty() ? std::string() : " \xc2\xb7 " + q;
@@ -1458,9 +1887,23 @@ class PlayerScreen : public Screen {
     item(okW, "Subtitles & more", "");
     if (keys.colour) item(dot(c, x, y, kGreen), "CC", "");
     if (zone_ != Zone::None || x > gfx::kLayoutWidth - kLeft - 300) return;
+    float right = gfx::kLayoutWidth - kLeft;
+    // Build 165: after a tune, the programme begun a while ago: one
+    // button, as if focused, where "Hides in" sits. OK takes it.
+    if (startOverOffer_ && pendingFlip_.empty()) {
+      std::string text = "Start over from " + ui::clock(c, *startOverOffer_, false);
+      float bw = ui::textWidth(c, text, Weight::Bold, 24) + 60;
+      Rect r{right - bw, y - 4, bw, 54};
+      c.hit(r, kHitStartOver);
+      c.g.fill(r, theme::white(), 27);
+      if (startOverHover_) c.g.stroke({r.x - 4, r.y - 4, r.w + 8, r.h + 8}, theme::black(0.85f), 31, 3);
+      ui::labelIn(c, text, r, Weight::Bold, 24, theme::black(), Align::Center);
+      float cw = ui::textWidth(c, keys.clickpad ? "Click" : "OK", Weight::Bold, 17) + 20;
+      keyCap(c, r.x - 14 - std::max(40.0f, cw), y + 3, keys.clickpad ? "Click" : "OK");
+      return;
+    }
     // The load states, quietly, where "Hides in" sits once it plays.
     Status st = status(g);
-    float right = gfx::kLayoutWidth - kLeft;
     if (st.text.empty()) {
       int left = hidesIn(app_.ms());
       ui::label(c, "Hides in " + std::to_string(std::min(left, static_cast<int>(kBannerMs / 1000))) + " s", right - 300,
@@ -1482,11 +1925,28 @@ class PlayerScreen : public Screen {
     struct Item {
       std::string title, extra;
       std::string tag;  // a small tag after the title ("TEST")
+      // Build 165: a mark before the title (Go live's red dot, Pause's
+      // bars, Rewind's arrow); `bare`: the mark alone (a full row).
+      enum class Mark { None, Dot, Pause, Replay } mark = Mark::None;
+      bool bare = false;
     };
     std::vector<Item> items;
     for (Pill pill : pills_) {
       Item it;
       switch (pill) {
+        case Pill::GoLive:
+          it.title = "Go live";
+          it.mark = Item::Mark::Dot;
+          break;
+        case Pill::Pause:
+          it.title = "Pause";
+          it.mark = Item::Mark::Pause;
+          break;
+        case Pill::Rewind:
+          it.title = "Rewind";
+          it.mark = Item::Mark::Replay;
+          break;
+        case Pill::StartOver: it.title = "Start over"; break;
         case Pill::Cameras: it.title = "Cameras"; break;
         case Pill::Subtitles: {
           Playback::SubtitleStatus st = p.subtitleStatus();
@@ -1508,17 +1968,15 @@ class PlayerScreen : public Screen {
         case Pill::Guide: it.title = app_.store().isEvent(p.entry()) ? "Games" : "Guide"; break;
         case Pill::Last: it.title = "Back to " + backName(); break;
         case Pill::Favorite: it.title = g && app_.store().isFavorite(g->id) ? "Unfavorite" : "Favorite"; break;
-        case Pill::Catchup:
-          it.title = "Test catch-up";
-          it.tag = "TEST";
-          break;
         case Pill::More: it.title = "Settings"; break;
       }
       items.push_back(std::move(it));
     }
     const float gap = 14, height = 80, room = gfx::kLayoutWidth - 2 * kLeft;
     auto widthOf = [&](const Item& it) {
+      if (it.bare) return height;  // the mark alone, round
       float w = ui::textWidth(c, it.title, Weight::Bold, 28) + 56;
+      if (it.mark != Item::Mark::None) w += 34;
       if (!it.extra.empty()) w += ui::textWidth(c, it.extra, Weight::Medium, 24) + 14;
       if (!it.tag.empty()) w += ui::chipWidth(c, it.tag, 14) + 12;
       return w;
@@ -1545,6 +2003,11 @@ class PlayerScreen : public Screen {
     };
     shorten(Pill::Last, [](Item& it) { it.title = "Back"; });
     shorten(Pill::Subtitles, [](Item& it) { it.extra.clear(); });
+    // Build 165: then Rewind and Pause keep their marks alone.
+    shorten(Pill::Rewind, [](Item& it) { it.bare = true; });
+    shorten(Pill::Pause, [](Item& it) { it.bare = true; });
+    // The programme's bar over the buttons (not under a game's card).
+    if (p.catchupDays() > 0 && cardTop_ == kCardTop) drawReplayBar(c, g);
     float x = kLeft, y = kRowY - 6;
     pillsShown_ = items.size();
     for (size_t i = 0; i < items.size(); ++i) {
@@ -1568,6 +2031,27 @@ class PlayerScreen : public Screen {
       }
       Color ink = f ? theme::black() : theme::white();
       float tx = r.x + 28;
+      if (it.mark != Item::Mark::None) {
+        float mx = it.bare ? r.x + (r.w - 26) * 0.5f : tx;
+        float my = r.y + (r.h - 26) * 0.5f;
+        switch (it.mark) {
+          case Item::Mark::Dot: c.g.fill({mx + 3, my + 3, 20, 20}, theme::hex(kRed), 10); break;
+          case Item::Mark::Pause:
+            c.g.fill({mx + 4, my + 1, 7, 24}, ink, 2);
+            c.g.fill({mx + 15, my + 1, 7, 24}, ink, 2);
+            break;
+          case Item::Mark::Replay:
+            if (unsigned icon = c.icons ? c.icons->get("ui-replay") : 0) c.g.textureAlpha(icon, {mx, my, 26, 26}, ink);
+            else ui::labelIn(c, "\xe2\x97\x80\xe2\x97\x80", {mx - 4, my, 34, 26}, Weight::Bold, 16, ink, Align::Center);
+            break;
+          case Item::Mark::None: break;
+        }
+        if (it.bare) {
+          x += w + gap;
+          continue;
+        }
+        tx += 34;
+      }
       tx += ui::label(c, it.title, tx, r.y + 22, Weight::Bold, 28, ink);
       if (!it.tag.empty())
         tx += 12 + ui::chip(c, it.tag, tx + 12, r.y + 29, 14, theme::hex(theme::kStar, f ? 1.0f : 0.9f), theme::black());
@@ -1633,10 +2117,29 @@ class PlayerScreen : public Screen {
   // never moves onto one that isn't on screen.
   size_t pillsShown_ = 99;
   int failButton_ = 0;
-  // The catch-up test's buttons: the one focused (-1 none, the pointer on
-  // the picture), and the test's state they were laid out for.
-  int catchupButton_ = 0;
-  int catchupLook_ = 0;
+  // Build 165, replay. The paused panel's focused button (-1 none: the
+  // pointer on the picture); the programme it paused in. The Rewind
+  // timeline: open, what played before it, the channel it's for, the
+  // playhead, the archive's start, the bar, the programmes on it, the key
+  // last moved with and its repeats, the pointer on the bar or Play. Where
+  // Start over goes (the row), the banner's offer, and the clocks shown.
+  int pausedButton_ = 0;
+  time::Seconds pausedTitleFor_ = 0, pausedStart_ = 0, pausedEnd_ = 0;
+  std::string pausedTitle_;
+  bool timeline_ = false;
+  From timelineFrom_ = From::Live;
+  std::string timelineEntry_;
+  time::Seconds head_ = 0, earliest_ = 0;
+  engine::replay::Span span_;
+  std::vector<engine::replay::Programme> programmes_;
+  int pastSerial_ = 0;
+  Key lastMove_ = Key::Unknown;
+  int repeats_ = 0;
+  int barHover_ = -1;
+  bool playHover_ = false;
+  std::optional<time::Seconds> startOverAt_, startOverOffer_;
+  bool startOverHover_ = false;
+  std::string replayLook_;
   bool tips_ = false;
   bool pointer_ = false;
   uint32_t controlsAt_ = 0;    // when the controls last opened

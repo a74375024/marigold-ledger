@@ -188,3 +188,44 @@ TEST_CASE("catch-up: the server's offset is kept on the account and saved with i
   REQUIRE(dropped.ok());
   CHECK_FALSE(dropped.value()[0].serverOffset);
 }
+
+TEST_CASE("replay: a stream's past guide is one get_simple_data_table request") {
+  Request r = client().simpleDataTableRequest("501");
+  CHECK(r.url.find("/player_api.php?") != std::string::npos);
+  CHECK(r.url.find("action=get_simple_data_table") != std::string::npos);
+  CHECK(r.url.find("stream_id=501") != std::string::npos);
+  CHECK(r.headers.empty());
+}
+
+TEST_CASE("replay: get_simple_data_table's listings, base64 titles and numbers or text") {
+  // "Morning Show", "Game Night", "Later" and a plain title.
+  std::string body = R"({"epg_listings":[)"
+                     R"({"title":"R2FtZSBOaWdodA==","start_timestamp":"1800003600","stop_timestamp":"1800007200","has_archive":"1"},)"
+                     R"({"title":"TW9ybmluZyBTaG93","start_timestamp":1800000000,"stop_timestamp":1800003600,"has_archive":1},)"
+                     R"({"title":"TGF0ZXI=","start_timestamp":"1800007200","stop_timestamp":"1800010800","has_archive":0},)"
+                     R"({"title":"Plain title","start_timestamp":"1800010800","stop_timestamp":"1800014400","has_archive":true},)"
+                     R"({"title":"","start_timestamp":"1800014400","stop_timestamp":"1800018000"},)"
+                     R"({"title":"TWlzc2luZw==","start_timestamp":"1800018000"},)"
+                     R"({"title":"QmFja3dhcmRz","start_timestamp":"1800021600","stop_timestamp":"1800018000"},)"
+                     R"({"title":"TW9ybmluZyBTaG93","start_timestamp":1800000000,"stop_timestamp":1800003600,"has_archive":1},)"
+                     R"("not an object"]})";
+  std::vector<xtream::ArchiveProgramme> list = xtream::parseSimpleDataTable(200, body);
+  REQUIRE(list.size() == 4);
+  CHECK(list[0].title == "Morning Show");
+  CHECK(list[0].start == 1800000000);
+  CHECK(list[0].end == 1800003600);
+  CHECK(list[0].archived);
+  CHECK(list[1].title == "Game Night");
+  CHECK(list[1].archived);
+  CHECK(list[2].title == "Later");
+  CHECK_FALSE(list[2].archived);
+  CHECK(list[3].title == "Plain title");
+  CHECK(list[3].archived);
+  // Malformed answers: nothing.
+  CHECK(xtream::parseSimpleDataTable(200, "").empty());
+  CHECK(xtream::parseSimpleDataTable(200, "[]").empty());
+  CHECK(xtream::parseSimpleDataTable(200, R"({"epg_listings":"none"})").empty());
+  CHECK(xtream::parseSimpleDataTable(200, R"({"epg_listings":[)").empty());
+  CHECK(xtream::parseSimpleDataTable(404, body).empty());
+  CHECK(xtream::parseSimpleDataTable(200, R"({"epg_listings":[]})").empty());
+}

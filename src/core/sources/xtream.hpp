@@ -47,6 +47,14 @@ struct AccountInfo {
   std::optional<int> utcOffset;
 };
 
+// Build 165, replay: one programme of a stream's own guide with its past
+// (get_simple_data_table), and whether the provider says its archive holds it.
+struct ArchiveProgramme {
+  time::Seconds start = 0, end = 0;
+  std::string title;
+  bool archived = false;  // has_archive
+};
+
 // category_id -> trimmed category_name.
 using CategoryNames = std::unordered_map<std::string, std::string>;
 
@@ -108,6 +116,9 @@ class Client {
   // Empty on any failure, like the Swift (which uses try?).
   std::vector<Program> parseShortEpg(int status, std::string_view body, const std::string& channelId,
                                      const TitleGenres& titleGenres = nullptr) const;
+  // Build 165, replay: the stream's guide with its past, in one request.
+  // Secret (the login is in it), like every player API request.
+  Request simpleDataTableRequest(std::string_view streamId) const;
   // The provider's full XMLTV guide (xmltv.php). Its channel ids are the
   // streams' epg_channel_ids. Secret: carries the login.
   std::string guideURL() const;
@@ -139,6 +150,12 @@ class Client {
   Account account_;
   std::string base_;
 };
+
+// get_simple_data_table's epg_listings: base64 (or plain) titles,
+// start_timestamp / stop_timestamp as numbers or text, has_archive (1, "1"
+// or true). Entries without a title or a sane span are skipped; sorted by
+// start, one per start. Empty on any failure.
+std::vector<ArchiveProgramme> parseSimpleDataTable(int status, std::string_view body);
 
 // get_live_categories. Failures give an empty map (the Swift ignores them:
 // channels then have no category tag).

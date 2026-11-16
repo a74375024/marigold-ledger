@@ -396,6 +396,8 @@ struct Store::Impl {
   // Guide.
   std::unordered_map<std::string, std::vector<Program>> serverPrograms;  // short EPG / Emby
   // Shared lists: copies of these maps copy pointers (see guide::share).
+  // Build 165: "guide past: …" lines for the playback log (Store::takeGuideLog).
+  std::vector<std::string> guideNotes;
   guide::SharedPrograms providerMatches;
   guide::SharedPrograms outsideMatches;
   catalog::ProgramLists programs;  // raw and entry ids

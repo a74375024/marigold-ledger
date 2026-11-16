@@ -91,6 +91,14 @@ void XmltvReader::settleKeepList() {
     }
   }
   keep_ = std::move(list);
+  if (window_.pastChannels) {
+    for (const auto& [id, users] : *keep_)
+      for (const Match& user : users)
+        if (window_.pastChannels->count(user.id)) {
+          pastIds_.insert(id);
+          break;
+        }
+  }
   channelNames_.clear();
   channelOrder_.clear();
 }
@@ -136,13 +144,19 @@ void XmltvReader::startElement(std::string_view element, const xml::Attributes& 
     }
     int high = window_.high;
     if (window_.shortIds && window_.shortIds->count(id)) high = std::min(high, window_.shortHigh);
-    if (!keep_->count(id) || !timed || !(end > start) || !(end > window_.low) || !(start < high)) {
+    bool kept = keep_->count(id) > 0;
+    if (kept && timed && end > start && (!earliestEnd_ || end < *earliestEnd_)) earliestEnd_ = end;
+    // Build 165: a channel with catch-up keeps what ended a while before
+    // the window's start (for its replay's timeline).
+    bool past = !(end > window_.low) && end > window_.pastLow && pastIds_.count(id) > 0;
+    if (!kept || !timed || !(end > start) || !(end > window_.low || past) || !(start < high)) {
       programmeChannel_.reset();
       return;
     }
     programmeChannel_ = std::move(id);
     programmeStart_ = start;
     programmeEnd_ = end;
+    programmePast_ = past;
     title_.reset();
     subtitle_.reset();
     desc_.reset();
@@ -213,7 +227,7 @@ void XmltvReader::endElement(std::string_view element) {
       int f = flags_ | genre::flags(str::join(categories_, " "));
       if ((f & genre::kGenreBits) == 0) f |= genre::flagsForTitle(*title_, subtitle_);
       int descUntil = window_.descUntil ? window_.descUntil : window_.low + 180 + kDescHours * 60;
-      bool keepDesc = programmeStart_ < descUntil || (f & genre::kSports) != 0;
+      bool keepDesc = !programmePast_ && (programmeStart_ < descUntil || (f & genre::kSports) != 0);
       RawProgram p;
       p.s = programmeStart_;
       p.m = std::max(1, programmeEnd_ - programmeStart_);
@@ -289,6 +303,7 @@ SourceResult XmltvReader::sourceResult() {
   out.programs = result();
   out.guideChannels = guideChannels_;
   out.programmes = programmes_;
+  out.earliestEnd = earliestEnd_;
   std::vector<int> ends;
   for (const auto& [id, entry] : out.programs) {
     if (!entry.programs || entry.programs->empty()) continue;

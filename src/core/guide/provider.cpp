@@ -159,7 +159,10 @@ Outcome build(const std::vector<Channel>& channels, time::Seconds nowSec, const 
     return out;
   }
   int now = static_cast<int>(nowSec / 60);
-  Window window{now - 180, now + kKeepHours * 60, now + kDescHours * 60};
+  Window window{now - kPastMinutes, now + kKeepHours * 60, now + kDescHours * 60};
+  // Build 165: the channels with catch-up keep their last six hours.
+  window.pastChannels = replayChannels(channels);
+  window.pastLow = now - kReplayPastMinutes;
   if (eventsOnly && !eventsOnly->empty()) {
     // Guide ids only Live Events reads: no further than it reads, from the
     // start (their channels shared with others are cut after).
@@ -197,6 +200,7 @@ Outcome build(const std::vector<Channel>& channels, time::Seconds nowSec, const 
     return out;
   }
   out.kind = Outcome::Kind::built;
+  out.pastNote = "guide past: provider file reaches back " + pastHours(found->earliestEnd, now);
   out.saved.built = nowSec;
   out.saved.channelCount = static_cast<int>(channels.size());
   // Channels with the same guide id share one list, sorted once.

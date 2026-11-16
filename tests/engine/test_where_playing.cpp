@@ -481,6 +481,6 @@ TEST_CASE("engine: back from the background after the game left the board, playb
   for (size_t i = lines; i < entries.size(); ++i) {
     CAPTURE(entries[i].event);
     CHECK((entries[i].event == "paused" || entries[i].event == "resumed" || entries[i].event == "memory" ||
-           entries[i].event == "live events"));
+           entries[i].event == "live events" || entries[i].event == "guide"));
   }
 }

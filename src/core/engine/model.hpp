@@ -121,6 +121,10 @@ struct Feed {
   int loadMode = 0;
   // Emby: the server opens the stream first (store().resolve()).
   bool needsOpen = false;
+  // Build 165: a stretch of a provider's archive (replay), not live. It
+  // ends where it was asked to end: nothing reopens it (the LG relay
+  // reopens a live source that closes).
+  bool replay = false;
 };
 
 }  // namespace marigold::engine

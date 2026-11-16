@@ -331,13 +331,14 @@ class Store {
   std::string entryOfChannel(const std::string& channelId) const;
   // Feeds for an entry, best first ("Always start with" honoured).
   std::vector<Feed> feeds(const std::string& entryId) const;
-  // Build 163, the catch-up test (test only). The days of catch-up the
-  // provider says a raw channel keeps (Xtream tv_archive_duration); 0 for
-  // none, and for every M3U or Emby channel (no test there).
+  // Build 163, catch-up. The days of catch-up the provider says a raw
+  // channel keeps (Xtream tv_archive_duration); 0 for none, and for every
+  // M3U or Emby channel (no replay there).
   uint16_t catchupDays(const std::string& channelId) const;
-  // A copy's archive from `from` (Unix time) until `now`, to play in place
-  // of `live`: the same channel, label and load mode, the provider's
-  // timeshift link (secret: for the player only) in its server's clock.
+  // Build 165, replay: a copy's archive from `from` (Unix time) until `now`
+  // plus five minutes (at most three hours), to play in place of `live`:
+  // the same channel, label and load mode, the provider's timeshift link
+  // (secret: for the player only) in its server's clock, marked as replay.
   // nullopt when the copy keeps no archive or no link can be made.
   struct CatchupFeed {
     Feed feed;
@@ -345,6 +346,21 @@ class Store {
     int minutes = 0;                  // how much of the archive is asked for
   };
   std::optional<CatchupFeed> catchupFeed(const Feed& live, time::Seconds from, time::Seconds now) const;
+  // Build 165, replay's timeline: a guide entry's listings from `from` on
+  // (the guide keeps six hours back for channels with catch-up), from the
+  // guide data already held; the normal guide window is not changed.
+  std::vector<Listing> pastListing(const std::string& entryId, time::Seconds from) const;
+  // Build 165: a copy's own guide with its past, asked of its Xtream panel
+  // in one request (get_simple_data_table) at background priority. `done`
+  // runs on the UI thread with the programmes (sorted), or nullopt when the
+  // request or its answer failed. Nothing for a copy that isn't Xtream.
+  struct PastProgramme {
+    time::Seconds start = 0, end = 0;
+    std::string title;
+    bool archived = false;  // the provider says its archive holds it
+  };
+  void archiveGuide(const std::string& channelId,
+                    std::function<void(std::optional<std::vector<PastProgramme>>)> done);
   // Emby: asks the server to open a feed (needsOpen); `done` gets it with
   // its URL, or nothing. Closes the stream opened before.
   void open(const Feed& feed, std::function<void(std::optional<Feed>)> done);
@@ -601,6 +617,9 @@ class Store {
   // Live Events lines for the playback log since the last call (opened,
   // rebuilt, the board's size). Counts only, never titles or links.
   std::vector<std::string> takeEventsLog();
+  // Build 165: "guide past: …" lines (how far back the guide files read
+  // reached) since the last call.
+  std::vector<std::string> takeGuideLog();
   // The board made here and now, on this thread, from what the store holds
   // (what the next one made on a worker shows), for checks. Nothing changes.
   std::shared_ptr<const EventsBoard> boardNow();

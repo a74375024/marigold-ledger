@@ -58,6 +58,9 @@ static int resolucaoPendente, resolucaoAtual;
 // marigold: passar a .ts continua adiante (sem 302), e quem le o que passa
 // (as legendas). Valem para a proxima sessao, como a resolucao.
 static int passarPendente, passarAtual;
+// marigold (Build 165): reabrir a .ts continua que a fonte fecha (ao vivo);
+// 0 num trecho de replay, que termina onde foi pedido.
+static int reabrirPendente = 1, reabrirAtual = 1;
 static void (*espiao)(const unsigned char *, size_t, unsigned, void *);
 static void *espiaoU;
 #ifndef MARIGOLD_PROXYTS_PURO
@@ -235,6 +238,7 @@ struct PxFluxo {
   char cabs[512];                   // os do addon, para playlist e segmentos
   int resolucao;                    // marigold: opcao da sessao, para a mestre
   int continuo;                     // marigold: a fonte e .ts continua, passada adiante
+  int reabrir;                      // marigold: reabrir a .ts continua que fecha (0: replay)
   size_t tam;                       // marigold: o tamanho do ring (PX_BUFFER ou PX_BUFFER_VIVO)
   uint64_t espiado;                 // marigold: ate onde o espiao ja leu
   int http;                         // marigold: o ultimo HTTP da fonte (0 = sem resposta)
@@ -541,7 +545,9 @@ static void pxContinuo(PxConexao *c, const char *url, const char *cabs) {
     if (time(NULL) - t0 >= 30) seguidas = 0;
     if (!antes && !veio) {
       if (++vazias > PX_VIVO_VAZIAS) desiste = 1;
-    } else if (++seguidas > PX_VIVO_REABRIR) {
+    } else if (!f->reabrir || ++seguidas > PX_VIVO_REABRIR) {
+      // marigold: um trecho de replay que termina nao recomeca do inicio;
+      // o app abre o trecho seguinte.
       desiste = 1;
     }
     pthread_mutex_lock(&f->trava); pxLigacao(f, (long)(pxMsAgora() - ms0), veio, !desiste); pthread_mutex_unlock(&f->trava);
@@ -602,6 +608,7 @@ static PxFluxo *pxFluxoPegar(PxConexao *c, const char *lista, const char *cabs, 
     snprintf(f->cabs, sizeof f->cabs, "%s", cabs ? cabs : "");
     f->resolucao = resolucao;
     f->continuo = continuo;
+    f->reabrir = reabrirAtual;
     fluxoAtual = f;
     if (pthread_create(&t, NULL, pxProduzir, f) != 0) {
       fluxoAtual = NULL; pxFluxoDestruir(f); pthread_mutex_unlock(&trava); return NULL;
@@ -887,6 +894,12 @@ void proxyts_definir_passagem(int sim) {
   pthread_mutex_unlock(&trava);
 }
 
+void proxyts_definir_reabrir(int sim) {
+  pthread_mutex_lock(&trava);
+  reabrirPendente = sim;
+  pthread_mutex_unlock(&trava);
+}
+
 void proxyts_definir_espiao(void (*f)(const unsigned char *, size_t, unsigned, void *), void *u) {
   pthread_mutex_lock(&trava);
   espiaoU = u;
@@ -964,6 +977,7 @@ int proxyts_url(const char *fonte, char *saida, size_t n) {
   snprintf(cabsAtual, sizeof cabsAtual, "%s", cabsPendentes);
   resolucaoAtual = resolucaoPendente;
   passarAtual = passarPendente;
+  reabrirAtual = reabrirPendente;
   s = atomic_fetch_add(&sessaoAtual, 1) + 1;
   pthread_mutex_unlock(&trava);
   snprintf(saida, n, "http://127.0.0.1:%d/live.ts?s=%u", porta, s);

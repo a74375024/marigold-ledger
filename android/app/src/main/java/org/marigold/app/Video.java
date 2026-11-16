@@ -182,6 +182,17 @@ final class Video {
     });
   }
 
+  /** Build 165, replay's pause: the picture held (the SurfaceView keeps the last frame), or on. */
+  static void pause(boolean paused) {
+    ui.post(() -> {
+      if (player == null || url.isEmpty()) return;
+      player.setPlayWhenReady(!paused);
+      synchronized (lock) {
+        playing = !paused && player.isPlaying();
+      }
+    });
+  }
+
   static void release() {
     ui.post(() -> {
       if (player != null) player.release();

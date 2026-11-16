@@ -186,6 +186,11 @@ TEST_CASE("outside build: mains, a failed main, stale shards, backups with a clo
   CHECK(r.nextCheck == kNowSec + kStaleRetry);
   CHECK(r.targetsKey == targetsKey(channels, on));
   CHECK(r.log.back().find("; stale: us, next check in 2 h") != std::string::npos);
+  // Build 165: how far back each file read reached, in one line (the files
+  // here start with what's on now).
+  REQUIRE(r.log.size() >= 2);
+  CAPTURE(r.log[r.log.size() - 2]);
+  CHECK(r.log[r.log.size() - 2].rfind("guide past: outside US locals 0 h, US national 0 h, Backup: EPGTalk sports nothing, Backup: epg.pw US 0 h", 0) == 0);
 
   REQUIRE(r.states.size() == 7);
   CHECK(r.states.at("us-sports").stale == true);

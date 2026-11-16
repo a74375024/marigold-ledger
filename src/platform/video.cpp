@@ -55,6 +55,14 @@ void Video::setMuted(bool muted) {
   gMuteSent = muted;
 }
 
+bool Video::pause(bool paused) {
+  // uMS pause / play on the media loaded: the last frame stays on the
+  // video plane until it is unloaded.
+  if (!video_ativo()) return false;
+  video_pausar(paused ? 1 : 0);
+  return true;
+}
+
 void Video::setWindow(gfx::Rect r) {
   video_janela(static_cast<int>(std::lround(r.x)), static_cast<int>(std::lround(r.y)),
                static_cast<int>(std::lround(r.w)), static_cast<int>(std::lround(r.h)));

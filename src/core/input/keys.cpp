@@ -14,6 +14,7 @@ constexpr int kPageUp = 75, kPageDown = 78;
 constexpr int kMenu = 118, kAcBack = 270;
 constexpr int kAudioNext = 258, kAudioPrev = 259, kAudioStop = 260, kAudioPlay = 261;
 constexpr int kAudioRewind = 285, kAudioFastForward = 286;  // SDL 2.0.6+, harmless if unused
+constexpr int kPause = 72;  // the LG remote's Pause (KEY_PAUSE); a keyboard's Pause
 constexpr int kF1 = 58;
 }  // namespace sdl
 
@@ -58,6 +59,7 @@ Key keyFromSdl(int scancode, int32_t keycode) {
     case sdl::kPageDown: return Key::ChannelDown;
     case sdl::kAudioPlay: return Key::PlayPause;
     case sdl::kSpace: return Key::PlayPause;
+    case sdl::kPause: return Key::Pause;
     case sdl::kAudioStop: return Key::Stop;
     case sdl::kAudioRewind:
     case sdl::kAudioPrev: return Key::Rewind;

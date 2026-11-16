@@ -31,6 +31,16 @@ TEST_CASE("arrows, OK and digits") {
   CHECK(marigold::digitOf(Key::Ok) == -1);
 }
 
+TEST_CASE("LG media keys reach the player (Build 165, replay)") {
+  // Play (or play/pause), Pause, fast forward and rewind, as SDL names
+  // them from the remote's KEY_PLAY, KEY_PAUSE, KEY_FASTFORWARD, KEY_REWIND.
+  CHECK(keyFromSdl(261, 0) == Key::PlayPause);
+  CHECK(keyFromSdl(72, 0) == Key::Pause);
+  CHECK(keyFromSdl(286, 0) == Key::FastForward);
+  CHECK(keyFromSdl(285, 0) == Key::Rewind);
+  CHECK(keyFromSdl(44, 0) == Key::PlayPause);  // a keyboard's space
+}
+
 TEST_CASE("unknown keys stay unknown") {
   CHECK(keyFromSdl(9999, 0) == Key::Unknown);
   CHECK(std::string(marigold::keyName(Key::Unknown)) == "Unknown");

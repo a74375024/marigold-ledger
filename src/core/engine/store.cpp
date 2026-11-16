@@ -3124,6 +3124,7 @@ void Store::runProviderGuide() {
             out.guideChannels = reader->guideChannelCount();
             out.programmes = reader->programmeCount();
             out.bytes = static_cast<int64_t>(r.bytes);
+            out.earliestEnd = reader->earliestEnd();
             return out;
           };
           guide::provider::Outcome o = guide::provider::build(j.channels, time::now(), read, nullptr, &j.eventsOnly);
@@ -3148,6 +3149,10 @@ void Store::runProviderGuide() {
           scheduleProvider(true);
         }
         for (auto& [key, outcome] : *results) {
+          if (!outcome.pastNote.empty()) {
+            MLOG_I("guide", "%s", outcome.pastNote.c_str());
+            mm.guideNotes.push_back(outcome.pastNote);
+          }
           if (outcome.kind == guide::provider::Outcome::Kind::built) {
             MLOG_I("guide", "provider guide: %zu channels matched", outcome.saved.programs.size());
             mm.providerSaved[key] = std::move(outcome.saved);
@@ -3372,7 +3377,11 @@ void Store::runOutsideGuide() {
           mm.outsideAt = 0;
           scheduleOutside(true);
         }
-        for (const std::string& line : built->log) MLOG_I("guide", "%s", redact(line).c_str());
+        for (const std::string& line : built->log) {
+          MLOG_I("guide", "%s", redact(line).c_str());
+          // Build 165: how far back the files reached, in the playback log too.
+          if (str::startsWith(line, "guide past:")) mm.guideNotes.push_back(redact(line));
+        }
         for (const std::string& p : built->problems) MLOG_W("guide", "%s", redact(p).c_str());
         pruneDisk();  // guide files of areas no longer chosen, and the budget
         if (!*newSaved) return;

@@ -118,6 +118,10 @@ final class Bridge {
     Video.stop();
   }
 
+  static void videoPause(boolean paused) {
+    Video.pause(paused);
+  }
+
   static void videoRelease() {
     Video.release();
   }

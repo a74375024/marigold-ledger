@@ -322,7 +322,22 @@ struct Window {
   // (provider::kEventsOnlyHours). Null: none.
   std::shared_ptr<const std::unordered_set<std::string>> shortIds = nullptr;
   int shortHigh = 0;
+  // Build 165, replay: the channels with catch-up (user channel ids; null
+  // none) keep the programmes that ended before `low` back to `pastLow`,
+  // without their descriptions, so a replay's timeline can name them.
+  std::shared_ptr<const std::unordered_set<std::string>> pastChannels = nullptr;
+  int pastLow = 0;
 };
+
+// Build 165: how far back the replay channels' listings are kept, minutes
+// before the read (the rest keep kPastMinutes).
+constexpr int kReplayPastMinutes = 6 * 60;
+constexpr int kPastMinutes = 180;
+// The user channels with catch-up among `channels` (null when none).
+std::shared_ptr<const std::unordered_set<std::string>> replayChannels(const std::vector<Channel>& channels);
+// "guide past: …" for the log: how far back a file reached (the earliest
+// programme end it held for your channels, before trimming), "26 h".
+std::string pastHours(std::optional<int> earliestEnd, int now);
 
 // One source's matches from a file (XMLTVReader.SourceResult).
 struct SourceResult {
@@ -336,6 +351,9 @@ struct SourceResult {
   // When half of the matched channels' listings have ended (minutes since
   // 1970): how far ahead this source really reaches.
   std::optional<int> horizonMedian;
+  // Build 165: the earliest programme end the file held for your channels,
+  // before the window trimmed it (minutes since 1970).
+  std::optional<int> earliestEnd;
   double seconds = 0;
 };
 

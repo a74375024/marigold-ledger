@@ -53,6 +53,10 @@ int  proxyts_redirecionou(void);
 // playlist tambem passa pelo proxy (sem 302 e sem sonda), para o espiao ler
 // o fluxo. 0 = como antes.
 void proxyts_definir_passagem(int sim);
+// marigold (Build 165): na proxima sessao, reabrir (1, o normal ao vivo) ou
+// nao (0: um trecho de replay, que termina onde foi pedido) a .ts continua
+// que a fonte fecha. Vale para a proxima proxyts_url.
+void proxyts_definir_reabrir(int sim);
 // marigold: chamado nos fios do proxy com cada trecho do fluxo entregue ao
 // player (em ordem, cada byte uma vez) e a sessao dele. Rapido: o fluxo espera.
 void proxyts_definir_espiao(void (*f)(const unsigned char *, size_t, unsigned, void *), void *u);

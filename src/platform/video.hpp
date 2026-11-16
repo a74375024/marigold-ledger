@@ -63,6 +63,9 @@ class Video {
   // The picture without its sound (Search's corner preview), kept across
   // streams until turned off. Off brings the sound back on the same stream.
   void setMuted(bool muted);
+  // Build 165, replay's pause: the picture held where it is (`paused`), or
+  // playing on. False when this platform can't (nothing done).
+  bool pause(bool paused);
   void shutdown();
 
   VideoState state() const;
