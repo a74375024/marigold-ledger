@@ -2,7 +2,7 @@
 // it really played: how long its picture took (the median of its recent
 // starts), the starts that failed, the stalls per hour played, the picture
 // measured on it and when it was last seen. Learned from the plays the
-// viewer makes (no extra connections); 1.0.11's "Test all sources" adds its
+// viewer makes (no extra connections); Test all sources (Build 166) adds its
 // probes to the same records (recordProbe).
 //
 // Older results count less: every count halves each week (kHalfLife), so a
@@ -35,6 +35,10 @@ constexpr time::Seconds kHalfLife = 7 * 86400;
 constexpr double kProbeWeight = 0.5;
 // Starts (weighted) before a copy's record is used for its order.
 constexpr double kEnoughStarts = 2.0;
+// Test all sources: a copy Test all sources probed is ordered by its record at once
+// (the test probes every copy once), while that probe still weighs this
+// much (about two weeks).
+constexpr double kEnoughProbes = 0.25;
 // A measured copy goes ahead of another only when its score is higher by
 // more than this (scores run 0..1; like the source reliability's 0.25, a
 // margin, so near-equal copies keep the catalog's order).
@@ -49,23 +53,26 @@ struct Record {
   std::vector<uint32_t> startMs;  // time to picture, oldest first (kSamples)
   // The picture measured last (0: not known).
   int width = 0, height = 0, fps = 0;
-  // Test all sources (1.0.11): probes that showed / didn't show a picture,
+  // Test all sources (Build 166): probes that showed / didn't show a picture,
   // and what a probe found of the archive.
   double probes = 0, probeFailures = 0;
   int archiveOk = -1;        // -1 not probed, 0 didn't play, 1 played
   uint16_t archiveDays = 0;  // the depth a probe found (0 not known)
   time::Seconds archiveAt = 0;
+  time::Seconds probedAt = 0;  // the newest probe (0 never)
 
   // The weights as they stand at `now`.
   Record at(time::Seconds now) const;
   // Starts, probes weighed in.
   double starts() const;
+  // More of its starts (probes weighed in) showed no picture than did.
+  bool mostlyFails() const;
   std::optional<uint32_t> medianStartMs() const;
   // Stalls per hour played (null: under a minute played).
   std::optional<double> stallsPerHour() const;
 };
 
-// What a probe found (Test all sources, 1.0.11).
+// What a probe found (Test all sources, Build 166).
 struct Probe {
   bool ok = false;        // a picture came
   uint32_t startMs = 0;   // ... this long after the request
@@ -105,7 +112,7 @@ class Book {
 
   // {"v":1,"rolledUp":t,"feeds":[[id,seen,plays,failures,stalls,playedS,
   // [ms...],width,height,fps,probes,probeFailures,archiveOk,archiveDays,
-  // archiveAt],...]}, oldest first; weights in hundredths.
+  // archiveAt,probedAt],...]}, oldest first; weights in hundredths.
   std::string toJson() const;
   // A saved book (the newest kCap of it); empty when it doesn't read.
   static Book fromJson(std::string_view text);
@@ -143,6 +150,18 @@ struct RowCopy {
 };
 using Row = std::vector<RowCopy>;
 
+// Test all sources (Build 166): a lineup row with its name (the guide's) and
+// its copies: each one's id, provider, name in the provider's list and the
+// archive it claims (days; 0 none).
+struct LineupCopy {
+  std::string feedId, provider, name;
+  uint16_t days = 0;
+};
+struct LineupRow {
+  std::string entryId, name;
+  std::vector<LineupCopy> copies;
+};
+
 struct ProviderFigures {
   std::string provider;  // its id ("xt:…")
   double plays = 0;      // weighted, recent counting most
@@ -153,6 +172,18 @@ struct ProviderFigures {
   // Shares of the lineup's rows (0..1): with a copy from it, with a copy
   // from it alone, with replay from it.
   double lineup = 0, only = 0, replay = 0;
+  // Test all sources (Build 166)' results (the fields above stay the log's:
+  // real plays only). Probes and plays together, a probe weighing
+  // kProbeWeight: the starts, the share that showed no picture; the share
+  // of its measured copies (each once) at 1080 lines or more; the share of
+  // rows with replay from it that a probe didn't find broken, and the
+  // typical depth of its copies' archives (days: what a probe found, else
+  // what it claims; 0 none).
+  double tested = 0;
+  std::optional<double> startFailures;
+  std::optional<double> fullHdCopies;
+  double replayWorks = 0;
+  uint16_t replayDays = 0;
 };
 struct PairFigures {
   std::string a, b;
@@ -166,6 +197,10 @@ struct Rollup {
 // `providers` in the order to report them; `rows` the lineup's rows.
 Rollup rollup(const Book& book, const std::vector<std::string>& providers, const std::vector<Row>& rows,
               time::Seconds now);
+// The same from the lineup's rows with their copies, with the Test all sources fields
+// (Test all sources' results) filled in too.
+Rollup rollupLineup(const Book& book, const std::vector<std::string>& providers, const std::vector<LineupRow>& rows,
+                    time::Seconds now);
 // The playback log's "providers" lines: (provider column, detail). Shares
 // as percentages; never a count of channels. `name` gives a provider's
 // name.

@@ -132,23 +132,34 @@ bool sizeText(VLCMediaPlayer* p, int size) {
 bool gMuted = false;  // guarded by gMu
 
 // No screen saver or display sleep over a picture. Main thread.
-void keepAwake(bool on) {
+void keepAwake(bool on) { marigold::tvos::keepAwake(marigold::tvos::Awake::Video, on); }
+
+}  // namespace
+
+namespace marigold::tvos {
+
+void keepAwake(Awake who, bool on) {
+  // Main thread only: no lock.
+  static bool video = false, app = false;
+  if (who == Awake::Video) video = on;
+  else app = on;
+  bool any = video || app;
 #if TARGET_OS_OSX
   static IOPMAssertionID assertion = 0;
-  if (on && !assertion) {
+  if (any && !assertion) {
     if (IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep, kIOPMAssertionLevelOn,
                                     CFSTR("Playing live TV"), &assertion) != kIOReturnSuccess)
       assertion = 0;
-  } else if (!on && assertion) {
+  } else if (!any && assertion) {
     IOPMAssertionRelease(assertion);
     assertion = 0;
   }
 #else
-  UIApplication.sharedApplication.idleTimerDisabled = on ? YES : NO;
+  UIApplication.sharedApplication.idleTimerDisabled = any ? YES : NO;
 #endif
 }
 
-}  // namespace
+}  // namespace marigold::tvos
 
 // VLC's own errors, in the app's log (redacted: they can name the link).
 @interface MGVlcLog : NSObject <VLCLogging>

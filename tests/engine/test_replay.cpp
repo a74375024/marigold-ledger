@@ -1012,7 +1012,7 @@ TEST_CASE("feed scores in order: a clearly better copy goes first; none of it wi
   CHECK(order() == std::vector<std::string>{"501", "502", "503"});
   r.store->pinFeed(espn, "");
   CHECK(order() == std::vector<std::string>{"503", "502", "501"});
-  // Probes (Test all sources, 1.0.11) feed the same records: 502 measured
+  // Probes (Test all sources, Build 166) feed the same records: 502 measured
   // well now goes ahead of 501 too, and being about as good as 503 it
   // keeps its catalog place ahead of it.
   marigold::engine::scores::Probe p;

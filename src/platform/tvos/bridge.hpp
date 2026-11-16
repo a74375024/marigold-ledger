@@ -59,6 +59,13 @@ NSURL* urlFrom(const std::string& link);
 // system does at the top screen (on the Mac: leaves full screen).
 void leaveToHome();
 
+// No screen saver or display sleep while either asks: a picture playing
+// (video.mm) or the app (Build 166, Test all sources: Window::keepAwake).
+// Apple TV: the idle timer off; the Mac: a display sleep assertion. Main
+// thread.
+enum class Awake { Video, App };
+void keepAwake(Awake who, bool on);
+
 #if TARGET_OS_OSX
 // The Mac: where the app placed the video, in its 1920x1080 points (the
 // window scales them to its size).

@@ -12,6 +12,7 @@ add_library(legacy STATIC
   src/video.c
   src/video_modo.c
   src/webosver.c
+  shim/esmaecer.c
   shim/marco.c
 )
 target_include_directories(legacy PUBLIC src shim)

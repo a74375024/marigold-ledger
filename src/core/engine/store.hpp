@@ -26,6 +26,7 @@
 #include "core/engine/model.hpp"
 #include "core/engine/quality.hpp"
 #include "core/engine/search.hpp"
+#include "core/engine/source_test.hpp"
 
 namespace marigold {
 struct Channel;
@@ -392,7 +393,7 @@ class Store {
   void noteStartFailed(const std::string& channelId);
   void noteStall(const std::string& channelId);
   void notePlayed(const std::string& channelId, uint32_t ms);
-  // For 1.0.11's "Test all sources" (one probe of every copy of every
+  // For Test all sources (Build 166) (one probe of every copy of every
   // lineup channel): a probe's result goes into the same record.
   void recordProbe(const std::string& channelId, const scores::Probe& probe);
   const scores::Book& feedScores() const;
@@ -401,6 +402,24 @@ class Store {
   // The providers compared (feed_scores.hpp): every account, in the order
   // they were added, with the lineup's coverage and replay.
   scores::Rollup providerRollup() const;
+  // Test all sources (Build 166) (source_test.hpp): My Lineup's rows in guide
+  // order, each with its copies (id, provider, name in the provider's list,
+  // the archive it claims); the providers (source id, the name it was
+  // given) in the order they were added; whether a copy is read directly
+  // (not opened by a server, as Emby / Jellyfin's are); a copy's live feed
+  // (its link is secret: for the probe only); and what its name claims of
+  // its picture (quality::claimed).
+  std::vector<scores::LineupRow> lineupRows() const;
+  std::vector<std::pair<std::string, std::string>> providerNames() const;
+  bool directCopy(const std::string& channelId) const;
+  std::optional<Feed> copyFeed(const std::string& channelId) const;
+  std::string claimedQuality(const std::string& channelId) const;
+  // Providers that look like one service underneath (sourcetest::
+  // sameServices: their copies' names, and their failures when known),
+  // worked out again when the lineup or the providers change and at most
+  // every ten minutes otherwise. A channel's backup comes from a separate
+  // service (versionsOf).
+  const std::vector<sourcetest::SameService>& sameServices() const;
   // ... as the playback log's "providers" lines: (provider, detail).
   // Percentages and plays; never a count of channels, never a link.
   std::vector<std::pair<std::string, std::string>> providerLines(const scores::Rollup& rollup) const;

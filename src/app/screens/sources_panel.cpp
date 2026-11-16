@@ -12,6 +12,7 @@
 #include "app/screens/screens.hpp"
 #include "app/store/store.hpp"
 #include "core/catalog/lineup.hpp"
+#include "core/engine/source_test.hpp"
 #include "core/util/strings.hpp"
 
 namespace marigold::app {
@@ -130,6 +131,13 @@ std::unique_ptr<Screen> makeSources(App& app, const std::string& entryId) {
                                                                      : "WATCH WITH"));
     bool watching = pb.entry() == id;
     time::Seconds now = time::now();
+    // Build 166: what Test all sources (and real plays) measured on
+    // each copy, and when the channel was last tested.
+    const engine::scores::Book& book = app.store().feedScores();
+    time::Seconds tested = 0;
+    for (const Feed& f : feeds)
+      if (const engine::scores::Record* rec = book.find(f.channelId)) tested = std::max(tested, rec->probedAt);
+    if (tested > 0) p.corner = "tested " + engine::sourcetest::testedDay(tested, now, app.zone());
     for (size_t i = 0; i < feeds.size(); ++i) {
       ui::PanelItem it{ui::PanelItem::Kind::Check, "Feed " + std::to_string(i + 1)};
       bool playing = watching && pb.feedIndex() == i;
@@ -139,7 +147,26 @@ std::unique_ptr<Screen> makeSources(App& app, const std::string& entryId) {
       else if (auto problem = pb.feedProblem(feeds[i].channelId))
         status = "Last try " + agoText(problem->at, now) + ": " + problem->why;
       else status = i == 0 ? "Main feed" : "Backup";
-      it.detail = status + " \xc2\xb7 " + feeds[i].label;
+      // The first copy is the one a tune starts with; the second, its backup.
+      if (i == 0) {
+        it.tag = "STARTS WITH";
+        it.tagStyle = 1;
+      } else if (i == 1) {
+        it.tag = "BACKUP";
+        it.tagStyle = 2;
+      }
+      const engine::scores::Record* rec = book.find(feeds[i].channelId);
+      std::string measured =
+          engine::sourcetest::copyLine(rec, app.store().claimedQuality(feeds[i].channelId),
+                                       app.store().catchupDays(feeds[i].channelId), now);
+      if (!measured.empty()) {
+        // "1080p 60 · starts in 1.4 s · replay 1 day · Trex", or "Didn't
+        // start · tried last" (in amber).
+        it.detail = status + " \xc2\xb7 " + measured + " \xc2\xb7 " + app.store().providerName(feeds[i].channelId);
+        it.warn = rec && rec->at(now).mostlyFails();
+      } else {
+        it.detail = status + " \xc2\xb7 " + feeds[i].label;
+      }
       if (feeds[i].channelId == pinned) it.detail += " \xc2\xb7 Always first";
       it.on = playing;
       it.select = [&app, id, i] {

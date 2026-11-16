@@ -1,4 +1,4 @@
-// Build 166: each copy's record of its real plays (and, from 1.0.11, its
+// Build 166: each copy's record of its real plays (and, from Test all sources, its
 // probes): what is counted, how older results fade, the saved form and its
 // size, how a channel's copies are ordered by it, and the providers'
 // roll-up for the playback log.
@@ -152,12 +152,16 @@ TEST_CASE("feed scores: a probe (Test all sources) counts as half a play, into t
   ok.fps = 60;
   scores::Probe bad;
   b.recordProbe("xt:a|1", ok, kNow);
-  b.recordProbe("xt:a|1", ok, kNow);
-  b.recordProbe("xt:a|1", ok, kNow);
-  // Three probes: one and a half starts, not enough to order by alone.
-  CHECK_FALSE(b.score("xt:a|1", kNow));
-  b.recordProbe("xt:a|1", ok, kNow);
+  CHECK(b.find("xt:a|1")->starts() == doctest::Approx(0.5));
+  CHECK(b.find("xt:a|1")->probedAt == kNow);
+  // Test all sources: the test probes each copy once, which is enough to order by
+  // while that probe is recent (about two weeks)...
   CHECK(b.score("xt:a|1", kNow));
+  CHECK(b.score("xt:a|1", kNow + 13 * 86400));
+  CHECK_FALSE(b.score("xt:a|1", kNow + 15 * 86400));
+  // ... and played copies still need two starts.
+  b.started("xt:a|3", 1500, kNow);
+  CHECK_FALSE(b.score("xt:a|3", kNow));
   b.recordProbe("xt:a|2", bad, kNow);
   CHECK(b.find("xt:a|2")->probeFailures == doctest::Approx(1));
   CHECK(b.find("xt:a|2")->archiveOk == -1);  // the archive wasn't tried
