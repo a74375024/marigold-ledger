@@ -67,4 +67,17 @@ std::string hideLine(App& app, const EventTile& t);
 // Hides a competition from the board and leaves a note to undo it.
 void hide(App& app, const std::string& id, const std::string& name);
 
+// Build 167, replay in Live Events (EventTile::hasReplay()). The small
+// replay mark (app/icons ui-replay), `size` square, in replay blue; on a
+// light surface a darker blue.
+void replayMark(ui::Ctx& c, float x, float y, float size, bool onLight = false, float alpha = 1);
+// The focused game's quiet chip: outlined white "Replay" with the mark, as
+// the other outlined chips. Returns its width.
+float replayChip(ui::Ctx& c, float x, float y);
+float replayChipWidth(ui::Ctx& c);
+// Start over (a live game) or Watch replay (a Final) from the board: the
+// game from its start on the channel's archive, full screen
+// (Session::tuneGameReplay). False, with the notice, when it can't start.
+bool watchReplay(App& app, const EventTile& t);
+
 }  // namespace marigold::app::events_ui

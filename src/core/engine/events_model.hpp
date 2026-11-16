@@ -132,6 +132,19 @@ struct EventTile {
     bool followed = false;
   };
   std::vector<FollowSide> follow;
+  // Build 167: the game's replay (engine::game_replay::pick), made with the
+  // board: the guide channel whose archive plays it from the start ("" no
+  // replay: no mark, no chip, no Start over or Watch replay), its name,
+  // where the replay starts (the scheduled start less a minute), whether
+  // that channel isn't the one OK plays, and the hold-OK menu's line
+  // ("Started 7:10 PM · on ESPN"). `finalSeenAt`: when the app saw the
+  // game's final (0: it didn't), for the replay's "End of the game" card.
+  std::string replayChannelId, replayChannelName;
+  time::Seconds replayFrom = 0;
+  bool replayIsOtherChannel = false;
+  std::string replayLine;
+  time::Seconds finalSeenAt = 0;
+  bool hasReplay() const { return !replayChannelId.empty(); }
 };
 
 // The tile's top line: a sport icon's name ("CRICKET"; empty for "other",

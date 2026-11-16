@@ -1539,6 +1539,22 @@ Board build(const Input& in) {
     Grouped g = grouped(source);
     drafts.push_back({"sport|" + sport, sport, g.events, g.buckets, liveWatchable(source), mixed(source)});
   }
+  // Build 167: Finals you follow whose start an archive still holds, past
+  // the 12 h a Final stays in its row (Input::keepsReplay).
+  if (in.keepsReplay) {
+    std::vector<SportsEvent> full;
+    for (const SportsEvent& e : all) {
+      if (!e.game || e.sources.empty() || board.studio.count(e.id) || stateOf(e) != State::finished) continue;
+      if (recentFinal(e) || unscheduled(e) || abroad(e)) continue;
+      bool followed = isFavorite(picks, *e.game) || (picked.count(e.league) > 0 && rowFilter(e).empty());
+      if (followed && in.keepsReplay(e)) full.push_back(e);
+    }
+    std::stable_sort(full.begin(), full.end(), [](const SportsEvent& a, const SportsEvent& b) {
+      Seconds x = a.start.value_or(0), y = b.start.value_or(0);
+      return x != y ? x > y : a.id < b.id;
+    });
+    if (!full.empty()) drafts.push_back({"full", "Full games", full, {}, 0, mixed(full)});
+  }
   if (!unlisted.empty()) {
     Grouped g = grouped(unlisted);
     int unlistedLive = static_cast<int>(std::count_if(unlisted.begin(), unlisted.end(), isLive));

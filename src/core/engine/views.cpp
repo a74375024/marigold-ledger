@@ -1,6 +1,7 @@
 #include "core/engine/views.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -321,6 +322,29 @@ bool startsSoonOnChannel(const EventTile& t, time::Seconds now) {
 bool okPlays(const EventTile& t, time::Seconds now) {
   return (t.watchable && !t.upcoming && !t.finished) || startsSoonOnChannel(t, now);
 }
+
+GameReplayBanner gameReplayBanner(bool behind, std::optional<time::Seconds> start, time::Seconds at, bool gameLive,
+                                  const std::string& liveTitle) {
+  GameReplayBanner b;
+  if (!behind) return b;
+  b.replay = true;
+  if (start) b.in = std::to_string(std::max<time::Seconds>(0, at - *start) / 60) + " min in";
+  if (gameLive) b.liveNow = "Live now: this game";
+  else if (!liveTitle.empty()) b.liveNow = "Live now: " + liveTitle;
+  return b;
+}
+
+std::string replayIn(time::Seconds start, time::Seconds at) {
+  long long s = std::max<long long>(0, static_cast<long long>(at - start));
+  char buf[32];
+  if (s >= 3600)
+    std::snprintf(buf, sizeof buf, "%lld:%02lld:%02lld in", s / 3600, s / 60 % 60, s % 60);
+  else
+    std::snprintf(buf, sizeof buf, "%lld:%02lld in", s / 60, s % 60);
+  return buf;
+}
+
+std::string channelLive(const std::string& channel) { return channel.empty() ? std::string("Go live") : channel + " live"; }
 
 const WatchSource* playingSource(const WhereToWatch& w, const std::string& playing, const std::string& picked) {
   if (playing.empty()) return nullptr;

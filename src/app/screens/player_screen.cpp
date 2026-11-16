@@ -86,6 +86,7 @@ constexpr int kHitPicture = 80;  // the picture itself (under everything)
 constexpr int kHitPaused = 90;   // + a paused panel button's index
 constexpr int kHitPlayHere = 99;  // the timeline's "Play from" button
 constexpr int kHitStartOver = 98;  // the banner's "Start over from 7:30"
+constexpr int kHitEndCard = 95;    // + "End of the game"'s button (Build 167)
 constexpr int kHitBar = 100;      // + a slice of the timeline's bar
 constexpr int kBarSlices = 160;
 // Build 165, replay.
@@ -135,6 +136,7 @@ class PlayerScreen : public Screen {
       return true;
     }
     if (pausedPanel() && pendingFlip_.empty()) return pausedKey(e);
+    if (endCard() && endCardKey(e)) return true;
     // The banner's "Start over from 7:30" after a tune: OK takes it; any
     // other key leaves it (and does what it does).
     if (startOverOffer_) {
@@ -239,6 +241,10 @@ class PlayerScreen : public Screen {
     if (pausedPanel()) {
       if (id >= kHitPaused && id < kHitPaused + 3) pausedButton_ = id - kHitPaused;
       else if (id == kHitPicture) pausedButton_ = -1;
+      return;
+    }
+    if (endCard() && (id == kHitEndCard || id == kHitEndCard + 1)) {
+      endCardButton_ = id - kHitEndCard;
       return;
     }
     startOverHover_ = id == kHitStartOver;
@@ -984,6 +990,31 @@ class PlayerScreen : public Screen {
   bool replayTick(uint32_t ms) {
     Playback& p = app_.playback();
     bool changed = false;
+    // Build 167: a Final's replay that can't go on: back to its card, with
+    // the notice (this screen goes, and its stream with it).
+    if (p.takeGameBack()) {
+      std::string said = p.takeReplayNotice();
+      const engine::Session::GameReplay* g = p.gameReplay();
+      std::string id = g ? g->eventId : p.entry();
+      App& app = app_;
+      app.toast(said.empty() ? std::string("Replay isn\xe2\x80\x99t available right now on this channel") : said);
+      app.nav().pop();
+      app.nav().push(makeEventDetail(app, id));
+      return true;
+    }
+    // ... and past the moment the app saw the final: "End of the game", for
+    // 15 s while it plays on.
+    if (p.takeEndOfGame()) {
+      endCardUntil_ = std::max<uint32_t>(1, ms + engine::Session::kEndCardMs);
+      endCardButton_ = 0;
+      closeControls();
+      changed = true;
+    }
+    if (endCardUntil_ && (ms >= endCardUntil_ || !finalReplay())) {
+      endCardUntil_ = 0;
+      changed = true;
+    }
+    if (endCardUntil_) wake_.at(endCardUntil_);
     std::string said = p.takeReplayNotice();
     if (!said.empty()) {
       notice(said, "", 3000);
@@ -1335,11 +1366,91 @@ class PlayerScreen : public Screen {
     }
   }
 
+  // ------------------------------------------- a game's replay (Build 167)
+  // The Final whose replay plays now (from Live Events), else null.
+  const engine::Session::GameReplay* finalReplay() const {
+    const Playback& p = app_.playback();
+    const engine::Session::GameReplay* g = p.gameReplay();
+    return g && g->finished && g->eventId == p.entry() && p.replay() ? g : nullptr;
+  }
+  bool endCard() const { return endCardUntil_ != 0 && finalReplay() && !timeline_ && !pausedPanel(); }
+  // "End of the game": Left / Right between its two buttons, OK takes one,
+  // Back keeps watching; anything else lets it go and does what it does.
+  bool endCardKey(const KeyEvent& e) {
+    switch (e.key) {
+      case Key::Left:
+      case Key::Right:
+        endCardButton_ = e.key == Key::Left ? 0 : 1;
+        return true;
+      case Key::Ok:
+        if (endCardButton_ == 0) {
+          // Back to Live Events: this screen goes, the stream with it.
+          endCardUntil_ = 0;
+          app_.nav().pop();
+          return true;
+        }
+        endCardUntil_ = 0;
+        return true;
+      case Key::Back:
+        endCardUntil_ = 0;
+        return true;
+      default:
+        endCardUntil_ = 0;
+        return false;
+    }
+  }
+  void drawEndCard(ui::Ctx& c, float y) {
+    if (!endCard()) return;
+    const engine::Session::GameReplay* g = finalReplay();
+    const EventTile* t = app_.store().eventTile(g->eventId);
+    std::string what = t ? matchup(*t) : std::string();
+    if (!g->channelName.empty()) what += (what.empty() ? "" : " \xc2\xb7 ") + g->channelName;
+    const float w = 560;
+    Rect r{gfx::kLayoutWidth - 64 - w, y, w, what.empty() ? 150.0f : 186.0f};
+    c.g.fill(r, theme::hex(0x161B24, 0.96f), 26);
+    float x = r.x + 28, ty = r.y + 22;
+    ui::label(c, "End of the game", x, ty, Weight::Bold, 28, theme::white());
+    ty += 44;
+    if (!what.empty()) {
+      ui::label(c, what, x, ty, Weight::Regular, 21, theme::white(0.65f), w - 56);
+      ty += 38;
+    }
+    const char* titles[2] = {"Back to Live Events", "Keep watching"};
+    float bx = x;
+    for (int i = 0; i < 2; ++i) {
+      float bw = ui::textWidth(c, titles[i], Weight::Bold, 22) + 44;
+      Rect b{bx, ty, bw, 56};
+      c.hit(b, kHitEndCard + i);
+      bool f = endCardButton_ == i;
+      c.g.fill(b, f ? theme::white() : theme::white(0.12f), 28);
+      ui::labelIn(c, titles[i], b, Weight::Bold, 22, f ? theme::black() : theme::white(), Align::Center);
+      bx += bw + 14;
+    }
+  }
+
   // Behind live: the rewind icon and how far, at the top right.
   void drawBehindTag(ui::Ctx& c) {
     Playback& p = app_.playback();
     const auto& r = p.replay();
     if (!r || r->phase == ReplayPhase::Paused || c.covered) return;
+    if (const engine::Session::GameReplay* g = finalReplay()) {
+      // Build 167: a Final's replay counts from the game's start ("REPLAY ·
+      // 48:10 in"), not behind live.
+      std::string in = engine::views::replayIn(g->start, p.replayAt());
+      float chipW = ui::chipWidth(c, "REPLAY", 17) + 26;
+      float tw = ui::textWidth(c, in, Weight::Bold, 24);
+      float w = 14 + chipW + 14 + tw + 24;
+      Rect box{gfx::kLayoutWidth - 64 - w, 52, w, 52};
+      c.g.fill(box, theme::black(0.6f), 26);
+      Rect chip{box.x + 12, box.y + 11, chipW, 30};
+      c.g.fill(chip, theme::hex(kBlue), 15);
+      if (unsigned icon = c.icons ? c.icons->get("ui-replay") : 0)
+        c.g.textureAlpha(icon, {chip.x + 10, chip.y + 7, 16, 16}, theme::white());
+      ui::labelIn(c, "REPLAY", {chip.x + 30, chip.y, chip.w - 36, chip.h}, Weight::Bold, 17, theme::white());
+      ui::label(c, in, chip.x + chip.w + 14, box.y + 11, Weight::Bold, 24, theme::white());
+      drawEndCard(c, box.y + box.h + 16);
+      return;
+    }
     std::string text = engine::replay::behindText(p.behindLive()) + " behind live";
     float tw = ui::textWidth(c, text, Weight::Bold, 24);
     float w = tw + 32 + 40;
@@ -1657,10 +1768,29 @@ class PlayerScreen : public Screen {
   // by the clock; under it the league, round and venue; at the right the
   // channel and, in small type, its times and what's next. Never a score,
   // clock or result: the broadcaster's bug in the picture has those.
+  //
+  // Build 167: behind live on the game (its replay), REPLAY and how far in
+  // by the title in place of the clock's status, no times or what's next,
+  // and at the right the channel replaying with one muted "Live now" line
+  // (views::gameReplayBanner). Caught up: as before.
   void drawGameBanner(ui::Ctx& c, const GuideChannel* g, const GameBanner& b) {
     float x = kLeft, right = gfx::kLayoutWidth - kLeft;
     float top = kGameCardTop + 22;  // the title's line
     sports::banner::Status st = sports::banner::status(b.start, b.end, b.postponed, c.now);
+    Playback& p = app_.playback();
+    engine::views::GameReplayBanner rb;
+    if (p.replay() && p.entry() == b.id) {
+      // The channel whose archive plays (not the live source's).
+      size_t copy = p.replay()->feed;
+      if (copy < p.feeds().size())
+        if (const GuideChannel* r = app_.store().channels()->find(app_.store().entryOfChannel(p.feeds()[copy].channelId)))
+          g = r;
+      const EventTile* t = app_.store().eventTile(b.id);
+      bool gameLive = t && !t->finished && !t->upcoming;
+      const Listing* on = g && !gameLive ? current(g->id, c.now, nullptr) : nullptr;
+      rb = engine::views::gameReplayBanner(true, b.start, p.replayAt(), gameLive, on ? on->title : std::string());
+      st = {};
+    }
 
     // At the right: the channel's logo, number and name (East/West), then
     // the listing times and what's next (before the start, what's on).
@@ -1676,7 +1806,9 @@ class PlayerScreen : public Screen {
     const Listing* l = g ? current(g->id, c.now, &next) : nullptr;
     std::vector<std::string> times;
     using sports::banner::Chip;
-    if (st.chip == Chip::soon) {
+    if (rb.replay) {
+      // Nothing of how it ends: no times, nothing after it.
+    } else if (st.chip == Chip::soon) {
       times.push_back("Starts " + ui::clock(c, *b.start));
       if (l) times.push_back("on now: " + l->title);
     } else {
@@ -1689,7 +1821,8 @@ class PlayerScreen : public Screen {
     }
     std::string sub;
     for (const std::string& t : times) sub += (sub.empty() ? "" : " \xc2\xb7 ") + t;
-    float subW = std::min(724.0f, ui::textWidth(c, sub, Weight::Regular, 19));
+    if (rb.replay) sub = rb.liveNow;
+    float subW = std::min(724.0f, ui::textWidth(c, sub, Weight::Regular, 19) + (rb.replay && !sub.empty() ? 20 : 0));
     float rightW = std::min(724.0f, std::max(rowW, subW));
     float rx = right - rowW;
     if (logo) {
@@ -1700,7 +1833,14 @@ class PlayerScreen : public Screen {
     float nameY = top + (logoH - c.t.lineHeight(Weight::Bold, 22)) * 0.5f;
     shadowed(c, name, rx, nameY, Weight::Bold, 22, theme::white(0.9f), nameW + 1);
     if (coast) ui::coastChip(c, g->west, rx + nameW + gap, top + (logoH - 21) * 0.5f, 14);
-    if (!sub.empty()) shadowed(c, sub, right - subW, top + 50, Weight::Regular, 19, theme::white(0.72f), subW + 1);
+    if (rb.replay && !sub.empty()) {
+      // "● Live now: …", muted.
+      float lx = right - subW;
+      c.g.fill({lx, top + 58, 10, 10}, theme::hex(kRed, 0.8f), 5);
+      shadowed(c, sub, lx + 20, top + 50, Weight::Regular, 19, theme::white(0.55f), subW - 19);
+    } else if (!sub.empty()) {
+      shadowed(c, sub, right - subW, top + 50, Weight::Regular, 19, theme::white(0.72f), subW + 1);
+    }
 
     // At the left: the marks, 60 tall; the title after them.
     float my = top + 2;
@@ -1733,6 +1873,9 @@ class PlayerScreen : public Screen {
     float room = right - rightW - 40 - tx;
     float starW = b.favorite ? ui::textWidth(c, "\xe2\x98\x85", Weight::Bold, 30) + 12 : 0;
     float chipW = st.chip == Chip::none ? 0 : ui::textWidth(c, st.text, Weight::Bold, 16) + 16 + 16;
+    if (rb.replay)
+      chipW = ui::textWidth(c, "REPLAY", Weight::Bold, 16) + 16 + 16 +
+              (rb.in.empty() ? 0 : ui::textWidth(c, rb.in, Weight::Medium, 22) + 12);
     float lineH = c.t.lineHeight(Weight::Bold, 36);
     float titleW = shadowed(c, b.title, tx, top, Weight::Bold, 36, theme::white(), std::max(80.0f, room - starW - chipW));
     float cx = tx + titleW;
@@ -1741,7 +1884,18 @@ class PlayerScreen : public Screen {
                 theme::hex(theme::kStar));
       cx += starW;
     }
-    events_ui::clockPill(c, st.chip, st.text, cx + 16, top + std::round((lineH - 26) * 0.5f));
+    if (rb.replay) {
+      float py = top + std::round((lineH - 26) * 0.5f);
+      float pw = ui::textWidth(c, "REPLAY", Weight::Bold, 16) + 16;
+      Rect pill{cx + 16, py, pw, 26};
+      c.g.fill(pill, theme::hex(kBlue), 5);
+      ui::labelIn(c, "REPLAY", pill, Weight::Bold, 16, theme::white(), Align::Center);
+      if (!rb.in.empty())
+        shadowed(c, rb.in, pill.x + pw + 12, top + (lineH - c.t.lineHeight(Weight::Medium, 22)) * 0.5f, Weight::Medium,
+                 22, theme::white(0.85f));
+    } else {
+      events_ui::clockPill(c, st.chip, st.text, cx + 16, top + std::round((lineH - 26) * 0.5f));
+    }
     shadowed(c, b.line, tx, top + 46, Weight::Bold, 19, theme::white(0.62f), std::max(80.0f, room));
   }
 
@@ -1935,7 +2089,9 @@ class PlayerScreen : public Screen {
       Item it;
       switch (pill) {
         case Pill::GoLive:
-          it.title = "Go live";
+          // Build 167: a Final's replay: the game has no live left, the
+          // channel has ("NBA TV live").
+          it.title = finalReplay() ? engine::views::channelLive(finalReplay()->channelName) : "Go live";
           it.mark = Item::Mark::Dot;
           break;
         case Pill::Pause:
@@ -2140,6 +2296,10 @@ class PlayerScreen : public Screen {
   std::optional<time::Seconds> startOverAt_, startOverOffer_;
   bool startOverHover_ = false;
   std::string replayLook_;
+  // Build 167: a Final's replay past its final: "End of the game" until
+  // then (app ms; 0 none), its focused button (0 Back to Live Events).
+  uint32_t endCardUntil_ = 0;
+  int endCardButton_ = 0;
   bool tips_ = false;
   bool pointer_ = false;
   uint32_t controlsAt_ = 0;    // when the controls last opened

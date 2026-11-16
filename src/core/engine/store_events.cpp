@@ -230,6 +230,44 @@ std::string glyphFor(const std::string& icon) {
   return "\xe2\x97\x8f";
 }
 
+// Build 167: what the board's replay rule needs of each guide channel the
+// games' sources name (game_replay::Channel): the longest archive among its
+// own copies, a copy Test all sources found broken left out; in My Lineup;
+// its name. Only channels with an archive are listed.
+std::shared_ptr<const game_replay::Channels> replayChannelsFor(const std::vector<sports::SportsEvent>& events,
+                                                               const std::vector<sports::SportsEvent>& kept,
+                                                               const Store::Impl& m, const Channels& guide,
+                                                               const Store& store) {
+  auto out = std::make_shared<game_replay::Channels>();
+  std::set<std::string> seen;
+  auto add = [&](const sports::SportsEvent& ev) {
+    for (const sports::EventSource& src : ev.sources) {
+      if (src.kind != sports::EventSource::Kind::lineup && src.kind != sports::EventSource::Kind::guide) continue;
+      if (!seen.insert(src.channelID).second) continue;
+      auto info = m.entryInfo.find(src.channelID);
+      if (info == m.entryInfo.end() || info->second >= m.catalog->entries.size()) continue;
+      uint16_t days = 0;
+      for (const std::string& copy : m.catalog->entries[info->second].members) {
+        uint16_t d = store.catchupDays(copy);
+        if (d <= days) continue;
+        const scores::Record* r = m.scores.find(copy);
+        if (r && r->archiveOk == 0) continue;  // Test all sources: its replay didn't play
+        days = d;
+      }
+      if (!days) continue;
+      game_replay::Channel c;
+      c.days = days;
+      c.lineup = m.lineup.lineupIDs.count(src.channelID) > 0;
+      const GuideChannel* g = guide.find(src.channelID);
+      c.name = g ? g->name : m.catalog->entries[info->second].name;
+      out->emplace(src.channelID, std::move(c));
+    }
+  };
+  for (const sports::SportsEvent& ev : events) add(ev);
+  for (const sports::SportsEvent& ev : kept) add(ev);
+  return out;
+}
+
 EventTile toTile(const sb::Tile& t, const sports::SportsEvent* event, const time::Zone& zone) {
   EventTile o;
   o.id = t.id;
@@ -1047,6 +1085,16 @@ BoardMade board(const BoardInput& in) {
   const std::vector<Channel>& channels = *in.channels;
   sb::Input b;
   b.events = *in.events;
+  // Build 167: Finals the games no longer hold, back while their replay lasts.
+  if (!in.kept.empty()) {
+    std::set<std::string> ids, games;
+    for (const sports::SportsEvent& ev : b.events) {
+      ids.insert(ev.id);
+      if (ev.game) games.insert(ev.game->id);
+    }
+    for (const sports::SportsEvent& ev : in.kept)
+      if (!ids.count(ev.id) && !(ev.game && games.count(ev.game->id))) b.events.push_back(ev);
+  }
   // Tiles come from the schedule once one is in (sb::Settings::fromSchedule),
   // told from every event, before any are left out while waiting below.
   b.scheduleLoaded = std::any_of(in.events->begin(), in.events->end(),
@@ -1143,6 +1191,15 @@ BoardMade board(const BoardInput& in) {
     sb::trimTitleMemo(*in.titles, 4 * in.events->size() + 4096);
     b.titles = in.titles;
   }
+  // Build 167: a game's replay, by the rule (game_replay::pick).
+  static const game_replay::Channels kNoChannels;
+  const game_replay::Channels& replayChannels = in.replayChannels ? *in.replayChannels : kNoChannels;
+  const std::set<std::string> viewer = sports::languages::ofViewer(in.lineupPrefs.countries);
+  if (!replayChannels.empty()) {
+    b.keepsReplay = [&](const sports::SportsEvent& ev) {
+      return game_replay::pick(ev, sports::SportsEvent::State::finished, in.now, replayChannels, viewer).has_value();
+    };
+  }
   made.board = sb::build(b);
   const sb::Board& board = made.board;
   for (const auto& [id, tile] : board.tiles) {
@@ -1186,6 +1243,20 @@ BoardMade board(const BoardInput& in) {
       for (const sb::Tile& t : g.tiles) {
         auto ev = board.events.find(t.id);
         EventTile tile = toTile(t, ev == board.events.end() ? nullptr : &ev->second, in.zone);
+        if (ev != board.events.end() && !replayChannels.empty()) {
+          const sports::SportsEvent& game = ev->second;
+          if (auto pick = game_replay::pick(game, t.state, in.now, replayChannels, viewer)) {
+            tile.replayChannelId = pick->channelId;
+            tile.replayChannelName = pick->channelName;
+            tile.replayFrom = pick->from;
+            tile.replayIsOtherChannel = pick->otherChannel;
+            tile.replayLine = game_replay::startedLine(*pick, in.zone, in.settings.twelveHour);
+          }
+          if (game.game) {
+            auto seen = in.finalSeen.find(game.game->id);
+            if (seen != in.finalSeen.end()) tile.finalSeenAt = seen->second;
+          }
+        }
         if (tile.detail.empty() && ev != board.events.end() && ev->second.game && ev->second.game->isRacing() &&
             hasCameras(ev->second))
           tile.detail = "Onboard cameras";
@@ -1262,6 +1333,19 @@ std::shared_ptr<events_build::BoardInput> Store::boardInput() {
   in->cameras = e.boardCameras;
   in->titles = e.boardTitles;
   in->camerasKey = std::to_string(m.catalogRevision) + "|" + std::to_string(m.channels->size());
+  // Build 167: the archives of the games' guide channels (once per games,
+  // channel list and lineup, and every 10 minutes for Test all sources'
+  // findings), and the Finals kept for the "Full games" row.
+  if (e.replayChannelsOf.lock() != e.events || e.replayCatalog != m.catalogRevision || e.replayLineup != lineupKey ||
+      now - e.replayChannelsAt >= 600 || now < e.replayChannelsAt || !e.replayChannels) {
+    e.replayChannels = replayChannelsFor(*e.events, e.keptFinals, m, *channels_, *this);
+    e.replayChannelsOf = e.events;
+    e.replayCatalog = m.catalogRevision;
+    e.replayLineup = lineupKey;
+    e.replayChannelsAt = now;
+  }
+  in->replayChannels = e.replayChannels;
+  in->kept = e.keptFinals;
   return in;
 }
 
@@ -1314,6 +1398,20 @@ void Store::putBoard() {
   e.boardSerial = e.boardDoneSerial;
   e.retired.push_back(std::move(events_));
   events_ = out;
+  // Build 167: the Finals with replay on it, put back into the next boards
+  // when the games no longer hold them (the "Full games" row). A board
+  // that waited for fresh inputs left things out: the last list stands.
+  if (!made->hold.any()) {
+    e.keptFinals.clear();
+    std::set<std::string> keptIds;
+    for (const EventRow& row : out->rows)
+      for (const EventGroup& g : row.groups)
+        for (const EventTile& t : g.tiles) {
+          if (!t.finished || !t.hasReplay() || !keptIds.insert(t.id).second) continue;
+          auto ev = e.board.events.find(t.id);
+          if (ev != e.board.events.end() && ev->second.game) e.keptFinals.push_back(ev->second);
+        }
+  }
   size_t tiles = made->tiles;
   double took = made->ms;
   host_.pool.post([made]() mutable { made.reset(); }, nullptr, http::Priority::Background);

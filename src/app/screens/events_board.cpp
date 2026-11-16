@@ -730,12 +730,31 @@ class EventsBoardScreen : public Screen {
     std::vector<EventTile::FollowSide> follow = t.follow;
     std::string hideId = t.competitionId, hideName = t.competitionName;
     std::string hideLine = hideId.empty() ? std::string() : events_ui::hideLine(app_, t);
+    // Build 167: a live game with replay starts over from its start; a Final
+    // with replay plays it from the start. First, before today's items.
+    std::string replayTitle, replayLine = t.replayLine;
+    if (t.hasReplay()) replayTitle = t.finished ? "Watch replay" : t.upcoming ? "" : "Start over";
     App& app = app_;
     app_.nav().push(std::make_unique<PanelScreen>(app_, PanelScreen::Side::Trailing, 640.0f,
                                                   [&app, id, upcoming, kicker, title, follow, hideId, hideName,
-                                                   hideLine](ui::ListPanel& p) {
+                                                   hideLine, replayTitle, replayLine](ui::ListPanel& p) {
       p.subtitle = kicker;
       p.title = title;
+      if (!replayTitle.empty()) {
+        ui::PanelItem replay{ui::PanelItem::Kind::Action, replayTitle};
+        replay.detail = replayLine;
+        replay.select = [&app, id] {
+          app.nav().pop();
+          // The board as it is now (it may have moved on since the menu opened).
+          const EventTile* now = app.store().eventTile(id);
+          if (!now || !now->hasReplay()) {
+            app.toast("Replay isn\xe2\x80\x99t available right now on this channel");
+            return;
+          }
+          events_ui::watchReplay(app, *now);
+        };
+        p.items.push_back(replay);
+      }
       ui::PanelItem where{ui::PanelItem::Kind::Chevron, "Where to Watch"};
       where.select = [&app, id] {
         app.nav().pop();
@@ -1065,8 +1084,20 @@ class EventsBoardScreen : public Screen {
     if (t->progress >= 0) ui::progress(c, {x, 260, 420, 6}, t->progress);
     // Where to watch it, and where it's played.
     y = t->progress >= 0 ? 286 : 256;
-    if (!t->whereLine.empty()) {
-      y += ui::paragraph(c, t->whereLine, x, y, kHeroW, Weight::Regular, 22, theme::white(0.72f), 2) + 8;
+    // Build 167: a game with replay, one quiet "Replay" chip after it (on
+    // its own line when the line is full).
+    float chipW = t->hasReplay() ? events_ui::replayChipWidth(c) + 14 : 0;
+    if (!t->whereLine.empty() && chipW > 0 && ui::textWidth(c, t->whereLine, Weight::Regular, 22) + chipW <= kHeroW) {
+      float lw = ui::label(c, t->whereLine, x, y, Weight::Regular, 22, theme::white(0.72f), kHeroW - chipW);
+      events_ui::replayChip(c, x + lw + 14, y + std::round((c.t.lineHeight(Weight::Regular, 22) - 30) * 0.5f));
+      y += std::round(22 * 1.35f) + 8;
+    } else {
+      if (!t->whereLine.empty())
+        y += ui::paragraph(c, t->whereLine, x, y, kHeroW, Weight::Regular, 22, theme::white(0.72f), 2) + 8;
+      if (chipW > 0) {
+        events_ui::replayChip(c, x, y);
+        y += 40;
+      }
     }
     std::string place = t->venue;
     if (!t->detail.empty() && t->detail != place) place = place.empty() ? t->detail : place + " \xc2\xb7 " + t->detail;

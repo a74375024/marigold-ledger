@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -181,6 +182,27 @@ std::vector<EventLine> eventGuide(const EventsBoard& board, size_t row);
 constexpr time::Seconds kPlaysBeforeStart = 30 * 60;
 bool startsSoonOnChannel(const EventTile& t, time::Seconds now);
 bool okPlays(const EventTile& t, time::Seconds now);
+
+// Build 167, replay in Live Events. The game banner while a game plays
+// behind live (its replay, from the board or Start over): a REPLAY chip by
+// the title with how far into the game it is ("38 min in", from its
+// scheduled start), none of what the clock would say ("likely over"), no
+// "was scheduled until" or what's next; at the right, the channel and one
+// muted line, "Live now: <the channel's listing now>" ("Live now: this
+// game" while the game itself is still on). Caught up (`behind` false):
+// as before, `replay` false. Never a score (the banner shows none).
+struct GameReplayBanner {
+  bool replay = false;
+  std::string in;       // "38 min in"
+  std::string liveNow;  // "Live now: NBA GameTime" ("" none known)
+};
+GameReplayBanner gameReplayBanner(bool behind, std::optional<time::Seconds> start, time::Seconds at, bool gameLive,
+                                  const std::string& liveTitle);
+// A Final's replay tag, from the game's scheduled start: "48:10 in",
+// "1:02:05 in" (never below zero).
+std::string replayIn(time::Seconds start, time::Seconds at);
+// Go live during a Final's replay: the channel's live ("NBA TV live").
+std::string channelLive(const std::string& channel);
 
 // The player's Sources for a game (Where to Watch with ticks), Build 135:
 // the source playing the raw channel `playing`. The one picked (`picked`,
