@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <utility>
 
 #include "core/engine/store.hpp"
+#include "core/sources/xtream.hpp"
 #include "core/util/log.hpp"
 #include "core/util/memory.hpp"
 #include "core/util/strings.hpp"
@@ -33,6 +35,27 @@ constexpr size_t kViewedKept = 4;
 int64_t wallMs() {
   using namespace std::chrono;
   return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+}
+
+// The catch-up test: a picture's size waited for this long after it shows
+// before its log line goes without one.
+constexpr uint32_t kTestSizeWaitMs = 3000;
+
+// "1920x1080" from the player's facts ("1920x1080 59.94p · h264 ..."); ""
+// when they don't start with one.
+std::string pictureSize(const std::string& facts) {
+  std::string first = facts.substr(0, facts.find(' '));
+  size_t x = first.find('x');
+  if (x == std::string::npos || x == 0 || x + 1 >= first.size() || first.size() > 11) return {};
+  for (size_t i = 0; i < first.size(); ++i)
+    if (i != x && (first[i] < '0' || first[i] > '9')) return {};
+  return first;
+}
+
+// "2.3 s".
+std::string tenthsOfSeconds(uint32_t ms) {
+  uint32_t tenths = (ms + 50) / 100;
+  return std::to_string(tenths / 10) + "." + std::to_string(tenths % 10) + " s";
 }
 
 }  // namespace
@@ -130,6 +153,8 @@ bool Session::begin(const std::string& entryId, std::vector<Feed> feeds, const s
     MLOG_W("play", "no feeds for this channel");
     return false;
   }
+  // A catch-up test ends with the tune (it goes to live, as usual).
+  if (test_) closeCatchup("another channel");
   // What is left becomes Right's target (before its source, flip list and
   // feeds are replaced). Another source or a camera of the same entry
   // isn't leaving it.
@@ -139,6 +164,7 @@ bool Session::begin(const std::string& entryId, std::vector<Feed> feeds, const s
   rememberGame();
   logMemory("before tuning");
   camera_ = false;
+  quietReturn_ = false;
   hadPicture_ = false;
   bouncing_ = false;
   paused_ = false;
@@ -176,6 +202,12 @@ bool Session::begin(const std::string& entryId, std::vector<Feed> feeds, const s
 }
 
 bool Session::tune(const std::string& entryId, const std::vector<std::string>& flip) {
+  // The channel under a catch-up test: back to it live.
+  if (test_ && entryId == entry_) {
+    if (!flip.empty()) flip_ = flip;
+    endCatchupTest();
+    return true;
+  }
   if (entryId == entry_ && !failed()) {
     if (!flip.empty()) flip_ = flip;  // a list picked here takes over
     return true;
@@ -190,7 +222,7 @@ bool Session::tuneEventVia(const std::string& eventId, const std::string& via, c
 }
 
 bool Session::restart(std::string_view why) {
-  if (entry_.empty() || feeds_.empty() || camera_) return false;
+  if (entry_.empty() || feeds_.empty() || camera_ || test_) return false;
   std::vector<playback::FeedInfo> infos = feedInfos(entry_);
   logEvent("restart", why);
   playback::TuneOptions options;
@@ -205,6 +237,11 @@ bool Session::restart(std::string_view why) {
 
 bool Session::useFeed(size_t index) {
   if (index >= feeds_.size()) return false;
+  if (test_) {
+    // Out of the test first; another copy picked is a live pick like any.
+    endCatchupTest();
+    if (index != testLive_) quietReturn_ = false;
+  }
   apply(rec_.pick(ms(), index));
   return true;
 }
@@ -212,6 +249,7 @@ bool Session::useFeed(size_t index) {
 void Session::stop() {
   pausedAt_.reset();
   if (entry_.empty()) return;
+  if (test_) closeCatchup("stopped");
   leaving();
   rememberGame();
   apply(rec_.stop(ms()));
@@ -258,6 +296,15 @@ void Session::apply(const playback::Actions& actions) {
       case playback::Action::Kind::RecordFeed:
         if (a.feed < feeds_.size()) {
           const std::string& id = feeds_[a.feed].channelId;
+          // Back to live after a catch-up test: the copy that played before
+          // it showing its picture again is no new success (nothing charged,
+          // nothing remembered). A failure there is live's own.
+          bool quiet = quietReturn_ && a.worked;
+          quietReturn_ = false;
+          if (quiet) {
+            problems_.erase(id);
+            break;
+          }
           store_.recordFeed(id, a.worked);
           if (a.worked) {
             store_.rememberFeed(entry_, id);
@@ -574,6 +621,8 @@ std::string Session::previous() {
 
 void Session::suspend() {
   if (paused_) return;
+  // A catch-up test simply ends: live plays again on return.
+  if (test_) closeCatchup("app in background");
   paused_ = true;
   if (entry_.empty()) return;
   Paused p;
@@ -649,6 +698,10 @@ Session::Look Session::look() const {
   l.noPicture = noPicture_;
   l.hadPicture = hadPicture_;
   l.backup = backup_.has_value();
+  if (test_) {
+    l.test = 1 + static_cast<int>(test_->phase);
+    l.testFeed = test_->feed;
+  }
   return l;
 }
 
@@ -661,6 +714,11 @@ bool Session::tick(uint32_t now) {
   saveLog(now);
   // Paused in the background: the recovery waits for the app's return.
   if (entry_.empty() || paused_) return false;
+  if (test_) {
+    // The catch-up test's own short path: the recovery stands aside.
+    tickCatchup(now);
+    return test_ && test_->phase == CatchupTest::Phase::Opening;
+  }
   PlayerState s = player_->state();
   // A picture is a frame drawn. Radio (or a channel kept as sound only)
   // plays when its clock runs; so does a stream whose frames the relay sees
@@ -725,6 +783,206 @@ bool Session::tick(uint32_t now) {
   else if (s.reportsLoading) rec_.loading(s.loaded);
   apply(rec_.tick(now));
   return (!ready() && !failed()) || !note().empty();
+}
+
+// ---------------------------------------------------------------- catch-up test
+
+uint16_t Session::catchupDays() const {
+  if (entry_.empty() || paused_ || camera_) return 0;
+  if (!test_ && (!rec_.sawFirstFrame() || failed())) return 0;
+  size_t i = test_ ? testLive_ : rec_.feedIndex();
+  return i < feeds_.size() ? store_.catchupDays(feeds_[i].channelId) : 0;
+}
+
+bool Session::startCatchupTest(CatchupMoment moment, time::Seconds from) {
+  uint16_t days = catchupDays();
+  if (!days) return false;
+  time::Seconds now = time::now();
+  from -= ((from % 60) + 60) % 60;  // the provider takes minutes
+  if (from >= now || now - from > (static_cast<time::Seconds>(days) + 1) * 86400) return false;
+  if (test_) {
+    // Tested again: the test on now ends (its line is written); the
+    // recovery is still aside.
+    closeCatchup("tested again");
+  } else {
+    testLive_ = rec_.feedIndex();
+    // The recovery stops where it is, as in the background: no timer falls
+    // due and nothing is charged to a feed; its "stop" line isn't one.
+    playback::Actions stopped = rec_.stop(ms());
+    stopped.erase(std::remove_if(stopped.begin(), stopped.end(),
+                                 [](const playback::Action& a) { return a.kind == playback::Action::Kind::Log; }),
+                  stopped.end());
+    apply(stopped);
+    quickPending_.clear();
+    measured_.reset();
+    backup_.reset();
+    noPicture_ = false;
+  }
+  quietReturn_ = false;
+  testTried_.clear();
+  test_ = CatchupTest{};
+  test_->moment = moment;
+  test_->from = from;
+  playCatchup(testLive_);
+  return true;
+}
+
+void Session::playCatchup(size_t index) {
+  CatchupTest& t = *test_;
+  index = std::min(index, feeds_.size() - 1);
+  time::Seconds now = time::now();
+  t.phase = CatchupTest::Phase::Opening;
+  t.feed = index;
+  t.days = store_.catchupDays(feeds_[index].channelId);
+  t.behind = now - t.from;
+  t.startedAt = ms();
+  t.pictureMs = 0;
+  t.timedOut = false;
+  t.error.clear();
+  t.size.clear();
+  testLogged_ = false;
+  testTried_.insert(index);
+  // The link carries the login: to the player only, never the log.
+  std::optional<Store::CatchupFeed> f = store_.catchupFeed(feeds_[index], t.from, now);
+  testOffset_ = f ? f->serverOffset : std::nullopt;
+  if (hooks_.changed) hooks_.changed();
+  if (!f) {
+    failCatchup(false, "no catch-up link could be made for this copy");
+    return;
+  }
+  MLOG_I("play", "catch-up test: feed %zu of %zu, %lld min back, %d min asked", index + 1, feeds_.size(),
+         static_cast<long long>(t.behind / 60), f->minutes);
+  player_->attempt();
+  player_->play(f->feed, false);
+}
+
+void Session::tickCatchup(uint32_t now) {
+  CatchupTest& t = *test_;
+  PlayerState s = player_->state();
+  // What the relay notes of its own belongs to live playback: read and left.
+  (void)player_->note();
+  (void)player_->sourceClosed();
+  if (t.phase == CatchupTest::Phase::Opening) {
+    bool picture = s.picture || (s.playing && s.streamChecked && s.stream == media::Verdict::Picture);
+    if (picture) {
+      t.phase = CatchupTest::Phase::Worked;
+      t.pictureMs = now - t.startedAt;
+      if (hooks_.picture) hooks_.picture();
+      if (hooks_.changed) hooks_.changed();
+    } else if (s.failed || s.ended) {
+      std::string error = s.failed ? playback::safeMessage(s.error) : std::string("the stream ended at once");
+      failCatchup(false, error.empty() ? std::string("the player reported an error") : error);
+      return;
+    } else if (now - t.startedAt >= kCatchupTimeoutMs) {
+      failCatchup(true, {});
+      return;
+    }
+  }
+  if (t.phase == CatchupTest::Phase::Worked && !testLogged_) {
+    if (t.size.empty()) t.size = pictureSize(s.facts);
+    if (!t.size.empty() || now - t.startedAt - t.pictureMs >= kTestSizeWaitMs) logCatchup();
+  }
+}
+
+void Session::failCatchup(bool timedOut, std::string error) {
+  CatchupTest& t = *test_;
+  t.phase = CatchupTest::Phase::Failed;
+  t.timedOut = timedOut;
+  t.error = std::move(error);
+  // Only said: no reconnect, no other copy unless the viewer asks.
+  player_->stop();
+  logCatchup();
+  if (hooks_.changed) hooks_.changed();
+}
+
+void Session::logCatchup(std::string_view ended) {
+  if (!test_ || testLogged_) return;
+  testLogged_ = true;
+  const CatchupTest& t = *test_;
+  std::string detail;
+  switch (t.moment) {
+    case CatchupMoment::TenMinutesAgo: detail = "10 min ago"; break;
+    case CatchupMoment::ProgrammeStart: {
+      time::Zone zone = host_.zone ? host_.zone() : time::Zone::device();
+      time::Civil at = zone.toLocal(t.from);
+      char hm[8];
+      std::snprintf(hm, sizeof hm, "%02d:%02d", at.hour, at.minute);
+      detail = std::string("start of programme ") + hm;
+      break;
+    }
+    case CatchupMoment::Yesterday: detail = "yesterday, same time"; break;
+  }
+  detail += " (archive says " + std::to_string(t.days) + (t.days == 1 ? " day): " : " days): ");
+  if (!ended.empty()) {
+    detail += "ended before a result (" + std::string(ended) + ")";
+  } else if (t.phase == CatchupTest::Phase::Worked) {
+    detail += "worked, picture in " + tenthsOfSeconds(t.pictureMs) + (t.size.empty() ? "" : ", " + t.size);
+  } else {
+    detail += "failed, " + (t.timedOut ? "no picture after " + std::to_string(kCatchupTimeoutMs / 1000) + " s" : t.error);
+  }
+  detail += "; server clock " + (testOffset_ ? sources::xtream::offsetText(*testOffset_) : "not known, asked as UTC");
+  std::string channel, feed, provider;
+  if (const GuideChannel* g = store_.channels()->find(entry_)) channel = g->name;
+  else if (const EventTile* e = store_.eventTile(entry_)) channel = e->heroTitle.empty() ? e->title : e->heroTitle;
+  if (t.feed < feeds_.size()) {
+    feed = feeds_[t.feed].label;
+    provider = store_.providerName(feeds_[t.feed].channelId);
+  }
+  detail = playback::safeMessage(detail);
+  MLOG_I("play", "catch-up test: %s", detail.c_str());
+  log_.add(wallMs(), "catch-up test", session_, channel, feed, provider, detail);
+}
+
+void Session::closeCatchup(std::string_view why) {
+  if (!test_) return;
+  // Every test has its line: one still opening ended before a result.
+  logCatchup(test_->phase == CatchupTest::Phase::Opening ? why : std::string_view());
+  test_.reset();
+  testTried_.clear();
+  testOffset_.reset();
+  if (hooks_.changed) hooks_.changed();
+}
+
+std::optional<size_t> Session::catchupOtherCopy() const {
+  if (!test_ || feeds_.empty()) return std::nullopt;
+  for (size_t k = 1; k < feeds_.size(); ++k) {
+    size_t i = (test_->feed + k) % feeds_.size();
+    if (testTried_.count(i)) continue;
+    const std::string& id = feeds_[i].channelId;
+    if (store_.catchupDays(id) == 0) continue;
+    // A guide channel's own versions (not a game's backup on another channel).
+    if (!game_ && store_.entryOfChannel(id) != entry_) continue;
+    return i;
+  }
+  return std::nullopt;
+}
+
+bool Session::catchupTryOtherCopy() {
+  std::optional<size_t> next = catchupOtherCopy();
+  if (!next) return false;
+  logCatchup("another copy");
+  playCatchup(*next);
+  return true;
+}
+
+void Session::endCatchupTest() {
+  if (!test_) return;
+  closeCatchup("back to live");
+  if (entry_.empty() || feeds_.empty()) return;
+  // The copy before the test again, as a fresh start (its backups after
+  // it), like a return from the background.
+  hadPicture_ = false;
+  failMessage_.clear();
+  noPicture_ = false;
+  player_->beginTune();
+  tunedAt_ = ms();
+  playback::TuneOptions options;
+  options.start = std::min(testLive_, feeds_.size() - 1);
+  options.settle = 0;
+  options.game = game_;
+  apply(rec_.tune(ms(), feedInfos(entry_), options));
+  quietReturn_ = true;
+  if (hooks_.changed) hooks_.changed();
 }
 
 }  // namespace marigold::engine

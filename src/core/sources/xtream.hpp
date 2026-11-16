@@ -37,6 +37,14 @@ struct AccountInfo {
   std::optional<int> maxConnections;
   std::optional<int> activeConnections;
   std::vector<std::string> formats;  // allowed_output_formats: "m3u8", "ts"
+  // server_info (Build 163, the catch-up test): the panel's clock. Its zone
+  // name ("" none), its Unix time (timestamp_now) and its own wall clock
+  // (time_now, "YYYY-MM-DD HH:MM:SS" read as if it were UTC); numbers or
+  // text.
+  std::string timezone;
+  std::optional<time::Seconds> timestampNow, timeNow;
+  // The server's offset from UTC, seconds east (serverOffset()).
+  std::optional<int> utcOffset;
 };
 
 // category_id -> trimmed category_name.
@@ -51,8 +59,23 @@ std::optional<Error> checkStatus(int status);
 std::optional<std::string> serverURL(std::string_view serverUrlString);
 
 // Account info expires, trial and connection limit, saved on the account
-// (Settings save in the tvOS app).
+// (Settings save in the tvOS app); the server's clock offset too, kept
+// when an answer doesn't say.
 void applyAccountInfo(Account& account, const AccountInfo& info);
+
+// Build 163, the catch-up test. The panel's offset from UTC (seconds east):
+// time_now minus timestamp_now to the nearest 15 minutes, when both are
+// there and within 14 h; else its zone name's offset at `at` (the zones
+// core/util/time knows); else nullopt (the caller plays it as UTC).
+std::optional<int> serverOffset(std::optional<time::Seconds> timeNow, std::optional<time::Seconds> timestampNow,
+                                std::string_view timezone, time::Seconds at);
+// "UTC", "UTC−5", "UTC+5:30" (a minus sign, not a hyphen): for the log.
+std::string offsetText(int seconds);
+// The longest catch-up asked for, in minutes.
+constexpr int kTimeshiftMaxMinutes = 180;
+// How long to ask the archive for, from `start` until now plus 5 minutes,
+// at most kTimeshiftMaxMinutes (at least 1).
+int timeshiftMinutes(time::Seconds start, time::Seconds now);
 // The panel says the membership has ended (status "Expired").
 bool endedStatus(const AccountInfo& info);
 
@@ -99,6 +122,14 @@ class Client {
   std::optional<std::string> streamURL(std::string_view streamId, const std::vector<std::string>& formats = {}) const {
     return streamURL(streamId, formats, account_.preferTS);
   }
+  // Build 163, the catch-up test: the provider's archive of a stream from
+  // `start` (Unix time) for `minutes` (1 to kTimeshiftMaxMinutes), as
+  // MPEG-TS: <server>/timeshift/<user>/<password>/<minutes>/<YYYY-MM-DD:HH-MM>/<id>.ts,
+  // the start to the minute in the server's own clock (`utcOffset` seconds
+  // east of UTC). nullopt for a stream id that isn't a plain id. Secret,
+  // like streamURL: for the player only.
+  std::optional<std::string> timeshiftURL(std::string_view streamId, time::Seconds start, int minutes,
+                                          int utcOffset) const;
 
  private:
   Client(Account account, std::string base) : account_(std::move(account)), base_(std::move(base)) {}

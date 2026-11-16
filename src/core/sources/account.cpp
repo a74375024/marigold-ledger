@@ -108,6 +108,7 @@ EncodedAccounts encodeAccounts(const std::vector<Account>& accounts) {
     if (a.expires) o.set("expires", static_cast<int64_t>(*a.expires));
     if (a.maxConnections) o.set("maxConnections", *a.maxConnections);
     if (a.trial) o.set("trial", true);
+    if (a.serverOffset) o.set("serverOffset", *a.serverOffset);
     if (a.noticeDay) o.set("noticeDay", a.noticeDay);
     if (a.lastChannelCount) o.set("lastChannelCount", *a.lastChannelCount);
     if (a.guideFromPlaylist) o.set("guideFromPlaylist", true);
@@ -155,6 +156,9 @@ Result<std::vector<Account>> decodeAccounts(std::string_view main, std::string_v
     if (o["expires"].isNumber()) a.expires = o["expires"].asInt();
     a.maxConnections = optionalInt(o["maxConnections"]);
     a.trial = o["trial"].asBool();
+    // Within 14 h of UTC (serverOffset()), else not known.
+    if (std::optional<int> off = optionalInt(o["serverOffset"]); off && *off >= -14 * 3600 && *off <= 14 * 3600)
+      a.serverOffset = off;
     if (o["noticeDay"].isNumber()) a.noticeDay = o["noticeDay"].asInt();
     a.lastChannelCount = optionalInt(o["lastChannelCount"]);
     const json::Value& s = secretRoot[a.id];

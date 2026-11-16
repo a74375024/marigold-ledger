@@ -76,6 +76,7 @@ constexpr int kHitGuide = 50, kHitLast = 51;
 constexpr int kHitFail = 60;     // + button index
 constexpr int kHitTips = 70;
 constexpr int kHitPicture = 80;  // the picture itself (under everything)
+constexpr int kHitCatchup = 90;  // + a catch-up test button's index
 
 class PlayerScreen : public Screen {
   bool cameras_ = false;  // the race on screen has cameras (a Cameras button)
@@ -116,6 +117,7 @@ class PlayerScreen : public Screen {
       clearScreen();
       return true;
     }
+    if (p.catchupTest() && pendingFlip_.empty()) return catchupKey(e);
     if (p.failed() || p.noPicture()) return failedKey(e);
     if (zone_ == Zone::Row) return rowKey(e);
     if (zone_ == Zone::EdgeGuide || zone_ == Zone::EdgeLast) {
@@ -193,6 +195,12 @@ class PlayerScreen : public Screen {
   }
 
   void hover(int id) override {
+    if (app_.playback().catchupTest()) {
+      // The catch-up test's buttons; over the picture, none.
+      if (id >= kHitCatchup && id < kHitCatchup + 3) catchupButton_ = id - kHitCatchup;
+      else if (id == kHitPicture) catchupButton_ = -1;
+      return;
+    }
     if (id >= kHitPill && id < kHitPill + static_cast<int>(pills_.size())) {
       zone_ = Zone::Row;
       pill_ = id - kHitPill;
@@ -231,6 +239,22 @@ class PlayerScreen : public Screen {
       if (id != p.entry()) flipped(p.tune(id) ? id : std::string());
       changed = true;
     }
+    // A catch-up test: its own few states (the button focus starts over
+    // with each); a spinner only while it opens.
+    if (const auto& t = p.catchupTest(); t && pendingFlip_.empty()) {
+      int look = 1 + static_cast<int>(t->phase) + 4 * static_cast<int>(t->feed);
+      if (look != catchupLook_) {
+        catchupLook_ = look;
+        catchupButton_ = 0;
+        changed = true;
+      }
+      if (t->phase == engine::Session::CatchupTest::Phase::Opening) {
+        if (spinner_.moved(ms)) changed = true;
+        wake_.at(spinner_.next(ms));
+      }
+      return changed;
+    }
+    catchupLook_ = 0;
     if (p.entry() != shownEntry_) {
       shownEntry_ = p.entry();
       // The banner is up while it loads; its few seconds start with the picture.
@@ -343,6 +367,10 @@ class PlayerScreen : public Screen {
       if (!p.feeds().empty()) g = ch->find(app_.store().entryOfChannel(p.feeds()[std::min(p.feedIndex(), p.feeds().size() - 1)].channelId));
     }
     Rect screen{0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight};
+    if (p.catchupTest() && !pending) {
+      drawCatchup(c);
+      return;
+    }
     bool picture = p.ready() && !pending && !p.failed();
     // No loading screen: the banner carries it. Behind it, the picture (or
     // what the player still holds of it after a stall), else black with a
@@ -401,7 +429,7 @@ class PlayerScreen : public Screen {
 
  private:
   enum class Zone { None, Row, EdgeGuide, EdgeLast };
-  enum class Pill { Cameras, Subtitles, Style, Sources, Coast, Guide, Last, Favorite, More };
+  enum class Pill { Cameras, Subtitles, Style, Sources, Coast, Guide, Last, Favorite, Catchup, More };
 
   // ---------------------------------------------------------- actions
   // A message while watching: in the banner's status line (brought up for
@@ -552,6 +580,9 @@ class PlayerScreen : public Screen {
     if (!backName().empty()) pills_.push_back(Pill::Last);
     if (app_.store().channels()->find(p.entry())) pills_.push_back(Pill::Favorite);
     pills_.push_back(Pill::More);
+    // Build 163 (test only): the copy playing says it keeps catch-up. Last,
+    // so a full row loses it before Settings.
+    if (p.catchupDays() > 0) pills_.push_back(Pill::Catchup);
     pill_ = std::clamp(pill_, -1, static_cast<int>(pills_.size()) - 1);
   }
   bool rowKey(const KeyEvent& e) {
@@ -569,7 +600,9 @@ class PlayerScreen : public Screen {
         pill_ = pill_ < 0 ? 0 : std::max(0, pill_ - 1);
         return true;
       case Key::Right:
-        pill_ = pill_ < 0 ? 0 : std::min(static_cast<int>(pills_.size()) - 1, pill_ + 1);
+        pill_ = pill_ < 0 ? 0
+                          : std::min(static_cast<int>(std::min(pills_.size(), std::max<size_t>(pillsShown_, 1))) - 1,
+                                     pill_ + 1);
         return true;
       case Key::Up:
       case Key::Down:
@@ -671,6 +704,7 @@ class PlayerScreen : public Screen {
         notice(was ? "Removed from Favorites" : "Added to Favorites", "OK again to undo", kNoticeMs);
         break;
       }
+      case Pill::Catchup: panel(makeCatchupPanel(app_)); break;
       case Pill::More: panel(makeQuickSettings(app_, QuickPlace::Player)); break;
     }
   }
@@ -787,6 +821,154 @@ class PlayerScreen : public Screen {
         return true;
       default: return true;
     }
+  }
+
+  // ---------------------------------------------------------- catch-up test
+  // Build 163 (test only): the archive of the copy playing, from a moment
+  // back. A tag at the top left says what this is and how far back; once
+  // its picture comes, a notice at the bottom says how long it took; if it
+  // doesn't, a card in the middle says so. Back, Back to live or a channel
+  // key end it.
+  using CatchupPhase = engine::Session::CatchupTest::Phase;
+
+  std::vector<std::string> catchupButtons() const {
+    const Playback& p = app_.playback();
+    const auto& t = p.catchupTest();
+    if (!t || t->phase == CatchupPhase::Opening) return {};
+    if (t->phase == CatchupPhase::Worked) return {"Back to live", "Test again"};
+    if (p.catchupOtherCopy()) return {"Try another copy with catch-up", "Back to live"};
+    return {"Back to live"};
+  }
+  bool catchupKey(const KeyEvent& e) {
+    Playback& p = app_.playback();
+    int n = static_cast<int>(catchupButtons().size());
+    switch (e.key) {
+      case Key::Back:
+        backToLive();
+        return true;
+      case Key::Left:
+        if (n > 0) catchupButton_ = std::max(0, catchupButton_ - 1);
+        return true;
+      case Key::Right:
+        if (n > 0) catchupButton_ = std::min(n - 1, catchupButton_ + 1);
+        return true;
+      case Key::Up:
+      case Key::Down:
+        if (e.swipe || (e.wheel && app_.ms() - lastOkAt_ < kWheelAfterClickMs)) return true;
+        flipBy(arrowStep(e.key));
+        return true;
+      case Key::ChannelUp:
+      case Key::ChannelDown:
+        flipBy(e.key == Key::ChannelUp ? 1 : -1);
+        return true;
+      case Key::Ok: {
+        std::vector<std::string> buttons = catchupButtons();
+        if (catchupButton_ < 0 || catchupButton_ >= n) return true;
+        const std::string& b = buttons[static_cast<size_t>(catchupButton_)];
+        if (b == "Back to live") backToLive();
+        else if (b == "Test again") app_.nav().push(makeCatchupPanel(app_));
+        else p.catchupTryOtherCopy();
+        return true;
+      }
+      default:
+        return true;  // nothing else during a test
+    }
+  }
+  void backToLive() {
+    app_.playback().endCatchupTest();
+    zone_ = Zone::None;
+    showBanner();
+  }
+  // "−10:00", "−1:05:00": how far behind live.
+  static std::string behindText(time::Seconds s) {
+    s = std::max<time::Seconds>(0, s);
+    char buf[32];
+    if (s >= 3600)
+      std::snprintf(buf, sizeof buf, "\xe2\x88\x92%lld:%02d:%02d", static_cast<long long>(s / 3600),
+                    static_cast<int>(s / 60 % 60), static_cast<int>(s % 60));
+    else
+      std::snprintf(buf, sizeof buf, "\xe2\x88\x92%d:%02d", static_cast<int>(s / 60), static_cast<int>(s % 60));
+    return buf;
+  }
+  // A row of buttons from `x`; returns its width (nothing drawn: `measure`).
+  float catchupRow(ui::Ctx& c, const std::vector<std::string>& buttons, float x, float y, bool measure) {
+    float start = x;
+    for (size_t i = 0; i < buttons.size(); ++i) {
+      float w = ui::textWidth(c, buttons[i], Weight::Bold, 24) + 60;
+      if (!measure) {
+        Rect r{x, y, w, 64};
+        c.hit(r, kHitCatchup + static_cast<int>(i));
+        bool f = static_cast<int>(i) == catchupButton_;
+        if (f) {
+          c.g.fill(r, theme::white(), 32);
+        } else {
+          c.g.fill(r, theme::hex(0x14161B, 0.75f), 32);
+          c.g.stroke(r, theme::white(0.22f), 32, 1);
+        }
+        ui::labelIn(c, buttons[i], r, Weight::Bold, 24, f ? theme::black() : theme::white(), Align::Center);
+      }
+      x += w + 16;
+    }
+    return buttons.empty() ? 0 : x - 16 - start;
+  }
+  void drawCatchup(ui::Ctx& c) {
+    Playback& p = app_.playback();
+    const engine::Session::CatchupTest& t = *p.catchupTest();
+    Rect screen{0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight};
+    if (t.phase == CatchupPhase::Worked) {
+      c.g.hole(screen);
+    } else {
+      c.g.fill(screen, theme::black());
+      if (t.phase == CatchupPhase::Opening) ui::spinner(c, gfx::kLayoutWidth * 0.5f, gfx::kLayoutHeight * 0.5f, 26);
+    }
+    if (c.covered) return;  // "Test again" open over it: the picture only
+    c.hit(screen, kHitPicture);
+    std::string provider;
+    if (t.feed < p.feeds().size()) provider = app_.store().providerName(p.feeds()[t.feed].channelId);
+    if (provider.empty()) provider = "The provider";
+    std::string version = provider + ", version " + std::to_string(t.feed + 1) + " of " +
+                          std::to_string(p.feeds().size());
+    std::string from = ui::clock(c, t.from);
+
+    // Top left: what this is, and how far back.
+    float x = 64, y = 56;
+    float tagW = ui::chip(c, "CATCH-UP TEST", x, y, 18, theme::hex(theme::kStar), theme::black());
+    shadowed(c, behindText(t.behind) + " behind live", x + tagW + 16, y, Weight::Bold, 24, theme::white());
+    if (t.phase == CatchupPhase::Opening)
+      shadowed(c, "Asking for " + from + " \xc2\xb7 " + version, x, y + 44, Weight::Medium, 22, theme::white(0.85f));
+
+    std::vector<std::string> buttons = catchupButtons();
+    if (t.phase == CatchupPhase::Worked) {
+      // At the bottom: it worked, how fast, from when, on which copy.
+      float top = kRowY - 96;
+      ui::floatingCard(c, {48, top, gfx::kLayoutWidth - 96, gfx::kLayoutHeight - 28 - top});
+      float tx = kLeft;
+      ui::labelIn(c, "\xe2\x9c\x93", {tx, top + 26, 30, 40}, Weight::Bold, 30, theme::hex(kGreen), Align::Center);
+      tx += 42;
+      tx += shadowed(c, "Catch-up worked", tx, top + 26, Weight::Bold, 32, theme::white());
+      uint32_t tenths = (t.pictureMs + 50) / 100;  // as the log says it
+      std::string took = std::to_string(tenths / 10) + "." + std::to_string(tenths % 10);
+      std::string line = " \xc2\xb7 picture in " + took + " s \xc2\xb7 playing from " + from + " \xc2\xb7 " + version;
+      shadowed(c, line, tx, top + 32, Weight::Medium, 24, theme::white(0.85f), gfx::kLayoutWidth - kLeft - tx);
+      catchupRow(c, buttons, kLeft, kRowY, false);
+      return;
+    }
+    if (t.phase != CatchupPhase::Failed) return;
+    // In the middle: it didn't play, and why, in one line.
+    std::string days = std::to_string(t.days) + (t.days == 1 ? " day" : " days");
+    std::string why = provider + " says this copy keeps " + days + ", but asking for " + from +
+                      (t.timedOut ? " showed no picture after " + std::to_string(engine::Session::kCatchupTimeoutMs / 1000) +
+                                        " seconds."
+                                  : " failed: " + t.error + (t.error.empty() || t.error.back() == '.' ? "" : "."));
+    float w = 1120, h = 330;
+    Rect card{(gfx::kLayoutWidth - w) * 0.5f, (gfx::kLayoutHeight - h) * 0.5f, w, h};
+    c.g.fill(card, theme::hex(0x0C0E12, 0.94f), 30);
+    c.g.stroke(card, theme::white(0.18f), 30, 2);
+    ui::labelIn(c, "Catch-up didn\xe2\x80\x99t play on this copy", {card.x + 56, card.y + 40, card.w - 112, 56},
+                Weight::Bold, 40, theme::white(), Align::Center);
+    ui::paragraph(c, why, card.x + 72, card.y + 112, card.w - 144, Weight::Regular, 26, theme::white(0.85f), 3, 1.35f);
+    float rowW = catchupRow(c, buttons, 0, 0, true);
+    catchupRow(c, buttons, card.x + (card.w - rowW) * 0.5f, card.y + card.h - 100, false);
   }
 
   // ---------------------------------------------------------- helpers
@@ -1001,6 +1183,12 @@ class PlayerScreen : public Screen {
       c.g.stroke({lx, top + 42, ccW, 24}, theme::white(0.75f), 6, 2);
       ui::labelIn(c, "CC", {lx, top + 42, ccW, 24}, Weight::Bold, 15, theme::white(), Align::Center);
       lx += ccW + 12;
+    }
+    // Build 163 (test only), with the controls: the copy playing says it
+    // keeps catch-up.
+    if (uint16_t days = !pending && zone_ == Zone::Row ? p.catchupDays() : 0) {
+      std::string text = "Catch-up: " + std::to_string(days) + (days == 1 ? " day" : " days");
+      lx += ui::chip(c, text, lx, top + 42, 16, theme::white(0.16f), theme::white(0.9f)) + 12;
     }
     std::string title = l ? l->title : (g ? g->name : std::string());
     const Listing* show = l;  // the listing the title is (its episode and description)
@@ -1293,6 +1481,7 @@ class PlayerScreen : public Screen {
     Playback& p = app_.playback();
     struct Item {
       std::string title, extra;
+      std::string tag;  // a small tag after the title ("TEST")
     };
     std::vector<Item> items;
     for (Pill pill : pills_) {
@@ -1319,6 +1508,10 @@ class PlayerScreen : public Screen {
         case Pill::Guide: it.title = app_.store().isEvent(p.entry()) ? "Games" : "Guide"; break;
         case Pill::Last: it.title = "Back to " + backName(); break;
         case Pill::Favorite: it.title = g && app_.store().isFavorite(g->id) ? "Unfavorite" : "Favorite"; break;
+        case Pill::Catchup:
+          it.title = "Test catch-up";
+          it.tag = "TEST";
+          break;
         case Pill::More: it.title = "Settings"; break;
       }
       items.push_back(std::move(it));
@@ -1327,6 +1520,7 @@ class PlayerScreen : public Screen {
     auto widthOf = [&](const Item& it) {
       float w = ui::textWidth(c, it.title, Weight::Bold, 28) + 56;
       if (!it.extra.empty()) w += ui::textWidth(c, it.extra, Weight::Medium, 24) + 14;
+      if (!it.tag.empty()) w += ui::chipWidth(c, it.tag, 14) + 12;
       return w;
     };
     // Too many to fit: the second words go, Sources' first, then the rest.
@@ -1338,11 +1532,29 @@ class PlayerScreen : public Screen {
       items[i].extra.clear();
       total += widthOf(items[i]);
     }
+    // Build 163: still too wide (a long "Back to" name, the catch-up test):
+    // "Back to …" becomes "Back", then Subtitles loses its second words too,
+    // so every button stays on screen.
+    auto shorten = [&](Pill which, auto change) {
+      for (size_t i = 0; i < items.size() && total > room; ++i) {
+        if (pills_[i] != which) continue;
+        total -= widthOf(items[i]);
+        change(items[i]);
+        total += widthOf(items[i]);
+      }
+    };
+    shorten(Pill::Last, [](Item& it) { it.title = "Back"; });
+    shorten(Pill::Subtitles, [](Item& it) { it.extra.clear(); });
     float x = kLeft, y = kRowY - 6;
+    pillsShown_ = items.size();
     for (size_t i = 0; i < items.size(); ++i) {
       const Item& it = items[i];
       float w = widthOf(it);
-      if (x + w > kLeft + room) break;
+      if (x + w > kLeft + room) {
+        pillsShown_ = i;
+        if (pill_ >= static_cast<int>(i)) pill_ = static_cast<int>(i) - 1;
+        break;
+      }
       Rect r{x, y, w, height};
       c.hit(r, kHitPill + static_cast<int>(i));
       bool f = static_cast<int>(i) == pill_;
@@ -1357,6 +1569,8 @@ class PlayerScreen : public Screen {
       Color ink = f ? theme::black() : theme::white();
       float tx = r.x + 28;
       tx += ui::label(c, it.title, tx, r.y + 22, Weight::Bold, 28, ink);
+      if (!it.tag.empty())
+        tx += 12 + ui::chip(c, it.tag, tx + 12, r.y + 29, 14, theme::hex(theme::kStar, f ? 1.0f : 0.9f), theme::black());
       if (!it.extra.empty())
         ui::label(c, it.extra, tx + 14, r.y + 25, Weight::Medium, 24, f ? theme::black(0.7f) : theme::white(0.75f));
       x += w + gap;
@@ -1415,7 +1629,14 @@ class PlayerScreen : public Screen {
   Zone zone_ = Zone::None;
   std::vector<Pill> pills_;
   int pill_ = 0;
+  // How many of pills_ the row drew last time (the rest didn't fit): focus
+  // never moves onto one that isn't on screen.
+  size_t pillsShown_ = 99;
   int failButton_ = 0;
+  // The catch-up test's buttons: the one focused (-1 none, the pointer on
+  // the picture), and the test's state they were laid out for.
+  int catchupButton_ = 0;
+  int catchupLook_ = 0;
   bool tips_ = false;
   bool pointer_ = false;
   uint32_t controlsAt_ = 0;    // when the controls last opened

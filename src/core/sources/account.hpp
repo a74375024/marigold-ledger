@@ -40,6 +40,9 @@ struct Account {
   std::optional<time::Seconds> expires;
   std::optional<int> maxConnections;
   bool trial = false;  // a trial membership (Xtream is_trial)
+  // Build 163: the Xtream server's clock, seconds east of UTC (its
+  // server_info); catch-up links ask for times in it. nullopt: not known.
+  std::optional<int> serverOffset;
   // The guide's heads-up about the membership's end was last shown on this
   // day (membership::localDay; 0: never): once a day.
   int64_t noticeDay = 0;
