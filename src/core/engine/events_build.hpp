@@ -23,6 +23,7 @@
 #include "core/catalog/lineup.hpp"
 #include "core/catalog/work.hpp"
 #include "core/engine/events_model.hpp"
+#include "core/engine/game_replay.hpp"
 #include "core/engine/model.hpp"
 #include "core/sports/board.hpp"
 #include "core/sports/cameras.hpp"
@@ -215,6 +216,13 @@ struct BoardInput {
   // With hold.scores: whose games' scores can still come (the rest go by
   // the clock).
   sports::scores::Awaited awaited;
+  // Build 167: the guide channels of the games' sources that keep an
+  // archive (game_replay::Channel), for each tile's replay and the "Full
+  // games" row; null: no replay anywhere.
+  std::shared_ptr<const game_replay::Channels> replayChannels;
+  // Finals of the last boards in the "Full games" row (or with replay)
+  // that the games no longer hold: put back while their replay lasts.
+  std::vector<sports::SportsEvent> kept;
 };
 
 struct BoardMade {

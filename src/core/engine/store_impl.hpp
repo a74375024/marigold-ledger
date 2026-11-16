@@ -139,6 +139,16 @@ struct EventsState {
   std::shared_ptr<sports::board::TitleMemo> boardTitles = sports::board::newTitleMemo();
   // The boards put in before, freed on a worker once no screen holds them.
   std::vector<std::shared_ptr<const EventsBoard>> retired;
+  // Build 167: the archives of the games' guide channels (BoardInput::
+  // replayChannels), made again for new games, channels or lineup and every
+  // 10 minutes; the Finals with replay on the last whole board, put back
+  // while the games no longer hold them (the "Full games" row).
+  std::shared_ptr<const game_replay::Channels> replayChannels;
+  std::weak_ptr<const std::vector<sports::SportsEvent>> replayChannelsOf;
+  int replayCatalog = -1;
+  uint64_t replayLineup = ~0ull;
+  time::Seconds replayChannelsAt = 0;
+  std::vector<sports::SportsEvent> keptFinals;
   // The timing log (counts and milliseconds), a line at most every minute.
   struct Timing {
     uint32_t since = 0;

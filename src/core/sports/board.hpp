@@ -175,6 +175,13 @@ struct Input {
   // studio-show test depend on the title and its row only, so each is
   // worked out once. Unset: every time.
   std::shared_ptr<TitleMemo> titles;
+  // Build 167: a finished game whose start a guide channel's archive still
+  // holds (engine::game_replay). Such a game of a team you follow, or of
+  // a league in your picks (its sport's row would take it), stays past the
+  // 12 hours a Final is on the board, in a row of its own, "Full games"
+  // (id "full", newest first), until its start leaves the archive. Unset:
+  // no such row.
+  std::function<bool(const SportsEvent&)> keepsReplay;
 };
 
 // MARK: View model

@@ -244,8 +244,9 @@ class Session {
     bool video = true;        // the channel shows a picture (not radio)
     time::Seconds at() const { return static_cast<time::Seconds>(atMs / 1000); }
   };
-  // Why a replay starts from a moment (its log line).
-  enum class ReplayWhy { StartOver, Rewind, Back, Resume };
+  // Why a replay starts from a moment (its log line). Game: a game's
+  // replay started from Live Events (tuneGameReplay).
+  enum class ReplayWhy { StartOver, Rewind, Back, Resume, Game };
   static constexpr uint32_t kReplayTimeoutMs = 10000;
   // Paused: the stream is closed this long after the picture was held.
   static constexpr uint32_t kReleaseMs = 3000;
@@ -296,6 +297,41 @@ class Session {
   void wantPast();
   // Moves when the copy's own past has landed (or failed).
   int pastSerial() const { return pastSerial_; }
+
+  // Build 167, replay in Live Events: a game played from its start on a
+  // guide channel's archive (the board's game_replay::pick), straight from
+  // the archive with no live start first. Live, the game's feeds are the
+  // ones OK plays and Go live (or catching up) goes to the best of them;
+  // a Final's are the channel's own (its copies first), so Go live is that
+  // channel live. Only that channel's own copies replay it; a copy that
+  // fails gives way to the next at the same minute; none left: "Replay
+  // isn't available right now on this channel" and live (a live game), or
+  // back to the Final's card (takeGameBack()). Lasts until the next tune.
+  struct GameReplay {
+    std::string eventId;      // the board's game
+    std::string channelId;    // the guide channel whose archive plays it
+    std::string channelName;  // "NBA TV"
+    time::Seconds start = 0;  // its scheduled start
+    time::Seconds from = 0;   // where the replay starts (a minute before it)
+    bool finished = false;    // a Final
+    // When the app saw the final (0: it didn't): the "End of the game"
+    // card comes once the replay passes it (takeEndOfGame()).
+    time::Seconds finalAt = 0;
+  };
+  // False when nothing could start: the game is gone, nothing plays it, or
+  // (a Final) no copy of the channel holds its start; a live game whose
+  // archive can't play it plays live with the notice.
+  bool tuneGameReplay(const GameReplay& g, const std::vector<std::string>& flip = {});
+  // The game replay of this tune (null: none, or another tune since).
+  const GameReplay* gameReplay() const { return gameReplay_ ? &*gameReplay_ : nullptr; }
+  // Once: a Final's replay couldn't go on (no copy plays it, the archive no
+  // longer holds the moment): the player goes back to its card. Nothing
+  // plays then.
+  bool takeGameBack();
+  // Once per game replay: a Final's replay has passed the moment the app saw
+  // its final. The player shows "End of the game" for kEndCardMs.
+  bool takeEndOfGame();
+  static constexpr uint32_t kEndCardMs = 15000;
 
   // Full screen or a preview. Going full screen makes the tune "watched".
   void setShowingFull(bool full);
@@ -517,6 +553,12 @@ class Session {
   std::string replayNotice_;
   // Right or the app's return replays this moment instead of a live start.
   std::optional<std::pair<time::Seconds, ReplayWhy>> replayInstead_;
+  // Build 167: the game replay of this tune (begin() takes the pending one);
+  // a Final's replay that gave up (takeGameBack); its end passed (once).
+  std::optional<GameReplay> gameReplay_, pendingGame_;
+  bool gameBack_ = false, endOfGame_ = false, endOfGameSaid_ = false;
+  // A Final's replay can't go on: the notice, back to its card.
+  void gameReplayGone(const std::string& why);
   // The copy's own past (wantPast), for the entry it was asked for.
   std::string pastFor_;
   std::optional<std::vector<replay::Programme>> past_;

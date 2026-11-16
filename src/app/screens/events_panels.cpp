@@ -36,6 +36,7 @@ bool watchEvent(App& app, const std::string& id, const std::string& entryOrChann
 }
 
 constexpr int kHitAction = 1, kHitMore = 101;  // + the pill's index
+const char* const kWatchReplay = "Watch replay";
 
 class EventDetail : public Screen {
  public:
@@ -88,7 +89,13 @@ class EventDetail : public Screen {
         std::string action = buttonTitle(t, focus_);
         std::string id = id_;
         App& app = app_;
-        if (action == "Where to Watch") {
+        if (action == kWatchReplay) {
+          // Build 167: from the start on the channel's archive; back to this
+          // card when it can't start.
+          EventTile tile = *t;
+          app.nav().pop();
+          if (!events_ui::watchReplay(app, tile)) app.nav().push(makeEventDetail(app, id));
+        } else if (action == "Where to Watch") {
           app.nav().pop();
           app.nav().push(makeWhereToWatch(app, id));
         } else if (action == "Remind Me" || action == "Reminder Set") {
@@ -217,12 +224,15 @@ class EventDetail : public Screen {
   int buttons(const EventTile* t) const {
     if (!t) return 0;
     int n = 1;                    // Where to Watch
+    if (t->finished && t->hasReplay()) ++n;  // Watch replay (Build 167)
     if (t->upcoming) ++n;         // Remind Me
     if (t->watchable && !t->upcoming && !t->finished) ++n;  // Watch
     return n;
   }
   std::string buttonTitle(const EventTile* t, int i) const {
     std::vector<std::string> list;
+    // Build 167: a Final with replay leads with it (focused as the card opens).
+    if (t->finished && t->hasReplay()) list.push_back(kWatchReplay);
     if (t->upcoming) list.push_back(app_.store().hasReminder(id_) ? "Reminder Set" : "Remind Me");
     if (t->watchable && !t->upcoming && !t->finished)
       list.push_back("Watch " + (t->channelName.empty() ? std::string("Now") : t->channelName + " Now"));

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "app/app.hpp"
+#include "app/playback.hpp"
 #include "app/screens/screens.hpp"
 #include "core/logos/tune.hpp"
 #include "core/sports/game_banner.hpp"
@@ -25,6 +26,8 @@ namespace theme = ui::theme;
 constexpr uint32_t kDelayed = 0xE0A100;
 constexpr uint32_t kPostponed = 0xE07A1F;
 constexpr uint32_t kPlayerLive = 0xE5372B;  // the player banner's LIVE
+// Build 167: the replay mark's blue (the guide's), darker on a light surface.
+constexpr uint32_t kReplayBlue = 0x6B95FF, kReplayBlueDark = 0x2F5FD0;
 // What a tile's marks sit on: the tile (white 9%, or 6% ended or not
 // watchable, over the background) or the calm focus; the player's card.
 constexpr uint32_t kTileSurface = 0x27292D, kTileDimSurface = 0x202226, kCardSurface = 0x15171C;
@@ -449,6 +452,13 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool mixed) {
     ui::labelIn(c, t.tag, {tr.x + 6, tr.y, tr.w - 12, tr.h}, Weight::Bold, 13, theme::white(), Align::Center);
     right -= tw + 8;
   }
+  // Build 167: the small replay mark (the game can be watched from its
+  // start), where the tile names where it plays; the tile has no footer
+  // line, so at the top line's end, before the competition.
+  if (t.hasReplay()) {
+    replayMark(c, right - 16, ty + 2, 16, false, alpha);
+    right -= 16 + 8;
+  }
   // The top line's competition, made with the tile.
   std::string made;
   const std::string& comp = t.textMade ? (mixed ? t.topLineMixed : t.topLine) : (made = tileTopLine(t, mixed));
@@ -605,6 +615,57 @@ std::string hideLine(App& app, const EventTile& t) {
 void hide(App& app, const std::string& id, const std::string& name) {
   app.store().hideFromBoard(id);
   app.nav().push(makeUndoNote(app, name + " hidden", [&app, id] { app.store().showOnBoard(id); }));
+}
+
+// ---------------------------------------------------------------- replay
+
+void replayMark(ui::Ctx& c, float x, float y, float size, bool onLight, float alpha) {
+  unsigned icon = c.icons ? c.icons->get("ui-replay") : 0;
+  if (!icon) return;
+  c.g.textureAlpha(icon, {x, y, size, size}, theme::hex(onLight ? kReplayBlueDark : kReplayBlue, alpha));
+}
+
+namespace {
+constexpr int kReplayChipPx = 17;
+constexpr float kReplayChipIcon = 16, kReplayChipGap = 7, kReplayChipPad = 12;
+}  // namespace
+
+float replayChipWidth(ui::Ctx& c) {
+  return kReplayChipPad * 2 + kReplayChipIcon + kReplayChipGap + ui::textWidth(c, "Replay", Weight::Bold, kReplayChipPx);
+}
+
+float replayChip(ui::Ctx& c, float x, float y) {
+  float w = replayChipWidth(c), h = 30;
+  Rect r{x, y, w, h};
+  Color ink = theme::white(0.8f);
+  c.g.stroke(r, theme::white(0.35f), h * 0.5f, 1.5f);
+  if (unsigned icon = c.icons ? c.icons->get("ui-replay") : 0)
+    c.g.textureAlpha(icon, {x + kReplayChipPad, y + (h - kReplayChipIcon) * 0.5f, kReplayChipIcon, kReplayChipIcon},
+                     ink);
+  float tx = x + kReplayChipPad + kReplayChipIcon + kReplayChipGap;
+  ui::labelIn(c, "Replay", {tx, y, r.x + r.w - kReplayChipPad - tx, h}, Weight::Bold, kReplayChipPx, ink);
+  return w;
+}
+
+bool watchReplay(App& app, const EventTile& t) {
+  Playback& p = app.playback();
+  engine::Session::GameReplay g;
+  g.eventId = t.id;
+  g.channelId = t.replayChannelId;
+  g.channelName = t.replayChannelName;
+  g.start = t.start;
+  g.from = t.replayFrom;
+  g.finished = t.finished;
+  g.finalAt = t.finalSeenAt;
+  // Already full screen (the player's search): the player switches in place.
+  bool watching = p.active() && p.full();
+  if (!t.hasReplay() || !p.tuneGameReplay(g, app.store().eventFlipList(t.id))) {
+    app.toast("Replay isn\xe2\x80\x99t available right now on this channel");
+    return false;
+  }
+  p.setFull();
+  if (!watching) app.nav().push(makePlayer(app));
+  return true;
 }
 
 }  // namespace marigold::app::events_ui

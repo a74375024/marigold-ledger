@@ -2054,3 +2054,39 @@ Channels with replay now say so where channels are listed, quietly, and the bann
 | Caught up | Go live (or catch up) | The banner as before: the live show, LIVE, "Later on this channel" |
 | Controls | OK during a replay | "Watching from … · live is …" as before |
 | Log | Playback log after the menu's Start over | "replay: start over 19:00 …"; no link anywhere |
+
+## Build 167: 1.0.11, replay in Live Events
+
+A game on a channel whose copy keeps a catch-up archive can be watched from its start, straight from Live Events. The board works out which games have replay when it is made, never while drawing. Scores behave exactly as before (Show scores decides), and nothing new is set anywhere.
+
+- **The rule:** a game gets replay only when all of these hold. One of its sources is a guide channel (My Lineup or your channels; not an event feed, not a team channel's "likely") whose guide listing shows the game at its start (the listing begins no later than 5 minutes after the scheduled start and hasn't ended by then). One of that channel's own copies keeps an archive that Test all sources hasn't found broken. The scheduled start less a minute is inside the archive as replay uses it (the days less an hour): on a one-day archive a game that started up to 23 hours ago, on two days 47 hours. The channel is in the language of the source OK plays (a channel with no language mark counts as English). The game is live, likely over or final (not later, postponed or without a time). When several channels qualify: the longest archive, then My Lineup, then the one OK plays.
+- **Tiles:** a small blue replay mark at the end of the tile's top line, before the competition. Games only on event feeds and games still to come have none.
+- **The focused game:** one quiet outlined "Replay" chip after the "On …" line under the matchup (on its own line when that line is full).
+- **Holding OK on a live game:** "Start over" comes first, with "Started 7:10 PM" under it, and " · on ESPN" when the replay comes from another channel than the one OK plays. Where to Watch, Follow and Hide are as before.
+- **A Final:** OK opens its card as before; with replay, "Watch replay" is the card's first button and has the focus, and Where to Watch stays. Holding OK on a Final offers "Watch replay" first too.
+- **Starting it:** the channel's archive copy plays from a minute before the scheduled start, with no live start first, and the game banner shows. Only that channel's own copies play it; a copy that fails gives way to the next at the same minute. When none plays it: "Replay isn't available right now on this channel", then live (a live game) or back to the Final's card.
+- **A live game started over:** reaching live goes live with "You're live", as on a channel; Go live plays the source OK plays. Start over, Rewind and Pause work as on a channel.
+- **A Final's replay:** the tag at the top right reads REPLAY and how far into the game it is ("48:10 in"), and Go live is named for the channel ("NBA TV live"). Once the replay passes the moment the app saw the final, an "End of the game" card (the game and the channel, "Back to Live Events" focused, "Keep watching") shows for 15 seconds while the replay plays on. It never shows when the app didn't see the final itself. Paused so long that the archive no longer holds the moment: back to the Final's card.
+- **Full games:** a Final of a team you follow, or of a league in your picks, that still has replay stays on the board past the usual 12 hours, in a row called "Full games" (newest first), until its start leaves the archive. The row is there only when it has a game. The app keeps these Finals in memory while it runs; after a restart only those the schedule still holds come back.
+- **The game banner during a replay:** behind live, a REPLAY chip and "38 min in" next to the title; nothing from the live clock ("likely over"), no "was scheduled until", nothing after the game. At the right the channel replaying and one muted "Live now: …" line with the channel's programme on now ("Live now: this game" for a live game started over). Caught up, the banner is as before. It never shows a score.
+- **Log:** "replay" lines as for channels: "game from 19:09 (Live Events, live)" or "(Live Events, final)" with the server clock, "another copy from 19:09", "game from 19:09: no copy of ESPN holds it; live", "past the final (21:31)", "failed: …; back to the game's card". Never a link.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Mark | Live Events with a live game on ESPN (Dream copy) and one on KCBS | The blue mark on ESPN's game only; none on event-feed games or later games |
+| Chip | Focus the ESPN game | "Replay" chip after the "On ESPN" line; no chip on KCBS's game |
+| Start over | Hold OK on the ESPN game | "Start over" first, "Started 7:10 PM"; Where to Watch, Follow, Hide below |
+| Other channel | A game OK plays on a regional channel but listed on ESPN too (Dream) | "Started 7:10 PM · on ESPN" |
+| Plays from the start | Start over | The game from a minute before its start, no live picture first; the game banner with REPLAY and "N min in"; "game from …" in the log |
+| Live game, Go live | Go live during it | The source OK plays, live |
+| Caught up | Start over a game begun 3 minutes ago, wait | "You're live" |
+| Final's card | OK on a Final with replay | "Watch replay" first and focused; Where to Watch beside it |
+| Final's hold OK | Hold OK on that Final | "Watch replay" first |
+| Final's replay | Watch replay | Tag "REPLAY · 0:… in" counting from the start; Go live reads "<channel> live" |
+| End card | Rewind to just before the game's end, play on | "End of the game" after the final's moment; hides after 15 s, the replay plays on |
+| No end card | A Final the app never saw end (opened the next day) | No card |
+| Edge | A Final 23 h 30 min ago on a one-day channel | No mark, no Watch replay |
+| Failure | A channel whose archive doesn't play | Next copy; then the notice and live (live game) or the Final's card |
+| Full games | Follow a team, the day after its game (two-day channel) | "Full games" row with the game; gone once its start is 47 h back |
+| Scores | Show scores on and off | Tiles and cards as in 1.0.10 |
+| Log | Send a report › Playback log | "replay" lines for game replays; no link |

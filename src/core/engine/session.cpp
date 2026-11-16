@@ -43,6 +43,8 @@ int64_t wallMs() {
 // this many short ones in a row and the archive is taken as not working.
 constexpr uint32_t kShortStretchMs = 20000;
 constexpr int kShortStretchesTried = 3;
+// The player's notice when no copy plays the moment asked.
+const char* const kReplayUnavailable = "Replay isn\xe2\x80\x99t available right now on this channel";
 
 }  // namespace
 
@@ -169,6 +171,10 @@ bool Session::begin(const std::string& entryId, std::vector<Feed> feeds, const s
   rememberGame();
   // A replay ends with the tune: the channel tuned plays live.
   if (replay_) endReplay(false);
+  // Build 167: a game replay is this tune's (tuneGameReplay), else none.
+  gameReplay_ = std::move(pendingGame_);
+  pendingGame_.reset();
+  gameBack_ = endOfGame_ = endOfGameSaid_ = false;
   logMemory("before tuning");
   camera_ = false;
   quietReturn_ = false;
@@ -208,6 +214,16 @@ bool Session::begin(const std::string& entryId, std::vector<Feed> feeds, const s
     std::pair<time::Seconds, ReplayWhy> at = *replayInstead_;
     replayInstead_.reset();
     if (startReplayInstead(at.first, at.second, 0)) return true;
+    if (gameReplay_) {
+      // Build 167: no copy of the channel holds the game's start (any more).
+      // A Final has nothing else to play (the caller stops); a live game
+      // plays live, saying so.
+      logReplay("game from " + localTime(at.first) + ": no copy of " + gameReplay_->channelName +
+                    " holds it" + (gameReplay_->finished ? "" : "; live"),
+                0);
+      if (gameReplay_->finished) return false;
+      replayNotice_ = kReplayUnavailable;
+    }
   }
   // Every caller has already waited (OK, a settled flip, a preview's dwell,
   // a typed number): no second settle.
@@ -903,6 +919,9 @@ bool Session::keepsArchive(size_t i, size_t live) const {
   if (i >= feeds_.size()) return false;
   const std::string& id = feeds_[i].channelId;
   if (store_.catchupDays(id) == 0) return false;
+  // Build 167: a game's replay from Live Events plays on its channel's own
+  // copies only.
+  if (gameReplay_) return store_.entryOfChannel(id) == gameReplay_->channelId;
   // A guide channel's own versions (not a game's backup on another channel).
   return i == live || game_ || store_.entryOfChannel(id) == entry_;
 }
@@ -1101,11 +1120,56 @@ bool Session::startReplayInstead(time::Seconds at, ReplayWhy why, size_t live) {
   replayTried_.clear();
   shortStretches_ = 0;
   std::string when = localTime(at);
+  if (why == ReplayWhy::Game) {
+    playReplay(*copy, at, "game from " + when + " (Live Events" +
+                              (gameReplay_ && gameReplay_->finished ? ", final)" : ", live)"));
+    return true;
+  }
   playReplay(*copy, at,
              why == ReplayWhy::StartOver ? "start over " + when
                                          : (why == ReplayWhy::Back ? "back to " : "resumed ") + when +
                                                (why == ReplayWhy::Resume ? " after the background" : ""));
   return true;
+}
+
+bool Session::tuneGameReplay(const GameReplay& g, const std::vector<std::string>& flip) {
+  if (g.eventId.empty() || g.channelId.empty() || !store_.isEvent(g.eventId)) return false;
+  // A Final: the channel's own copies first (Go live is that channel live);
+  // live: as OK plays it.
+  std::vector<Feed> feeds = store_.eventFeeds(g.eventId, g.finished ? g.channelId : std::string());
+  if (feeds.empty()) return false;
+  pendingGame_ = g;
+  replayInstead_ = std::make_pair(g.from, ReplayWhy::Game);
+  bool ok = begin(g.eventId, std::move(feeds), flip);
+  pendingGame_.reset();
+  replayInstead_.reset();
+  if (!ok) {
+    stop();
+    return false;
+  }
+  if (g.finished) picked_ = g.channelId;
+  return true;
+}
+
+bool Session::takeGameBack() {
+  bool out = gameBack_;
+  gameBack_ = false;
+  return out;
+}
+
+bool Session::takeEndOfGame() {
+  bool out = endOfGame_;
+  endOfGame_ = false;
+  return out;
+}
+
+void Session::gameReplayGone(const std::string& why) {
+  size_t copy = replay_ ? replay_->feed : 0;
+  if (replay_ && !replay_->released) player_->stop();
+  logReplay("failed: " + why + "; back to the game's card", copy);
+  replayNotice_ = kReplayUnavailable;
+  gameBack_ = true;
+  endReplay(false);
 }
 
 bool Session::pause(bool quiet) {
@@ -1171,6 +1235,11 @@ bool Session::resumePaused(bool quiet) {
   }
   std::optional<size_t> copy = archiveCopyFor(from, replayLive_, r.feed);
   if (!copy) {
+    // Build 167: a Final has no live of its own to go to: back to its card.
+    if (gameReplay_ && gameReplay_->finished) {
+      gameReplayGone("the archive no longer holds " + localTime(from));
+      return true;
+    }
     goLive(quiet);
     return true;
   }
@@ -1231,8 +1300,13 @@ void Session::replayFailed(const std::string& why) {
     playReplay(*other, at, "another copy from " + localTime(at));
     return;
   }
+  if (gameReplay_ && gameReplay_->finished) {
+    // Build 167: a Final's replay goes back to its card.
+    gameReplayGone(why);
+    return;
+  }
   logReplay("failed: " + why + "; back to live", r.feed);
-  replayNotice_ = "Replay isn\xe2\x80\x99t available right now on this channel";
+  replayNotice_ = kReplayUnavailable;
   endReplay(true);
 }
 
@@ -1278,6 +1352,14 @@ void Session::tickReplay(uint32_t now) {
   }
   // Playing: the moment showing moves on while the picture does.
   if (!s.buffering && (s.playing || picture)) r.atMs += dt;
+  // Build 167: a Final's replay past the moment the app saw its final (never
+  // when it didn't see it): the player's "End of the game", once.
+  if (gameReplay_ && gameReplay_->finished && gameReplay_->finalAt > 0 && !endOfGameSaid_ &&
+      r.at() >= gameReplay_->finalAt) {
+    endOfGameSaid_ = endOfGame_ = true;
+    logReplay("past the final (" + localTime(gameReplay_->finalAt) + ")", r.feed);
+    if (hooks_.changed) hooks_.changed();
+  }
   time::Seconds live = time::now();
   if (live - r.at() <= kLiveWithin) {
     logReplay("caught up", r.feed);
