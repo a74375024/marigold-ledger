@@ -1886,7 +1886,7 @@ The catch-up test is offered on a channel when any of its own copies keeps an ar
 | Back to live | Back to live | Live again on the copy that played before the test |
 | No copy with an archive | A channel none of whose copies has catch-up (KCBS) | Neither the pill nor the button |
 
-## Build 165: replay (pause, rewind, start over, go live)
+## Build 165: 1.0.9, replay (pause, rewind, start over, go live)
 
 The catch-up test becomes replay. It belongs to the channel: any of its own copies with an archive serves it (the one playing live when it has one, else the first in live order), and live stays on the best live copy. Channels with no copy that keeps catch-up look exactly as before; nothing new runs unless replay is used, apart from the guide keeping a few more hours for these channels.
 
