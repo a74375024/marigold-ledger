@@ -1078,9 +1078,12 @@ TEST_CASE("replay marks 1.0.11: a row's replay days, its depth by provider, and 
   REQUIRE(!tnt.empty());
   REQUIRE(!cnn.empty());
   auto days = [&](const std::string& id) {
-    const auto* g = r.store->channels()->find(id);
+    // Both lists held while their rows are read.
+    auto published = r.store->channels();
+    auto now = r.store->channelsNow();
+    const auto* g = published->find(id);
     REQUIRE(g);
-    const auto* again = r.store->channelsNow()->find(id);
+    const auto* again = now->find(id);
     REQUIRE(again);
     CHECK(again->replayDays == g->replayDays);
     return static_cast<int>(g->replayDays);
