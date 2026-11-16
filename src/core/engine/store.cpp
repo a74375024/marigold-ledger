@@ -1712,6 +1712,10 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
   auto stations = m.stations;
   std::set<std::string> wanted = m.prefs.guideCountries();  // "US" for US English and US Spanish
   bool freeOn = m.prefs.categories.count(catalog::LineupCategory::free) > 0;
+  // Build 166: My Lineup's rows (and the list they're from), so admission
+  // keeps a mostly empty group that holds one of their channels.
+  auto lineupRows = std::make_shared<const std::set<std::string>>(m.lineup.lineupIDs);
+  std::shared_ptr<const CatalogResult> lineupCatalog = m.catalog;
   auto cut = std::make_shared<bool>(false);
   uint64_t lastPrint = showing && !m.admissionChanged ? m.listFingerprint : 0;
   auto print = std::make_shared<uint64_t>(0);
@@ -1721,8 +1725,8 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
   http::Pool* pool = &host_.pool;
   std::string linksPath = host_.files.path(kM3uStreamsFile);
   host_.pool.post(
-      [merged, old, oldCatalog, result, renamedCount, now, stations, wanted, freeOn, cut, lastPrint, print, unchanged,
-       progress,
+      [merged, old, oldCatalog, result, renamedCount, now, stations, wanted, freeOn, lineupRows, lineupCatalog, cut,
+       lastPrint, print, unchanged, progress,
        foreground = m.foregroundJobs, parts, total, mergeHere, mergeParts, links, allLinks = m.links, files, pool,
        linksPath] {
         Foreground busy(foreground);
@@ -1749,11 +1753,17 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
         // left out. Over the cap: the viewer's countries first, then
         // unmarked groups ("United States", "4K|", event groups), then those
         // sports groups (the emptiest last), then free streaming and 24/7
-        // groups unless free channels are on. Provider order alone kept
-        // Europe and cut every US group.
+        // groups unless free channels are on, then (Build 166) groups of
+        // mostly empty slots and headings with nothing of My Lineup's.
+        // Provider order alone kept Europe and cut every US group.
         if (!wanted.empty() || list.size() > catalog::kMaxChannels) {
-          catalog::Admission adm =
-              catalog::admitGroups(list, catalog::kMaxChannels, catalog::countryRank(wanted, freeOn));
+          std::unordered_set<std::string> lineupCopies;
+          if (lineupCatalog && !lineupRows->empty()) {
+            for (const catalog::EntryInfo& e : lineupCatalog->entries)
+              if (lineupRows->count(e.id)) lineupCopies.insert(e.members.begin(), e.members.end());
+          }
+          catalog::Admission adm = catalog::admitGroups(
+              list, catalog::kMaxChannels, catalog::countryRank(wanted, freeOn, std::move(lineupCopies)));
           MLOG_I("store", "admitted %zu channels in %zu groups; %zu groups cut for room, %zu other countries' left out",
                  adm.channels.size(), adm.admittedGroups, adm.cutGroups, adm.leftOut);
           *cut = adm.cutGroups > 0 || adm.leftOut > 0;

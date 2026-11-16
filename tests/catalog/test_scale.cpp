@@ -1,10 +1,14 @@
-// Building the catalog for 60,000 varied synthetic channels.
+// Building the catalog for 70,000 varied synthetic channels (the cap), and
+// saving and reading it back.
 #include <chrono>
 #include <cstdint>
+#include <sstream>
+#include <string>
 #include <unordered_set>
 
 #include "catalog/helpers.hpp"
 #include "core/catalog/admission.hpp"
+#include "core/catalog/cache.hpp"
 #include "core/catalog/catalog.hpp"
 #include "core/catalog/work.hpp"
 #include "doctest.h"
@@ -106,8 +110,16 @@ std::vector<Channel> synthetic(size_t count) {
 
 }  // namespace
 
-TEST_CASE("catalog for 60,000 synthetic channels") {
-  std::vector<Channel> raw = synthetic(60000);
+TEST_CASE("catalog for 70,000 synthetic channels (the cap), saved and read back") {
+  // Build 166: the cap went from 30,000 to 70,000; a provider's 80,000
+  // is cut to whole groups under it.
+  std::vector<Channel> offered = synthetic(80000);
+  Admission admitted = admitGroups(offered);
+  CHECK(admitted.channels.size() <= kMaxChannels);
+  CHECK(admitted.channels.size() > kMaxChannels - 1000);
+  CHECK(admitted.cutGroups > 0);
+  offered.clear();
+  std::vector<Channel> raw = std::move(admitted.channels);
   auto started = std::chrono::steady_clock::now();
   std::vector<Channel> channels = annotated(raw);
   CatalogResult r =
@@ -115,7 +127,7 @@ TEST_CASE("catalog for 60,000 synthetic channels") {
             {{"KABC", "ABC", {"springfield"}, "7"}, {"WXYZ", "NBC", {"capital"}, "4"}});
   double seconds =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-  MESSAGE("catalog build for 60000 channels: " << seconds << " s, " << r.entries.size()
+  MESSAGE("catalog build for " << channels.size() << " channels: " << seconds << " s, " << r.entries.size()
                                                << " entries, " << r.families.size() << " families, "
                                                << r.events.size() << " events");
   CHECK(r.traits.size() == channels.size());
@@ -147,11 +159,29 @@ TEST_CASE("catalog for 60,000 synthetic channels") {
   for (const EntryInfo& e : r.entries) cnn += e.id == "e|core:CNN" ? 1 : 0;
   CHECK(cnn == 1);
 #if !MARIGOLD_SANITIZED
-  // About 2 s in an optimized desktop build; sanitizers make it 15-40x slower.
+  // About 2.5 s in an optimized desktop build; sanitizers make it 15-40x slower.
   CHECK(seconds < 30);
 #endif
 
-  Admission admitted = admitGroups(channels);
-  CHECK(admitted.channels.size() <= kMaxChannels);
-  CHECK(admitted.cutGroups > 0);
+  // The saved list, written a piece at a time and read back (about 40 MB
+  // before gzip; under a second each way on a desktop).
+  cache::SavedRef saved;
+  saved.signature = "scale";
+  saved.savedAt = testdata::wednesdayNoon();
+  saved.channels = &channels;
+  saved.catalog = &r;
+  std::string text;
+  started = std::chrono::steady_clock::now();
+  CHECK(cache::writeSaved(saved, [&](std::string_view chunk) {
+    text.append(chunk);
+    return true;
+  }));
+  std::istringstream in(text);
+  auto back = cache::readSaved(in, "scale");
+  seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+  MESSAGE("saved list: " << text.size() / (1024 * 1024) << " MB, written and read in " << seconds << " s");
+  REQUIRE(back);
+  CHECK(back->channels.size() == channels.size());
+  CHECK(back->catalog.entries.size() == r.entries.size());
+  CHECK(back->catalog.traits.size() == r.traits.size());
 }

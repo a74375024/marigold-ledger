@@ -78,7 +78,9 @@ const char* kSample = R"({
     {"c": "WTCL-LD", "n": "TELEMUNDO", "m": "Cleveland-Akron", "v": "6", "l": "es", "k": "LP"},
     {"c": "WUVP-DT", "n": "UNIVISION", "m": "Philadelphia", "v": "65", "l": "es"},
     {"c": "KMEX-DT", "n": "UNIVISION", "m": "Los Angeles", "v": "34", "l": "es"},
-    {"c": "WGBC", "n": "FOX", "m": "Meridian", "v": "30", "s": [{"n": "NBC", "v": "30.2"}]}
+    {"c": "WGBC", "n": "FOX", "m": "Meridian", "v": "30", "s": [{"n": "NBC", "v": "30.2"}]},
+    {"c": "KNTV", "n": "NBC", "m": "San Francisco-Oakland-San Jose", "v": "11"},
+    {"c": "KCRA-TV", "n": "NBC", "m": "Sacramento-Stockton-Modesto", "v": "3"}
   ]
 })";
 
@@ -124,7 +126,7 @@ TEST_CASE("reference: reads its channels, stations and shut-down names, also pac
   CHECK(data->channels[8].markets == std::vector<std::string>{"New York"});
   CHECK(data->channels[9].closed);
   CHECK(data->channels[9].language == "es");
-  REQUIRE(data->stations.size() == 12);
+  REQUIRE(data->stations.size() == 14);
   CHECK(data->stations[2].subChannels.size() == 1);
   CHECK(data->stations[2].subChannels[0].number == "12.2");
   CHECK(data->stations[1].simulcasts == "WBOC-TV");
@@ -595,16 +597,18 @@ TEST_CASE("Build 161: a directory row that is a reference channel by an old name
   CHECK(std::find(b.entryOf("2")->formerIds.begin(), b.entryOf("2")->formerIds.end(), "e|d:Fox Sports 2") !=
         b.entryOf("2")->formerIds.end());
   // A brand alone, and a page title among the directory's other names: no.
+  // (Build 166: a person's name isn't the directory's channel at all.)
   CHECK(b.entryOf("3")->id == "e|d:Cinemax");
-  CHECK(b.entryOf("4")->id == "e|d:The Weather Channel");
+  CHECK(b.entryOf("4")->id == "e|n:US:jenniferlopez");
   // "Fox Sports West" says its coast: that name, no West feed of anything;
   // "FOX SPORTS" alone isn't it.
   CHECK(b.entryOf("5")->id == "e|r:angels-tv");
   CHECK(b.entryOf("6") != b.entryOf("5"));
   CHECK_FALSE(str::startsWith(b.entryOf("6")->id, "e|d:Prime Sports"));
   // A regional sports network's old stream in the directory's free tier
-  // isn't free streaming: other. Another free-tier channel still is.
-  CHECK(b.entryOf("7")->category == LineupCategory::other);
+  // isn't free streaming: (Build 166) sports. Another free-tier channel
+  // still is free streaming.
+  CHECK(b.entryOf("7")->category == LineupCategory::sports);
   CHECK(b.entryOf("7")->kind == ChannelKind::channel);
   CHECK(b.entryOf("8")->category == LineupCategory::free);
   CHECK(regionalSportsBrand("Bally Sports Ohio Plus"));
@@ -622,8 +626,10 @@ TEST_CASE("Build 161: only stations and network feeds escape the channel list by
            channel("3", "TV: UNIVISION EAST", "US| TV"), channel("4", "US: NBC LOS ANGELES NEWS", "US| NEWS"),
            channel("5", "US-S| CBS News Philadelphia FHD", "US-S| NEWS"), channel("6", "US: FOX 5 TESTVILLE", "US| LOCALS"),
            channel("7", "US: PARAMOUNT+ ORIGINAL 1", "US| MOVIES"), channel("8", "|US| TELEMUNDO 47", "|US| LATINO")});
-  CHECK(b.entryOf("1")->category == LineupCategory::other);
-  CHECK(b.entryOf("2")->category == LineupCategory::other);
+  // Build 166: a regional sports network's and a league's channels are
+  // sports, even ones the list doesn't know.
+  CHECK(b.entryOf("1")->category == LineupCategory::sports);
+  CHECK(b.entryOf("2")->category == LineupCategory::sports);
   CHECK(b.entryOf("3")->category == LineupCategory::spanish);
   CHECK(b.entryOf("4")->category == LineupCategory::news);
   CHECK(b.entryOf("5")->category == LineupCategory::news);
@@ -736,6 +742,91 @@ TEST_CASE("Build 161: a US Spanish station without a call sign is its market's")
   ny.callsigns = {"WNJU"};
   in.prefs.markets = {ny};
   CHECK(lineup(in).lineupIDs.count(b.entryOf("2")->id));
+}
+
+TEST_CASE("Build 166: a provider's \"TV|\" copies join their channels' rows, and picks carry over") {
+  Built b({channel("1", "TV| TUDN ᴿᴬᵂ", "US| TV ᴿᴬᵂ"), channel("2", "US: TUDN", "US| SPANISH"),
+           channel("3", "TV| HBO ᴿᴬᵂ", "US| TV ᴿᴬᵂ"), channel("4", "US: HBO", "US| MOVIES"),
+           channel("5", "|US|  GOL TV ᵁᴴᴰ 1080", "|US| ✪ SPORTS"), channel("6", "TV| ESPN2 ᴿᴬᵂ", "US| TV ᴿᴬᵂ"),
+           channel("7", "US: ESPN2 HD", "US| SPORTS"), channel("8", "TV| MS NOW ᴿᴬᵂ", "US| TV ᴿᴬᵂ"),
+           channel("9", "RX: RELAX MOROCCO ᵁᴴᴰ 3840P", "4K| RELAX")});
+  REQUIRE(b.entryOf("1"));
+  CHECK(b.entryOf("1") == b.entryOf("2"));
+  CHECK(b.entryOf("1")->id == "e|r:tudn");
+  auto former = [&](const char* item, const char* id) {
+    const auto& ids = b.entryOf(item)->formerIds;
+    return std::find(ids.begin(), ids.end(), id) != ids.end();
+  };
+  // The row the "TV|" copy had on its own until now.
+  CHECK(former("1", "e|n:US-ES:tudn"));
+  CHECK(b.entryOf("3") == b.entryOf("4"));
+  CHECK(b.entryOf("3")->id == "e|r:hbo");
+  CHECK(b.entryOf("5")->id == "e|r:goltv");
+  CHECK(b.entryOf("6") == b.entryOf("7"));
+  CHECK(b.entryOf("8")->id == "e|r:ms-now");
+  // A resolution left the name: the row it had before is its earlier one.
+  CHECK(b.entryOf("9")->id == "e|n:US:relaxmorocco");
+  CHECK(former("9", "e|n:US:relaxmorocco3840p"));
+}
+
+TEST_CASE("Build 166: Other keeps what nothing knows, not sports networks, teams, directory rows or US Spanish") {
+  directory::Data dirData;
+  directory::Entry listed;
+  listed.id = listed.name = "Harbor Living Network";
+  listed.list = "pay";
+  listed.genre = "Lifestyle";
+  dirData.entries = {listed};
+  directory::Index dir(dirData);
+  Built b({channel("1", "USA | FanDuel Sports Network Detroit Plus", "|US| ✪ FANDUEL SPORTS"),
+           channel("2", "US: BALLY SPORTS DETROIT PLUS HD", "US| SPORTS"),
+           channel("3", "NHL TEAM| BOSTON BRUINS", "US| NHL PACKAGE"), channel("4", "NFL | BEARS", "|US| ✪ NFL TEAMS"),
+           channel("5", "MLS FC Dallas", "US| MLS TEAMS"), channel("6", "US: TUDN EXTRA 3", "US| SPANISH"),
+           channel("7", "US: ZONA TUDN", "US| SPANISH"), channel("8", "US: VIX DEPORTES", "US| SPANISH"),
+           channel("9", "US: TELEMUNDO DEPORTES AHORA", "US| SPANISH"), channel("10", "US: CINEMAX LATINO", "US| MOVIES"),
+           channel("11", "US: HARBOR LIVING NETWORK", "US| ENTERTAINMENT"),
+           // Still other: a feed nothing knows, a film loop, a streaming service's shows.
+           channel("12", "US: SOME SPORTS FEED", "US| SPORTS"), channel("13", "Denzel Washington 1", "|US| ✪ BEST ACTORS"),
+           channel("14", "HULU ORIGINALS 8", "US| VOD")},
+          &dir);
+  for (const char* item : {"1", "2", "3", "4", "5"}) {
+    CAPTURE(item);
+    REQUIRE(b.entryOf(item));
+    CHECK(b.entryOf(item)->category == LineupCategory::sports);
+  }
+  for (const char* item : {"6", "7", "8", "9", "10"}) {
+    CAPTURE(item);
+    REQUIRE(b.entryOf(item));
+    CHECK(b.entryOf(item)->category == LineupCategory::spanish);
+  }
+  REQUIRE(b.entryOf("11"));
+  CHECK(b.entryOf("11")->id == "e|d:Harbor Living Network");
+  CHECK(b.entryOf("11")->category == LineupCategory::entertainment);
+  for (const char* item : {"12", "13", "14"}) {
+    CAPTURE(item);
+    REQUIRE(b.entryOf(item));
+    CHECK(b.entryOf(item)->category == LineupCategory::other);
+  }
+}
+
+TEST_CASE("Build 166: a US English station named by its region is that market's station") {
+  Built b({channel("1", "US| NBC BAY AREA HD", "US| LOCALS ᴿᴬᵂ"), channel("2", "US: NBC 11 (KNTV) SAN JOSE", "US| LOCALS"),
+           channel("3", "US: NBC 11 [SALISBURY]", "US| LOCALS"), channel("4", "US: NBC SACRAMENTO", "US| LOCALS")});
+  REQUIRE(b.entryOf("1"));
+  CHECK(b.entryOf("1")->callsign == std::string("KNTV"));
+  CHECK(b.entryOf("1") == b.entryOf("2"));
+  CHECK(b.entryOf("1")->id == "e|cs:KNTV|NBC");
+  CHECK(b.entryOf("1")->category == LineupCategory::local);
+  // Picks made on the row it had alone carry over.
+  const auto& ids = b.entryOf("1")->formerIds;
+  CHECK(std::find(ids.begin(), ids.end(), "e|n:US:nbcbayarea") != ids.end());
+  // A market whose NBC station isn't on 11: not another market's 11.
+  CHECK_FALSE(b.entryOf("3")->callsign);
+  CHECK(b.entryOf("4")->callsign == std::string("KCRA"));
+  // "Bay Area" is San Francisco's region; "California" is four markets'.
+  CHECK(regionCities("bay area") == std::vector<std::string>{"san francisco"});
+  CHECK(regionCities("california").size() == 4);
+  CHECK(regionCities("san francisco").empty());
+  CHECK(regionCities("nowhere").empty());
 }
 
 TEST_CASE("Build 161: the built-in reference data") {

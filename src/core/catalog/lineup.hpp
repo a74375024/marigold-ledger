@@ -99,11 +99,25 @@ struct LocalAreas {
   // Bare call sign -> index into names: each area's call signs
   // (MarketChoice::callsigns) and the reference data's stations in it.
   std::unordered_map<std::string, int> areaOf;
+  // Build 166: each area's places, as LineupPrefs::marketPlaces() gives
+  // them for one market (its cities and the names for its region: "bay
+  // area" for San Francisco).
+  std::vector<std::set<std::string>> places;
   // A station's area by its call sign ("WNBC", "WABC-TV"); -1 for none.
   int of(const std::optional<std::string>& callsign) const;
+  // Build 166: and a local with no call sign by its scope
+  // ("regional:bay area"): the area whose places have it; with two or more,
+  // home (0); -1 for none.
+  int of(const std::optional<std::string>& callsign, const std::string& scope) const;
 };
 // Made once per lineup build (empty with fewer than two areas picked).
 LocalAreas localAreas(const LineupPrefs& prefs);
+
+// Build 166: the market cities a region's name stands for ("bay area" ->
+// {"san francisco"}; "california" -> four), from the names
+// LineupPrefs::marketPlaces() adds for a market. Lower case; empty when the
+// name is no region's.
+std::vector<std::string> regionCities(std::string_view region);
 
 // Whether a market is on Pacific, Mountain, Alaska or Hawaii time, where
 // cable carries the West feeds (a network's West feed is its Pacific

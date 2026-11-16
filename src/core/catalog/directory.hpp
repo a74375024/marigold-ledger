@@ -126,7 +126,10 @@ class Index {
   // only asked when no listed channel has the name, even loosely ("Bounce"
   // is Bounce TV). An other name that is the entry's name and more
   // ("GritXtra") isn't one, and one left with a single word ("The Action
-  // Channel") matches only exactly.
+  // Channel") matches only exactly. Build 166: a name of two or more words
+  // that shares none with the entry's name matches an other name only when
+  // written like a channel's (in capitals, or with a number or a word such
+  // as "TV", "Network", "HD"): "Jennifer Lopez" isn't The Weather Channel.
   Match match(std::string_view name) const;
   // The entry with this id (nullptr when none).
   const Entry* entryById(const std::string& id) const;

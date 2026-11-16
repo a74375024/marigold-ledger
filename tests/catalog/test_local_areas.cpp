@@ -217,3 +217,67 @@ TEST_CASE("lineup: three areas, and a station in two of them") {
                                                "WRAA:River Town", "WRBB:River Town", "KHAA:Hill Valley",
                                                "WOUT:-", "NEWS:-", "WHSP:-"});
 }
+
+TEST_CASE("Build 166: a local with no call sign goes to the picked area its place names") {
+  LineupPrefs prefs;
+  prefs.markets = {market("San Francisco\xe2\x80\x93Oakland\xe2\x80\x93San Jose", {"KNTV"}), market("Los Angeles", {"KNBC"})};
+  LocalAreas areas = localAreas(prefs);
+  CHECK(areas.of(std::nullopt, "regional:bay area") == 0);
+  CHECK(areas.of(std::nullopt, "regional:san jose") == 0);
+  CHECK(areas.of(std::nullopt, "regional:los angeles") == 1);
+  CHECK(areas.of(std::nullopt, "regional:socal") == 1);
+  CHECK(areas.of(std::nullopt, "regional:boston|bay area") == 0);
+  // Both areas' place: home.
+  CHECK(areas.of(std::nullopt, "regional:california") == 0);
+  prefs.homeMarket = "Los Angeles";
+  CHECK(localAreas(prefs).of(std::nullopt, "regional:california") == 0);
+  CHECK(localAreas(prefs).of(std::nullopt, "regional:bay area") == 1);
+  // Neither area's, no place, or a call sign of neither: none.
+  CHECK(areas.of(std::nullopt, "regional:boston") == -1);
+  CHECK(areas.of(std::nullopt, "regional:?") == -1);
+  CHECK(areas.of(std::nullopt, "national") == -1);
+  CHECK(areas.of(std::string("WOUT"), "regional:bay area") == -1);
+  CHECK(areas.of(std::string("KNBC"), "local") == 1);
+}
+
+TEST_CASE("Build 166: in the guide, such a local is under its area, not a Local of its own") {
+  LineupInput in = input(kStations, {kHarbor, kRiver});
+  // "NBC BAYSIDE": a local nothing found the call sign of; and one of a
+  // place neither area has.
+  EntryInfo bayside;
+  bayside.id = "e|n:US:nbcbayside";
+  bayside.name = "NBCBAY";
+  bayside.category = LineupCategory::local;
+  bayside.market = "US";
+  bayside.scope = "regional:bayside";
+  bayside.members = {"xt:1|NBCBAY"};
+  EntryInfo far = bayside;
+  far.id = "e|n:US:nbcfaraway";
+  far.name = "NBCFAR";
+  far.scope = "regional:faraway";
+  far.members = {"xt:1|NBCFAR"};
+  in.infos.push_back(bayside);
+  in.infos.push_back(far);
+  in.channels.push_back(channel("NBCBAY", "NBCBAY"));
+  in.channels.push_back(channel("NBCFAR", "NBCFAR"));
+  for (size_t i = 0; i < in.channels.size(); ++i) in.indexByID[in.channels[i].id] = i;
+  in.prefs.added = {"e|n:US:nbcbayside", "e|n:US:nbcfaraway"};
+  LineupOutput out = lineup(in);
+  REQUIRE(out.areaNames == std::vector<std::string>{"Harbor City", "River Town"});
+  REQUIRE(out.areaSection("e|n:US:nbcbayside"));
+  CHECK(*out.areaSection("e|n:US:nbcbayside") == "Harbor City");
+  // A real orphan stays under Local.
+  CHECK(out.areaSection("e|n:US:nbcfaraway") == nullptr);
+}
+
+TEST_CASE("Build 166: an area's reference stations whatever dash its name is written with") {
+  const reference::Index& index = reference::builtInIndex();
+  if (index.stationsIn("San Francisco-Oakland-San Jose").empty()) return;  // built without
+  CHECK(index.stationsIn("San Francisco\xe2\x80\x93Oakland\xe2\x80\x93San Jose").size() ==
+        index.stationsIn("San Francisco-Oakland-San Jose").size());
+  CHECK(index.stationsIn("San Francisco\xe2\x80\x94Oakland").empty());
+  LineupPrefs prefs;
+  prefs.markets = {market("San Francisco\xe2\x80\x93Oakland\xe2\x80\x93San Jose", {}), market("Los Angeles", {})};
+  CHECK(localAreas(prefs).of(std::string("KNTV")) == 0);
+  CHECK(prefs.marketCallsigns().count("KNTV"));
+}

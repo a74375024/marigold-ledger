@@ -17,6 +17,8 @@ namespace {
 
 using text::contains;
 
+std::string cleanNameWith(std::string_view name, bool since166, bool* changed);
+
 // Prefilters: many patterns below need a character every one of their
 // matches contains (a ':' or '(' literal, a digit). Checking for it first
 // skips the regex on most names and gives the same results.
@@ -86,7 +88,10 @@ std::optional<std::string> countryFor(std::string_view name, std::string_view lo
       {"mexico", "MX"},   {"vietnam", "VN"},        {"arabic", "AR"},     {"indonesia", "ID"},
       {"thailand", "TH"}, {"united kingdom", "UK"}, {"canada", "CA"},     {"india", "IN"},
       {"brazil", "BR"},   {"spain", "ES"},          {"france", "FR"},     {"germany", "DE"},
-      {"italy", "IT"},    {"portugal", "PT"},       {"philippines", "PH"}};
+      {"italy", "IT"},    {"portugal", "PT"},       {"philippines", "PH"},
+      // Build 166: "SWEDEN HD & HEVC", "NORWAY SPORT" (headed "#####").
+      {"sweden", "SE"},   {"norway", "NO"},         {"denmark", "DK"},    {"finland", "FI"},
+      {"iceland", "IS"}};
   for (const auto& [word, code] : kGroupMap) {
     if (contains(group, word)) return std::string(code);
   }
@@ -232,6 +237,14 @@ std::optional<std::string> eventFeedBrand(std::string_view display) {
   // "NBC Sports Network 2 (Feed)": a network's overflow game feeds.
   if (auto m = rx::first("^(.{2,40}?)\\s*\\d{1,2}\\s*\\(feed\\)", display, true))
     return std::string(str::trimUnicode(m->group(1)));
+  // Build 166: "ESPN PLAY EVENTS 12 HD", "<brand> EVENTS 3", "ESPN COLLEGE
+  // EXTRA 5": numbered game feeds under the brand's name.
+  if (mayHaveDigit(display)) {
+    if (auto m = rx::first("^(.{2,40}?\\s(?:play\\s+)?events?|.{2,40}?\\scollege\\s+extra)\\s*\\d{1,3}"
+                           "(?:\\s+(?:hd|fhd|uhd|sd))?$",
+                           display, true))
+      return std::string(str::trimUnicode(m->group(1)));
+  }
   return std::nullopt;
 }
 
@@ -385,6 +398,15 @@ std::optional<std::string> referenceStation(const reference::Index& index, std::
       place = str::lower(std::string(str::trimUnicode(*rest)));
     }
   }
+  // Build 166: a quality word after it isn't the place ("NBC BAY AREA HD"),
+  // and a region's name is its market's ("bay area": San Francisco).
+  place = std::string(str::trimUnicode(rx::replace(place, "(\\s+(hd|fhd|uhd|sd|4k))+$", "")));
+  if (!place.empty() && std::none_of(carriers.begin(), carriers.end(), [&](const reference::Index::Carrier& c) {
+        return placeInMarket(place, c.station->market);
+      })) {
+    std::vector<std::string> cities = regionCities(place);
+    if (cities.size() == 1) place = cities.front();
+  }
   auto mainNumber = [](const std::string& n) { return text::toInt(n.substr(0, n.find('.'))); };
   std::vector<const reference::Index::Carrier*> byNumber, byPlace;
   for (const reference::Index::Carrier& c : carriers) {
@@ -398,7 +420,12 @@ std::optional<std::string> referenceStation(const reference::Index& index, std::
     for (const auto* c : byNumber)
       if (std::find(byPlace.begin(), byPlace.end(), c) != byPlace.end()) picks.push_back(c);
     // A place that isn't a market ("New Jersey"): by the number alone.
-    if (picks.empty() && byPlace.empty()) picks = byNumber;
+    // Build 166: not a market without this network's station ("CW 8
+    // [MISSOULA]" isn't Indianapolis' CW 8).
+    if (picks.empty() && byPlace.empty() &&
+        std::none_of(index.data().stations.begin(), index.data().stations.end(),
+                     [&](const reference::Station& s) { return placeInMarket(place, s.market); }))
+      picks = byNumber;
   } else if (number) {
     picks = byNumber;
   } else if (!place.empty()) {
@@ -423,7 +450,8 @@ template <typename StationLike>
 std::string scopeFor(std::string_view display, StationLike stationLike) {
   // A regional sports network: its home places ("regional:a|b").
   if (auto places = regionalSportsPlaces(display)) return "regional:" + str::join(*places, "|");
-  if (rx::test("^\\s*\\(?(nfl|nba|nhl|mlb|mls|wnba)\\)?\\s+(\\([A-Z]{2,4}\\)\\s+)?[A-Za-z]",
+  // (Build 166: also "NFL | BEARS".)
+  if (rx::test("^\\s*\\(?(nfl|nba|nhl|mlb|mls|wnba)\\)?\\s*\\|?\\s+(\\([A-Z]{2,4}\\)\\s+)?[A-Za-z]",
                display, true)) {
     return "team";
   }
@@ -750,6 +778,18 @@ bool unknownChannel(const std::string& name, const ChannelTraits& traits, const 
   return false;
 }
 
+// Build 166: a regional sports network ("FanDuel Sports Network Ohio",
+// "BALLY SPORTS DETROIT PLUS", an MSG alternate) or a team's own channel
+// ("NHL TEAM| BOSTON BRUINS", "NFL | BEARS", "MLB Detroit Tigers"): a
+// sports channel, even one the channel list doesn't know.
+bool sportsOfItsOwn(const std::string& name, const ChannelTraits& traits) {
+  if (traits.scope == "team" || proTeamChannel(name) || regionalSportsBrand(name) || regionalSportsPlaces(name))
+    return true;
+  if (traits.category != LineupCategory::sports) return false;
+  // A sports channel of a region ("regional:new york") or a league's.
+  return str::startsWith(traits.scope, "regional:") || rx::test("^\\W*(nfl|nba|nhl|mlb|mls|wnba)\\b", name, true);
+}
+
 }  // namespace
 
 CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
@@ -1056,7 +1096,14 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
       if (context.reference && usMarket && entry.kind == ChannelKind::channel &&
           entry.category != LineupCategory::international && entry.category != LineupCategory::radio &&
           entry.category != LineupCategory::free && !networkFeed(entry.name, traits.scope)) {
-        entry.category = LineupCategory::other;
+        // Build 166: but for a regional sports network or a team's channel
+        // (sports), a channel the directory knows, and US Spanish channels:
+        // those are what the rules made them.
+        if (sportsOfItsOwn(entry.name, traits)) {
+          entry.category = LineupCategory::sports;
+        } else if (!str::startsWith(key, "d:") && entry.category != LineupCategory::spanish) {
+          entry.category = LineupCategory::other;
+        }
       }
     }
     entry.market = traits.market;
@@ -1355,7 +1402,8 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
       market = "US-ES";
     }
   }
-  std::string display = cleanName(name);
+  bool cleanedSince166 = false;  // a Build 166 rule took a prefix or a resolution off
+  std::string display = cleanNameWith(name, true, &cleanedSince166);
   // "[Denver] PBS12", "[Seattle] Oxygen": the provider's note of where the
   // feed comes from.
   std::optional<std::string> bracketCity;
@@ -1514,7 +1562,9 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
     // [SAN FRANCISCO]", "UNIVISION 65 [NEW JERSEY]", "UNIVISION LOS
     // ANGELES") by the reference data's stations: its network and channel
     // number or place. It is then that market's local, not a national one.
-    if (!callsign && context.reference && market == std::string("US-ES") && stationLike()) {
+    // Build 166: a US English one too ("NBC BAY AREA HD" is KNTV).
+    if (!callsign && context.reference && (market == std::string("US-ES") || market == std::string("US")) &&
+        stationLike()) {
       callsign = referenceStation(*context.reference, display, bracketCity ? bracketCity : parenCity);
       stationByReference = callsign.has_value();
     }
@@ -1623,7 +1673,13 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
       }
     }
     key = "cs:" + *callsign + "|" + network;
-    if (stationByReference) earlier = "n:" + (market ? *market : std::string("?")) + nameKey(display);
+    if (stationByReference) {
+      earlier = "n:" + (market ? *market : std::string("?")) + nameKey(display);
+      // Build 166: and its row with the bracketed place written in ("NBC 19
+      // [VIRGIN ISLANDS]"), which a US English station had until now.
+      std::string withPlace = "n:" + (market ? *market : std::string("?")) + nameKey(named);
+      if (withPlace != earlier) earlier += "\n" + withPlace;
+    }
   } else {
     // Never merged across countries: a Mexican feed isn't a backup for a US one.
     key = "n:" + (market ? *market : std::string("?")) + nameKey(named);
@@ -1641,6 +1697,16 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
   } else if (!earlier.empty()) {
     formerKey = earlier;
   }
+  // Build 166: a name read without a provider's prefix or a resolution now
+  // ("TV| ABC NEWS LIVE", "RELAX MOROCCO 3840P") keeps the row it had under
+  // Build 165's reading as its earlier id. (A directory row has its own.)
+  if (cleanedSince166 && (str::startsWith(key, "n:") || str::startsWith(key, "core:") || str::startsWith(key, "cs:"))) {
+    std::string before = cleanNameWith(name, false, nullptr);
+    std::string bracketedBefore = bracketed.empty() ? std::string() : withBracketWords(before);
+    std::string was = "n:" + (market ? *market : std::string("?")) + nameKey(bracketedBefore.empty() ? before : bracketedBefore);
+    if (was != key && ("\n" + formerKey + "\n").find("\n" + was + "\n") == std::string::npos)
+      formerKey = formerKey.empty() ? was : formerKey + "\n" + was;
+  }
 
   std::string scope;
   if (core) {
@@ -1649,6 +1715,10 @@ ChannelTraits traitsFor(const Channel& channel, const CallsignContext& context, 
     scope = "local";
   } else if (market == std::string("US") || market == std::string("US-ES")) {
     scope = scopeFor(display, stationLike);
+    // Build 166: "NBA TEAM| ATLANTA HAWKS": the prefix cleanName() took off
+    // said it is a team's channel.
+    if (scope != "team" && hasAnyOf(name, "|") && rx::test("^\\s*(nfl|nba|nhl|mlb|mls|wnba)\\s+teams?\\s*\\|", name, true))
+      scope = "team";
   } else {
     scope = "national";
   }
@@ -1824,15 +1894,17 @@ bool freeServiceName(std::string_view name) {
                   name, true);
 }
 
+bool separatorName(std::string_view name) {
+  bool separatorChars = name.find_first_of("#=-*~") != std::string_view::npos ||
+                        contains(name, "▬") || contains(name, "━") || contains(name, "═");
+  return separatorChars && rx::test("^\\s*(#{2,}|={2,}|-{3,}|\\*{2,}|▬|━|═|~{2,})|#{3,}\\s*$", name);
+}
+
 ChannelKind kindFor(std::string_view name, std::string_view lower, std::string_view group,
                     bool isCore) {
   // Each pattern below only runs when the name holds a character or word
   // every one of its alternatives needs (a cheap scan; same results).
-  bool separatorChars = name.find_first_of("#=-*~") != std::string_view::npos ||
-                        contains(name, "▬") || contains(name, "━") || contains(name, "═");
-  if (separatorChars && rx::test("^\\s*(#{2,}|={2,}|-{3,}|\\*{2,}|▬|━|═|~{2,})|#{3,}\\s*$", name)) {
-    return ChannelKind::separator;
-  }
+  if (separatorName(name)) return ChannelKind::separator;
   if (placeholderName(lower)) return ChannelKind::placeholder;
   // A numbered slot ("NCAAF 16: USA NETWORK") is an event even when it names a network.
   bool digits = mayHaveDigit(name);
@@ -2033,7 +2105,13 @@ bool isPlaceholder(std::string_view textIn) {
   return text::count(str::trimUnicode(lower, true)) < 3;
 }
 
-std::string cleanName(std::string_view name) {
+namespace {
+
+// cleanName(), and with `since166` false as Build 165 wrote it (for a row's
+// earlier id); `changed` (when given) says whether a Build 166 rule took
+// something off.
+std::string cleanNameWith(std::string_view name, bool since166, bool* changed) {
+  if (changed) *changed = false;
   // Superscript markers ("ᴿᴬᵂ ⁶⁰ᶠᵖˢ ⱽᴵᴾ"), "ⓧ".
   std::string s(name);
   if (hasNonAscii(s)) {
@@ -2046,31 +2124,54 @@ std::string cleanName(std::string_view name) {
   if (hasAnyOf(s, ":")) {
     s = rx::replace(s, "^\\s*[A-Z0-9&+]{1,8}(\\s[A-Z0-9&+]{1,6})?\\s*:\\s+(?=\\S{2})", "");
   }
+  // Build 166: and the same written with a bar right after it: "TV|",
+  // "GOLD|", "4K|", "NFL TEAMS|", "SWE|". (Country codes are still read from
+  // the name itself; "NEXT | ...", "NY | Watertown | ..." keep theirs.)
+  // ("US|", "UK|" and the like went before too, below.)
+  if (since166 && hasAnyOf(s, "|") && !rx::test("^\\s*(USA?|REG|MEX|MX|UK|CA)\\|", s)) {
+    std::string out = rx::replace(s, "^\\s*[A-Z0-9&+]{1,8}(\\s[A-Z0-9&+]{1,6})?\\|\\s*(?=[^\\s|]{2})", "");
+    if (changed && out != s) *changed = true;
+    s = std::move(out);
+  }
   struct Pattern {
     const char* pattern;
     const char* needs;  // skipped unless one of these is in the name (nullptr: always run)
+    bool since166;
   };
   static const Pattern kPatterns[] = {
-      {"^\\s*(\\([A-Za-z0-9 ]{1,14}\\)\\s*)+", "("},          // (US) (A)
-      {"^\\s*\\|\\s*[A-Za-z]{2,5}\\s*\\|\\s*", "|"},          // |US| |EGYPT|
-      {"^\\s*(USA?|US|REG|MEX|MX|UK|CA)\\s*[:|]\\s*", ":|"},  // US: / USA |
+      {"^\\s*(\\([A-Za-z0-9 ]{1,14}\\)\\s*)+", "(", false},          // (US) (A)
+      {"^\\s*\\|\\s*[A-Za-z]{2,5}\\s*\\|\\s*", "|", false},          // |US| |EGYPT|
+      {"^\\s*(USA?|US|REG|MEX|MX|UK|CA)\\s*[:|]\\s*", ":|", false},  // US: / USA |
       // US / USA, but not USA Network's own name.
-      {"^\\s*(USA?|US)\\s+(?!network\\b)", "Uu"},
-      {"^\\s*\\[[^\\]]{1,30}\\]\\s*", "["},                   // [Denver]
-      {"^\\s*(\\([A-Za-z0-9 ]{1,14}\\)\\s*)+", "("},          // US (English) ...
-      {"\\s*\\((A|H|D|S|P|SP|RK|GT|DZ|XV|F|X|Prime|SD|HD|FHD|UHD|4K|Backup)\\)", "("},
-      {"\\s*\\(\\d{3,4}p[^)]*\\)", "("},  // (720p29 @ 3.2Mbps)
-      {"\\b(FHD|UHD|4K|8K|HEVC|RAW|VIP|60FPS|50FPS)\\b", nullptr},
-      {"\\bBackup\\b", nullptr},
-      {"\\s{2,}", nullptr}};
+      {"^\\s*(USA?|US)\\s+(?!network\\b)", "Uu", false},
+      {"^\\s*\\[[^\\]]{1,30}\\]\\s*", "[", false},                   // [Denver]
+      {"^\\s*(\\([A-Za-z0-9 ]{1,14}\\)\\s*)+", "(", false},          // US (English) ...
+      {"\\s*\\((A|H|D|S|P|SP|RK|GT|DZ|XV|F|X|Prime|SD|HD|FHD|UHD|4K|Backup)\\)", "(", false},
+      {"\\s*\\(\\d{3,4}p[^)]*\\)", "(", false},  // (720p29 @ 3.2Mbps)
+      // Build 166: "4K+", HDR and a resolution ("1080p", "3840P", "2160"),
+      // which may follow a superscript "ᵁᴴᴰ" ("GOL TV ᵁᴴᴰ 1080"). A bare
+      // number only at the end ("SHAHID BUNDESLIGA 3 720").
+      {"\\b4K\\+", "+", true},
+      {"\\b(FHD|UHD|4K|8K|HEVC|RAW|VIP|60FPS|50FPS)\\b", nullptr, false},
+      {"\\bHDR\\b|\\b(720|1080|1440|2160|3840|4320)[PI]\\b", "PpIiRr", true},
+      {"\\s(720|1080|2160)\\s*$", "0", true},
+      {"\\bBackup\\b", nullptr, false},
+      {"\\s{2,}", nullptr, false}};
   constexpr size_t kCount = sizeof(kPatterns) / sizeof(kPatterns[0]);
   for (size_t i = 0; i < kCount; ++i) {
-    if (kPatterns[i].needs && !hasAnyOf(s, kPatterns[i].needs)) continue;
-    s = rx::replace(s, kPatterns[i].pattern, i == kCount - 1 ? " " : "", true);
+    const Pattern& p = kPatterns[i];
+    if ((p.since166 && !since166) || (p.needs && !hasAnyOf(s, p.needs))) continue;
+    std::string out = rx::replace(s, p.pattern, i == kCount - 1 ? " " : "", true);
+    if (p.since166 && changed && out != s) *changed = true;
+    s = std::move(out);
   }
   std::string trimmed(str::trimUnicode(s, false, ":|-"));
   return trimmed.empty() ? std::string(name) : trimmed;
 }
+
+}  // namespace
+
+std::string cleanName(std::string_view name) { return cleanNameWith(name, true, nullptr); }
 
 std::optional<int> virtualNumber(std::string_view name) {
   auto n = text::firstGroup(

@@ -304,7 +304,8 @@ LineupOutput lineup(const LineupInput& input) {
     size_t holding = 0;
     for (size_t i = 0; i < infos.size(); ++i) {
       if (infos[i].category != LineupCategory::local) continue;
-      int area = areas.of(infos[i].callsign);
+      // Build 166: one with no call sign ("NBC BAY AREA") by its place.
+      int area = areas.of(infos[i].callsign, infos[i].scope);
       areaAt[i] = area;
       if (area >= 0 && !held[static_cast<size_t>(area)] && out.lineupIDs.count(infos[i].id) &&
           std::any_of(infos[i].members.begin(), infos[i].members.end(),

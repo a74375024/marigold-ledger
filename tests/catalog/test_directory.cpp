@@ -76,6 +76,30 @@ TEST_CASE("directory: matching a provider's name") {
   CHECK(index.match("Zeta Channel").kind == MatchKind::none);
 }
 
+TEST_CASE("directory: Build 166: an other name a person's name shares no word with isn't the channel") {
+  Data data;
+  data.entries = {entry("The Weather Channel", "The Weather Channel", {"Jennifer López", "TWC", "Local Weather Now", "Storm Alert"}),
+                  entry("Fox Sports 2", "Fox Sports 2", {"Fuel TV"}), entry("Paramount Network", "Paramount Network", {"Spike"}),
+                  entry("MGM+ Marquee", "MGM+ Marquee", {"Epix Hits"}),
+                  entry("Daystar Television Network", "Daystar Television Network", {"Day Star"})};
+  Index index(data);
+  // A 24/7 loop of an actor's films, not the network whose meteorologist
+  // of that name redirects to its article.
+  CHECK_FALSE(index.match("Jennifer Lopez").entry);
+  CHECK_FALSE(index.match("Storm Alert").entry);
+  // Written like a channel's name: one word, a shared word, capitals, a
+  // channel word, or its words run together.
+  CHECK(index.match("TWC").entry);
+  CHECK(index.match("Local Weather Now").entry);
+  CHECK(index.match("FUEL TV").entry);
+  CHECK(index.match("Spike").entry);
+  CHECK(index.match("EPIX HITS").entry);
+  CHECK(index.match("Day STAR").entry);
+  // The channel's own name, and our corrections, as before.
+  CHECK(index.match("The Weather Channel").kind == MatchKind::exact);
+  CHECK(index.match("WGN America").kind == MatchKind::none);  // not listed here
+}
+
 TEST_CASE("directory: saved and read back") {
   Data data;
   data.made = "2026-10-28";

@@ -347,3 +347,72 @@ TEST_CASE("trailingNumber, bareCallsign, isPlaceholder") {
   CHECK(isPlaceholder("ab"));
   CHECK_FALSE(isPlaceholder("Team A vs Team B"));
 }
+
+TEST_CASE("Build 166: provider prefixes with a bar go, as \"TV:\" does; the country still reads") {
+  CHECK(cleanName("TV| A&E ᴿᴬᵂ") == "A&E");
+  CHECK(cleanName("GOLD| BBC NEWS ᴿᴬᵂ") == "BBC NEWS");
+  CHECK(cleanName("4K| SKY SPORTS MAIN EVENTS UHD") == "SKY SPORTS MAIN EVENTS");
+  CHECK(cleanName("NFL TEAMS| CBS BEARS CHICAGO IL") == "CBS BEARS CHICAGO IL");
+  CHECK(cleanName("NBA TEAM| ATLANTA HAWKS") == "ATLANTA HAWKS");
+  CHECK(cleanName("SWE| SVT 1 HD") == "SVT 1 HD");
+  // With a space before the bar it's a slot's status or a place, not a prefix.
+  CHECK(cleanName("NEXT | AS BAKARIDJAN VS. DERBY") == "NEXT | AS BAKARIDJAN VS. DERBY");
+  CHECK(cleanName("NY | Watertown | CW WWTI-D2") == "NY | Watertown | CW WWTI-D2");
+  // Words in lower case aren't a provider's prefix.
+  CHECK(cleanName("Tv|Thing") == "Tv|Thing");
+  // The country comes from the group or the name as before.
+  ChannelTraits latino = traitsFor(channel("1", "TV| HBO LATINO ᴿᴬᵂ", std::string("US| TV ᴿᴬᵂ ⁶⁰ᶠᵖˢ")));
+  CHECK(latino.country == std::string("US"));
+  CHECK(latino.displayName == "HBO LATINO");
+  CHECK(traitsFor(channel("2", "SWE| SVT 1", std::string("SWEDEN HD & HEVC"))).country == std::string("SE"));
+  CHECK(traitsFor(channel("3", "|US| GOL TV ᵁᴴᴰ 1080", std::string("|US| ✪ SPORTS"))).country == std::string("US"));
+  // A league's team prefix said whose channel it is: still a team's.
+  ChannelTraits bruins = traitsFor(channel("4", "NHL TEAM| BOSTON BRUINS", std::string("US| NHL PACKAGE")));
+  CHECK(bruins.scope == "team");
+  CHECK(bruins.category == LineupCategory::sports);
+  CHECK(traitsFor(channel("5", "NFL | BEARS", std::string("|US| ✪ NFL TEAMS"))).scope == "team");
+}
+
+TEST_CASE("Build 166: resolutions and more quality words leave the name") {
+  CHECK(cleanName("|US|  GOL TV ᵁᴴᴰ 1080") == "GOL TV");
+  CHECK(cleanName("|US|  MOTOR TREND ᵁᴴᴰ 1080") == "MOTOR TREND");
+  CHECK(cleanName("RX: RELAX MOROCCO ᵁᴴᴰ 3840P") == "RELAX MOROCCO");
+  CHECK(cleanName("US: ESPN 1080p") == "ESPN");
+  CHECK(cleanName("US: ESPN 2160P HDR") == "ESPN");
+  CHECK(cleanName("SKY SPORTS F1 4K+") == "SKY SPORTS F1");
+  CHECK(cleanName("AR| SHAHID BUNDESLIGA 3 720") == "SHAHID BUNDESLIGA 3");
+  // A bare number only at the end; a channel's own number stays.
+  CHECK(cleanName("US: FOX 1080 NEWS") == "FOX 1080 NEWS");
+  CHECK(cleanName("US: NBC 4") == "NBC 4");
+  // The quality ranking still reads them.
+  CHECK(traitsFor(channel("1", "US: Dream Channel 1080")).quality == 2);
+}
+
+TEST_CASE("Build 166: numbered game feeds under a brand's name are event feeds") {
+  // As build() reads them when they're too few for a numbered family.
+  auto read = [](const char* name, const char* group) {
+    return traitsFor(channel("1", name, std::string(group)), CallsignContext(), false);
+  };
+  ChannelTraits play = read("ESPN PLAY EVENTS 12 HD", "US| SPORTS");
+  CHECK(play.kind == ChannelKind::event);
+  CHECK(play.familyKey == std::string("feeds:espn play events"));
+  CHECK(play.familyNumber == 12);
+  CHECK(read("TV| ESPN PLAY EVENTS 3", "US| SPORTS").familyKey == std::string("feeds:espn play events"));
+  CHECK(read("NFL EVENTS 4", "US| SPORTS").familyKey == std::string("feeds:nfl events"));
+  ChannelTraits extra = read("ESPN COLLEGE EXTRA 5", "|US| ✪ SPORTS");
+  CHECK(extra.kind == ChannelKind::event);
+  CHECK(extra.familyKey == std::string("feeds:espn college extra"));
+  // TUDN's extra channels are channels (US Spanish), and a name that only
+  // has the word isn't a feed.
+  CHECK(read("US: TUDN EXTRA 2", "US| SPANISH").kind == ChannelKind::channel);
+  CHECK(read("US: SPECIAL EVENTS CHANNEL", "US| ENTERTAINMENT").kind == ChannelKind::channel);
+  // In a build: one family under the brand's name.
+  CatalogResult r = build({channel("1", "ESPN PLAY EVENTS 1 HD", std::string("US| ESPN PLAY")),
+                           channel("2", "ESPN PLAY EVENTS 2 HD", std::string("US| ESPN PLAY")),
+                           channel("3", "TV| ESPN PLAY EVENTS 3", std::string("US| ESPN PLAY"))},
+                          testdata::wednesdayNoon(), {});
+  REQUIRE(r.families.size() == 1);
+  CHECK(r.families[0].id == "fam|feeds:espn play events");
+  CHECK(r.families[0].feeds.size() == 3);
+  CHECK(r.entries.empty());
+}

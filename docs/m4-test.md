@@ -1927,3 +1927,34 @@ The catch-up test becomes replay. It belongs to the channel: any of its own copi
 | Keys | Fire TV play/pause, fast forward; Siri Remote play/pause; Mac Space; LG Play / Pause | Pause and play on; fast forward opens Rewind on Fire TV |
 | Guide data | Send a report › Playback log after a guide update | "guide past: …" lines; memory readings as before |
 | Log | Playback log | One "replay" line per action; no link anywhere |
+
+## Build 166: 1.0.10, channels
+
+The TV keeps up to 70,000 channels (was 30,000). With three providers the list a US viewer's rules let in is over 64,000 channels, so at 30,000 every other country's sports group, and some US ones, were cut. Nothing new to set: the same rules decide what comes first when a list is larger still.
+- **Cap:** measured on a desktop build with a list put together from the last five channel reports (72,560 channels, 64,276 let in): the app's peak went from 215 MB to 345 MB, sorting from 3.1 s to 5.1 s, rebuilding My Lineup's rows from 0.15 s to 0.5 s, and the saved channel list from 20 MB to 41 MB (4.5 MB as saved, compressed; read in 0.5 s). The TV (32-bit) holds less per channel than a desktop. If the LG is restarted for memory, 50,000 still holds every group of the viewer's countries, unmarked groups and other countries' sports; above that come only free streaming groups (with Free off) and groups of empty slots.
+- **What comes last:** a group named by its country in words ("SWEDEN HD & HEVC", "NORWAY VIAPLAY PPV", Denmark, Finland, Iceland), or headed by a "#####" line, is that country's, as "SE|" is: its sports groups are kept after the viewer's country's, the rest left out (before, about 4,600 of one provider's Nordic channels came ahead of every other country's sports). A group of four in five or more empty slots and headings ("NO EVENT STREAMING", "#####", a slot dated "2098-12-31") comes after everything else unless My Lineup has one of its channels; when its games are listed, the next refresh puts it back in its country's place.
+- **Names:** a provider's prefix with a bar goes as "TV:" does: "TV| A&E", "GOLD| …", "4K| …", "NFL TEAMS| …", "NBA TEAM| …" (a team prefix keeps the row a team's channel). The country is still read from the group and the name. Resolutions and more quality words leave the name: "1080", "720", "2160" at the end, "1080p", "3840P", "4K+", "HDR". So one provider's 549 "TV| …" copies join their channels' rows (A&E, AMC, CNN, CNBC, ESPN2, FS1, HBO Latino, TUDN, Universo…), and "|US| GOL TV ᵁᴴᴰ 1080" is GolTV. A row that changes id this way keeps its old one as an earlier id, so picks, removals and favourites carry over.
+- **Other:** fewer rows end up there. A channel the channel directory knows keeps its section; a regional sports network (FanDuel, Bally and Fox Sports names, MSG and other alternates) and a team's own channel (NBA, NHL, MLB, NFL, MLS, WNBA teams) are Sports; US Spanish channels (TUDN Extra, Zona TUDN, ViX Deportes, Telemundo Deportes Ahora, Cinemax Latino) are Spanish. Streaming services' show loops (Hulu, Peacock, Paramount+ originals, Cinemania, Big Brother cameras) and actors' film loops stay in Other.
+- **Event feeds:** "ESPN PLAY EVENTS 12 HD", "<brand> EVENTS 3" and "ESPN COLLEGE EXTRA 5" are a brand's numbered game feeds, in Live Events with the other event feeds, not channels in the guide.
+- **Other names:** a name of two or more words that shares no word with a channel's is taken for one of its other names only when written like a channel's (in capitals, or with a number or a word such as TV, Network, HD): a "Jennifer Lopez" film loop is no longer The Weather Channel (a meteorologist of that name is among the directory's other names for it). Renamed channels written that way (Spike, DIY, EPIX HITS, Fuel TV) still find their rows.
+- **Locals:** a US station named by its region ("NBC BAY AREA HD") is the market's station (KNTV) and joins its row, keeping its own row's id for picks. A local with no call sign but a place goes to the picked area whose place it is ("Bay Area": San Francisco); a place two areas share goes to home. "Local" holds only stations of no picked area. An area picked from the station lists (written with en dashes) now also counts the built-in list's stations of that market.
+- **Saved list:** a channel list with Other rows was read back as damaged, so every launch sorted the whole list again before the guide showed; it is read now, and a launch whose download hasn't changed skips the sort. The saved list's version changes, so the first launch of 1.0.10 sorts once.
+
+Measured with this report's channels through the rules (each provider as its own account): Other rows 1,956 → 1,112; Sports 309 → 722; Spanish 136 → 176; My Lineup 349 rows → 343 (the "TV|" copies of HBO Latino, TUDN, Universo, ABC News Live, Fox News and NBC News Now, GolTV and NBC Bay Area joined their rows; none left in Other); one provider's US channel copies with a row the channel lists know 39% → 62%, in Other 62% → 19%.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Cap | Help › playback log after a full refresh | "admitted N channels in G groups; 0 groups cut for room" (N above 30,000 with three providers) |
+| Memory (LG) | Settings › Help & info › About › Memory in use, after a full refresh and after an hour | Not restarted; within about 150 MB of 1.0.9's figure |
+| Speed (LG) | "sorted N channels in X ms" in the log; edit My Lineup | Sorting under a minute; the lineup updates within a few seconds |
+| Relaunch | Relaunch with nothing changed at the provider | The guide shows without "Sorting your channels…"; the log says the list is unchanged |
+| Nordic groups | All Channels, Search: SVT 1, TV 2 | Not there (another country's non-sports channels); their sports events in Live Events |
+| TV\| copies | A&E, CNN, ESPN2, HBO Latino, TUDN, Universo | One row each, with the "TV\|" copy among its sources; no second row |
+| GolTV | Search "GOL" | One GolTV row |
+| Other | Settings › Other channels on, then All Channels › Other | No FanDuel, Bally, team or TUDN Extra rows there; Hulu / Peacock originals and film loops still there |
+| Sports | All Channels › Sports | FanDuel Sports Network rows, team channels (Boston Bruins, Bears) |
+| Spanish | All Channels › Spanish (Spanish on) | TUDN Extra 1–11, Zona TUDN, ViX Deportes, Cinemax Latino |
+| Event feeds | Live Events with Event channels on | "ESPN PLAY EVENTS" feeds there; none in the guide |
+| Weather Channel | Search "Weather" | The Weather Channel row has no film loop among its sources |
+| Bay Area | My Lineup with San Francisco and Los Angeles picked | NBC Bay Area's copy is in KNTV's row under San Francisco; no "Local" row for it |
+| Picks kept | A row added, removed or starred before (HBO Latino's "TV\|" row, NBC Bay Area) | Still added, removed or starred after the update |
