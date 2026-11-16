@@ -447,7 +447,8 @@ class Store {
   void markAudioOnly(const std::string& id);
   bool audioOnly(const std::string& id) const;
   // The version of a channel that just played: it starts first next time
-  // (unless one is pinned with pinFeed).
+  // (unless one is pinned with pinFeed, or, Build 169, a copy measured
+  // working has a better picture: versionsOf).
   void rememberFeed(const std::string& entryId, const std::string& channelId);
   void pinFeed(const std::string& entryId, const std::string& channelId);  // "" = automatic
   std::string pinnedFeed(const std::string& entryId) const;

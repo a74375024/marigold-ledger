@@ -281,16 +281,24 @@ std::vector<std::string> bestFeeds(const std::vector<std::string>& ids,
 std::vector<std::string> baseVersions(const std::string& id, const catalog::EntryInfo* info,
                                       const std::optional<std::string>& pinned, const Reliability& reliability,
                                       const std::function<bool(const std::string&)>& exists);
+// Build 169: holds(ahead, behind): the version `ahead` keeps its place
+// before `behind` in the two below (the store: a server-opened version
+// measured working with a better picture tier, scores::holdsAhead).
+using Holds = std::function<bool(const std::string& ahead, const std::string& behind)>;
 // Marigold (Build 136): direct versions (Xtream, M3U: a picture in about
 // 2.5 s) ahead of server-opened ones (Emby / Jellyfin: about 10 s, and
 // often none), whatever their sources' records; the first `keep` (the
 // pinned or last played version) stay first. Stable within each kind.
+// Build 169: a direct version doesn't pass a server-opened one that
+// `holds` its place, so direct first applies within a picture tier.
 void directVersionsFirst(std::vector<std::string>& list, size_t keep,
-                         const std::function<bool(const std::string&)>& serverOpened);
+                         const std::function<bool(const std::string&)>& serverOpened, const Holds& holds = nullptr);
 // Marigold: `last` (a server-opened version that played last) moves to the
-// front of the server-opened versions, behind every direct one.
+// front of the server-opened versions, behind every direct one. Build 169:
+// with `holds`, only past the server-opened versions before it that don't
+// hold their place (and never past a direct one).
 void leadServerVersions(std::vector<std::string>& list, const std::string& last,
-                        const std::function<bool(const std::string&)>& serverOpened);
+                        const std::function<bool(const std::string&)>& serverOpened, const Holds& holds = nullptr);
 
 // What the store resolves for the candidates.
 struct ChannelRef {

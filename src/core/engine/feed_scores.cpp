@@ -58,6 +58,18 @@ bool Record::mostlyFails() const {
   return failures + kProbeWeight * probeFailures > plays + kProbeWeight * probes;
 }
 
+double Record::works() const {
+  double ok = plays + kProbeWeight * probes;
+  double bad = failures + kProbeWeight * probeFailures;
+  return (ok + 0.9) / (ok + bad + 1.0);
+}
+
+bool Record::working() const {
+  if (works() < kWorksAt) return false;
+  std::optional<uint32_t> m = medianStartMs();
+  return !m || *m <= kWorkingStartMs;
+}
+
 std::optional<uint32_t> Record::medianStartMs() const {
   if (startMs.empty()) return std::nullopt;
   return median(startMs);
@@ -179,6 +191,53 @@ std::optional<double> Book::score(const std::string& feedId, time::Seconds now) 
   return scoreOf(d);
 }
 
+Standing Book::standing(const std::string& feedId, time::Seconds now) const {
+  Standing s;
+  const Record* r = find(feedId);
+  if (!r) return s;
+  Record d = r->at(now);
+  s.tier = pictureTier(d.height, d.fps);
+  if (d.starts() < kEnoughStarts && d.probes + d.probeFailures < kEnoughProbes) return s;
+  s.measured = true;
+  s.works = d.working();
+  s.score = scoreOf(d);
+  return s;
+}
+
+int pictureTier(int height, int fps) {
+  int smooth = fps >= 49 ? 1 : 0;
+  if (height >= 1070) return 4 + smooth;
+  if (height >= 700) return 2 + smooth;
+  return height > 0 ? 1 : 0;
+}
+
+int claimedTier(std::string_view claimed) {
+  if (claimed.rfind("4K", 0) == 0 || claimed.rfind("FHD", 0) == 0) return 5;
+  if (claimed.rfind("HD", 0) == 0) return 3;
+  if (claimed.rfind("SD", 0) == 0) return 1;
+  return 0;
+}
+
+bool outranks(const Standing& a, const Standing& b) {
+  if (!a.measured || !a.works) return false;
+  if (!b.measured && b.tier == 0) return false;  // claims nothing: not passed
+  return a.tier > b.tier;
+}
+
+bool holdsAhead(const Standing& ahead, const Standing& behind) {
+  if (outranks(ahead, behind)) return true;
+  return ahead.measured && ahead.works && behind.measured && !behind.works;
+}
+
+bool keepsFirst(const std::string& first, const std::vector<std::string>& copies,
+                const std::function<Standing(const std::string&)>& standing) {
+  if (!standing) return true;
+  Standing f = standing(first);
+  for (const std::string& c : copies)
+    if (c != first && outranks(standing(c), f)) return false;
+  return true;
+}
+
 std::string Book::toJson() const {
   json::Value list = json::Value::array();
   for (const auto& [seq, id] : bySeq_) {
@@ -249,30 +308,50 @@ Book Book::fromJson(std::string_view text) {
 }
 
 void orderMeasured(std::vector<std::string>& ids, size_t keep,
-                   const std::function<std::optional<double>(const std::string&)>& score) {
-  if (!score || keep >= ids.size()) return;
-  // The measured copies' places, and the copies in them.
+                   const std::function<Standing(const std::string&)>& standing) {
+  if (!standing || keep >= ids.size()) return;
+  std::vector<Standing> of;
+  of.reserve(ids.size());
+  for (const std::string& id : ids) of.push_back(standing(id));
+  // 1. The measured copies' places, and the copies in them.
   std::vector<size_t> places;
-  std::vector<std::pair<size_t, double>> items;  // (catalog position, score)
-  for (size_t i = keep; i < ids.size(); ++i) {
-    if (std::optional<double> s = score(ids[i])) {
+  std::vector<size_t> items;  // catalog positions
+  for (size_t i = keep; i < ids.size(); ++i)
+    if (of[i].measured) {
       places.push_back(i);
-      items.emplace_back(i, *s);
+      items.push_back(i);
     }
-  }
-  if (items.size() < 2) return;
-  // The order stays unless a copy is clearly better. Not a strict ordering,
-  // so an insertion sort (as orderedByReliability) rather than std::sort.
-  auto before = [](const std::pair<size_t, double>& a, const std::pair<size_t, double>& b) {
-    if (std::fabs(a.second - b.second) > kClearlyBetter) return a.second > b.second;
-    return a.first < b.first;
+  // Working first; among them the better picture, then a clearly better
+  // score, then the catalog's order (copies that don't work: by score, as
+  // before). Not a strict ordering, so an insertion sort (as
+  // orderedByReliability) rather than std::sort.
+  auto before = [&of](size_t a, size_t b) {
+    const Standing& x = of[a];
+    const Standing& y = of[b];
+    if (x.works != y.works) return x.works;
+    if (x.works && x.tier != y.tier) return x.tier > y.tier;
+    if (std::fabs(x.score - y.score) > kClearlyBetter) return x.score > y.score;
+    return a < b;
   };
   for (size_t i = 1; i < items.size(); ++i)
     for (size_t j = i; j > 0 && before(items[j], items[j - 1]); --j) std::swap(items[j], items[j - 1]);
-  std::vector<std::string> moved;
-  moved.reserve(items.size());
-  for (const auto& item : items) moved.push_back(ids[item.first]);
-  for (size_t k = 0; k < places.size(); ++k) ids[places[k]] = std::move(moved[k]);
+  std::vector<std::string> ordered = ids;
+  std::vector<Standing> orderedOf = of;
+  for (size_t k = 0; k < places.size(); ++k) {
+    ordered[places[k]] = ids[items[k]];
+    orderedOf[places[k]] = of[items[k]];
+  }
+  // 2. A working copy with a better picture than an unmeasured copy before
+  // it claims moves just ahead of it (past each such copy in turn; never
+  // past a measured copy or one it doesn't outrank).
+  for (size_t i = keep + 1; i < ordered.size(); ++i) {
+    if (!orderedOf[i].measured || !orderedOf[i].works) continue;
+    for (size_t j = i; j > keep && !orderedOf[j - 1].measured && outranks(orderedOf[j], orderedOf[j - 1]); --j) {
+      std::swap(ordered[j], ordered[j - 1]);
+      std::swap(orderedOf[j], orderedOf[j - 1]);
+    }
+  }
+  ids = std::move(ordered);
 }
 
 std::string_view providerOf(std::string_view feedId) {

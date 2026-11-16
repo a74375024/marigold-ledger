@@ -697,6 +697,24 @@ TEST_CASE("test all sources: the same service underneath, and backups from anoth
   ids = {"trex|0", "trex|1", "xtream|0", "dream|0"};
   st::preferSeparateBackup(ids, [&same](std::string_view a, std::string_view b) { return st::isSame(same, a, b); });
   CHECK(ids == std::vector<std::string>{"trex|0", "trex|1", "xtream|0", "dream|0"});
+
+  // Build 169: copies ordered by their measured picture first (Xtream's
+  // and Trex's 1080p ahead of Dream's 720p); the backup still comes from
+  // a separate service.
+  scores::Book pictures;
+  scores::Probe full = good, hd = good;
+  full.height = 1080;
+  full.fps = 60;
+  hd.height = 720;
+  hd.fps = 60;
+  pictures.recordProbe("xtream|0", full, now);
+  pictures.recordProbe("trex|0", full, now);
+  pictures.recordProbe("dream|0", hd, now);
+  ids = {"dream|0", "xtream|0", "trex|0"};
+  scores::orderMeasured(ids, 0, [&](const std::string& id) { return pictures.standing(id, now); });
+  CHECK(ids == std::vector<std::string>{"xtream|0", "trex|0", "dream|0"});
+  st::preferSeparateBackup(ids, [&same](std::string_view a, std::string_view b) { return st::isSame(same, a, b); });
+  CHECK(ids == std::vector<std::string>{"xtream|0", "dream|0", "trex|0"});
 }
 
 TEST_CASE("test all sources: keeping one or two, the best pair and the channels you'd lose by name") {
