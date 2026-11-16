@@ -69,7 +69,8 @@ TEST_CASE("six recoveries in 180 s, then it stops: dropping") {
 
 TEST_CASE("six recoveries in 180 s, then it stops: failing to start") {
   Rig t;
-  t.tune({xt("a"), xt("b"), xt("c")});
+  // One provider: each version gets one retry, then the next (Build 163).
+  t.tune({xt("a"), xt("b"), xt("c"), xt("d")});
   Actions a;
   for (int i = 0; i < 7; ++i) a = failStart(t);
   CHECK(giveUpMessage(a) ==
@@ -97,12 +98,11 @@ TEST_CASE("a new channel starts with a fresh budget") {
   Rig t;
   t.tune({xt("a"), xt("b")});
   failStart(t);
-  failStart(t);
   CHECK(logged(failStart(t), "switch"));
   t.tune({xt("a"), xt("b")});
   Actions a = failStart(t);
   CHECK(logged(a, "retry"));
-  CHECK(logDetail(a, "retry").find("attempt 1 of 2") != std::string::npos);
+  CHECK(logDetail(a, "retry").find("attempt 1 of 1") != std::string::npos);
 }
 
 TEST_CASE("a feed picked in Sources wraps round the list before giving up") {

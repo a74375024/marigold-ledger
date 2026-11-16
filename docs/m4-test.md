@@ -1832,3 +1832,16 @@ The same channel list also says, per Xtream copy, whether the provider marks it 
 | Provider fields | Same report | `adult`, `more_categories`, `added`, `direct_source` filled where the provider gives them; no address anywhere in the report |
 | Saved list | Relaunch with the channel list cached | Same values as before the relaunch |
 | No change | Guide, playback, Live Events | Same as Build 161 |
+
+## Build 163: 1.0.7, catch-up test and faster fallback
+
+Faster fallback:
+- A version that fails to start no longer gets two more tries before another version is tried (the playback logs: the retry played 18 times in 83 and failed again 42 times, about 12 s a try). A version from the other provider, with its own connection limit, is tried at once; with only the same provider's versions left, the failed one gets one retry first; the last version left still gets two.
+- A direct feed the server closes before a picture ("stream ended") fails at once rather than after the 10 s wait.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Dead first copy | A channel whose first version is dead and has a version on the other provider (SportsGrid on the 1.0.6 log) | The other provider's version plays about 10 s after the tune, no "retry" line before the "switch" |
+| Same provider | A channel whose versions are all on one provider, first one dead | One "retry … (attempt 1 of 1)", then the next version |
+| One version | A channel with one version that won't start (Flix West) | Two retries, then the "stopped working" card, as before |
+| Ended early | The playback log on a dead copy | "stream ended", then "start failed: ended before a picture" at the same moment |

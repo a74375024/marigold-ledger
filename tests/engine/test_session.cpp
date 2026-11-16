@@ -152,12 +152,13 @@ TEST_CASE("session: no picture in 20 seconds moves to the next feed and says why
   auto feeds = r.store->feeds(ids[0]);
   r.session->setShowingFull(true);
   REQUIRE(r.session->tune(ids[0]));
-  // A provider stream is tried again twice before the next feed (tvOS rule).
+  // A provider stream is tried again once before the provider's next feed
+  // (Build 163: twice only when it is the last version left).
   REQUIRE(r.runUntilFeed(1));
-  REQUIRE(r.player->plays.size() == 4);
+  REQUIRE(r.player->plays.size() == 3);
   CHECK(r.player->plays[0] == feeds[0].channelId);
-  CHECK(r.player->plays[2] == feeds[0].channelId);
-  CHECK(r.player->plays[3] == feeds[1].channelId);
+  CHECK(r.player->plays[1] == feeds[0].channelId);
+  CHECK(r.player->plays[2] == feeds[1].channelId);
   auto problem = r.session->feedProblem(feeds[0].channelId);
   REQUIRE(problem);
   CHECK(problem->why == "no picture after 20 s");

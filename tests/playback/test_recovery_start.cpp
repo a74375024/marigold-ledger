@@ -170,34 +170,84 @@ TEST_CASE("surfing skips to the next feed without a backup toast") {
   CHECK_FALSE(has(t.picture(), Kind::Toast));
 }
 
-TEST_CASE("an Xtream feed that won't start is retried twice, 2 s apart, before the backup") {
+TEST_CASE("an Xtream feed that won't start: one retry, then the provider's next version") {
+  // Build 163: with another version of the same provider left, one retry
+  // (the connection limit letting go), not two.
   Rig t;
-  t.tune({xt("a"), xt("b")});
+  t.tune({xt("xt:1|a"), xt("xt:1|b")});
+  t.untilOpen();
+  t.hand();
+  Ms handed = t.now;
+  Actions fail = t.until(handed + kXtreamStartupTimeoutMs);
+  CHECK(notes(fail) == std::vector<std::string>{"Retrying…"});
+  CHECK(logDetail(fail, "retry") == "same feed in 2s (attempt 1 of 1)");
+  CHECK_FALSE(has(fail, Kind::RecordFeed));
+  Ms failedAt = t.now;
+  Actions open = t.untilOpen();
+  const Action* re = first(open, Kind::Reconnect);
+  REQUIRE(re);
+  CHECK(re->feed == 0);
+  CHECK(t.now == failedAt + kXtreamRetryDelayMs);  // no second settle
+  t.hand();
+  Actions second = t.until(t.now + kXtreamStartupTimeoutMs);
+  const Action* rec = first(second, Kind::RecordFeed);
+  REQUIRE(rec);
+  CHECK_FALSE(rec->worked);
+  CHECK(notes(second) == std::vector<std::string>{"Switching to a backup feed…"});
+  CHECK(first(t.untilOpen(), Kind::Play)->feed == 1);
+}
+
+TEST_CASE("an Xtream feed that won't start: the other provider's version at once") {
+  // Build 163: another provider has its own connection limit, so its version
+  // is tried straight away, ahead of this provider's next one.
+  Rig t;
+  t.tune({xt("xt:1|a"), xt("xt:1|b"), xt("xt:2|c")});
+  t.untilOpen();
+  t.hand();
+  Actions fail = t.until(t.now + kXtreamStartupTimeoutMs);
+  CHECK_FALSE(logged(fail, "retry"));
+  CHECK(has(fail, Kind::RecordFeed));
+  CHECK(logDetail(fail, "switch").find("to version 3 of 3") == 0);
+  CHECK(first(t.untilOpen(), Kind::Play)->feed == 2);
+  // That one fails too: the first provider's other version, at once (another
+  // provider again from where it stands).
+  t.hand();
+  Actions again = t.until(t.now + kXtreamStartupTimeoutMs);
+  CHECK_FALSE(logged(again, "retry"));
+  CHECK(logDetail(again, "switch").find("to version 2 of 3") == 0);
+  CHECK(first(t.untilOpen(), Kind::Play)->feed == 1);
+  // The last version left gets the two retries.
+  t.hand();
+  Actions last = t.until(t.now + kXtreamStartupTimeoutMs);
+  CHECK(logDetail(last, "retry") == "same feed in 2s (attempt 1 of 2)");
+}
+
+TEST_CASE("an Xtream feed that won't start: the last version left is retried twice") {
+  Rig t;
+  t.tune({xt("xt:1|a")});
   t.untilOpen();
   for (int attempt = 1; attempt <= 2; ++attempt) {
     t.hand();
-    Ms handed = t.now;
-    Actions fail = t.until(handed + kXtreamStartupTimeoutMs);
-    // The note only goes out when it changes.
-    CHECK(notes(fail) == (attempt == 1 ? std::vector<std::string>{"Retrying…"} : std::vector<std::string>{}));
-    CHECK(t.r.note() == "Retrying…");
+    Actions fail = t.until(t.now + kXtreamStartupTimeoutMs);
     CHECK(logDetail(fail, "retry") == "same feed in 2s (attempt " + std::to_string(attempt) + " of 2)");
-    CHECK_FALSE(has(fail, Kind::RecordFeed));
-    Ms failedAt = t.now;
-    Actions open = t.untilOpen();
-    const Action* re = first(open, Kind::Reconnect);
-    REQUIRE(re);
-    CHECK(re->feed == 0);
-    CHECK(t.now == failedAt + kXtreamRetryDelayMs);  // no second settle
+    CHECK(has(t.untilOpen(), Kind::Reconnect));
   }
   t.hand();
-  Actions third = t.until(t.now + kXtreamStartupTimeoutMs);
-  const Action* rec = first(third, Kind::RecordFeed);
-  REQUIRE(rec);
-  CHECK_FALSE(rec->worked);
-  CHECK(notes(third) == std::vector<std::string>{"Switching to a backup feed…"});
-  Actions open = t.untilOpen();
-  CHECK(first(open, Kind::Play)->feed == 1);
+  Actions last = t.until(t.now + kXtreamStartupTimeoutMs);
+  CHECK(logged(last, "gave up"));
+}
+
+TEST_CASE("a direct feed the server closes before a picture fails at once") {
+  // Build 163: no grace; the playback log's timeouts came 2 s later every time.
+  Rig t;
+  t.tune({xt("xt:1|a"), xt("xt:2|b")});
+  t.untilOpen();
+  t.hand();
+  t.until(t.now + 4000);
+  Actions ended = t.take(t.r.ended(t.now));
+  CHECK(logged(ended, "start failed"));
+  CHECK(logDetail(ended, "start failed") == "ended before a picture");
+  CHECK(first(t.untilOpen(), Kind::Play)->feed == 1);
 }
 
 TEST_CASE("M3U feeds get the Xtream startup retries") {

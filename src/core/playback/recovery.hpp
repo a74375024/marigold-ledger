@@ -310,7 +310,12 @@ class Recovery {
   void recover(Ms now, const std::string& reason, Actions& out);
   // `picture`: moving on because of a picture problem (the note says so;
   // with none left, the sound plays on).
-  void moveToNext(Ms now, const std::string& reason, Actions& out, bool picture = false);
+  void moveToNext(Ms now, const std::string& reason, Actions& out, bool picture = false,
+                  bool otherProviderFirst = false);
+  // Build 163: the next version not tried yet after the one playing, one
+  // from another provider first when `otherProviderFirst`; npos when every
+  // version has been tried.
+  size_t nextUntried(bool otherProviderFirst) const;
   void pictureFailed(Ms now, media::Verdict v, Actions& out);
   void failedNoRetry(Ms now, const std::string& reason, const std::string& why, bool picture, Actions& out);
   void noPictureAnywhere(Ms now, Actions& out);

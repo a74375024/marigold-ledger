@@ -10,6 +10,14 @@
 namespace marigold::playback {
 namespace {
 
+// "xt:1|12345" -> "xt:1": the account a feed comes from (feed ids are
+// channel ids, never URLs).
+std::string_view providerOf(std::string_view feedId) {
+  size_t bar = feedId.find('|');
+  // No account in the id: one unknown provider, so the same rules as one.
+  return bar == std::string_view::npos ? std::string_view() : feedId.substr(0, bar);
+}
+
 // Xtream links are cheap to reopen and usually come straight back. M3U
 // links are direct links too (often an Xtream panel behind a playlist), so
 // they get the Xtream treatment; the Swift only knows Xtream and Emby.
@@ -287,6 +295,11 @@ Actions Recovery::ended(Ms now) {
     // Marigold: the playback log (HLN) shows a live stream that "ends" never
     // plays on by itself; waiting the grace only froze the picture longer.
     recover(now, "the stream ended", out);
+  } else if (isDirect(feeds_[index_].kind)) {
+    // Build 163: the server closed a direct feed before a picture: that start
+    // has failed, no grace (the playback log: the timeout followed 2 s later
+    // every time).
+    startupFailed(now, "ended before a picture", out);
   } else {
     scheduleStartupFailure(now, "ended before a picture");
   }
@@ -603,8 +616,19 @@ void Recovery::startupFailed(Ms now, const std::string& reason, Actions& out, bo
   // Xtream: retry the same feed (twice) before any backup. A failed start is
   // often the provider's connection limit while the previous stream lets go,
   // or a slow first segment.
+  // Build 163: but another version comes first. The playback logs: the retry
+  // played 18 times in 83 and failed again 42 times, at 12 s a try. A version
+  // from another provider (its own connection limit) is tried at once; with
+  // only this provider's versions left, the feed gets one retry, not two; the
+  // two retries stay for the last version.
   int retries = startupRetries_[feed.id];
-  bool more = (isDirect(feed.kind) && retries < kXtreamStartRetries) || (feed.retryOnce && retries < 1);
+  int directRetries = kXtreamStartRetries;
+  if (nextUntried(true) != Action::npos && providerOf(feeds_[nextUntried(true)].id) != providerOf(feed.id)) {
+    directRetries = 0;
+  } else if (nextUntried(false) != Action::npos) {
+    directRetries = 1;
+  }
+  bool more = (isDirect(feed.kind) && retries < directRetries) || (feed.retryOnce && retries < 1);
   if (allowed >= 0 && retries >= allowed) more = false;
   if (more) {
     startupRetries_[feed.id] = retries + 1;
@@ -616,7 +640,7 @@ void Recovery::startupFailed(Ms now, const std::string& reason, Actions& out, bo
     log(out, "retry",
         "same feed in " + seconds(isDirect(feed.kind) ? kXtreamRetryDelayMs : 0) + " (attempt " +
             std::to_string(retries + 1) + " of " +
-            std::to_string(isDirect(feed.kind) ? kXtreamStartRetries : 1) + ")",
+            std::to_string(isDirect(feed.kind) ? std::max(directRetries, 1) : 1) + ")",
         index_);
     // A direct feed waits for the provider to let go of the last stream; a
     // quick start falls back to the normal open at once.
@@ -624,7 +648,7 @@ void Recovery::startupFailed(Ms now, const std::string& reason, Actions& out, bo
     return;
   }
   out.push_back({Action::Kind::RecordFeed, index_, 0, false, reason, why});
-  moveToNext(now, reason, out, picture);
+  moveToNext(now, reason, out, picture, true);
 }
 
 // A black or frozen picture: one reconnect (before a real picture only on a
@@ -714,7 +738,21 @@ void Recovery::recover(Ms now, const std::string& reason, Actions& out) {
 // the first feed, so one round is the list); here a feed picked in the
 // middle of the list is followed by the ones after it and then the ones
 // before it, and the round ends when every feed has been tried once.
-void Recovery::moveToNext(Ms now, const std::string& reason, Actions& out, bool picture) {
+size_t Recovery::nextUntried(bool otherProviderFirst) const {
+  size_t count = feeds_.size();
+  if (count == 0) return Action::npos;
+  std::string_view own = providerOf(feeds_[index_].id);
+  size_t first = Action::npos;
+  for (size_t step = 1; step < count; ++step) {
+    size_t i = (index_ + step) % count;
+    if (i < tried_.size() && tried_[i]) continue;
+    if (!otherProviderFirst || providerOf(feeds_[i].id) != own) return i;
+    if (first == Action::npos) first = i;
+  }
+  return first;
+}
+
+void Recovery::moveToNext(Ms now, const std::string& reason, Actions& out, bool picture, bool otherProviderFirst) {
   size_t count = feeds_.size();
   if (triedCount_ >= count && picture && playing()) {
     noPictureAnywhere(now, out);
@@ -731,6 +769,10 @@ void Recovery::moveToNext(Ms now, const std::string& reason, Actions& out, bool 
     return;
   }
   size_t next = (index_ + 1) % count;
+  if (otherProviderFirst) {
+    size_t untried = nextUntried(true);
+    if (untried != Action::npos) next = untried;
+  }
   reconnectsOnFeed_ = 0;
   announceBackup_ = !surf_;
   std::string note = surf_ ? "Skipping to the next feed…" : "Switching to a backup feed…";
