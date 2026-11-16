@@ -28,6 +28,10 @@ class PanelScreen : public Screen {
   std::function<bool(const KeyEvent&)> onKey;
   // Rebuild the rows once a second (rows that show live state).
   bool liveRows = false;
+  // Drawn under the rows, `footerHeight` tall (side panels only): the
+  // Subtitles panel's caption preview (Build 169).
+  float footerHeight = 0;
+  std::function<void(ui::Ctx&, ui::Rect)> footer;
   bool tick(uint32_t ms) override;
   const char* name() const override { return "panel"; }
 

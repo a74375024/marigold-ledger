@@ -2112,3 +2112,31 @@ Four changes after testing 1.0.11. Nothing new runs; channels without replay loo
 | Tag hidden | OK (controls) or Info while it shows | The tag gone while they're up |
 | Other jumps | Pause and play; Right back to a replay; the menu's Start over; a Final's Watch replay | The tag for 5 s after each (REPLAY · N in for the Final) |
 | Long replay | Watch a replay across a stretch boundary (3 h) | The tag doesn't come back by itself |
+
+## Build 169: 1.0.12, controls with icons and the replay bar
+
+OK brings up a new row of controls. Every button is a round icon, in three groups with a thin line between them: what you're watching (Live when behind live, Pause, Rewind: only on channels with replay), this channel (Subtitles, Sources, Watch East or West when the channel has both, Cameras when a race has them), and elsewhere (Back to the last channel or game, Guide or Games, Favorite, Settings). Only the focused button opens into a pill with its name and what it's set to ("Subtitles English", "Sources Dream · 1080p", "Back to TNT", "Watch West", "Unfavorite", "Live"); the rest stay icons, so the row always fits and nothing is shortened any more. With the Magic Remote, the button under the pointer opens the same way. Left and Right move along the row, OK uses the button, Up and Down still change channel, and the colour keys work as before (Green turns subtitles on or off, Red opens Sources, Blue Settings).
+
+Subtitles and Aa are now one Subtitles button. OK on it opens one panel: Off and the languages the stream carries (the one on ticked), then Look (size, style, letters, position) with a preview of a caption at the bottom, then Timing. A small green dot on the Subtitles icon says they're on.
+
+The programme bar over the buttons (channels with replay) works the same live, with a line under it: "AC360 · 20 min in · 40 min left". Behind live the bar now runs from the start of the programme you're watching to live, and live is always the right end (a red dot and LIVE). Blue is how far you've got, with a white dot and the time under it ("7:21 PM"); grey is what's left to catch up on. A thin tick marks every programme that starts between you and live; only the first one is named (the same names as the banner's), cut short with "…" to fit before the next tick, and left out when there's no room. The paused panel's bar also ends at live; the Rewind timeline is unchanged.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Row live | OK on CNN live | Pause, Rewind, line, Subtitles (focused, "Subtitles Off" or the language), Sources, line, Back, Guide, Favorite, Settings |
+| Row without replay | OK on a channel with no replay | No Pause or Rewind; Subtitles first |
+| Row behind | OK during a replay (LG and another remote) | Live first and focused ("Live", red dot); Pause after it on LG only; Rewind |
+| Final's replay | OK during a Final's replay from Live Events | The first button says "NBA TV live" (the channel's name) |
+| East/West, cameras | OK on a channel with both versions; on a race with onboard cameras | "Watch West" (or East) after Sources; Cameras after it |
+| Focus | Left and Right along the row | Only the focused button shows its name and state; the row never runs off the screen, "Back to" keeps its full name |
+| Pointer | Move the Magic Remote over the buttons | The one under the pointer opens; moving right doesn't flicker between two buttons |
+| Keys | Green, Red, Blue, Play/Pause with the row up | As before |
+| Apple TV | Swipe along the row; click | One button per swipe; the click uses it |
+| Subtitles | OK on Subtitles | One panel: Off, languages (✓ on the one on), LOOK with the preview, TIMING; picking a language turns them on; a dot on the icon while on |
+| Green | Green from anywhere | Subtitles on or off, as before |
+| Bar live | OK on CNN live | The show from start to end, white to now, "AC360 · 20 min in · 40 min left" under it |
+| Bar behind | Rewind to 7:21 during Erin Burnett OutFront, OK on the controls | 7:00 PM at the left, LIVE at the right end, blue to the dot with "7:21 PM" under it, a tick at 8:00 named "AC360" |
+| Long name | Replay from early afternoon (several shows behind) | A tick at every show's start; only the first named, cut with "…" before the second tick |
+| No room | Replay from a few minutes before a show starts, close to live | The tick shows, no name |
+| Paused | Pause during a replay | The panel's bar ends at live (red dot, LIVE at the right) |
+| Rewind | FF or Rewind | The timeline exactly as before |

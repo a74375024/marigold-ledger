@@ -490,7 +490,7 @@ void watchingRows(App& app, ui::ListPanel& p, SettingsPages& /*pages*/) {
     if (c.on) it.detail = c.language.empty() ? "In each channel's own language" : "In " + c.language;
     else it.detail = spanish ? "Univision, Telemundo and the rest" : "Off until you turn them on";
     it.about = std::string("Subtitles stay on for every ") + (spanish ? "Spanish" : "English") +
-               "-language channel that has them, until you turn them off.\nPick a language from Aa in the player.";
+               "-language channel that has them, until you turn them off.\nPick a language from Subtitles in the player.";
     it.select = [&app, spanish] {
       changeCaptions(app, [spanish](Settings& s) {
         SubtitleChoice now = subtitleChoice(s, spanish);
@@ -541,7 +541,7 @@ void watchingRows(App& app, ui::ListPanel& p, SettingsPages& /*pages*/) {
   });
   timing.detail = set.captionTimingByChannel.empty() ? "For every channel" : "Channels given their own keep it";
   timing.about = std::string("Later holds captions back; earlier shows them sooner. Live captions are typed as "
-                             "people speak, so they often come a few seconds after the words.\nAa in the player "
+                             "people speak, so they often come a few seconds after the words.\nSubtitles in the player "
                              "can give a channel its own timing.") +
                  (apple ? "\nOn Apple TV captions can only be held back: earlier shows them on time." : "");
   p.items.push_back(timing);

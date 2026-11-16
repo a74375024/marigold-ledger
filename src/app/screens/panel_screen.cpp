@@ -67,7 +67,12 @@ void PanelScreen::draw(ui::Ctx& c) {
   float inset = width_ * 0.12f;
   float contentW = width_ - inset - 70;
   float x = leading ? 70.0f : r.x + inset;
-  panel_.draw(c, {x, 70, contentW, h - 120});
+  float rows = h - 120;
+  if (footer && footerHeight > 0) {
+    rows -= footerHeight + 28;
+    footer(c, {x, 70 + rows + 28, contentW, footerHeight});
+  }
+  panel_.draw(c, {x, 70, contentW, rows});
 }
 
 }  // namespace marigold::app

@@ -52,7 +52,7 @@ enum class SettingsCategory { Watching, Guide, MyLineup, LiveEvents, Providers, 
 void openAllSettings(App& app, std::optional<SettingsCategory> inside = std::nullopt, const std::string& at = {});
 
 // A page inside Settings (Build 144). Panels float only over the picture
-// (Sources, Aa, Quick settings): every Settings page opens in Settings'
+// (Sources, Subtitles, Quick settings): every Settings page opens in Settings'
 // own middle column, one level deeper, with the categories dimmed on the
 // left, "SETTINGS › PROVIDERS › BACKUP TV" over its title and the focused
 // row explained on the right. Back goes up a level, to the row it was
@@ -146,10 +146,14 @@ std::string testAllSourcesLine(App& app);
 // "Listings look wrong?": the channel's distinct schedules, to pick the
 // right one (Build 153).
 std::unique_ptr<Screen> makeGuideChoice(App& app, const std::string& entryId);
-// Subtitles (the player's Aa): Off or a language the stream carries, the
-// timing and the style.
+// Subtitles (Build 169: the player's one Subtitles button): Off or a
+// language the stream carries, then their look with a preview, then the
+// timing.
 std::unique_ptr<Screen> makeSubtitles(App& app);
-// The Caption timing row (Aa and Settings): `ms` now, `pick` gets the new one.
+// A small picture with a caption in the chosen size, look, letters and
+// position (Settings › Watching's right column, the Subtitles panel).
+void captionPreview(ui::Ctx& c, ui::Rect r, const Settings& set);
+// The Caption timing row (Subtitles and Settings): `ms` now, `pick` gets the new one.
 ui::PanelItem captionTimingRow(int ms, std::function<void(int)> pick);
 // Live Events: the board, the left rail's Live Events section over the
 // guide. `go` gets what its strip or menu picks for the guide: a guide

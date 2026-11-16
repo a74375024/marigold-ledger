@@ -1,16 +1,19 @@
 // Full screen playback (LiveTVOverlay). Up/Down (and CH, and swipes)
 // always change channel: the banner after a flip only shows information
 // (what's on, later on this channel, where Up and Down go, the keys). OK
-// brings up the controls on the banner, Subtitles first (OK again turns
-// them on or off; Aa or holding OK opens languages and style), then
-// Sources, the guide, the last channel, Favorite, Settings; Up/Down still flip
-// from there. Changes that stick (subtitles, favorites) say so in a large
-// notice with how to undo them. Back closes what's on top, then asks once
-// before leaving. Under a panel the player draws only the picture and its
-// captions. Also: the one-time "Getting around" card, number keys (OK tunes
-// at once), LG's Green as a CC key, Exit clearing the screen, and the Magic
-// Remote pointer (the controls with nothing highlighted, a click on the
-// picture opening or closing them, two edge buttons for Guide and Last).
+// brings up the controls on the banner: round icon buttons in three groups
+// (Build 169, engine::controls): watching (Live, Pause, Rewind where the
+// channel has replay), this channel (Subtitles, Sources, East/West,
+// Cameras), elsewhere (Back, Guide, Favorite, Settings); only the focused
+// one (or the one under the pointer) opens into a pill with its label and
+// state. Up/Down still flip from there. Changes that stick (subtitles,
+// favorites) say so in a large notice with how to undo them. Back closes
+// what's on top, then asks once before leaving. Under a panel the player
+// draws only the picture and its captions. Also: the one-time "Getting
+// around" card, number keys (OK tunes at once), LG's Green as a CC key,
+// Exit clearing the screen, and the Magic Remote pointer (the controls with
+// nothing highlighted, a click on the picture opening or closing them, two
+// edge buttons for Guide and Last).
 // A game (a Live Events tile or feed, or a guide channel showing one the
 // board matched) gets a lower card with one line of who's playing instead
 // of the show's title, times and "Later on this channel". A show's banner
@@ -19,12 +22,13 @@
 //
 // Build 165, replay (channels with a copy that keeps catch-up): Pause and
 // Rewind at the front of the controls, with the programme's bar above them;
-// the Rewind timeline; the paused panel; behind live, Go live first and a
+// the Rewind timeline; the paused panel; behind live, Live first and a
 // tag at the top right (Build 169: for a few seconds after each jump, never
 // over the banner or the controls). Build 169: no Start over in the row or
 // on the banner; Rewind and the guide's and Live Events' hold-OK menus
-// start a programme or a game over. Channels without catch-up look as they
-// always did.
+// start a programme or a game over. Behind live the bar runs from the
+// programme watched to live, always its right end. Channels without
+// catch-up have no replay buttons and no bar.
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -37,6 +41,7 @@
 #include "app/store/store.hpp"
 #include "core/captions/caption_style.hpp"
 #include "core/captions/sentence_case.hpp"
+#include "core/engine/controls.hpp"
 #include "core/engine/replay.hpp"
 #include "core/engine/views.hpp"
 #include "core/input/countdown.hpp"
@@ -107,12 +112,6 @@ class PlayerScreen : public Screen {
     if (p.active() && p.full()) p.stop();
     // What was typed in the player's search goes with it (Build 132).
     p.setPlayerQuery({});
-  }
-
-  // Holding OK on the Subtitles button opens languages and style.
-  bool holdsOk() const override {
-    return zone_ == Zone::Row && pill_ >= 0 && static_cast<size_t>(pill_) < pills_.size() &&
-           pills_[static_cast<size_t>(pill_)] == Pill::Subtitles;
   }
 
   bool key(const KeyEvent& e) override {
@@ -456,7 +455,7 @@ class PlayerScreen : public Screen {
 
  private:
   enum class Zone { None, Row, EdgeGuide, EdgeLast };
-  enum class Pill { GoLive, Pause, Rewind, Cameras, Subtitles, Style, Sources, Coast, Guide, Last, Favorite, More };
+  using Ctl = engine::controls::Button;
 
   // ---------------------------------------------------------- actions
   // A message while watching: in the banner's status line (brought up for
@@ -533,12 +532,8 @@ class PlayerScreen : public Screen {
     }
     buildPills();
     zone_ = Zone::Row;
-    pill_ = -1;
-    // Subtitles first; behind live, Go live.
-    Pill first = app_.playback().replay() ? Pill::GoLive : Pill::Subtitles;
-    if (focus)
-      for (size_t i = 0; i < pills_.size(); ++i)
-        if (pills_[i] == first) pill_ = static_cast<int>(i);
+    // Subtitles first; behind live, Live.
+    pill_ = focus ? engine::controls::opening(pills_, app_.playback().replay().has_value()) : -1;
     controlsAt_ = app_.ms();
     backAskUntil_ = 0;
     touch();
@@ -597,25 +592,21 @@ class PlayerScreen : public Screen {
                                            : "On for every channel that has them";
     notice(title, where + " \xc2\xb7 " + how, kNoticeMs);
   }
+  // Build 169: the row's buttons (engine::controls::row): replay's at the
+  // front where a copy keeps an archive (engine::replay::buttons: behind
+  // live, Live first and, on LG, Pause after it), then this channel's,
+  // then elsewhere.
   void buildPills() {
     Playback& p = app_.playback();
-    pills_.clear();
-    // Build 165: replay's buttons at the front, only where a copy keeps an
-    // archive. Behind live: Go live first (and, on LG, Pause after it).
-    // Build 169: no Start over (engine::replay::buttons).
-    using Button = engine::replay::Button;
-    for (Button b : engine::replay::buttons(p.catchupDays(), p.replay().has_value(),
-                                            app_.window().remoteKeys() == RemoteKeys::lg()))
-      pills_.push_back(b == Button::GoLive ? Pill::GoLive : b == Button::Pause ? Pill::Pause : Pill::Rewind);
-    if (cameras_) pills_.push_back(Pill::Cameras);
-    pills_.push_back(Pill::Subtitles);
-    pills_.push_back(Pill::Style);
-    pills_.push_back(Pill::Sources);
-    if (!otherCoast().empty()) pills_.push_back(Pill::Coast);
-    pills_.push_back(Pill::Guide);
-    if (!backName().empty()) pills_.push_back(Pill::Last);
-    if (app_.store().channels()->find(p.entry())) pills_.push_back(Pill::Favorite);
-    pills_.push_back(Pill::More);
+    engine::controls::RowIn in;
+    in.replayDays = p.catchupDays();
+    in.behind = p.replay().has_value();
+    in.lgPause = app_.window().remoteKeys() == RemoteKeys::lg();
+    in.bothVersions = !otherCoast().empty();
+    in.cameras = cameras_;
+    in.back = !backName().empty();
+    in.favorite = app_.store().channels()->find(p.entry()) != nullptr;
+    pills_ = engine::controls::row(in);
     pill_ = std::clamp(pill_, -1, static_cast<int>(pills_.size()) - 1);
   }
   bool rowKey(const KeyEvent& e) {
@@ -633,9 +624,7 @@ class PlayerScreen : public Screen {
         pill_ = pill_ < 0 ? 0 : std::max(0, pill_ - 1);
         return true;
       case Key::Right:
-        pill_ = pill_ < 0 ? 0
-                          : std::min(static_cast<int>(std::min(pills_.size(), std::max<size_t>(pillsShown_, 1))) - 1,
-                                     pill_ + 1);
+        pill_ = pill_ < 0 ? 0 : std::min(static_cast<int>(pills_.size()) - 1, pill_ + 1);
         return true;
       case Key::Up:
       case Key::Down:
@@ -654,10 +643,6 @@ class PlayerScreen : public Screen {
         if (app_.ms() - controlsAt_ < kDoubleOkMs) return true;
         if (pill_ < 0) {
           closeControls();  // a click on the picture
-          return true;
-        }
-        if (e.longPress && pills_[static_cast<size_t>(pill_)] == Pill::Subtitles) {
-          activate(Pill::Style);
           return true;
         }
         activate(pills_[static_cast<size_t>(pill_)]);
@@ -696,7 +681,7 @@ class PlayerScreen : public Screen {
         return true;
     }
   }
-  void activate(Pill pill) {
+  void activate(Ctl pill) {
     Playback& p = app_.playback();
     // A panel opens over the plain picture: back from it, the controls
     // are gone too.
@@ -705,30 +690,27 @@ class PlayerScreen : public Screen {
       app_.nav().push(std::move(s));
     };
     switch (pill) {
-      case Pill::GoLive:
+      case Ctl::Live:
         closeControls();
         p.goLive();
         showBanner();
         break;
-      case Pill::Pause:
+      case Ctl::Pause:
         playPause(Key::Pause);
         break;
-      case Pill::Rewind:
+      case Ctl::Rewind:
         closeControls();
         openTimeline();
         break;
-      case Pill::Cameras: panel(makeCameraPanel(app_)); break;
-      case Pill::Subtitles: {
-        bool on = p.toggleSubtitles();
-        subtitlesNotice(on, std::string("OK again turns them ") + (on ? "off" : "on"));
-        break;
-      }
-      case Pill::Style: panel(makeSubtitles(app_)); break;
-      case Pill::Sources:
+      case Ctl::Cameras: panel(makeCameraPanel(app_)); break;
+      // Build 169: one Subtitles button: its panel has the languages and
+      // their look (Green still turns them on or off from anywhere).
+      case Ctl::Subtitles: panel(makeSubtitles(app_)); break;
+      case Ctl::Sources:
         closeControls();
         openSources();
         break;
-      case Pill::Coast: {
+      case Ctl::Swap: {
         // The other version, in place (Last goes back).
         std::string other = otherCoast();
         if (other.empty()) break;
@@ -739,21 +721,21 @@ class PlayerScreen : public Screen {
         flipped(other);
         break;
       }
-      case Pill::Guide:
+      case Ctl::Guide:
         closeControls();
         openGuide();
         break;
-      case Pill::Last:
+      case Ctl::Back:
         closeControls();
         goPrevious();
         break;
-      case Pill::Favorite: {
+      case Ctl::Favorite: {
         bool was = app_.store().isFavorite(p.entry());
         app_.store().toggleFavorite(p.entry());
         notice(was ? "Removed from Favorites" : "Added to Favorites", "OK again to undo", kNoticeMs);
         break;
       }
-      case Pill::More: panel(makeQuickSettings(app_, QuickPlace::Player)); break;
+      case Ctl::Settings: panel(makeQuickSettings(app_, QuickPlace::Player)); break;
     }
   }
   // The other version of the channel playing, when it has both.
@@ -1271,24 +1253,24 @@ class PlayerScreen : public Screen {
       const engine::replay::Programme* on = engine::replay::on(list, at);
       pausedTitle_ = on ? on->title : std::string();
       pausedStart_ = on ? on->start : at - 1800;
-      pausedEnd_ = on ? on->end : now;
     }
     if (!pausedTitle_.empty()) line += " \xc2\xb7 " + pausedTitle_;
     shadowed(c, line, kLeft, top + 88, Weight::Regular, 26, theme::white(0.85f), gfx::kLayoutWidth - 2 * kLeft);
-    // The programme's bar: where it paused, and live.
+    // The programme's bar: from its start to live (Build 169: live always
+    // the right end, as on the controls' bar), where it paused.
     float bx = kLeft + 110, bw = gfx::kLayoutWidth - 2 * kLeft - 220, by = top + 148;
-    time::Seconds a = pausedStart_, b = std::max(pausedEnd_, at + 60);
+    time::Seconds a = std::min(pausedStart_, at), b = std::max(now, at + 60);
     auto x = [&](time::Seconds t) {
       double f = static_cast<double>(t - a) / static_cast<double>(std::max<time::Seconds>(1, b - a));
       return bx + static_cast<float>(std::clamp(f, 0.0, 1.0)) * bw;
     };
     shadowed(c, ui::clock(c, a), kLeft, by - 12, Weight::Medium, 20, theme::white(0.7f));
-    ui::label(c, ui::clock(c, b), gfx::kLayoutWidth - kLeft - 100, by - 12, Weight::Medium, 20, theme::white(0.7f), 100,
+    ui::label(c, "LIVE", gfx::kLayoutWidth - kLeft - 100, by - 12, Weight::Bold, 20, theme::hex(0xFF8A80), 100,
               Align::Right);
     c.g.fill({bx, by, bw, 8}, theme::white(0.25f), 4);
     c.g.fill({bx, by, x(at) - bx, 8}, theme::hex(kBlue), 4);
+    c.g.fill({bx + bw - 7, by - 3, 14, 14}, theme::hex(kRed), 7);
     c.g.fill({x(at) - 9, by - 5, 18, 18}, theme::white(), 9);
-    if (now <= b) c.g.fill({x(now) - 7, by - 3, 14, 14}, theme::hex(kRed), 7);
     // The buttons.
     std::vector<std::string> buttons = pausedButtons(c);
     float bxx = kLeft, byy = top + 190;
@@ -1415,37 +1397,65 @@ class PlayerScreen : public Screen {
     ui::label(c, text, ix + 36, box.y + 11, Weight::Bold, 24, theme::white(a));
   }
 
-  // The programme's bar above the controls (A1, A3): its start at the
-  // left, its end at the right; live a dot; behind live, where it plays.
+  // The programme's bar above the controls (engine::controls::bar). Live:
+  // the show on now from its start to its end, white to now with a dot,
+  // and "AC360 · 20 min in · 40 min left" under it. Build 169, behind
+  // live: from the start of the programme watched (the replay banner's
+  // listings) to live, always the right end (a red dot, LIVE); blue to the
+  // moment, a white dot with a blue halo and its clock under it, grey on to
+  // live; a thin tick at every programme start between, only the first one
+  // named, cut to its room or left out.
   void drawReplayBar(ui::Ctx& c, const GuideChannel* g) {
+    namespace ctl = engine::controls;
     Playback& p = app_.playback();
     time::Seconds now = c.now;
-    time::Seconds at = p.replayAt();
-    const Listing* l = g ? current(g->id, now, nullptr) : nullptr;
-    time::Seconds a = l ? l->start : now - 3600, b = l ? l->end : now + 1800;
-    if (p.replay() && at < a) {
-      a = at - 1800;
-      b = std::max(b, now);
-    }
-    float y = kRowY - 34;
-    float lw = 110;
-    shadowed(c, ui::clock(c, a), kLeft, y - 11, Weight::Medium, 18, theme::white(0.75f));
-    ui::label(c, ui::clock(c, b), gfx::kLayoutWidth - kLeft - lw, y - 11, Weight::Medium, 18, theme::white(0.75f), lw,
-              Align::Right);
-    float x0 = kLeft + lw, w = gfx::kLayoutWidth - 2 * kLeft - 2 * lw;
-    auto x = [&](time::Seconds t) {
-      double f = static_cast<double>(t - a) / static_cast<double>(std::max<time::Seconds>(1, b - a));
-      return x0 + static_cast<float>(std::clamp(f, 0.0, 1.0)) * w;
-    };
-    c.g.fill({x0, y, w, 4}, theme::white(0.28f), 2);
-    if (p.replay()) {
-      c.g.fill({x0, y, x(at) - x0, 4}, theme::hex(kBlue), 2);
-      c.g.fill({x(at) - 7, y - 5, 14, 14}, theme::hex(kBlue), 7);
-      c.g.fill({x(now) - 6, y - 4, 12, 12}, theme::hex(kRed), 6);
+    const Listing* live = g ? current(g->id, now, nullptr) : nullptr;
+    ctl::Bar bar;
+    if (p.replay() && g) {
+      time::Seconds at = p.replayAt();
+      replayBanner(*g, at, now);  // the banner's listings, worked out once a minute
+      bar = ctl::bar(replayShown_.shows, live, at, now);
+    } else if (p.replay()) {
+      bar = ctl::bar({}, nullptr, p.replayAt(), now);
     } else {
-      c.g.fill({x0, y, x(now) - x0, 4}, theme::white(0.7f), 2);
-      c.g.fill({x(now) - 7, y - 5, 14, 14}, theme::white(), 7);
+      bar = ctl::bar({}, live, std::nullopt, now);
     }
+    constexpr int kPx = 18;
+    const float y = kRowY - 54, lw = 110;
+    const float x0 = kLeft + lw, w = gfx::kLayoutWidth - 2 * kLeft - 2 * lw;
+    auto xAt = [&](double f) { return x0 + static_cast<float>(f) * w; };
+    shadowed(c, ui::clock(c, bar.from), kLeft, y - 11, Weight::Medium, kPx, theme::white(0.75f));
+    if (!bar.replay) {
+      ui::label(c, ui::clock(c, bar.to), gfx::kLayoutWidth - kLeft - lw, y - 11, Weight::Medium, kPx,
+                theme::white(0.75f), lw, Align::Right);
+      c.g.fill({x0, y, w, 4}, theme::white(0.28f), 2);
+      c.g.fill({x0, y, xAt(bar.at) - x0, 4}, theme::white(0.7f), 2);
+      c.g.fill({xAt(bar.at) - 7, y - 5, 14, 14}, theme::white(), 7);
+      if (!bar.line.empty()) shadowed(c, bar.line, x0, y + 14, Weight::Regular, kPx, theme::white(0.6f), w);
+      return;
+    }
+    // Live at the right end.
+    ui::label(c, "LIVE", gfx::kLayoutWidth - kLeft - lw, y - 11, Weight::Bold, kPx, theme::hex(0xFF8A80), lw,
+              Align::Right);
+    c.g.fill({x0, y, w, 4}, theme::white(0.28f), 2);
+    float ax = xAt(bar.at);
+    c.g.fill({x0, y, ax - x0, 4}, theme::hex(kBlue), 2);
+    for (size_t i = 0; i < bar.ticks.size(); ++i)
+      c.g.fill({xAt(bar.ticks[i].at) - 1, y - 5, 2, 14}, theme::white(i == 0 ? 0.55f : 0.4f), 1);
+    c.g.fill({x0 + w - 11, y - 9, 22, 22}, theme::hex(kRed, 0.25f), 11);
+    c.g.fill({x0 + w - 7, y - 5, 14, 14}, theme::hex(kRed), 7);
+    // The moment: a white dot with a blue halo, its clock under it.
+    c.g.fill({ax - 12, y - 10, 24, 24}, theme::hex(kBlue, 0.5f), 12);
+    c.g.fill({ax - 8, y - 6, 16, 16}, theme::white(), 8);
+    std::string clock = ui::clock(c, p.replayAt());
+    float cw = ui::textWidth(c, clock, Weight::Bold, kPx);
+    float cx = std::clamp(ax - cw * 0.5f, kLeft, x0 + w - cw);
+    shadowed(c, clock, cx, y + 14, Weight::Bold, kPx, theme::white());
+    // The next programme's name by its tick.
+    ctl::TickName name = ctl::tickName(bar, w, cx + cw - x0,
+                                       [&c](const std::string& s) { return ui::textWidth(c, s, Weight::Regular, kPx); });
+    if (!name.text.empty())
+      shadowed(c, name.text, x0 + name.x, y + 14, Weight::Regular, kPx, theme::white(0.6f));
   }
   // ---------------------------------------------------------- helpers
   void flipped(const std::string& id) {
@@ -1508,17 +1518,6 @@ class PlayerScreen : public Screen {
     }
     return game_ ? &*game_ : nullptr;
   }
-  std::string feedLine() const {
-    Playback& p = app_.playback();
-    if (p.feeds().empty()) return {};
-    size_t i = std::min(p.feedIndex(), p.feeds().size() - 1);
-    std::string q = p.feeds()[i].quality;
-    std::string line = "Feed " + std::to_string(i + 1) + " of " + std::to_string(p.feeds().size());
-    return q.empty() ? line : q + " \xc2\xb7 " + line;
-  }
-  int backups() const {
-    return std::max(0, static_cast<int>(app_.playback().feeds().size()) - 1);
-  }
   float keyCap(ui::Ctx& c, float x, float y, const char* glyph) {
     // A word ("Click") gets a wider cap.
     float w = std::max(40.0f, ui::textWidth(c, glyph, Weight::Bold, 17) + 20);
@@ -1553,7 +1552,7 @@ class PlayerScreen : public Screen {
     return 22;
   }
 
-  // The Subtitles pill: the stream carries captions, or this channel did
+  // Captions to offer: the stream carries them, or this channel did
   // before (with subtitles off, LG only reads them once they're on).
   bool offersSubtitles() const {
     const Playback& p = app_.playback();
@@ -2106,148 +2105,111 @@ class PlayerScreen : public Screen {
     if (st.done) ui::labelIn(c, "\xe2\x9c\x93", {tx - 34, y + 8, 24, 28}, Weight::Bold, 22, theme::hex(kGreen), Align::Center);
   }
 
-  // The controls: Subtitles first (with its language), Aa for languages
-  // and style, then Sources, the guide, the last channel, Favorite, Settings.
+  // Build 169: what the controls' buttons say when focused
+  // (engine::controls::label).
+  engine::controls::LabelIn labelIn(const GuideChannel* g) const {
+    Playback& p = app_.playback();
+    engine::controls::LabelIn in;
+    if (const engine::Session::GameReplay* f = finalReplay()) in.finalChannel = f->channelName;
+    Playback::SubtitleStatus st = p.subtitleStatus();
+    in.subtitlesOn = st.on;
+    in.subtitles = st.label;
+    if (!p.feeds().empty()) {
+      const Feed& f = p.feeds()[std::min(p.feedIndex(), p.feeds().size() - 1)];
+      in.source = app_.store().providerName(f.channelId);
+      in.quality = f.quality;
+    }
+    in.west = g && g->west;
+    in.backTo = backName();
+    in.game = app_.store().isEvent(p.entry());
+    in.favorite = g && app_.store().isFavorite(g->id);
+    return in;
+  }
+  // A button's icon in `r` (app/icons ctl-*, Rewind's ui-replay); Live is
+  // its red dot. Without the icon file, the label's first letter.
+  void drawGlyph(ui::Ctx& c, Ctl b, Rect r, Color ink, bool favorite, const std::string& title) {
+    if (b == Ctl::Live) {
+      float d = std::round(r.w * 0.6f);
+      c.g.fill({r.x + (r.w - d) * 0.5f, r.y + (r.h - d) * 0.5f, d, d}, theme::hex(kRed), d * 0.5f);
+      return;
+    }
+    const char* name = "";
+    switch (b) {
+      case Ctl::Pause: name = "ctl-pause"; break;
+      case Ctl::Rewind: name = "ui-replay"; break;
+      case Ctl::Subtitles: name = "ctl-subtitles"; break;
+      case Ctl::Sources: name = "ctl-sources"; break;
+      case Ctl::Swap: name = "ctl-swap"; break;
+      case Ctl::Cameras: name = "ctl-camera"; break;
+      case Ctl::Back: name = "ctl-back"; break;
+      case Ctl::Guide: name = "ctl-guide"; break;
+      case Ctl::Favorite: name = favorite ? "ctl-star-on" : "ctl-star"; break;
+      case Ctl::Settings: name = "ctl-settings"; break;
+      case Ctl::Live: break;
+    }
+    if (unsigned icon = c.icons ? c.icons->get(name) : 0) {
+      c.g.textureAlpha(icon, r, ink);
+      return;
+    }
+    ui::labelIn(c, title.substr(0, 1), r, Weight::Bold, 24, ink, Align::Center);
+  }
+
+  // Build 169: the controls: round icon buttons in their three groups
+  // (engine::controls), a thin divider between groups; the focused one (or
+  // the one under the pointer) opens into a pill with its label and state,
+  // the rest stay round, so the row always fits. A small dot on Subtitles'
+  // icon while they're on. The programme's bar over them on a channel with
+  // replay (not under a game's card).
   void drawPills(ui::Ctx& c, const GuideChannel* g) {
     buildPills();
     Playback& p = app_.playback();
-    struct Item {
-      std::string title, extra;
-      std::string tag;  // a small tag after the title ("TEST")
-      // Build 165: a mark before the title (Go live's red dot, Pause's
-      // bars, Rewind's arrow); `bare`: the mark alone (a full row).
-      enum class Mark { None, Dot, Pause, Replay } mark = Mark::None;
-      bool bare = false;
-    };
-    std::vector<Item> items;
-    for (Pill pill : pills_) {
-      Item it;
-      switch (pill) {
-        case Pill::GoLive:
-          // Build 167: a Final's replay: the game has no live left, the
-          // channel has ("NBA TV live").
-          it.title = finalReplay() ? engine::views::channelLive(finalReplay()->channelName) : "Go live";
-          it.mark = Item::Mark::Dot;
-          break;
-        case Pill::Pause:
-          it.title = "Pause";
-          it.mark = Item::Mark::Pause;
-          break;
-        case Pill::Rewind:
-          it.title = "Rewind";
-          it.mark = Item::Mark::Replay;
-          break;
-        case Pill::Cameras: it.title = "Cameras"; break;
-        case Pill::Subtitles: {
-          Playback::SubtitleStatus st = p.subtitleStatus();
-          if (!st.on) {
-            it.title = "Subtitles";
-            it.extra = "Off";
-          } else if (st.label == "On") {
-            it.title = "Subtitles";
-            it.extra = "On \xc2\xb7 " + st.detail;
-          } else {
-            it.title = st.label + " \xe2\x9c\x93";
-            it.extra = st.detail;
-          }
-          break;
-        }
-        case Pill::Style: it.title = "Aa"; break;
-        case Pill::Sources: it.title = "Sources"; it.extra = backups() > 0 ? feedLine() : std::string(); break;
-        case Pill::Coast: it.title = g && g->west ? "Watch East \xe2\x86\x94" : "Watch West \xe2\x86\x94"; break;
-        case Pill::Guide: it.title = app_.store().isEvent(p.entry()) ? "Games" : "Guide"; break;
-        case Pill::Last: it.title = "Back to " + backName(); break;
-        case Pill::Favorite: it.title = g && app_.store().isFavorite(g->id) ? "Unfavorite" : "Favorite"; break;
-        case Pill::More: it.title = "Settings"; break;
-      }
-      items.push_back(std::move(it));
-    }
-    const float gap = 14, height = 80, room = gfx::kLayoutWidth - 2 * kLeft;
-    auto widthOf = [&](const Item& it) {
-      if (it.bare) return height;  // the mark alone, round
-      float w = ui::textWidth(c, it.title, Weight::Bold, 28) + 56;
-      if (it.mark != Item::Mark::None) w += 34;
-      if (!it.extra.empty()) w += ui::textWidth(c, it.extra, Weight::Medium, 24) + 14;
-      if (!it.tag.empty()) w += ui::chipWidth(c, it.tag, 14) + 12;
-      return w;
-    };
-    // Too many to fit: the second words go, Sources' first, then the rest.
-    float total = 0;
-    for (const Item& it : items) total += widthOf(it) + gap;
-    for (size_t i = 0; i < items.size() && total > room; ++i) {
-      if (pills_[i] == Pill::Subtitles || items[i].extra.empty()) continue;
-      total -= widthOf(items[i]);
-      items[i].extra.clear();
-      total += widthOf(items[i]);
-    }
-    // Build 163: still too wide (a long "Back to" name, the catch-up test):
-    // "Back to …" becomes "Back", then Subtitles loses its second words too,
-    // so every button stays on screen.
-    auto shorten = [&](Pill which, auto change) {
-      for (size_t i = 0; i < items.size() && total > room; ++i) {
-        if (pills_[i] != which) continue;
-        total -= widthOf(items[i]);
-        change(items[i]);
-        total += widthOf(items[i]);
-      }
-    };
-    shorten(Pill::Last, [](Item& it) { it.title = "Back"; });
-    shorten(Pill::Subtitles, [](Item& it) { it.extra.clear(); });
-    // Build 165: then Rewind and Pause keep their marks alone.
-    shorten(Pill::Rewind, [](Item& it) { it.bare = true; });
-    shorten(Pill::Pause, [](Item& it) { it.bare = true; });
-    // The programme's bar over the buttons (not under a game's card).
     if (p.catchupDays() > 0 && cardTop_ == kCardTop) drawReplayBar(c, g);
-    float x = kLeft, y = kRowY - 6;
-    pillsShown_ = items.size();
-    for (size_t i = 0; i < items.size(); ++i) {
-      const Item& it = items[i];
-      float w = widthOf(it);
-      if (x + w > kLeft + room) {
-        pillsShown_ = i;
-        if (pill_ >= static_cast<int>(i)) pill_ = static_cast<int>(i) - 1;
-        break;
-      }
-      Rect r{x, y, w, height};
+    namespace ctl = engine::controls;
+    constexpr float kIcon = 34, kPadLeft = 23, kIconGap = 14, kPadRight = 30, kStateGap = 12;
+    constexpr int kTitlePx = 28, kStatePx = 24;
+    const float y = kRowY - 6, room = gfx::kLayoutWidth - 2 * kLeft;
+    ctl::LabelIn in = labelIn(g);
+    std::vector<ctl::Label> labels;
+    for (Ctl b : pills_) labels.push_back(ctl::label(b, in));
+    bool focused = pill_ >= 0 && static_cast<size_t>(pill_) < pills_.size();
+    float want = ctl::kSize;
+    if (focused) {
+      const ctl::Label& l = labels[static_cast<size_t>(pill_)];
+      want = kPadLeft + kIcon + kIconGap + ui::textWidth(c, l.title, Weight::Bold, kTitlePx) + kPadRight;
+      if (!l.state.empty()) want += kStateGap + ui::textWidth(c, l.state, Weight::Medium, kStatePx);
+    }
+    ctl::RowLayout row = ctl::layout(pills_, focused ? pill_ : -1, want, room);
+    for (float d : row.dividers) c.g.fill({kLeft + d - 1, y + 22, 2, ctl::kSize - 44}, theme::white(0.25f), 1);
+    for (size_t i = 0; i < pills_.size(); ++i) {
+      const ctl::Slot& slot = row.slots[i];
+      const ctl::Label& l = labels[i];
+      Rect r{kLeft + slot.x, y, slot.w, ctl::kSize};
       c.hit(r, kHitPill + static_cast<int>(i));
       bool f = static_cast<int>(i) == pill_;
+      float round = ctl::kSize * 0.5f;
       if (f) {
-        Rect big{r.x - r.w * 0.02f, r.y - 1.5f, r.w * 1.04f, r.h + 3};
-        c.g.fill(big, theme::white(), height * 0.5f + 2);
-        c.g.stroke({big.x - 4, big.y - 4, big.w + 8, big.h + 8}, theme::black(0.85f), height * 0.5f + 6, 3);
+        c.g.fill(r, theme::white(), round);
+        c.g.stroke({r.x - 4, r.y - 4, r.w + 8, r.h + 8}, theme::black(0.85f), round + 4, 3);
       } else {
-        c.g.fill(r, theme::hex(0x14161B, 0.85f), height * 0.5f);
-        c.g.stroke(r, theme::white(0.3f), height * 0.5f, 1.5f);
+        c.g.fill(r, theme::hex(0x14161B, 0.85f), round);
+        c.g.stroke(r, theme::white(0.3f), round, 1.5f);
       }
       Color ink = f ? theme::black() : theme::white();
-      float tx = r.x + 28;
-      if (it.mark != Item::Mark::None) {
-        float mx = it.bare ? r.x + (r.w - 26) * 0.5f : tx;
-        float my = r.y + (r.h - 26) * 0.5f;
-        switch (it.mark) {
-          case Item::Mark::Dot: c.g.fill({mx + 3, my + 3, 20, 20}, theme::hex(kRed), 10); break;
-          case Item::Mark::Pause:
-            c.g.fill({mx + 4, my + 1, 7, 24}, ink, 2);
-            c.g.fill({mx + 15, my + 1, 7, 24}, ink, 2);
-            break;
-          case Item::Mark::Replay:
-            if (unsigned icon = c.icons ? c.icons->get("ui-replay") : 0) c.g.textureAlpha(icon, {mx, my, 26, 26}, ink);
-            else ui::labelIn(c, "\xe2\x97\x80\xe2\x97\x80", {mx - 4, my, 34, 26}, Weight::Bold, 16, ink, Align::Center);
-            break;
-          case Item::Mark::None: break;
-        }
-        if (it.bare) {
-          x += w + gap;
-          continue;
-        }
-        tx += 34;
+      float iy = r.y + (ctl::kSize - kIcon) * 0.5f;
+      Rect icon = f ? Rect{r.x + kPadLeft, iy, kIcon, kIcon} : Rect{r.x + (ctl::kSize - kIcon) * 0.5f, iy, kIcon, kIcon};
+      drawGlyph(c, pills_[i], icon, ink, in.favorite, l.title);
+      // Subtitles on: a small green dot at the icon's top right corner.
+      if (l.dot) {
+        Rect dot{icon.x + icon.w - 7, icon.y - 5, 14, 14};
+        c.g.fill({dot.x - 2, dot.y - 2, dot.w + 4, dot.h + 4}, f ? theme::white() : theme::hex(0x14161B), 9);
+        c.g.fill(dot, theme::hex(kGreen), 7);
       }
-      tx += ui::label(c, it.title, tx, r.y + 22, Weight::Bold, 28, ink);
-      if (!it.tag.empty())
-        tx += 12 + ui::chip(c, it.tag, tx + 12, r.y + 29, 14, theme::hex(theme::kStar, f ? 1.0f : 0.9f), theme::black());
-      if (!it.extra.empty())
-        ui::label(c, it.extra, tx + 14, r.y + 25, Weight::Medium, 24, f ? theme::black(0.7f) : theme::white(0.75f));
-      x += w + gap;
+      if (!f) continue;
+      float tx = icon.x + kIcon + kIconGap, right = r.x + r.w - kPadRight;
+      tx += ui::label(c, l.title, tx, r.y + 22, Weight::Bold, kTitlePx, ink, right - tx);
+      if (!l.state.empty() && right - tx - kStateGap > 24)
+        ui::label(c, l.state, tx + kStateGap, r.y + 25, Weight::Medium, kStatePx, theme::black(0.6f),
+                  right - tx - kStateGap);
     }
   }
 
@@ -2301,11 +2263,8 @@ class PlayerScreen : public Screen {
   bool noSubtitlesSaid_ = false;
   size_t pictureFeed_ = 0;  // the feed the picture last came from
   Zone zone_ = Zone::None;
-  std::vector<Pill> pills_;
+  std::vector<Ctl> pills_;
   int pill_ = 0;
-  // How many of pills_ the row drew last time (the rest didn't fit): focus
-  // never moves onto one that isn't on screen.
-  size_t pillsShown_ = 99;
   int failButton_ = 0;
   // Build 165, replay. The paused panel's focused button (-1 none: the
   // pointer on the picture); the programme it paused in. The Rewind
@@ -2314,7 +2273,7 @@ class PlayerScreen : public Screen {
   // last moved with and its repeats, the pointer on the bar or Play. The
   // clocks shown.
   int pausedButton_ = 0;
-  time::Seconds pausedTitleFor_ = 0, pausedStart_ = 0, pausedEnd_ = 0;
+  time::Seconds pausedTitleFor_ = 0, pausedStart_ = 0;
   std::string pausedTitle_;
   bool timeline_ = false;
   From timelineFrom_ = From::Live;

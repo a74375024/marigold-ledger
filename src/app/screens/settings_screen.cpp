@@ -72,7 +72,7 @@ About categoryAbout(SettingsCategory c) {
   switch (c) {
     case SettingsCategory::Watching:
       return {"Subtitles and the remote",
-              "Subtitles stay on for every channel of that language until you turn them off. Pick a language from Aa "
+              "Subtitles stay on for every channel of that language until you turn them off. Pick a language from Subtitles "
               "in the player.\nWhere the TV has its own captions switch, it turns them on and off too."};
     case SettingsCategory::Guide:
       return {"The guide", "The corner preview, the clock, the All Channels tab and where listings come from."};
@@ -101,6 +101,8 @@ float paragraphs(ui::Ctx& c, const std::string& text, float x, float y, float w,
   }
   return y - top;
 }
+
+}  // namespace
 
 // A small picture with a caption in the chosen size, look, letters and
 // position (what the player draws, scaled down).
@@ -138,6 +140,8 @@ void captionPreview(ui::Ctx& c, Rect r, const Settings& set) {
   }
   c.g.popClip();
 }
+
+namespace {
 
 // What a row is set to, for the right column's small heading.
 std::string rowValue(const ui::PanelItem& it) {

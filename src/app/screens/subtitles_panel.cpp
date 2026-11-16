@@ -1,5 +1,7 @@
-// Subtitles: the panel from the player's Aa button (Off or a language the
-// stream carries, the timing and the style). Settings › Watching has the same choices
+// Subtitles: the panel from the player's Subtitles button (Build 169: the
+// one button, with what Aa used to open): Off or a language the stream
+// carries first, then their look (with a preview of a caption at the
+// bottom), then the timing. Settings › Watching has the same choices
 // (settings_rows.cpp). Picking a language turns subtitles on for every channel of the same
 // language (English-language or Spanish-language) until Off is picked.
 // Caption timing changes every channel's, or this channel's own once it has one.
@@ -44,7 +46,7 @@ std::vector<ui::PanelItem> styleItems(App& app) {
   const Settings& set = app.store().settings();
   out.push_back(choice("Size", {kSizes[0], kSizes[1], kSizes[2], kSizes[3]}, set.subtitleSize,
                        [&app](int k) { change(app, [k](Settings& s) { s.subtitleSize = k; }); }));
-  out.push_back(choice("Look", {kLooks[0], kLooks[1], kLooks[2]}, set.subtitleLook,
+  out.push_back(choice("Style", {kLooks[0], kLooks[1], kLooks[2]}, set.subtitleLook,
                        [&app](int k) { change(app, [k](Settings& s) { s.subtitleLook = k; }); }));
   if (Playback::playerDrawsSubtitles()) {
     // Apple TV's player draws them: a size shows from the next line, a box
@@ -138,14 +140,17 @@ std::unique_ptr<Screen> makeSubtitles(App& app) {
       };
       p.items.push_back(on);
     }
+    p.items.push_back(ui::PanelItem::header("LOOK"));
+    for (ui::PanelItem& it : styleItems(app)) p.items.push_back(std::move(it));
     p.items.push_back(ui::PanelItem::header("TIMING"));
     for (ui::PanelItem& it : timingItems(app)) p.items.push_back(std::move(it));
-    p.items.push_back(ui::PanelItem::header("STYLE"));
-    for (ui::PanelItem& it : styleItems(app)) p.items.push_back(std::move(it));
     p.hint = pb.spanishChannel() ? "Your choice stays on for every Spanish-language channel"
                                  : "Your choice stays on as you change channels";
   });
   panel->liveRows = true;  // languages appear as the stream shows them
+  // How they'll look, as the rows change it.
+  panel->footerHeight = 150;
+  panel->footer = [&app](ui::Ctx& c, ui::Rect r) { captionPreview(c, r, app.store().settings()); };
   return panel;
 }
 
