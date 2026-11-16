@@ -115,10 +115,11 @@ float coastChip(Ctx& c, bool west, float x, float y, int px);
 // arrow) `size` square at (x, y), in replay blue unless `ink` is given.
 // Never a count. Returns its width (0 when the icon isn't there).
 float replayMark(Ctx& c, float x, float y, float size, std::optional<Color> ink = std::nullopt);
-// The quiet outlined "Replay" chip (the guide's focused show), in the
-// "N feeds" chip's neutral look: the icon, then the word. Returns its width.
-float replayChip(Ctx& c, float x, float y, int px);
-float replayChipWidth(Ctx& c, int px);
+// The quiet outlined replay chip, in the "N feeds" chip's neutral look: the
+// icon, then `text` (the guide's focused show, Build 169: its replay
+// window, "2 days"). Returns its width.
+float replayChip(Ctx& c, float x, float y, int px, const std::string& text = "Replay");
+float replayChipWidth(Ctx& c, int px, const std::string& text = "Replay");
 
 // A channel logo fitted inside `r` (aspect kept, centred), or the fallback
 // name in bold until the logo is ready (or if there is none, or the one

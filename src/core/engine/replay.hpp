@@ -91,4 +91,39 @@ std::string behindText(time::Seconds behind);
 // "−17 min", "−1 h 02 min" for the playhead's bubble.
 std::string behindMinutes(time::Seconds behind);
 
+// The controls' replay buttons, at the front of the row on a channel
+// whose copies keep an archive (`days` > 0; none otherwise): behind live,
+// Go live (then Pause where `lgPause`: LG's remote), else Pause; then
+// Rewind. Build 169: no Start over in the row any more (nor on the banner
+// after a tune): Rewind's timeline, and the guide's and Live Events'
+// hold-OK menus, start a programme or a game over.
+enum class Button { GoLive, Pause, Rewind };
+std::vector<Button> buttons(uint16_t days, bool behind, bool lgPause);
+
+// Build 169: the "−17:05 behind live" tag at the top right. It shows for
+// kShowMs once a replay starts or plays from another moment (a jump),
+// counted from the first moment after it that neither the banner nor the
+// controls are up (they say how far behind themselves), then fades over
+// kFadeMs. Never while they're up. Times are the app's ms.
+class BehindTag {
+ public:
+  static constexpr uint32_t kShowMs = 5000, kFadeMs = 400, kFrameMs = 16;
+  // A jump (again while its stretch opens: its seconds start with the
+  // picture).
+  void jumped() {
+    pending_ = true;
+    from_ = 0;
+  }
+  // Every tick; `covered`: the banner or the controls are up.
+  void tick(uint32_t ms, bool covered);
+  // How much of it shows: 0 hidden, 1 fully, between while it fades.
+  float opacity(uint32_t ms, bool covered) const;
+  // When it next looks different by itself (0: it doesn't).
+  uint32_t nextChange(uint32_t ms) const;
+
+ private:
+  bool pending_ = false;  // jumped; its seconds not begun
+  uint32_t from_ = 0;     // ms they began (0: not)
+};
+
 }  // namespace marigold::engine::replay

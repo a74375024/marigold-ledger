@@ -2090,3 +2090,25 @@ A game on a channel whose copy keeps a catch-up archive can be watched from its 
 | Full games | Follow a team, the day after its game (two-day channel) | "Full games" row with the game; gone once its start is 47 h back |
 | Scores | Show scores on and off | Tiles and cards as in 1.0.10 |
 | Log | Send a report › Playback log | "replay" lines for game replays; no link |
+
+## Build 169: 1.0.12, replay fixes
+
+Four changes after testing 1.0.11. Nothing new runs; channels without replay look exactly as before.
+
+- **The banner after a tune:** no "Start over from 7:30" button any more. OK on the banner opens the controls, as it did before Build 165.
+- **The controls:** no "Start over" button. Live: Pause, Rewind; behind live: Go live (then Pause on LG), Rewind. To start a programme over: Rewind (the timeline), or hold OK on it in the guide, or on a game in Live Events (Start over / Watch replay), which work as before.
+- **The guide's focused show:** the outlined chip shows the replay window, "↺ 2 days" or "↺ 1 day" (the channel's longest usable archive), in the same quiet look. Edit My Lineup and elsewhere still say "Replay".
+- **The tag at the top right** ("↺ −17:05 behind live", or a Final's "REPLAY · 48:10 in"): shows for 5 seconds when a replay starts and after every jump (Play from on the timeline, resuming from pause, Right back to a replay, Start over from a menu, a game's replay), then fades out (under half a second). Its 5 seconds start once the banner and the controls are down, and it never shows while either is up (the banner says how far behind itself). The next stretch of the same replay doesn't bring it back. "End of the game" keeps its place.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Banner | Tune CNN 40 min into a programme | No Start over button; "Hides in" as usual; OK opens the controls |
+| Controls live | OK on CNN live | Pause, Rewind, then Subtitles…; no Start over |
+| Controls behind | OK during a replay (LG and another remote) | Go live (Pause on LG), Rewind; no Start over |
+| Guide chip | Focus ESPN (two-day copy), then a one-day-only channel | "↺ 2 days", then "↺ 1 day"; no chip on KCBS |
+| Edit My Lineup | Focus ESPN there | Still "Sports · ↺ Replay" |
+| Menu Start over | Hold OK on ESPN's programme begun 40 min ago › Start over; Live Events, hold OK on a live game › Start over, a Final › Watch replay | Plays from the start as before |
+| Tag after a jump | Rewind, Play from 7:00 | Banner for its few seconds, then the tag for 5 s, then it fades; nothing in the corner afterwards |
+| Tag hidden | OK (controls) or Info while it shows | The tag gone while they're up |
+| Other jumps | Pause and play; Right back to a replay; the menu's Start over; a Final's Watch replay | The tag for 5 s after each (REPLAY · N in for the Final) |
+| Long replay | Watch a replay across a stretch boundary (3 h) | The tag doesn't come back by itself |

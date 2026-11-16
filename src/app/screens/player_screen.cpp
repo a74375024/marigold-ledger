@@ -17,11 +17,14 @@
 // has the guide's episode after its times and its description in the band
 // under them, at today's height (Build 119).
 //
-// Build 165, replay (channels with a copy that keeps catch-up): Pause,
-// Rewind and Start over at the front of the controls, with the programme's
-// bar above them; the Rewind timeline; the paused panel; behind live, a tag
-// at the top right and Go live first; after a tune, "Start over from 7:30"
-// on the banner. Channels without catch-up look as they always did.
+// Build 165, replay (channels with a copy that keeps catch-up): Pause and
+// Rewind at the front of the controls, with the programme's bar above them;
+// the Rewind timeline; the paused panel; behind live, Go live first and a
+// tag at the top right (Build 169: for a few seconds after each jump, never
+// over the banner or the controls). Build 169: no Start over in the row or
+// on the banner; Rewind and the guide's and Live Events' hold-OK menus
+// start a programme or a game over. Channels without catch-up look as they
+// always did.
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -85,12 +88,10 @@ constexpr int kHitTips = 70;
 constexpr int kHitPicture = 80;  // the picture itself (under everything)
 constexpr int kHitPaused = 90;   // + a paused panel button's index
 constexpr int kHitPlayHere = 99;  // the timeline's "Play from" button
-constexpr int kHitStartOver = 98;  // the banner's "Start over from 7:30"
 constexpr int kHitEndCard = 95;    // + "End of the game"'s button (Build 167)
 constexpr int kHitBar = 100;      // + a slice of the timeline's bar
 constexpr int kBarSlices = 160;
 // Build 165, replay.
-constexpr uint32_t kStartOverAfterS = 3 * 60;  // the banner offers Start over past this
 using ReplayPhase = engine::Session::Replay::Phase;
 
 class PlayerScreen : public Screen {
@@ -137,20 +138,6 @@ class PlayerScreen : public Screen {
     }
     if (pausedPanel() && pendingFlip_.empty()) return pausedKey(e);
     if (endCard() && endCardKey(e)) return true;
-    // The banner's "Start over from 7:30" after a tune: OK takes it; any
-    // other key leaves it (and does what it does).
-    if (startOverOffer_) {
-      // (With the pointer, only a click on it.)
-      bool take = e.key == Key::Ok && !e.longPress && (!pointer_ || startOverHover_) && bannerVisible() &&
-                  zone_ == Zone::None && digits_.empty() &&
-                  pendingFlip_.empty();
-      time::Seconds at = *startOverOffer_;
-      startOverOffer_.reset();
-      if (take) {
-        startOver(at);
-        return true;
-      }
-    }
     if (p.failed() || p.noPicture()) return failedKey(e);
     if (zone_ == Zone::Row) return rowKey(e);
     if (zone_ == Zone::EdgeGuide || zone_ == Zone::EdgeLast) {
@@ -247,8 +234,6 @@ class PlayerScreen : public Screen {
       endCardButton_ = id - kHitEndCard;
       return;
     }
-    startOverHover_ = id == kHitStartOver;
-    if (id == kHitStartOver) return;
     if (id >= kHitPill && id < kHitPill + static_cast<int>(pills_.size())) {
       zone_ = Zone::Row;
       pill_ = id - kHitPill;
@@ -321,22 +306,8 @@ class PlayerScreen : public Screen {
       // A backup on the first start isn't "back on" anything: the banner
       // said it was still trying.
       if (!pictureSeen_) p.dismissBackupNotice();
-      if (!pictureSeen_) {
-        pictureAt_ = ms;
-        // Build 165: a tune that settled on a channel with replay, the
-        // programme begun a while ago: the banner offers to start it over.
-        startOverOffer_.reset();
-        if (pendingFlip_.empty() && !p.replay()) {
-          std::optional<time::Seconds> at = startOverAt(false);
-          if (at && time::now() - *at > static_cast<time::Seconds>(kStartOverAfterS)) startOverOffer_ = at;
-        }
-      }
+      if (!pictureSeen_) pictureAt_ = ms;
       pictureSeen_ = true;
-      changed = true;
-    }
-    // The offer goes with the banner.
-    if (startOverOffer_ && (!bannerVisible() || zone_ != Zone::None || !pendingFlip_.empty())) {
-      startOverOffer_.reset();
       changed = true;
     }
     // Subtitles on and none here: said once, quietly, while the banner is
@@ -485,7 +456,7 @@ class PlayerScreen : public Screen {
 
  private:
   enum class Zone { None, Row, EdgeGuide, EdgeLast };
-  enum class Pill { GoLive, Pause, Rewind, StartOver, Cameras, Subtitles, Style, Sources, Coast, Guide, Last, Favorite, More };
+  enum class Pill { GoLive, Pause, Rewind, Cameras, Subtitles, Style, Sources, Coast, Guide, Last, Favorite, More };
 
   // ---------------------------------------------------------- actions
   // A message while watching: in the banner's status line (brought up for
@@ -560,8 +531,6 @@ class PlayerScreen : public Screen {
       showBanner();
       return;
     }
-    // Build 165: where Start over goes, worked out once as the row opens.
-    startOverAt_ = startOverAt(true);
     buildPills();
     zone_ = Zone::Row;
     pill_ = -1;
@@ -633,16 +602,11 @@ class PlayerScreen : public Screen {
     pills_.clear();
     // Build 165: replay's buttons at the front, only where a copy keeps an
     // archive. Behind live: Go live first (and, on LG, Pause after it).
-    if (p.catchupDays() > 0) {
-      if (p.replay()) {
-        pills_.push_back(Pill::GoLive);
-        if (app_.window().remoteKeys() == RemoteKeys::lg()) pills_.push_back(Pill::Pause);
-      } else {
-        pills_.push_back(Pill::Pause);
-      }
-      pills_.push_back(Pill::Rewind);
-      if (startOverAt_) pills_.push_back(Pill::StartOver);
-    }
+    // Build 169: no Start over (engine::replay::buttons).
+    using Button = engine::replay::Button;
+    for (Button b : engine::replay::buttons(p.catchupDays(), p.replay().has_value(),
+                                            app_.window().remoteKeys() == RemoteKeys::lg()))
+      pills_.push_back(b == Button::GoLive ? Pill::GoLive : b == Button::Pause ? Pill::Pause : Pill::Rewind);
     if (cameras_) pills_.push_back(Pill::Cameras);
     pills_.push_back(Pill::Subtitles);
     pills_.push_back(Pill::Style);
@@ -752,10 +716,6 @@ class PlayerScreen : public Screen {
       case Pill::Rewind:
         closeControls();
         openTimeline();
-        break;
-      case Pill::StartOver:
-        closeControls();
-        if (startOverAt_) startOver(*startOverAt_);
         break;
       case Pill::Cameras: panel(makeCameraPanel(app_)); break;
       case Pill::Subtitles: {
@@ -947,44 +907,6 @@ class PlayerScreen : public Screen {
     zone_ = Zone::None;
     showBanner();
   }
-  void startOver(time::Seconds at) {
-    Playback& p = app_.playback();
-    if (!p.replayFrom(at, engine::Session::ReplayWhy::StartOver)) return;
-    zone_ = Zone::None;
-    showBanner();
-  }
-
-  // Where Start over goes: a game's scheduled start (its source a channel
-  // with replay), else the start of the programme on (`behind`: at the
-  // moment watched, else now). Not when the archive doesn't reach it, nor
-  // a minute from now.
-  std::optional<time::Seconds> startOverAt(bool behind) const {
-    Playback& p = app_.playback();
-    uint16_t days = p.catchupDays();
-    if (!days) return std::nullopt;
-    time::Seconds now = time::now();
-    time::Seconds at = behind ? p.replayAt() : now;
-    std::optional<time::Seconds> start;
-    if (app_.store().isEvent(p.entry())) {
-      if (std::optional<GameBanner> b = app_.store().gameBanner(p.entry(), now); b && b->start && *b->start <= at)
-        start = *b->start;
-    }
-    if (!start) {
-      if (at >= now - 60) {
-        // On now: the guide's listing (a game's, its channel's).
-        std::string id = p.entry();
-        if (!app_.store().channels()->find(id) && !p.feeds().empty())
-          id = app_.store().entryOfChannel(p.feeds()[std::min(p.feedIndex(), p.feeds().size() - 1)].channelId);
-        if (const Listing* l = current(id, now, nullptr)) start = l->start;
-      } else {
-        std::vector<engine::replay::Programme> list = p.timeline(at - 6 * 3600);
-        if (const engine::replay::Programme* on = engine::replay::on(list, at)) start = on->start;
-      }
-    }
-    if (!start || *start > now - 60 || *start < engine::replay::archiveStart(now, days)) return std::nullopt;
-    return start;
-  }
-
   // Every tick: the session's notices, the tag's text, the timeline's live
   // edge and the paused panel's clock. True when something shown changed.
   bool replayTick(uint32_t ms) {
@@ -1046,8 +968,32 @@ class PlayerScreen : public Screen {
       }
     }
     if (!look.empty()) wake_.at(ms + 1000 - ms % 1000);
+    // Build 169: the tag's few seconds. A replay that starts, or plays from
+    // another moment (a jump: the timeline, a resume, Right's return, a
+    // menu's Start over, a game's replay), starts them again; the next
+    // stretch of the same replay doesn't. While it opens they wait for its
+    // picture.
+    std::string mark = tagMark_;
+    if (!r || r->phase == ReplayPhase::Paused) mark.clear();
+    else if (!r->next) mark = p.entry() + " " + std::to_string(r->from);
+    if (mark != tagMark_) {
+      tagMark_ = mark;
+      if (!mark.empty()) behindTag_.jumped();
+    }
+    if (r && r->phase == ReplayPhase::Opening && !r->next) behindTag_.jumped();
+    bool covered = tagCovered();
+    behindTag_.tick(ms, covered);
+    float shown = behindTag_.opacity(ms, covered);
+    if (shown != tagShown_) {
+      tagShown_ = shown;
+      changed = true;
+    }
+    if (uint32_t next = behindTag_.nextChange(ms)) wake_.at(next);
     return changed;
   }
+  // What hides the tag: the banner (it says how far behind itself), the
+  // controls, a channel key pending.
+  bool tagCovered() const { return bannerVisible() || zone_ == Zone::Row || !pendingFlip_.empty(); }
 
   // ------------------------------------------- the Rewind timeline
   enum class From { Live, Replay, Paused };
@@ -1076,7 +1022,6 @@ class PlayerScreen : public Screen {
     playHover_ = false;
     zone_ = Zone::None;
     bannerUntil_ = app_.ms();
-    startOverOffer_.reset();
   }
   bool timelineKey(const KeyEvent& e) {
     Playback& p = app_.playback();
@@ -1428,37 +1373,46 @@ class PlayerScreen : public Screen {
     }
   }
 
-  // Behind live: the rewind icon and how far, at the top right.
+  // Behind live: the rewind icon and how far, at the top right. Build 169:
+  // for a few seconds after a jump, then it fades (engine::replay::
+  // BehindTag); never over the banner or the controls.
   void drawBehindTag(ui::Ctx& c) {
     Playback& p = app_.playback();
     const auto& r = p.replay();
     if (!r || r->phase == ReplayPhase::Paused || c.covered) return;
+    float a = behindTag_.opacity(app_.ms(), tagCovered());
+    constexpr float kTop = 52, kH = 52;
     if (const engine::Session::GameReplay* g = finalReplay()) {
       // Build 167: a Final's replay counts from the game's start ("REPLAY ·
       // 48:10 in"), not behind live.
-      std::string in = engine::views::replayIn(g->start, p.replayAt());
-      float chipW = ui::chipWidth(c, "REPLAY", 17) + 26;
-      float tw = ui::textWidth(c, in, Weight::Bold, 24);
-      float w = 14 + chipW + 14 + tw + 24;
-      Rect box{gfx::kLayoutWidth - 64 - w, 52, w, 52};
-      c.g.fill(box, theme::black(0.6f), 26);
-      Rect chip{box.x + 12, box.y + 11, chipW, 30};
-      c.g.fill(chip, theme::hex(kBlue), 15);
-      if (unsigned icon = c.icons ? c.icons->get("ui-replay") : 0)
-        c.g.textureAlpha(icon, {chip.x + 10, chip.y + 7, 16, 16}, theme::white());
-      ui::labelIn(c, "REPLAY", {chip.x + 30, chip.y, chip.w - 36, chip.h}, Weight::Bold, 17, theme::white());
-      ui::label(c, in, chip.x + chip.w + 14, box.y + 11, Weight::Bold, 24, theme::white());
-      drawEndCard(c, box.y + box.h + 16);
+      if (a > 0) {
+        std::string in = engine::views::replayIn(g->start, p.replayAt());
+        float chipW = ui::chipWidth(c, "REPLAY", 17) + 26;
+        float tw = ui::textWidth(c, in, Weight::Bold, 24);
+        float w = 14 + chipW + 14 + tw + 24;
+        Rect box{gfx::kLayoutWidth - 64 - w, kTop, w, kH};
+        c.g.fill(box, theme::black(0.6f * a), 26);
+        Rect chip{box.x + 12, box.y + 11, chipW, 30};
+        c.g.fill(chip, theme::hex(kBlue, a), 15);
+        if (unsigned icon = c.icons ? c.icons->get("ui-replay") : 0)
+          c.g.textureAlpha(icon, {chip.x + 10, chip.y + 7, 16, 16}, theme::white(a));
+        ui::labelIn(c, "REPLAY", {chip.x + 30, chip.y, chip.w - 36, chip.h}, Weight::Bold, 17, theme::white(a));
+        ui::label(c, in, chip.x + chip.w + 14, box.y + 11, Weight::Bold, 24, theme::white(a));
+      }
+      // "End of the game" keeps its place under it, shown or not.
+      drawEndCard(c, kTop + kH + 16);
       return;
     }
+    if (a <= 0) return;
     std::string text = engine::replay::behindText(p.behindLive()) + " behind live";
     float tw = ui::textWidth(c, text, Weight::Bold, 24);
     float w = tw + 32 + 40;
-    Rect box{gfx::kLayoutWidth - 64 - w, 52, w, 52};
-    c.g.fill(box, theme::black(0.6f), 26);
+    Rect box{gfx::kLayoutWidth - 64 - w, kTop, w, kH};
+    c.g.fill(box, theme::black(0.6f * a), 26);
     float ix = box.x + 18;
-    if (unsigned icon = c.icons ? c.icons->get("ui-replay") : 0) c.g.textureAlpha(icon, {ix, box.y + 13, 26, 26}, theme::white());
-    ui::label(c, text, ix + 36, box.y + 11, Weight::Bold, 24, theme::white());
+    if (unsigned icon = c.icons ? c.icons->get("ui-replay") : 0)
+      c.g.textureAlpha(icon, {ix, box.y + 13, 26, 26}, theme::white(a));
+    ui::label(c, text, ix + 36, box.y + 11, Weight::Bold, 24, theme::white(a));
   }
 
   // The programme's bar above the controls (A1, A3): its start at the
@@ -2137,20 +2091,6 @@ class PlayerScreen : public Screen {
     if (keys.colour) item(dot(c, x, y, kGreen), "CC", "");
     if (zone_ != Zone::None || x > gfx::kLayoutWidth - kLeft - 300) return;
     float right = gfx::kLayoutWidth - kLeft;
-    // Build 165: after a tune, the programme begun a while ago: one
-    // button, as if focused, where "Hides in" sits. OK takes it.
-    if (startOverOffer_ && pendingFlip_.empty()) {
-      std::string text = "Start over from " + ui::clock(c, *startOverOffer_, false);
-      float bw = ui::textWidth(c, text, Weight::Bold, 24) + 60;
-      Rect r{right - bw, y - 4, bw, 54};
-      c.hit(r, kHitStartOver);
-      c.g.fill(r, theme::white(), 27);
-      if (startOverHover_) c.g.stroke({r.x - 4, r.y - 4, r.w + 8, r.h + 8}, theme::black(0.85f), 31, 3);
-      ui::labelIn(c, text, r, Weight::Bold, 24, theme::black(), Align::Center);
-      float cw = ui::textWidth(c, keys.clickpad ? "Click" : "OK", Weight::Bold, 17) + 20;
-      keyCap(c, r.x - 14 - std::max(40.0f, cw), y + 3, keys.clickpad ? "Click" : "OK");
-      return;
-    }
     // The load states, quietly, where "Hides in" sits once it plays.
     Status st = status(g);
     if (st.text.empty()) {
@@ -2197,7 +2137,6 @@ class PlayerScreen : public Screen {
           it.title = "Rewind";
           it.mark = Item::Mark::Replay;
           break;
-        case Pill::StartOver: it.title = "Start over"; break;
         case Pill::Cameras: it.title = "Cameras"; break;
         case Pill::Subtitles: {
           Playback::SubtitleStatus st = p.subtitleStatus();
@@ -2372,8 +2311,8 @@ class PlayerScreen : public Screen {
   // pointer on the picture); the programme it paused in. The Rewind
   // timeline: open, what played before it, the channel it's for, the
   // playhead, the archive's start, the bar, the programmes on it, the key
-  // last moved with and its repeats, the pointer on the bar or Play. Where
-  // Start over goes (the row), the banner's offer, and the clocks shown.
+  // last moved with and its repeats, the pointer on the bar or Play. The
+  // clocks shown.
   int pausedButton_ = 0;
   time::Seconds pausedTitleFor_ = 0, pausedStart_ = 0, pausedEnd_ = 0;
   std::string pausedTitle_;
@@ -2388,9 +2327,12 @@ class PlayerScreen : public Screen {
   int repeats_ = 0;
   int barHover_ = -1;
   bool playHover_ = false;
-  std::optional<time::Seconds> startOverAt_, startOverOffer_;
-  bool startOverHover_ = false;
   std::string replayLook_;
+  // Build 169: the behind-live tag's few seconds after a jump; the replay
+  // they're for (its channel and stretch start, "" none); how much shows.
+  engine::replay::BehindTag behindTag_;
+  std::string tagMark_;
+  float tagShown_ = 0;
   // Build 167: a Final's replay past its final: "End of the game" until
   // then (app ms; 0 none), its focused button (0 Back to Live Events).
   uint32_t endCardUntil_ = 0;

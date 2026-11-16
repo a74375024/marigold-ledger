@@ -63,22 +63,22 @@ float replayMark(Ctx& c, float x, float y, float size, std::optional<Color> ink)
   return size;
 }
 
-float replayChipWidth(Ctx& c, int px) {
+float replayChipWidth(Ctx& c, int px, const std::string& text) {
   float icon = std::round(static_cast<float>(px) * 1.05f);
-  return std::round(c.t.measure("Replay", Weight::Bold, px) + icon + static_cast<float>(px) * 0.35f +
+  return std::round(c.t.measure(text, Weight::Bold, px) + icon + static_cast<float>(px) * 0.35f +
                     static_cast<float>(px) * 0.9f);
 }
 
-float replayChip(Ctx& c, float x, float y, int px) {
+float replayChip(Ctx& c, float x, float y, int px, const std::string& text) {
   float h = std::round(static_cast<float>(px) * 1.5f);
-  float width = replayChipWidth(c, px);
+  float width = replayChipWidth(c, px, text);
   Rect r{x, y, width, h};
   c.g.stroke(r, theme::white(0.5f), h * 0.5f, 2);
   float icon = std::round(static_cast<float>(px) * 1.05f);
   float ix = x + std::round(static_cast<float>(px) * 0.45f);
   replayMark(c, ix, y + std::round((h - icon) * 0.5f), icon, theme::white(0.85f));
   float tx = ix + icon + std::round(static_cast<float>(px) * 0.35f);
-  labelIn(c, "Replay", {tx, y, x + width - tx, h}, Weight::Bold, px, theme::white(0.85f));
+  labelIn(c, text, {tx, y, x + width - tx, h}, Weight::Bold, px, theme::white(0.85f));
   return width;
 }
 

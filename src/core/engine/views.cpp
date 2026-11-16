@@ -297,6 +297,11 @@ std::string replayAbout(const std::vector<std::pair<std::string, uint16_t>>& byP
   return out + ". Pause, rewind and start over work on it, and its games can be watched from the start.";
 }
 
+std::string replayWindow(uint16_t days) {
+  if (!days) return {};
+  return std::to_string(days) + (days == 1 ? " day" : " days");
+}
+
 std::vector<Listing> mergedListings(std::vector<Listing> base, const std::vector<Listing>& extra) {
   std::stable_sort(base.begin(), base.end(), [](const Listing& a, const Listing& b) { return a.start < b.start; });
   size_t kept = base.size();

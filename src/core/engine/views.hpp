@@ -191,6 +191,9 @@ std::string behindLine(time::Seconds behind);
 // and start over work on it, and its games can be watched from the start."
 // ("" when it has none). Never a count of channels.
 std::string replayAbout(const std::vector<std::pair<std::string, uint16_t>>& byProvider);
+// Build 169: the guide's focused-show chip, the replay window after its
+// icon: "2 days", "1 day" ("" when the channel has none).
+std::string replayWindow(uint16_t days);
 
 // "Title · Episode", or the title alone.
 std::string titleAndEpisode(const Listing& l);

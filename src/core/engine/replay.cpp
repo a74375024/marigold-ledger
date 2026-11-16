@@ -176,4 +176,39 @@ std::string behindMinutes(time::Seconds behind) {
   return buf;
 }
 
+std::vector<Button> buttons(uint16_t days, bool behind, bool lgPause) {
+  if (!days) return {};
+  std::vector<Button> out;
+  if (behind) {
+    out.push_back(Button::GoLive);
+    if (lgPause) out.push_back(Button::Pause);
+  } else {
+    out.push_back(Button::Pause);
+  }
+  out.push_back(Button::Rewind);
+  return out;
+}
+
+void BehindTag::tick(uint32_t ms, bool covered) {
+  if (!pending_ || covered) return;
+  pending_ = false;
+  from_ = ms ? ms : 1;
+}
+
+float BehindTag::opacity(uint32_t ms, bool covered) const {
+  if (covered || !from_ || ms < from_) return 0;
+  uint32_t t = ms - from_;
+  if (t < kShowMs) return 1;
+  if (t >= kShowMs + kFadeMs) return 0;
+  return 1 - static_cast<float>(t - kShowMs) / static_cast<float>(kFadeMs);
+}
+
+uint32_t BehindTag::nextChange(uint32_t ms) const {
+  if (!from_ || ms < from_) return 0;
+  uint32_t t = ms - from_;
+  if (t < kShowMs) return from_ + kShowMs;
+  if (t < kShowMs + kFadeMs) return ms + kFrameMs;
+  return 0;
+}
+
 }  // namespace marigold::engine::replay

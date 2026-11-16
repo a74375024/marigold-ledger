@@ -1347,8 +1347,9 @@ void GuideScreen::drawHero(ui::Ctx& c) {
   const Listing* l = focusedListing();
   const Top& t = top(c, *g, l);
   if (!g->partner.empty()) nx += ui::coastChip(c, g->west, nx, y + 6, 16) + 14;
-  // Build 167: a channel with replay, in one quiet chip (no days, no count).
-  if (g->replayDays > 0) nx += ui::replayChip(c, nx, y + 4, 18) + 12;
+  // Build 167: a channel with replay, in one quiet chip; Build 169: its
+  // window ("↺ 2 days"), never a count.
+  if (g->replayDays > 0) nx += ui::replayChip(c, nx, y + 4, 18, engine::views::replayWindow(g->replayDays)) + 12;
   if (!g->partner.empty() && !t.also.empty() && right - nx > 60)
     ui::label(c, t.also, nx, y + 4, Weight::Medium, 22, theme::white(0.7f), right - nx);
 
