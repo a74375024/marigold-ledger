@@ -68,6 +68,9 @@ struct PlayerState {
   // The picture and sound, for the log ("1920x1080 59.94p · h264 High
   // 8-bit · aac"); "" not known yet.
   std::string facts;
+  // Build 177: what the relay read of the stream's tables: SCTE-35 ad
+  // markers declared (1) or not (0); -1 not known.
+  int adMarkersDeclared = -1;
 };
 
 class Player {
@@ -118,6 +121,9 @@ class Player {
     return false;
   }
   virtual std::optional<int> startedInside() const { return std::nullopt; }
+  // Build 177: the SCTE-35 ad markers in what the replay relay passed on
+  // since the last call, and cleared (nullopt: nothing went through it).
+  virtual std::optional<media::scte35::Tally> takeReplayAdMarkers() { return std::nullopt; }
 };
 
 class Session {
@@ -541,6 +547,11 @@ class Session {
   // return); false when the archive no longer holds it.
   bool startReplayInstead(time::Seconds at, ReplayWhy why, size_t live);
   void logReplay(std::string detail, size_t copy, bool clock = false);
+  // Build 177: the replay ending (or replaced): what the replay relay
+  // passed on of it, read for SCTE-35 ad markers, in one line; nothing
+  // when the relay wasn't in its path. `log` false: dropped unsaid (a
+  // replay starting from live).
+  void replayMarkers(bool log);
   // Build 172: copy `i`'s reach; measuring its archive timing during a
   // replay's first wait.
   replay::Reach reachFor(size_t i) const;
@@ -615,6 +626,9 @@ class Session {
   bool noPicture_ = false;
   std::string noPictureMessage_;
   bool factsLogged_ = false;  // the picture's facts are in the log (this attempt)
+  // Build 177: the stream's ad markers are in the log (this tune), and a
+  // tune whose first attempt hasn't started yet (what plays is the last one's).
+  bool adMarkersLogged_ = true, adMarkersTune_ = false;
   // ... and its picture, until it has played long enough to remember.
   std::optional<quality::Picture> measured_;
   std::set<std::string> quickTried_;  // Emby quick starts tried this tune

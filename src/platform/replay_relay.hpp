@@ -29,6 +29,12 @@
 // One session at a time (a new localUrl() ends the last), one connection
 // to the provider at a time. Plain POSIX sockets and threads, like
 // lan_server; nothing here logs a link.
+//
+// Build 177: what it passes on is read for SCTE-35 ad markers on the way
+// (media::scte35::Scanner, inline on the bytes sent), counted across its
+// sessions until takeAdMarkers() hands them over (the session logs one
+// line when a replay ends or is replaced). The relay is in a replay's path
+// only for a stretch started inside (Feed::inside) from an http:// link.
 #pragma once
 
 #include <atomic>
@@ -37,6 +43,8 @@
 #include <optional>
 #include <string>
 #include <thread>
+
+#include "core/media/ts_ad_markers.hpp"
 
 namespace marigold::platform {
 
@@ -71,6 +79,9 @@ class ReplayRelay {
   // session, and the last byte range asked of it (0: none).
   int opens() const;
   uint64_t lastRange() const;
+  // Build 177: the ad markers in what it passed on since the last call
+  // (every session since, the current one so far), and cleared.
+  media::scte35::Tally takeAdMarkers();
 
   // Bytes dropped while reading through at most: this many a second of
   // the skip and the stretch's rate, with a floor and a cap.

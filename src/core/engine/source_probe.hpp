@@ -19,6 +19,7 @@
 #include <string_view>
 #include <vector>
 
+#include "core/media/ts_ad_markers.hpp"
 #include "core/net/http.hpp"
 
 namespace marigold::engine::probe {
@@ -46,6 +47,9 @@ struct Outcome {
   uint32_t pictureMs = 0;    // the first key picture, after the request
   int width = 0, height = 0, fps = 0;
   std::string why;  // for the log when it failed: "http 404", "no picture in 12 s" (never a link)
+  // Build 177: what the stream read said of SCTE-35 ad markers (nothing
+  // read: ads.read() false).
+  media::scte35::Tally ads;
 };
 
 // Milliseconds from any thread (a steady clock).

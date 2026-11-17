@@ -683,6 +683,37 @@ TEST_CASE("session: what plays is logged once, with the picture") {
   CHECK(video[0] == "1920x1080 59.94p \xc2\xb7 h264 High 8-bit \xc2\xb7 aac");
 }
 
+TEST_CASE("session Build 177: where the relay reads live TS, whether it declares ad markers, once a tune") {
+  Rig r;
+  auto ids = r.entries(2);
+  REQUIRE(ids.size() >= 2);
+  REQUIRE(r.session->tune(ids[0]));
+  r.run(500);
+  r.picture();
+  r.run(2000);
+  CHECK(r.logged("video").empty());  // the relay isn't reading it: nothing said
+  // Through the relay (webOS): its PMT read, SCTE-35 listed.
+  REQUIRE(r.session->tune(ids[1]));
+  r.run(500);
+  r.player->state.streamChecked = true;
+  r.player->state.adMarkersDeclared = 1;
+  r.picture();
+  r.run(5000);
+  auto video = r.logged("video");
+  REQUIRE(video.size() == 1);
+  CHECK(video[0] == "ad markers: declared (SCTE-35 in the stream's tables)");
+  // Once a tune: the next tune says it again (none this time).
+  REQUIRE(r.session->tune(ids[0]));
+  r.run(500);
+  r.player->state.streamChecked = true;
+  r.player->state.adMarkersDeclared = 0;
+  r.picture();
+  r.run(5000);
+  video = r.logged("video");
+  REQUIRE(video.size() == 2);
+  CHECK(video[1] == "ad markers: none declared");
+}
+
 TEST_CASE("session: what the screens show changes as the picture comes, not every tick") {
   Rig r;
   auto ids = r.entries(1);

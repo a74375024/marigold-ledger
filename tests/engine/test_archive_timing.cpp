@@ -862,3 +862,72 @@ TEST_CASE("archive clock 1.0.17: one stretch read where the other wasn't still t
   CHECK(o.timing->kind == Kind::Exact);
   CHECK(o.timing->clock == 3600);
 }
+
+// ------------------------------------- Build 177: ad markers in the reads
+
+namespace {
+
+// clip() with an SCTE-35 stream in its PMT (`declared`) and a splice_insert
+// (out, a 30 s break) after its first tables (`cue`).
+std::string markedClip(int64_t pts0, int seconds, bool declared, bool cue) {
+  tsgen::Muxer m;
+  tsgen::VideoFormat f;
+  for (int i = 0; i < seconds * 25; ++i) {
+    if (i % 10 == 0) {
+      m.section(0, tsgen::pat());
+      m.section(tsgen::kPmtPid, tsgen::pmt(0x1B, 0, false, declared ? 0x86 : 0));
+      if (cue && i == 0) m.section(tsgen::kCuePid, tsgen::spliceInsert(1, true, 30));
+    }
+    int64_t t = (pts0 + static_cast<int64_t>(i) * 3600) % kWrap;
+    m.pes(tsgen::kVideoPid, tsgen::videoPes(t, t, tsgen::picture(f, i % 50 == 0, 3000, 0, static_cast<uint8_t>(i))));
+  }
+  return std::string(m.out.begin(), m.out.end());
+}
+
+}  // namespace
+
+TEST_CASE("archive clock Build 177: each read is scanned for ad markers; the clock check's words") {
+  fake::Tv tv;
+  time::Seconds now = time::now();
+  archive::Request req;
+  req.live = "http://m.example.invalid/live/u/p/9.ts";
+  req.linkFor = [](time::Seconds at) { return "http://m.example.invalid/timeshift/x/" + std::to_string(at) + "/9.ts"; };
+  time::Seconds first = archive::firstMoment(now), second = first + archive::kApart;
+  // Live declares none; the first stretch declares them and sends a cue,
+  // the second only declares them.
+  tv.pool.answer(req.live, clip(broadcast(now - 3), 4));
+  tv.pool.answer(*req.linkFor(first), markedClip(broadcast(first), 5, true, true));
+  tv.pool.answer(*req.linkFor(second), markedClip(broadcast(second), 5, true, false));
+  uint32_t ms = 0;
+  archive::Clock ticking = [&ms] { return ms += 5; };
+  archive::Outcome o = archive::measure(tv.pool, req, ticking, nullptr, 20000, now);
+  REQUIRE(o.timing);
+  CHECK(o.liveAds.read());
+  CHECK_FALSE(o.liveAds.declared);
+  CHECK(o.archiveAds.declared);
+  CHECK(o.archiveAds.cues == 1);
+  CHECK(o.archiveAds.outOfNetwork == 1);
+  CHECK(archive::adMarkersText(o) == "ad markers: 1 cue (splice_insert, out of network, break 30 s) (live: none)");
+
+  // Declared, no cue in what was read, live the same: said once.
+  archive::Outcome d;
+  d.archiveAds = o.archiveAds;
+  d.archiveAds.cues = d.archiveAds.spliceInsert = d.archiveAds.outOfNetwork = 0;
+  d.archiveAds.longestBreak90 = 0;
+  d.liveAds = d.archiveAds;
+  CHECK(archive::adMarkersText(d) == "ad markers: declared, no cue in the first seconds");
+  // None in the archive's reads.
+  archive::Outcome n;
+  n.archiveAds = o.liveAds;
+  CHECK(archive::adMarkersText(n) == "ad markers: none");
+  // Only live read (the archive answered no stream).
+  archive::Outcome l;
+  l.liveAds = o.liveAds;
+  CHECK(archive::adMarkersText(l) == "ad markers: none (live only)");
+  // Nothing read: nothing said.
+  CHECK(archive::adMarkersText(archive::Outcome{}).empty());
+  for (const archive::Outcome* x : {&o, &d, &n, &l}) {
+    CHECK(archive::adMarkersText(*x).find("://") == std::string::npos);
+    CHECK(archive::adMarkersText(*x).find("example") == std::string::npos);
+  }
+}

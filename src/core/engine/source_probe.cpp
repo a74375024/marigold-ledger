@@ -6,6 +6,7 @@
 #include <memory>
 
 #include "core/media/hls.hpp"
+#include "core/media/ts_ad_markers.hpp"
 #include "core/media/ts_video_probe.hpp"
 
 namespace marigold::engine::probe {
@@ -48,6 +49,7 @@ struct Read {
   std::string head;  // the first bytes, until the kind is known
   std::string text;  // a playlist's or a message's text
   std::unique_ptr<media::TsVideoProbe> ts;
+  media::scte35::Scanner ads;  // Build 177: on the same bytes
   uint32_t keyAt = 0;  // clock() at the first key picture
   bool keySeen = false;
   bool aborted = false, stopped = false, timedOut = false, scrambled = false, audioOnly = false;
@@ -145,13 +147,18 @@ Outcome run(http::Pool& pool, const Request& req, const Clock& clock, const std:
         if (rd.kind == Read::Kind::Ts) {
           rd.ts = std::make_unique<media::TsVideoProbe>();
           rd.ts->feed(reinterpret_cast<const uint8_t*>(rd.head.data()), rd.head.size());
-          if (!rest.empty()) rd.ts->feed(reinterpret_cast<const uint8_t*>(rest.data()), rest.size());
+          rd.ads.feed(reinterpret_cast<const uint8_t*>(rd.head.data()), rd.head.size());
+          if (!rest.empty()) {
+            rd.ts->feed(reinterpret_cast<const uint8_t*>(rest.data()), rest.size());
+            rd.ads.feed(reinterpret_cast<const uint8_t*>(rest.data()), rest.size());
+          }
         } else {
           rd.text = rd.head;
           rd.text.append(rest);
         }
       } else if (rd.kind == Read::Kind::Ts) {
         rd.ts->feed(reinterpret_cast<const uint8_t*>(chunk.data()), chunk.size());
+        rd.ads.feed(reinterpret_cast<const uint8_t*>(chunk.data()), chunk.size());
       } else if (rd.kind == Read::Kind::Playlist || rd.kind == Read::Kind::Text) {
         rd.text.append(chunk);
       }
@@ -212,12 +219,14 @@ Outcome run(http::Pool& pool, const Request& req, const Clock& clock, const std:
       if (rd.kind == Read::Kind::Ts) {
         rd.ts = std::make_unique<media::TsVideoProbe>();
         rd.ts->feed(reinterpret_cast<const uint8_t*>(rd.head.data()), rd.head.size());
+        rd.ads.feed(reinterpret_cast<const uint8_t*>(rd.head.data()), rd.head.size());
         if (rd.ts->intraPictures() > 0) {
           rd.keySeen = true;
           rd.keyAt = clock();
         }
       }
     }
+    out.ads.merge(rd.ads.tally());
     if (refusal(r.status, rd.stopped ? std::string_view() : std::string_view(r.error),
                 rd.kind == Read::Kind::Text ? std::string_view(rd.text) : std::string_view())) {
       out.refused = true;

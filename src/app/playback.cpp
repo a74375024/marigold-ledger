@@ -168,6 +168,12 @@ class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
   std::optional<int> startedInside() const override {
     return viaRelay_ ? relay_.skipped() : std::nullopt;
   }
+  // Build 177: the ad markers in what the replay relay passed on.
+  std::optional<media::scte35::Tally> takeReplayAdMarkers() override {
+    media::scte35::Tally t = relay_.takeAdMarkers();
+    if (!t.read()) return std::nullopt;
+    return t;
+  }
 
   engine::PlayerState state() const override {
     platform::VideoState v = app_.video().state();
@@ -207,6 +213,7 @@ class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
     s.streamChecked = true;
     s.stream = c.verdict;
     s.streamDetail = c.detail;
+    s.adMarkersDeclared = c.adMarkers;
     // The stream's own facts once the frame rate is measured (the player's
     // otherwise: a codec the relay can't read).
     media::VideoFacts f = c.facts;

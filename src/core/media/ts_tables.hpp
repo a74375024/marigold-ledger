@@ -48,9 +48,13 @@ struct Stream {
   // A registration or AC-3 / E-AC-3 / DTS descriptor said what a private
   // stream (type 0x06) carries: "ac3", "eac3", "dts"; else "".
   const char* privateAudio = "";
+  // Build 177: a registration descriptor with the format identifier "CUEI"
+  // (SCTE-35 splice information on this stream).
+  bool cuei = false;
 };
 struct ProgramMap {
   bool conditionalAccess = false;  // a CA descriptor, for the program or a stream
+  bool cuei = false;               // Build 177: a "CUEI" registration for the program
   std::vector<Stream> streams;
 };
 // Reads a PMT section into `out` (its vector is reused). False when it isn't one.

@@ -22,7 +22,12 @@ std::string percent(double share) {
 }
 
 char kindLetter(Kind k) {
-  return k == Kind::Archive ? 'A' : k == Kind::Depth ? 'D' : k == Kind::Clock ? 'C' : k == Kind::Timing ? 'T' : 'L';
+  return k == Kind::Archive   ? 'A'
+         : k == Kind::Depth   ? 'D'
+         : k == Kind::Clock   ? 'C'
+         : k == Kind::Timing  ? 'T'
+         : k == Kind::Markers ? 'M'
+                              : 'L';
 }
 
 // The live outcome "o1080,60,1400": its height, frame rate and time to
@@ -613,8 +618,34 @@ void Runner::endRun(bool stopped) {
     run_.stopped = false;
     logLine(stopped ? "stopped by you; what was found so far is kept" : "finished");
   }
+  // Build 177: each provider's ad markers, replays then live (shares only).
+  for (size_t i = 0; planned_ && i < plan_.queues.size(); ++i) {
+    std::vector<std::string> values;
+    std::set<std::string> seen;
+    for (const Item& item : plan_.queues[i]) {
+      if (!seen.insert(item.channelId).second) continue;
+      auto m = run_.done.find(key(item.channelId, Kind::Markers));
+      if (m != run_.done.end()) values.push_back(m->second);
+    }
+    for (bool live : {false, true}) {
+      std::string line = adMarkersLine(values, live);
+      if (!line.empty()) logLine(providerName(plan_.providers[i]) + ": " + line);
+    }
+  }
   if (!sum.empty()) logLine("summary: " + sum);
   save(true);
+}
+
+void Runner::noteAds(const std::string& channelId, const media::scte35::Tally& t, bool live) {
+  // Only a stream whose tables (or a cue) were read can tell.
+  if (!t.tables && !t.cues) return;
+  std::string& v = run_.done[key(channelId, Kind::Markers)];
+  if (v.size() != 2) v = "--";
+  char& c = v[live ? 1 : 0];
+  int bits = c >= '0' && c <= '3' ? c - '0' : 0;
+  bits |= (t.declared ? 1 : 0) | (t.cues ? 2 : 0);
+  c = static_cast<char>('0' + bits);
+  dirty_ = true;
 }
 
 bool Runner::canCarryOn() const {
@@ -902,6 +933,9 @@ void Runner::readTiming(Slot& s, const Item& item, uint32_t ms) {
         }
         run_.done[k] = o.timing ? "t" + archive::encode(*o.timing) : std::string("f");
         dirty_ = true;
+        // Build 177: its reads' ad markers count with the probes'.
+        noteAds(copy.channelId, o.archiveAds, false);
+        noteAds(copy.channelId, o.liveAds, true);
         // Build 174: why a read couldn't tell, once a provider (never a link).
         if ((!o.timing || !o.timing->clock) && !o.why.empty() &&
             timingFailTold_.insert(plan_.providers[index]).second)
@@ -1006,6 +1040,7 @@ void Runner::finishItem(size_t index, const Item& item, const probe::Outcome& o,
   acc.refusals = 0;
   s.costMs += (ms - started) + gap;
   ++s.costN;
+  noteAds(item.channelId, o.ads, item.kind == Kind::Live);
   std::string k = key(item.channelId, item.kind);
   if (item.kind != Kind::Live) {
     run_.done[k] = o.ok ? "o" : "f";
@@ -1217,6 +1252,23 @@ std::string clocksText(const std::vector<int>& clocks, std::optional<int> server
   if (server != order[0].first)
     out += "; server says " + (server ? sources::xtream::offsetText(*server) : std::string("nothing"));
   return out;
+}
+
+std::string adMarkersLine(const std::vector<std::string>& values, bool live) {
+  size_t tested = 0, declared = 0, cues = 0;
+  for (const std::string& v : values) {
+    if (v.size() != 2) continue;
+    char c = v[live ? 1 : 0];
+    if (c < '0' || c > '3') continue;
+    ++tested;
+    declared += (c - '0') & 1;
+    cues += ((c - '0') & 2) != 0;
+  }
+  if (!tested) return "";
+  double n = static_cast<double>(tested);
+  return std::string(live ? "ad markers live" : "ad markers in replays") + ": declared on " +
+         percent(static_cast<double>(declared) / n) + " of copies tested, cues seen on " +
+         percent(static_cast<double>(cues) / n);
 }
 
 std::string headerLine(const Runner::Status& s) {

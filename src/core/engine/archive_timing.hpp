@@ -66,6 +66,7 @@
 #include <vector>
 
 #include "core/engine/replay.hpp"
+#include "core/media/ts_ad_markers.hpp"
 #include "core/net/http.hpp"
 #include "core/util/time.hpp"
 
@@ -193,6 +194,10 @@ struct Outcome {
   // (archive)", "out of time"); also set when `timing` is told without a
   // clock.
   std::string why;
+  // Build 177: what the reads found of SCTE-35 ad markers (media::scte35),
+  // the live read's and the archive's, each merged over its reads; a read
+  // that got no stream counts nothing.
+  media::scte35::Tally liveAds, archiveAds;
 };
 // The first moment read: about two hours back, on minute 23 of its hour
 // (no chunk boundary), the second eleven minutes later.
@@ -236,6 +241,13 @@ Plan plan(const std::optional<Timing>& t, time::Seconds picked, int clock, bool 
 replay::Reach reach(const std::optional<Timing>& t, int clock, bool canSkip);
 
 // ---------------------------------------------------------------- words
+
+// Build 177: the reads' ad markers for the clock check's line: "ad
+// markers: none", "ad markers: declared, no cue in the first seconds",
+// "ad markers: 2 cues (splice_insert)"; the archive's reads, with the live
+// read's after where it found otherwise ("(live: declared, ...)"), or the
+// live read's alone ("(live only)"). "" when no read got a stream.
+std::string adMarkersText(const Outcome& o);
 
 // The channel's line, once: "archive: exact", "archive: 30-min chunks,
 // skips to the minute", "archive: 60-min chunks, no skip", "archive:

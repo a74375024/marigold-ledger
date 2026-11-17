@@ -1191,3 +1191,78 @@ TEST_CASE("test all sources 1.0.17: the replay probe asks as the player; a timin
   CHECK(r.logged("not a video stream (text/html) (archive)"));
   r.noLinks();
 }
+
+// ---------------------------------------- Build 177: ad markers (SCTE-35)
+
+namespace {
+
+// ts() with an SCTE-35 stream in its PMT (`declared`) and a splice_insert
+// after its first tables (`cue`).
+std::string markedTs(bool declared, bool cue) {
+  tsgen::Scene s;
+  s.fps = 30;
+  s.seconds = 3;
+  s.gopSeconds = 1;
+  s.size = [](int, bool intra) { return intra ? 6000u : 900u; };
+  s.cueType = declared ? 0x86 : 0;
+  if (cue) s.cueFrames = {0};
+  tsgen::Bytes b = tsgen::build(s);
+  return std::string(b.begin(), b.end());
+}
+
+}  // namespace
+
+TEST_CASE("test all sources Build 177: ad markers per copy, a line per provider at the run's end, shares only") {
+  // The probe reads them on the bytes it reads anyway.
+  {
+    fake::Tv tv;
+    tv.pool.answer("http://p.example.invalid/live/1.ts", markedTs(true, true));
+    uint32_t now = 0;
+    probe::Outcome o = probe::run(tv.pool, {"http://p.example.invalid/live/1.ts", {}}, ticking(now, 10), nullptr);
+    CHECK(o.ok);
+    CHECK(o.ads.declared);
+    CHECK(o.ads.cues == 1);
+    CHECK(o.ads.spliceInsert == 1);
+    tv.pool.answer("http://p.example.invalid/live/2.ts", ts(1920, 1080, 30));
+    probe::Outcome plain = probe::run(tv.pool, {"http://p.example.invalid/live/2.ts", {}}, ticking(now, 10), nullptr);
+    CHECK(plain.ads.tables);
+    CHECK_FALSE(plain.ads.declared);
+    CHECK(plain.ads.cues == 0);
+  }
+
+  Rig r;
+  for (int id : {601, 604, 701, 702}) r.tv.pool.answer(r.liveUrl(id), ts(1920, 1080, 60));
+  // Dream's replay declares them and carries a cue; Trex's: one declares
+  // them (no cue in what's read), one has none.
+  r.tv.pool.answer(r.archiveUrl(601, st::kArchiveBack), markedTs(true, true));
+  r.tv.pool.answer(r.archiveUrl(701, st::kArchiveBack), markedTs(true, false));
+  r.tv.pool.answer(r.archiveUrl(702, st::kArchiveBack), markedTs(false, false));
+  r.runner->start();
+  r.run(300000);
+  CHECK_FALSE(r.runner->running());
+  CHECK(r.logged("Dream: ad markers in replays: declared on 100% of copies tested, cues seen on 100%"));
+  CHECK(r.logged("Dream: ad markers live: declared on 0% of copies tested, cues seen on 0%"));
+  CHECK(r.logged("Trex: ad markers in replays: declared on 50% of copies tested, cues seen on 0%"));
+  CHECK(r.logged("Trex: ad markers live: declared on 0% of copies tested, cues seen on 0%"));
+  // At the run's end, before its summary; never a count, never a link.
+  size_t ads = r.lines.size(), summary = r.lines.size();
+  for (size_t i = 0; i < r.lines.size(); ++i) {
+    if (r.lines[i].find("ad markers") != std::string::npos) {
+      ads = std::min(ads, i);
+      noCounts(r.lines[i]);
+      CHECK(r.lines[i].find(" 1 ") == std::string::npos);
+      CHECK(r.lines[i].find(" 2 ") == std::string::npos);
+    }
+    if (r.lines[i].rfind("summary: ", 0) == 0) summary = i;
+  }
+  CHECK(ads < summary);
+  CHECK(summary < r.lines.size());
+  r.noLinks();
+
+  // The words from the copies' values: replay then live, '-' not read.
+  CHECK(st::adMarkersLine({"3-", "1-", "0-", "--"}, false) ==
+        "ad markers in replays: declared on 67% of copies tested, cues seen on 33%");
+  CHECK(st::adMarkersLine({"3-", "1-"}, true).empty());
+  CHECK(st::adMarkersLine({"-2", "-0"}, true) == "ad markers live: declared on 0% of copies tested, cues seen on 50%");
+  CHECK(st::adMarkersLine({}, false).empty());
+}

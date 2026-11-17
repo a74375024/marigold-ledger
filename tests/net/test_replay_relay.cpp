@@ -172,3 +172,65 @@ TEST_CASE("replay relay: starts the stream at the moment, by a range or by readi
   (void)fresh;
   provider.stop();
 }
+
+TEST_CASE("replay relay Build 177: what it passes on is read for ad markers, across its sessions until taken") {
+  // 40 s declaring SCTE-35, a break going out at 5 s (before the moment:
+  // never passed on), 25 s and 32 s.
+  tsgen::Muxer m;
+  tsgen::VideoFormat f;
+  for (int i = 0; i < 40 * 25; ++i) {
+    if (i % 10 == 0) {
+      m.section(0, tsgen::pat());
+      m.section(tsgen::kPmtPid, tsgen::pmt(0x1B, 0, false, 0x86));
+    }
+    if (i == 5 * 25 || i == 25 * 25 || i == 32 * 25)
+      m.section(tsgen::kCuePid, tsgen::spliceInsert(static_cast<uint32_t>(i), true, 30));
+    int64_t t = kStart + static_cast<int64_t>(i) * 3600;
+    m.pes(tsgen::kVideoPid, tsgen::videoPes(t, t, tsgen::picture(f, i % 50 == 0, 3000, 0, static_cast<uint8_t>(i))));
+  }
+  const std::string archive(m.out.begin(), m.out.end());
+  platform::LanServer provider;
+  platform::LanServer::Options o;
+  o.host = "127.0.0.1";
+  o.lifetimeSeconds = 60;
+  auto st = provider.start(
+      [&](const lan::Request& r) {
+        if (r.path != "/plain/9.ts") return lan::Response::notFound();
+        lan::Response out;
+        out.type = "video/mp2t";
+        out.status = 200;
+        out.body = archive;
+        return out;
+      },
+      o);
+  REQUIRE(st.state == platform::LanServer::State::Ready);
+  platform::ReplayRelay relay;
+  REQUIRE(relay.start());
+  CHECK_FALSE(relay.takeAdMarkers().read());  // nothing passed yet
+
+  platform::ReplayRelay::Start through;
+  through.skip = 20;
+  std::string body = play(relay.localUrl(st.base() + "/plain/9.ts", "", through));
+  REQUIRE(firstPts(body) >= 0);
+  media::scte35::Tally t = relay.takeAdMarkers();
+  CHECK(t.read());
+  CHECK(t.declared);
+  CHECK(t.cues == 2);
+  CHECK(t.outOfNetwork == 2);
+  CHECK(t.videoMs >= 19000);
+  CHECK(t.videoMs <= 20500);
+  CHECK(media::scte35::replayText(t) == "ad markers seen 2 times in 20 s (splice_insert, out of network, break 30 s)");
+  // Taken: cleared.
+  CHECK_FALSE(relay.takeAdMarkers().read());
+
+  // Two stretches, the first replaced by the second, the second stopped:
+  // both counted in one take.
+  play(relay.localUrl(st.base() + "/plain/9.ts", "", through));
+  play(relay.localUrl(st.base() + "/plain/9.ts", "", through));
+  relay.stop();
+  media::scte35::Tally both = relay.takeAdMarkers();
+  CHECK(both.cues == 4);
+  CHECK(both.videoMs >= 38000);
+  CHECK(media::scte35::replayText(both).find("://") == std::string::npos);
+  provider.stop();
+}
