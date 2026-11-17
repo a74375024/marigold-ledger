@@ -2288,3 +2288,15 @@ On the LG TV, 1.0.16's check of a provider's archive clock never once succeeded,
 | Test all sources | Run it | The provider's replay result is no longer 0% where the TV plays its replays; a provider whose replay clock couldn't be read says why once: "Dream: a replay's clock couldn't be read (…)" |
 | No links | Export the playback log | No link, host, path or login in any "clock check" or "replay" line |
 | Other platforms | The CNN check on Android / Fire TV and Apple TV | Same as on LG |
+
+### Build 174: Test all sources carries on where it stopped
+
+A test stopped part way (Stop, or the providers left turned it away) keeps its place for a week. Its results page reads "Your providers, ranked so far", "Stopped at 62% today, 7:51 AM · about 1 h 20 min left; carry on any time this week", each provider with its share tested under its name, and the buttons Carry on, Keeping one or two, Done, Start over. Carry on tests only what's left and gives a provider that refused another try; Start over tests everything again. Settings › Providers says "Stopped at 62% · carry on any time".
+
+| Check | How | Pass |
+|---|---|---|
+| Stop and carry on | Start Test all sources, Stop it after a few minutes, open it again | "Stopped at N%"; Carry on is focused; Carry on resumes at about N% (log: "carried on from N%"), not 0% |
+| Across a restart | Stop it, quit and reopen the app | Settings line "Stopped at N% · carry on any time"; Carry on still there |
+| Start over | Stop it, then Start over | It starts from 0% |
+| Refused | A provider that turned the test away | The run ends "ended part way (providers turned it away)"; Carry on tries that provider again |
+| A week on | A test stopped more than a week ago | No Carry on; log: "a test stopped more than a week ago was dropped" |
