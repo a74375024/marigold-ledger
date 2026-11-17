@@ -68,6 +68,11 @@ struct Response {
   int retryAfterS = 0;
   unsigned ms = 0;
   uint64_t bytes = 0;       // body bytes after decoding
+  // Build 172 (the archive timing): what the answer said of byte ranges,
+  // its Content-Range and Accept-Ranges headers ("" none) and its
+  // Content-Length (0 none).
+  std::string contentRange, acceptRanges;
+  uint64_t contentLength = 0;
 };
 
 // Runs requests and jobs off the UI thread and hands results back on it.

@@ -16,6 +16,7 @@
 // report its flags. Where the picture goes on screen is the platform's.
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -106,6 +107,16 @@ class Player {
   // session stops it at once.
   virtual bool pause() { return false; }
   virtual PlayerState state() const = 0;
+  // Build 172: whether this player can start a replay stretch of `copy`'s
+  // provider inside its stream (Feed::inside: the app's replay relay
+  // positions it), and where the stream it handed over began, in seconds
+  // after the stretch's first picture (nullopt: not known, or it didn't
+  // go through the relay).
+  virtual bool startsInside(const Feed& copy) const {
+    (void)copy;
+    return false;
+  }
+  virtual std::optional<int> startedInside() const { return std::nullopt; }
 };
 
 class Session {
@@ -250,14 +261,24 @@ class Session {
       std::string what;
       uint32_t since = 0;
       int serial = 0;
+      bool measuring = false;  // Build 172: its archive timing is measured meanwhile
     };
     std::optional<ClockWait> clockWait;
+    // Build 172: the moment the stream asked for begins with (a chunk's
+    // start before the moment picked), and whether the player was asked to
+    // start inside it (the moment shown is set from where it really began
+    // once the picture comes).
+    time::Seconds base = 0;
+    bool inside = false;
     time::Seconds at() const { return static_cast<time::Seconds>(atMs / 1000); }
   };
   // Why a replay starts from a moment (its log line). Game: a game's
   // replay started from Live Events (tuneGameReplay).
   enum class ReplayWhy { StartOver, Rewind, Back, Resume, Game };
   static constexpr uint32_t kReplayTimeoutMs = 10000;
+  // Build 172: a stretch started inside (the relay reads up to the moment,
+  // at most 12 s, before passing anything on) has this much more.
+  static constexpr uint32_t kInsideExtraMs = 15000;
   // Build 170: the longest a first replay waits for its copy's archive clock.
   static constexpr uint32_t kClockWaitMs = 3000;
   // Paused: the stream is closed this long after the picture was held.
@@ -276,6 +297,10 @@ class Session {
   // here): the timeline's left edge (replay::archiveStart) and Start
   // over's. A moment only a shorter archive misses plays on a longer one.
   uint16_t catchupDays() const;
+  // Build 172: where a replay can start on the timeline (replay::Reach):
+  // the chunk boundaries of an archive that comes in chunks the player
+  // can't seek into, any minute otherwise (and with no replay copy).
+  replay::Reach reach() const;
   const std::optional<Replay>& replay() const { return replay_; }
   // The moment showing (live: now), and how far behind live it is (0 live).
   time::Seconds replayAt() const;
@@ -489,6 +514,12 @@ class Session {
   // return); false when the archive no longer holds it.
   bool startReplayInstead(time::Seconds at, ReplayWhy why, size_t live);
   void logReplay(std::string detail, size_t copy, bool clock = false);
+  // Build 172: copy `i`'s reach; measuring its archive timing during a
+  // replay's first wait.
+  replay::Reach reachFor(size_t i) const;
+  bool startMeasure(const std::string& channel, int serial);
+  // The measurement out stops, unless its account has a connection to spare.
+  void dropMeasure();
   std::string localTime(time::Seconds t) const;
   void saveLog(uint32_t ms, bool all = false);
   uint32_t ms() const { return host_.ms(); }
@@ -570,6 +601,11 @@ class Session {
   };
   std::optional<ReplayClock> replayClock_;
   std::set<std::string> clockTold_;
+  // Build 172: the copies whose archive timing was said (once each), those
+  // measured during a replay's wait this run, and the measurement out.
+  std::set<std::string> timingTold_, measureTried_;
+  std::shared_ptr<std::atomic<bool>> measureAbort_;
+  bool measureSpare_ = false;
   int clockSerial_ = 0;
   int shortStretches_ = 0;
   uint32_t replayTick_ = 0;

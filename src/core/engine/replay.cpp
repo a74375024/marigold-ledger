@@ -138,6 +138,102 @@ time::Seconds at(Span shown, double fraction, time::Seconds earliest, time::Seco
   return clampTo(minuteOf(t), earliest, live);
 }
 
+// ------------------------------------------------- reach (Build 172)
+
+namespace {
+int chunksFor(int repeats) {
+  if (repeats >= kRepeatsToFifteen) return 4;
+  if (repeats >= kRepeatsToFive) return 2;
+  return 1;
+}
+// The first reachable start at or after `t`.
+time::Seconds reachableFrom(const Reach& r, time::Seconds t) {
+  t = floorDiv(t + kMinute - 1, kMinute) * kMinute;
+  time::Seconds b = boundaryOf(r, t);
+  return t - b <= r.readThrough ? t : b + r.chunk;
+}
+// The last reachable start at or before `t`.
+time::Seconds reachableBefore(const Reach& r, time::Seconds t) {
+  t = minuteOf(t);
+  time::Seconds b = boundaryOf(r, t);
+  return std::min(t, b + r.readThrough);
+}
+time::Seconds inside(const Reach& r, time::Seconds t, time::Seconds earliest, time::Seconds live) {
+  if (t >= live || live < earliest) return live;
+  if (t < earliest) t = reachableFrom(r, earliest);
+  return t >= live ? live : t;
+}
+}  // namespace
+
+time::Seconds boundaryOf(const Reach& r, time::Seconds t) {
+  if (r.anyMinute()) return minuteOf(t);
+  return floorDiv(t - r.phase, r.chunk) * r.chunk + r.phase;
+}
+
+bool reachable(const Reach& r, time::Seconds t) {
+  if (r.anyMinute()) return true;
+  return t - boundaryOf(r, t) <= r.readThrough;
+}
+
+time::Seconds snap(const Reach& r, time::Seconds t, time::Seconds earliest, time::Seconds live) {
+  if (t >= live) return live;
+  if (r.anyMinute()) return clampTo(minuteOf(t), earliest, live);
+  time::Seconds m = minuteOf(t);
+  time::Seconds b = boundaryOf(r, m);
+  time::Seconds to = m;
+  if (m - b > r.readThrough) {
+    time::Seconds before = b + r.readThrough, after = b + r.chunk;
+    to = (t - before <= after - t) ? before : after;
+    if (after >= live && live - t < t - before) return live;
+  }
+  return inside(r, to, earliest, live);
+}
+
+time::Seconds stepReach(const Reach& r, time::Seconds at, int dir, int repeats, time::Seconds earliest,
+                        time::Seconds live) {
+  if (r.anyMinute()) return step(at, dir, repeats, earliest, live);
+  time::Seconds n = chunksFor(repeats);
+  if (dir > 0) {
+    time::Seconds to = boundaryOf(r, at) + n * r.chunk;
+    return inside(r, to, earliest, live);
+  }
+  time::Seconds to = boundaryOf(r, at - 1) - (n - 1) * r.chunk;
+  if (to < earliest) {
+    to = reachableFrom(r, earliest);
+    if (to >= at) return at;
+  }
+  return inside(r, to, earliest, live);
+}
+
+time::Seconds startOverTarget(const Reach& r, time::Seconds start, time::Seconds earliest, time::Seconds live) {
+  if (r.anyMinute()) return clampTo(minuteOf(start), earliest, live);
+  return inside(r, reachableBefore(r, start), earliest, live);
+}
+
+time::Seconds jumpReach(const Reach& r, const std::vector<Programme>& list, time::Seconds at, int dir,
+                        time::Seconds earliest, time::Seconds live) {
+  time::Seconds to = jump(list, at, dir, earliest, live);
+  if (r.anyMinute() || to >= live) return to;
+  if (dir < 0) {
+    time::Seconds back = startOverTarget(r, to, earliest, live);
+    // Already there (the reachable start before this programme): the one
+    // before it.
+    if (back >= at) back = stepReach(r, at, -1, 0, earliest, live);
+    return back;
+  }
+  time::Seconds ahead = inside(r, reachableFrom(r, to), earliest, live);
+  if (ahead <= at) ahead = stepReach(r, at, 1, 0, earliest, live);
+  return ahead;
+}
+
+std::vector<time::Seconds> boundaries(const Reach& r, Span shown, size_t limit) {
+  std::vector<time::Seconds> out;
+  if (r.anyMinute() || shown.to <= shown.from) return out;
+  for (time::Seconds t = boundaryOf(r, shown.from); t <= shown.to && out.size() < limit; t += r.chunk)
+    if (t >= shown.from) out.push_back(t);
+  return out;
+}
+
 std::vector<Programme> merged(std::vector<Programme> guide, const std::vector<Programme>& own) {
   std::vector<Programme> out = std::move(guide);
   size_t fromGuide = out.size();

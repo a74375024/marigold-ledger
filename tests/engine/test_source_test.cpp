@@ -9,11 +9,13 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "core/engine/archive_timing.hpp"
 #include "core/engine/source_probe.hpp"
 #include "core/engine/source_test.hpp"
 #include "core/engine/store.hpp"
@@ -413,9 +415,11 @@ TEST_CASE("test all sources: one connection per provider, providers side by side
       CHECK(at[i] - at[i - 1] >= st::kGapMinMs);
       CHECK(at[i] - at[i - 1] <= st::kGapMaxMs + 500);
     }
-  // Every test after the first (which went out before): Dream's four, Trex's six.
-  CHECK(starts["Dream"].size() == 3);
-  CHECK(starts["Trex"].size() == 5);
+  // Every test after the first (which went out before): Dream's four, Trex's
+  // six, and (Build 172) the timing of each archive that played, in a turn
+  // of its own: one on Dream, two on Trex.
+  CHECK(starts["Dream"].size() == 4);
+  CHECK(starts["Trex"].size() == 7);
 
   // Into the records: the live probe with what the archive did.
   const scores::Record* d = r.store->feedScores().find(r.copy(601));
@@ -433,8 +437,8 @@ TEST_CASE("test all sources: one connection per provider, providers side by side
   const scores::Record* c = r.store->feedScores().find(r.copy(604));
   REQUIRE(c);
   CHECK(c->probeFailures == doctest::Approx(1));
-  // Each link once.
-  CHECK(r.tv.pool.asked[espnDream] == 1);
+  // Each link once (ESPN's live twice: its timing read it too).
+  CHECK(r.tv.pool.asked[espnDream] == 2);
   CHECK(r.tv.pool.asked[cnn] == 1);
 
   // The Sources panel's lines.
@@ -915,4 +919,85 @@ TEST_CASE("test all sources 1.0.13: archive clocks in words, never a count") {
   CHECK(st::clocksText({3600, 3600, 0}, 0) == "UTC+1 (most), UTC (some); server says UTC");
   CHECK(st::clocksText({0, 0, 3600, -5 * 3600}, 0) == "UTC (half), UTC\xe2\x88\x92" "5 (some), UTC+1 (some)");
   CHECK(st::clocksText({3600}, std::nullopt) == "UTC+1 on all replay channels; server says nothing");
+}
+
+// ------------------------------------------------- Build 172: the timing
+
+namespace {
+
+// `seconds` of 25 fps video whose clock starts at the encoder's time `t`.
+std::string timedClip(mtime::Seconds t, int seconds) {
+  int64_t wrap = int64_t{1} << 33;
+  int64_t pts0 = ((t - 1700000000) * 90000 % wrap + wrap) % wrap;
+  tsgen::Muxer m;
+  tsgen::VideoFormat f;
+  for (int i = 0; i < seconds * 25; ++i) {
+    if (i % 10 == 0) {
+      m.section(0, tsgen::pat());
+      m.section(tsgen::kPmtPid, tsgen::pmt(0x1B, 0));
+    }
+    int64_t pts = (pts0 + static_cast<int64_t>(i) * 3600) % wrap;
+    m.pes(tsgen::kVideoPid, tsgen::videoPes(pts, pts, tsgen::picture(f, i % 50 == 0, 3000, 0, static_cast<uint8_t>(i))));
+  }
+  return std::string(m.out.begin(), m.out.end());
+}
+
+// Answers a copy's timing reads: its live picture now, and the archive
+// starting at `startOf(moment)`.
+void answerTiming(Rig& r, int id, const std::function<mtime::Seconds(mtime::Seconds)>& startOf, int liveStatus = 200) {
+  auto req = r.store->timingRequest(r.copy(id));
+  REQUIRE(req);
+  mtime::Seconds now = mtime::now();
+  r.tv.pool.answer(req->live, liveStatus == 200 ? timedClip(now - 3, 4) : std::string(), liveStatus);
+  mtime::Seconds first = marigold::engine::archive::firstMoment(now);
+  for (mtime::Seconds at : {first, first + marigold::engine::archive::kApart})
+    r.tv.pool.answer(*req->linkFor(at), timedClip(startOf(at), 5));
+}
+
+}  // namespace
+
+TEST_CASE("test all sources 1.0.15: each replay copy's archive timing, in a turn of its own; a line per provider") {
+  Rig r;
+  for (int id : {601, 604, 701, 702}) r.tv.pool.answer(r.liveUrl(id), ts(1920, 1080, 60));
+  for (int id : {601, 701, 702}) r.tv.pool.answer(r.archiveUrl(id, st::kArchiveBack), ts(1920, 1080, 30));
+  // Dream's archive starts at the minute asked; Trex's at the half hour.
+  answerTiming(r, 601, [](mtime::Seconds t) { return t; });
+  for (int id : {701, 702}) answerTiming(r, id, [](mtime::Seconds t) { return t / 1800 * 1800; });
+  r.runner->start();
+  r.run(300000);
+  CHECK_FALSE(r.runner->running());
+  auto dream = r.store->archiveTiming(r.copy(601));
+  REQUIRE(dream);
+  CHECK(dream->kind == marigold::engine::archive::Kind::Exact);
+  auto trex = r.store->archiveTiming(r.copy(702));
+  REQUIRE(trex);
+  CHECK(trex->kind == marigold::engine::archive::Kind::Chunked);
+  CHECK(trex->chunkMinutes == 30);
+  CHECK_FALSE(r.store->archiveTiming(r.copy(604)));  // no replay: not measured
+  CHECK(r.logged("Dream: archive timing: exact on all replay channels"));
+  CHECK(r.logged("Trex: archive timing: 30-min chunks (reads through up to 4 min) on all replay channels"));
+  for (const std::string& l : r.lines)
+    if (l.find("archive timing") != std::string::npos) noCounts(l);
+  // The summary's other words are as before.
+  CHECK(r.logged("summary: "));
+  r.noLinks();
+}
+
+TEST_CASE("test all sources 1.0.15: a timing read refused pauses the provider; the others carry on") {
+  Rig r;
+  for (int id : {601, 604, 701, 702}) r.tv.pool.answer(r.liveUrl(id), ts(1920, 1080, 60));
+  for (int id : {601, 701, 702}) r.tv.pool.answer(r.archiveUrl(id, st::kArchiveBack), ts(1920, 1080, 30));
+  answerTiming(r, 601, [](mtime::Seconds t) { return t; });
+  answerTiming(r, 701, [](mtime::Seconds t) { return t; }, 429);
+  r.runner->start();
+  r.run(120000);
+  CHECK(r.logged("Trex: paused, it refused a connection (http 429); trying again in 15 min"));
+  const st::Runner::Provider* trex = r.provider("Trex");
+  REQUIRE(trex);
+  CHECK(trex->state == State::Paused);
+  // Dream finished meanwhile.
+  CHECK(r.logged("Dream: done"));
+  CHECK(r.store->archiveTiming(r.copy(601)));
+  CHECK_FALSE(r.store->archiveTiming(r.copy(701)));
+  r.noLinks();
 }

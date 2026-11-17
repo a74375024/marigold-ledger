@@ -13,6 +13,7 @@
 #include "core/media/ts_video_probe.hpp"
 #include "core/util/log.hpp"
 #include "core/util/strings.hpp"
+#include "platform/replay_relay.hpp"
 #include "platform/storage.hpp"
 #include "platform/ts_proxy.hpp"
 
@@ -54,6 +55,9 @@ class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
     if (platform::TsProxy::wanted() && !proxy_.start())
       MLOG_W("play", "TS proxy unavailable; HLS feeds play directly");
     proxy_.setTap(this);
+    // Build 172: the replay relay starts replay stretches at the moment
+    // picked where the archive starts them earlier (every platform).
+    relay_.start();
   }
   ~TvPlayer() override { proxy_.setTap(nullptr); }
 
@@ -61,6 +65,8 @@ class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
 
   void attempt() override {
     viaProxy_ = false;
+    viaRelay_ = false;
+    relayUrl_.clear();
     closedSeen_ = 0;
     check_.begin(0);
     app_.video().setWindow(window_());
@@ -72,7 +78,25 @@ class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
     bool hls = looksHls(url);
     const Settings& set = app_.store().settings();
     unsigned relay = 0;
-    if (!asGiven && (hls || anySubtitles(set) || set.playThroughApp) && !proxyFailed_.count(f.channelId)) {
+    if (!asGiven && f.replay && f.inside.skip > 0) {
+      // Build 172: a stretch to start inside: the replay relay reads it
+      // from the provider and hands on the stream from the moment.
+      platform::ReplayRelay::Start start;
+      start.skip = f.inside.skip;
+      start.seek = f.inside.seek;
+      start.startByte = f.inside.startByte;
+      start.byteRate = f.inside.byteRate;
+      std::string local = relay_.localUrl(url, headers, start);
+      if (!local.empty()) {
+        url = relayUrl_ = local;
+        headers.clear();  // the relay sends them to the provider
+        viaRelay_ = true;
+      }
+    }
+    // The relay's stream reaches the TV's player through the LG relay as a
+    // continuous TS (one connection to it, the picture check on the way).
+    if (!asGiven && (hls || anySubtitles(set) || set.playThroughApp || (viaRelay_ && platform::TsProxy::wanted())) &&
+        !proxyFailed_.count(f.channelId)) {
       // A replay stretch ends where it was asked to: the relay doesn't
       // reopen it from its start (the session opens the next stretch).
       std::string local = proxy_.localUrl(url, headers, !hls, !f.replay);
@@ -101,7 +125,9 @@ class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
     if (redirected) return std::nullopt;
     MLOG_I("play", "proxy didn't start this feed; playing it directly");
     app_.playback().subtitlesBegin(0, false);
-    app_.video().play(feed_.url, feed_.headers, feed_.loadMode);
+    // A replay stretch started inside: still from the replay relay.
+    if (viaRelay_) app_.video().play(relayUrl_, "", feed_.loadMode);
+    else app_.video().play(feed_.url, feed_.headers, feed_.loadMode);
     return Retry{"proxy failed", "playing directly" + answered};
   }
 
@@ -119,7 +145,10 @@ class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
     return out;
   }
 
-  void streamClosed() override { proxy_.stop(); }
+  void streamClosed() override {
+    proxy_.stop();
+    relay_.stop();
+  }
 
   // Replay's pause: the player holds the picture (the session stops the
   // stream, and the relay with it, a few seconds later).
@@ -128,7 +157,16 @@ class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
   void stop() override {
     app_.video().stop();
     proxy_.stop();
+    relay_.stop();
     check_.begin(0);
+  }
+
+  // Build 172: the replay relay takes plain HTTP links.
+  bool startsInside(const engine::Feed& copy) const override {
+    return relay_.running() && platform::ReplayRelay::takes(copy.url);
+  }
+  std::optional<int> startedInside() const override {
+    return viaRelay_ ? relay_.skipped() : std::nullopt;
   }
 
   engine::PlayerState state() const override {
@@ -184,6 +222,10 @@ class TvPlayer final : public engine::Player, private platform::TsProxy::Tap {
   std::function<gfx::Rect()> window_;
   std::shared_ptr<engine::Subtitles> subtitles_;
   platform::TsProxy proxy_;
+  // Build 172: replay stretches started inside go through it.
+  platform::ReplayRelay relay_;
+  bool viaRelay_ = false;
+  std::string relayUrl_;  // the relay's local link for this attempt
   engine::Feed feed_;  // the one playing (its link stays in memory only)
   // The current attempt went through the TS proxy; feeds (raw channel ids)
   // the proxy failed on play directly for the rest of this tune.

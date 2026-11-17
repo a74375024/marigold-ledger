@@ -72,7 +72,14 @@ constexpr const char* kFile = "source-test.json";
 // (Store::archiveTable keeps it); the archive probes ask in that clock. Its
 // outcome is saved under the Clock key ("o<seconds east>" or "f"); no plan
 // item has that kind.
-enum class Kind : uint8_t { Archive, Depth, Live, Clock };
+//
+// Build 172: once a copy's archive played, its timing (archive_timing.hpp:
+// its live picture and two moments of its archive, read for their clocks,
+// a few seconds each) is measured in a turn of its own before its next
+// item, under the same pacing and refusal rules, and kept with its archive
+// clock. Saved under the Timing key ("t<encoded>", "f" nothing read, "x"
+// nothing to measure); no plan item has that kind either.
+enum class Kind : uint8_t { Archive, Depth, Live, Clock, Timing };
 
 struct Item {
   size_t row = 0, copy = 0;  // in the rows the plan was made from
@@ -182,6 +189,8 @@ std::string pictureText(int height, int fps);
 std::string secondsText(uint32_t ms);
 // "54% · 1 day", "None".
 std::string replayCell(const scores::ProviderFigures& f);
+// Build 172: how long a timing measurement may take, all reads together.
+constexpr uint32_t kTimingBudgetMs = 20000;
 // Build 170: a provider's archive clocks in words, from each replay copy's
 // clock (seconds east of UTC) and its server's: "UTC+1 on all replay
 // channels", "UTC+1 (most), UTC (some)", with "; server says UTC" after
@@ -251,6 +260,8 @@ class Runner {
   void next(Slot& s, uint32_t ms);
   // Build 170: the copy's archive clock, then its archive probe.
   void readClock(Slot& s, const Item& item, uint32_t ms);
+  // Build 172: the copy's archive timing.
+  void readTiming(Slot& s, const Item& item, uint32_t ms);
   void probeItem(Slot& s, const Item& item, uint32_t ms, uint32_t started);
   void finishItem(size_t provider, const Item& item, const probe::Outcome& o, uint32_t ms, uint32_t started);
   void endRun(bool stopped);
@@ -297,6 +308,7 @@ class Runner {
     std::string nowText;
     uint32_t costMs = 0, costN = 0;  // the pace measured this app run
     std::map<std::string, int> lost;  // probes that never answered
+    int serial = 0;                   // the timing measurement out (Build 172)
   };
   std::vector<Slot> slots_;
   bool waitingForPlay_ = false;

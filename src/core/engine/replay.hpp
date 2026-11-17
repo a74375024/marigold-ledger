@@ -80,6 +80,40 @@ Span follow(Span shown, time::Seconds at, time::Seconds earliest, time::Seconds 
 // [earliest, live] (a click with the pointer).
 time::Seconds at(Span shown, double fraction, time::Seconds earliest, time::Seconds live);
 
+// Build 172: where a replay can start on a channel whose archive comes in
+// chunks the app can't skip into (a provider that starts a request at the
+// chunk's start and answers no byte range). `chunk` 0: any minute (an exact
+// or seekable archive, or one not measured): everything below is the
+// minute timeline above. Otherwise the starts are the chunk boundaries
+// (wall clock: t with (t - phase) a whole number of chunks) and, where the
+// stream can be read through to the minute, each boundary's next
+// `readThrough` seconds (minutes on). Live is always reachable.
+struct Reach {
+  time::Seconds chunk = 0, phase = 0, readThrough = 0;
+  bool anyMinute() const { return chunk <= 0; }
+};
+// The boundary at or before `t`.
+time::Seconds boundaryOf(const Reach& r, time::Seconds t);
+bool reachable(const Reach& r, time::Seconds t);
+// The nearest reachable start to `t` (to the minute), inside
+// [earliest, live]: a pointer's click, or a moment picked elsewhere.
+time::Seconds snap(const Reach& r, time::Seconds t, time::Seconds earliest, time::Seconds live);
+// Left / Right: boundary to boundary (one chunk; held, two, then four),
+// inside [earliest, live]; a channel with any minute steps as step().
+time::Seconds stepReach(const Reach& r, time::Seconds at, int dir, int repeats, time::Seconds earliest,
+                        time::Seconds live);
+// Start over (and Up's programme starts): the programme's start when it is
+// reachable (a boundary, or within the read-through after one), else the
+// reachable start just before it; never before `earliest` (then the first
+// reachable start after it).
+time::Seconds startOverTarget(const Reach& r, time::Seconds start, time::Seconds earliest, time::Seconds live);
+// Up / Down on such a channel: jump(), then the reachable start at or
+// before the programme (Up) or the next one after it (Down).
+time::Seconds jumpReach(const Reach& r, const std::vector<Programme>& list, time::Seconds at, int dir,
+                        time::Seconds earliest, time::Seconds live);
+// The boundaries on the bar (its faint ticks), at most `limit`.
+std::vector<time::Seconds> boundaries(const Reach& r, Span shown, size_t limit = 200);
+
 // Merges the guide's listings with a copy's own past (from its panel): the
 // guide's where it has them, the copy's to fill what it lacks (one that
 // overlaps a guide programme by more than half of itself is left out).

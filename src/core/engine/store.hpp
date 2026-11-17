@@ -21,6 +21,7 @@
 #include "core/engine/disk.hpp"
 #include "core/engine/events_model.hpp"
 #include "core/engine/feed_scores.hpp"
+#include "core/engine/archive_timing.hpp"
 #include "core/engine/host.hpp"
 #include "core/engine/membership.hpp"
 #include "core/engine/model.hpp"
@@ -395,6 +396,23 @@ class Store {
     std::string why;  // "http 429" and the like, for the log (never a link)
   };
   void archiveTable(const std::string& channelId, std::function<void(const ArchiveTableAnswer&)> done);
+  // Build 172: a copy's archive timing (archive_timing.hpp), kept with its
+  // archive clock; nullopt: never measured.
+  std::optional<archive::Timing> archiveTiming(const std::string& channelId) const;
+  void noteArchiveTiming(const std::string& channelId, const archive::Timing& t);
+  // What measuring a copy's archive needs (its links: secret, for the
+  // reads only), in the clock its links ask in; nullopt for a copy that
+  // keeps no archive or isn't Xtream.
+  std::optional<archive::Request> timingRequest(const std::string& channelId) const;
+  // Whether the copy's account allows more than one connection at a time
+  // (its max_connections; not known counts as one).
+  bool spareConnection(const std::string& channelId) const;
+  // Measures a copy's archive on a worker (archive::measure, `budgetMs` in
+  // all); `done` runs on the UI thread with the outcome, the timing kept
+  // first. Returns the flag that stops it (nullptr: nothing to measure).
+  std::shared_ptr<std::atomic<bool>> measureArchive(const std::string& channelId, uint32_t budgetMs,
+                                                    std::function<void(const archive::Outcome&)> done,
+                                                    archive::Clock clock = nullptr);
   // Emby: asks the server to open a feed (needsOpen); `done` gets it with
   // its URL, or nothing. Closes the stream opened before.
   void open(const Feed& feed, std::function<void(std::optional<Feed>)> done);

@@ -85,6 +85,25 @@ bool ArchiveClocks::note(const std::string& accountId, const std::string& stream
   return true;
 }
 
+bool ArchiveClocks::noteTiming(const std::string& accountId, const std::string& streamId,
+                               const archive::Timing& t) {
+  if (accountId.empty() || streamId.empty() || !t.told()) return false;
+  if (!accounts.count(accountId) && accounts.size() >= kAccountsKept) return false;
+  Account& a = accounts[accountId];
+  auto it = a.timings.find(streamId);
+  if (it == a.timings.end() && a.timings.size() >= kStreamsKept) a.timings.erase(a.timings.begin());
+  a.timings[streamId] = t;
+  return true;
+}
+
+std::optional<archive::Timing> ArchiveClocks::timing(const std::string& accountId, const std::string& streamId) const {
+  auto a = accounts.find(accountId);
+  if (a == accounts.end()) return std::nullopt;
+  auto it = a->second.timings.find(streamId);
+  if (it == a->second.timings.end()) return std::nullopt;
+  return it->second;
+}
+
 std::optional<int> ArchiveClocks::stream(const std::string& accountId, const std::string& streamId) const {
   auto a = accounts.find(accountId);
   if (a == accounts.end()) return std::nullopt;
@@ -118,6 +137,12 @@ std::string ArchiveClocks::toJson() const {
     json::Value streams = json::Value::object();
     for (const auto& [stream, off] : a.streams) streams.set(stream, off);
     x.set("streams", std::move(streams));
+    // Build 172: ids and numbers only ("c30,0,1,625000,<when>").
+    if (!a.timings.empty()) {
+      json::Value timings = json::Value::object();
+      for (const auto& [stream, t] : a.timings) timings.set(stream, archive::encode(t));
+      x.set("timing", std::move(timings));
+    }
     list.set(id, std::move(x));
   }
   root.set("accounts", std::move(list));
@@ -142,7 +167,12 @@ ArchiveClocks ArchiveClocks::fromJson(std::string_view text) {
       if (a.streams.size() >= kStreamsKept) break;
       if (std::optional<int> v = sane(off); v && sources::isSafeItemId(stream)) a.streams.emplace(stream, *v);
     }
-    if (a.last || !a.streams.empty()) out.accounts.emplace(id, std::move(a));
+    for (const auto& [stream, v] : x["timing"].fields()) {
+      if (a.timings.size() >= kStreamsKept) break;
+      if (!v.isString() || !sources::isSafeItemId(stream)) continue;
+      if (std::optional<archive::Timing> t = archive::decode(v.asString())) a.timings.emplace(stream, *t);
+    }
+    if (a.last || !a.streams.empty() || !a.timings.empty()) out.accounts.emplace(id, std::move(a));
   }
   return out;
 }
@@ -339,6 +369,90 @@ void Store::archiveTable(const std::string& channelId, std::function<void(const 
     for (auto& d : waiters)
       if (d) d(*answer);
   });
+}
+
+// ------------------------------------------------ archive timing (Build 172)
+
+std::optional<archive::Timing> Store::archiveTiming(const std::string& channelId) const {
+  const Impl& m = *impl_;
+  const Channel* c = nullptr;
+  const sources::Account* account = xtreamAccount(m.accounts, *m.channels, m.indexByID, channelId, &c);
+  if (!account) return std::nullopt;
+  return m.archiveClocks.timing(account->id, c->itemId);
+}
+
+void Store::noteArchiveTiming(const std::string& channelId, const archive::Timing& t) {
+  Impl& m = *impl_;
+  const Channel* c = nullptr;
+  const sources::Account* account = xtreamAccount(m.accounts, *m.channels, m.indexByID, channelId, &c);
+  if (!account) return;
+  if (m.archiveClocks.noteTiming(account->id, c->itemId, t)) saveArchiveClocksLater();
+}
+
+std::optional<archive::Request> Store::timingRequest(const std::string& channelId) const {
+  const Impl& m = *impl_;
+  const Channel* c = nullptr;
+  const sources::Account* account = xtreamAccount(m.accounts, *m.channels, m.indexByID, channelId, &c);
+  if (!account || c->archiveDays == 0) return std::nullopt;
+  auto made = sources::xtream::Client::make(*account);
+  if (!made) return std::nullopt;
+  sources::xtream::Client client = made.value();
+  archive::Request req;
+  // Live as MPEG-TS: its clock is read from the packets.
+  std::optional<std::string> live = client.streamURL(c->itemId, {}, true);
+  if (!live) return std::nullopt;
+  req.live = std::move(*live);
+  if (std::optional<Feed> f = copyFeed(channelId)) {
+    size_t at = 0;
+    while (at < f->headers.size()) {
+      size_t end = f->headers.find('\n', at);
+      if (end == std::string::npos) end = f->headers.size();
+      std::string line = f->headers.substr(at, end - at);
+      while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+      if (!line.empty()) req.headers.push_back(std::move(line));
+      at = end + 1;
+    }
+  }
+  req.clock = archiveClock(channelId).offset.value_or(0);
+  int clock = req.clock;
+  std::string item = c->itemId;
+  req.linkFor = [client, item, clock](time::Seconds at) { return client.timeshiftURL(item, at, 60, clock); };
+  time::Seconds now = time::now();
+  std::string entry = entryOfChannel(channelId);
+  for (const Listing& l : pastListing(entry.empty() ? channelId : entry, now - 8 * 3600))
+    if (l.start < now) req.programmeStarts.push_back(l.start);
+  return req;
+}
+
+bool Store::spareConnection(const std::string& channelId) const {
+  const Impl& m = *impl_;
+  const Channel* c = nullptr;
+  const sources::Account* account = xtreamAccount(m.accounts, *m.channels, m.indexByID, channelId, &c);
+  return account && account->maxConnections.value_or(1) >= 2;
+}
+
+std::shared_ptr<std::atomic<bool>> Store::measureArchive(const std::string& channelId, uint32_t budgetMs,
+                                                         std::function<void(const archive::Outcome&)> done,
+                                                         archive::Clock clock) {
+  std::optional<archive::Request> req = timingRequest(channelId);
+  if (!req) return nullptr;
+  auto abort = std::make_shared<std::atomic<bool>>(false);
+  auto result = std::make_shared<archive::Outcome>();
+  if (!clock) clock = probe::steadyClock();
+  http::Pool& pool = host_.pool;
+  uint64_t gen = impl_->generation;
+  time::Seconds now = time::now();
+  pool.post(
+      [&pool, req = std::move(*req), clock, abort, result, budgetMs, now] {
+        *result = archive::measure(pool, req, clock, abort.get(), budgetMs, now);
+      },
+      [this, gen, channelId, result, abort, done = std::move(done)] {
+        if (gen != impl_->generation) return;
+        if (result->timing) noteArchiveTiming(channelId, *result->timing);
+        if (done) done(*result);
+      },
+      http::Priority::Normal);
+  return abort;
 }
 
 std::vector<std::string> Store::takeGuideLog() {

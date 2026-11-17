@@ -14,6 +14,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "core/engine/archive_timing.hpp"
 #include "core/engine/store.hpp"
 #include "core/engine/events_build.hpp"
 #include "core/engine/quality.hpp"
@@ -258,10 +259,15 @@ struct ArchiveClocks {
   struct Account {
     std::map<std::string, int> streams;
     std::optional<int> last;  // the one read most recently
+    // Build 172: each copy's archive timing (archive_timing.hpp).
+    std::map<std::string, archive::Timing> timings;
   };
   std::map<std::string, Account> accounts;
   // Records a copy's clock; true when something changed.
   bool note(const std::string& accountId, const std::string& streamId, int offset);
+  // Build 172: a copy's archive timing (bounded like the clocks).
+  bool noteTiming(const std::string& accountId, const std::string& streamId, const archive::Timing& t);
+  std::optional<archive::Timing> timing(const std::string& accountId, const std::string& streamId) const;
   std::optional<int> stream(const std::string& accountId, const std::string& streamId) const;
   // The account's learned clock: the value most of its copies showed; a
   // tie goes to the one read last. nullopt: none read yet.

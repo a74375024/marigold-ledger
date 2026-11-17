@@ -130,6 +130,18 @@ struct Feed {
   // ends where it was asked to end: nothing reopens it (the LG relay
   // reopens a live source that closes).
   bool replay = false;
+  // Build 172: a replay stretch whose archive starts before the moment
+  // asked (a chunk or a programme's start): the player is to start `skip`
+  // seconds into it, by a byte range from about `startByte` (`seek`: the
+  // provider answers ranges; `byteRate` its bytes a second) or by reading
+  // through the stream up to there. 0: from its start.
+  struct Inside {
+    int skip = 0;
+    bool seek = false;
+    uint64_t startByte = 0;
+    uint32_t byteRate = 0;
+  };
+  Inside inside;
 };
 
 }  // namespace marigold::engine

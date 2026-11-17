@@ -21,6 +21,7 @@ add_executable(marigold
   platform/image.cpp
   platform/image_sdl.cpp
   platform/lan_server.cpp
+  platform/replay_relay.cpp
   platform/lan_share.cpp
   platform/logo_cache.cpp
   platform/stdout_capture.cpp

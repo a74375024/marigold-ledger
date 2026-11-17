@@ -33,10 +33,21 @@ class Pool final : public http::Pool {
   struct Canned {
     int status = 200;
     std::string body;
+    std::string contentRange, acceptRanges;
+    uint64_t contentLength = 0;
   };
 
   // Links not answered here fail like a network that is down.
-  void answer(const std::string& url, std::string body, int status = 200) { canned_[url] = {status, std::move(body)}; }
+  void answer(const std::string& url, std::string body, int status = 200) {
+    canned_[url] = {status, std::move(body), {}, {}, 0};
+  }
+  // Build 172: the range headers an answer carries.
+  void ranges(const std::string& url, std::string contentRange, std::string acceptRanges, uint64_t length) {
+    Canned& c = canned_[url];
+    c.contentRange = std::move(contentRange);
+    c.acceptRanges = std::move(acceptRanges);
+    c.contentLength = length;
+  }
 
   void submit(http::Request req, Done done) override {
     std::string url = req.url;
@@ -95,6 +106,8 @@ class Pool final : public http::Pool {
 
   // How many times each link was asked for.
   std::map<std::string, int> asked;
+  // The headers each link was last asked with.
+  std::map<std::string, std::vector<std::string>> sent;
   // Streamed bodies: whether the server says how big they are (onProgress
   // gets the size), and a look in after each piece (on the same thread).
   bool announceLength = false;
@@ -103,6 +116,7 @@ class Pool final : public http::Pool {
  private:
   http::Response run(http::Request& req) {
     ++asked[req.url];
+    sent[req.url] = req.headers;
     http::Response r;
     auto it = canned_.find(req.url);
     if (it == canned_.end()) {
@@ -110,6 +124,9 @@ class Pool final : public http::Pool {
     } else {
       r.status = it->second.status;
       r.ok = r.status >= 200 && r.status < 300;
+      r.contentRange = it->second.contentRange;
+      r.acceptRanges = it->second.acceptRanges;
+      r.contentLength = it->second.contentLength;
       const std::string& body = it->second.body;
       r.bytes = body.size();
       if (req.onChunk) {

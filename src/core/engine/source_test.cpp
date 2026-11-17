@@ -22,7 +22,7 @@ std::string percent(double share) {
 }
 
 char kindLetter(Kind k) {
-  return k == Kind::Archive ? 'A' : k == Kind::Depth ? 'D' : k == Kind::Clock ? 'C' : 'L';
+  return k == Kind::Archive ? 'A' : k == Kind::Depth ? 'D' : k == Kind::Clock ? 'C' : k == Kind::Timing ? 'T' : 'L';
 }
 
 // The live outcome "o1080,60,1400": its height, frame rate and time to
@@ -681,6 +681,17 @@ void Runner::next(Slot& s, uint32_t ms) {
     }
     std::string words = clocksText(clocks, server);
     if (!words.empty()) logLine(providerName(id) + ": archive clocks: " + words);
+    // Build 172: how its archives start, in words.
+    std::vector<archive::Timing> timings;
+    seen.clear();
+    for (const Item& item : q) {
+      if (item.kind != Kind::Archive || !seen.insert(item.channelId).second) continue;
+      auto t = run_.done.find(key(item.channelId, Kind::Timing));
+      if (t == run_.done.end() || t->second.size() < 2 || t->second[0] != 't') continue;
+      if (std::optional<archive::Timing> v = archive::decode(t->second.substr(1))) timings.push_back(*v);
+    }
+    std::string timing = archive::providerText(timings);
+    if (!timing.empty()) logLine(providerName(id) + ": archive timing: " + timing);
     dirty_ = true;
     return;
   }
@@ -697,6 +708,16 @@ void Runner::next(Slot& s, uint32_t ms) {
       run_.done[k] = "s";
       dirty_ = true;
       s.nextMs = ms;
+      return;
+    }
+  }
+  // Build 172: a copy whose archive played: its timing, in a turn of its
+  // own before its next item.
+  if ((item.kind == Kind::Depth || item.kind == Kind::Live) && !run_.done.count(key(item.channelId, Kind::Timing)) &&
+      store_.catchupDays(item.channelId) > 0) {
+    auto a = run_.done.find(key(item.channelId, Kind::Archive));
+    if (a != run_.done.end() && a->second == "o") {
+      readTiming(s, item, ms);
       return;
     }
   }
@@ -744,6 +765,52 @@ void Runner::readClock(Slot& s, const Item& item, uint32_t ms) {
     slot.inFlight = false;
     probeItem(slot, copy, at, ms);
   });
+}
+
+void Runner::readTiming(Slot& s, const Item& item, uint32_t ms) {
+  const scores::LineupRow& row = rows_[item.row];
+  std::string name = row.name.empty() ? std::string("a channel") : row.name;
+  std::string k = key(item.channelId, Kind::Timing);
+  int serial = ++s.serial;
+  size_t index = s.index;
+  Item copy = item;
+  std::weak_ptr<bool> alive = alive_;
+  s.nowText = name + " \xc2\xb7 replay timing";
+  s.inFlight = true;
+  s.startedMs = ms;
+  s.abort = store_.measureArchive(
+      item.channelId, kTimingBudgetMs,
+      [this, alive, index, copy, serial, ms, k](const archive::Outcome& o) {
+        if (alive.expired() || index >= slots_.size()) return;
+        Slot& slot = slots_[index];
+        if (!slot.inFlight || slot.serial != serial) return;  // dropped meanwhile
+        uint32_t at = host_.ms ? host_.ms() : ms_;
+        if (o.aborted || (slot.abort && slot.abort->load())) {
+          slot.inFlight = false;
+          slot.nextMs = at + kGapMinMs;
+          return;
+        }
+        if (o.refused) {
+          // As a probe's refusal: the provider is left alone a while.
+          probe::Outcome p;
+          p.refused = true;
+          p.why = o.why;
+          finishItem(index, copy, p, at, ms);
+          return;
+        }
+        run_.done[k] = o.timing ? "t" + archive::encode(*o.timing) : std::string("f");
+        dirty_ = true;
+        slot.inFlight = false;
+        slot.nextMs = at + kGapMinMs + static_cast<uint32_t>(random_() % (kGapMaxMs - kGapMinMs + 1));
+      },
+      clock);
+  if (!s.abort) {
+    // Nothing to measure (gone from the provider's list).
+    s.inFlight = false;
+    run_.done[k] = "x";
+    dirty_ = true;
+    s.nextMs = ms;
+  }
 }
 
 void Runner::probeItem(Slot& s, const Item& item, uint32_t ms, uint32_t started) {

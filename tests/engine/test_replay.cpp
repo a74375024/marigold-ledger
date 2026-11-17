@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "core/engine/archive_timing.hpp"
 #include "core/engine/controls.hpp"
 #include "core/engine/replay.hpp"
 #include "core/engine/session.hpp"
@@ -21,6 +22,7 @@
 #include "core/util/base64.hpp"
 #include "core/util/json.hpp"
 #include "engine/loaded_store.hpp"
+#include "playback/ts_builder.hpp"
 #include "sources/mock_provider.hpp"
 
 using marigold::engine::AccountForm;
@@ -42,6 +44,9 @@ struct Player final : marigold::engine::Player {
     int stops = 0;
     int pauses = 0;
     bool canPause = true;
+    // Build 172: the replay relay is there; where it said the stream began.
+    bool inside = false;
+    std::optional<int> began;
   };
   explicit Player(std::shared_ptr<Shared> s) : s_(std::move(s)) {}
   void attempt() override { s_->state = {}; }
@@ -52,6 +57,8 @@ struct Player final : marigold::engine::Player {
     return s_->canPause;
   }
   PlayerState state() const override { return s_->state; }
+  bool startsInside(const Feed&) const override { return s_->inside; }
+  std::optional<int> startedInside() const override { return s_->began; }
   std::shared_ptr<Shared> s_;
 };
 
@@ -321,6 +328,7 @@ TEST_CASE("replay: start over plays the programme's start on the archive copy; r
   // Start over: the programme began 38 minutes ago.
   mtime::Seconds start = minuteOf(mtime::now() - 38 * 60);
   REQUIRE(r.session->replayFrom(start + 20, Why::StartOver));
+  r.tv.pool.drain();  // Build 172: its archive timing is read first (not answered here)
   REQUIRE(r.session->replay());
   CHECK(r.session->replay()->phase == Phase::Opening);
   CHECK(r.session->replay()->feed == copy);
@@ -414,6 +422,7 @@ TEST_CASE("replay: pause holds the picture, closes the stream within 3 s, and re
 
   // Play: the archive from the paused minute (a few seconds early).
   REQUIRE(r.session->resumePaused());
+  r.tv.pool.drain();  // Build 172: its archive timing is read first (not answered here)
   REQUIRE(r.player->plays.size() == plays + 1);
   CHECK(isReplay(r.player->plays.back()));
   CHECK(r.player->plays.back().url.find("/" + serverMinute(minuteOf(pausedAt)) + "/501.ts") != std::string::npos);
@@ -464,6 +473,7 @@ TEST_CASE("replay: a stretch that ends opens the next from where it ended; reach
   // Five hours back: the provider is asked for its longest stretch.
   mtime::Seconds from = minuteOf(mtime::now() - 5 * 3600);
   REQUIRE(r.session->replayFrom(from, Why::Rewind));
+  r.tv.pool.drain();  // Build 172: its archive timing is read first (not answered here)
   CHECK(r.player->plays.back().url.find("/timeshift/u/p/180/" + serverMinute(from) + "/501.ts") != std::string::npos);
   r.picture();
   // Three hours of it; then the stream ends, still five hours behind live.
@@ -512,6 +522,7 @@ TEST_CASE("replay: a copy that fails tries the next with an archive, then goes l
 
   mtime::Seconds from = minuteOf(mtime::now() - 3600);
   REQUIRE(r.session->replayFrom(from, Why::Rewind));
+  r.tv.pool.drain();  // Build 172: its archive timing is read first (not answered here)
   CHECK(r.session->replay()->feed == first);
   // An error before any picture: the other copy with an archive, same minute.
   r.player->state.failed = true;
@@ -857,6 +868,7 @@ TEST_CASE("replay 1.0.10: Dream (2 days) and Trex (1 day) copies, either order: 
     // Thirty hours back: only Dream holds it.
     mtime::Seconds far = minuteOf(mtime::now() - 30 * 3600);
     REQUIRE(r.session->replayFrom(far, Why::Rewind));
+    r.tv.pool.drain();  // Build 172: its archive timing is read first (not answered here)
     CHECK(r.session->replay()->feed == dream);
     CHECK(r.player->plays.back().url.rfind(std::string(mock::kHost) + "/timeshift/", 0) == 0);
     // Dream fails there: Trex's day doesn't reach it, so live, with the notice.
@@ -903,6 +915,7 @@ TEST_CASE("replay 1.0.10: a one-day archive stops an hour short of a day, for re
   // Exactly a day back (what failed on the provider): an hour later than that.
   mtime::Seconds now = mtime::now();
   REQUIRE(r.session->replayFrom(now - 86400, Why::Rewind));
+  r.tv.pool.drain();  // Build 172: its archive timing is read first (not answered here)
   mtime::Seconds from = r.session->replay()->from;
   CHECK(from == replay::archiveStart(now, 1));
   CHECK(from >= now - 23 * 3600);
@@ -1233,6 +1246,7 @@ TEST_CASE("replay 1.0.13: the controls' Start over plays from the programme's st
   REQUIRE(at);
   CHECK(*at == start);
   REQUIRE(r.session->replayFrom(*at, Why::StartOver));
+  r.tv.pool.drain();  // Build 172: its archive timing is read first (not answered here)
   REQUIRE(r.session->replay());
   CHECK(r.session->replay()->from == minuteOf(start));
   CHECK(r.player->plays.back().url.find("/" + serverMinute(minuteOf(start)) + "/501.ts") != std::string::npos);
@@ -1312,7 +1326,8 @@ TEST_CASE("replay 1.0.13: the copy's own archive clock over the server's; the lo
   size_t plays = r.player->plays.size();
   mtime::Seconds from = minuteOf(mtime::now() - 40 * 60);
   REQUIRE(r.session->replayFrom(from, Why::Rewind));
-  REQUIRE(r.player->plays.size() == plays + 1);  // nothing to wait for
+  r.tv.pool.drain();  // Build 172: its archive timing is read first (not answered here)
+  REQUIRE(r.player->plays.size() == plays + 1);  // no clock to wait for
   CHECK(r.player->plays.back().url.find("/" + minuteIn(from, 3600) + "/501.ts") != std::string::npos);
   CHECK(r.player->plays.back().url.find("/" + serverMinute(from) + "/") == std::string::npos);
   r.picture();
@@ -1331,6 +1346,7 @@ TEST_CASE("replay 1.0.13: the copy's own archive clock over the server's; the lo
   same.tv.pool.answer(tableUrl(501), clockTable(-5 * 3600));
   same.watchLive(same.entry("ESPN"), 502);
   REQUIRE(same.session->replayFrom(from, Why::Rewind));
+  same.tv.pool.drain();  // Build 172: its archive timing is read first (not answered here)
   CHECK(same.player->plays.back().url.find("/" + serverMinute(from) + "/501.ts") != std::string::npos);
   REQUIRE(same.replayLines().size() == 1);
   CHECK(same.replayLines()[0] == "rewind to " + hm(from) + "; archive clock UTC\xe2\x88\x92" "5");
@@ -1430,6 +1446,7 @@ TEST_CASE("replay 1.0.13: no table within 3 s: the server's clock; the table tha
   CHECK(r.store->archiveClock(r.channelOf(501)).from == Store::ClockFrom::Table);
   mtime::Seconds to = minuteOf(mtime::now() - 20 * 60);
   REQUIRE(r.session->replayFrom(to, Why::Rewind));
+  r.tv.pool.drain();  // Build 172: its archive timing is read first (not answered here)
   CHECK(r.player->plays.back().url.find("/" + minuteIn(to, 3600) + "/501.ts") != std::string::npos);
   CHECK(r.replayLines().back() == "rewind to " + hm(to) + "; archive clock UTC+1 (server says UTC\xe2\x88\x92" "5)");
   r.noLinks();
@@ -1440,5 +1457,178 @@ TEST_CASE("replay 1.0.13: no table within 3 s: the server's clock; the table tha
   CHECK(n.store->archiveClock(n.channelOf(501)).settled);
   size_t before = n.player->plays.size();
   REQUIRE(n.session->replayFrom(from, Why::Rewind));
+  n.tv.pool.drain();  // Build 172: its archive timing is read first (not answered here)
   CHECK(n.player->plays.size() == before + 1);
+}
+
+// ------------------------------------------- Build 172: the minute picked
+
+namespace {
+
+namespace archive = marigold::engine::archive;
+
+// `seconds` of 25 fps video whose clock starts at `pts0`.
+std::string timingClip(int64_t pts0, int seconds) {
+  tsgen::Muxer m;
+  tsgen::VideoFormat f;
+  for (int i = 0; i < seconds * 25; ++i) {
+    if (i % 10 == 0) {
+      m.section(0, tsgen::pat());
+      m.section(tsgen::kPmtPid, tsgen::pmt(0x1B, 0));
+    }
+    int64_t t = (pts0 + static_cast<int64_t>(i) * 3600) % (int64_t{1} << 33);
+    m.pes(tsgen::kVideoPid, tsgen::videoPes(t, t, tsgen::picture(f, i % 50 == 0, 3000, 0, static_cast<uint8_t>(i))));
+  }
+  return std::string(m.out.begin(), m.out.end());
+}
+// The channel's encoder clock at wall time `t`.
+int64_t encoderPts(mtime::Seconds t) {
+  int64_t wrap = int64_t{1} << 33;
+  return ((t - 1700000000) * 90000 % wrap + wrap) % wrap;
+}
+// `t` as the archive's link writes it, in `clock`.
+std::string linkMinute(mtime::Seconds t, int clock) {
+  mtime::Civil c = mtime::civilFromSeconds(t + clock);
+  char buf[32];
+  std::snprintf(buf, sizeof buf, "/%04d-%02d-%02d:%02d-%02d/", c.year, c.month, c.day, c.hour, c.minute);
+  return buf;
+}
+mtime::Seconds hourOf(mtime::Seconds t, int clock) { return (t + clock) / 3600 * 3600 - clock; }
+
+}  // namespace
+
+TEST_CASE("replay 1.0.15: a chunked archive measured on its first replay; read through to the minute; the real start shown") {
+  Rig r;
+  r.player->inside = true;  // the replay relay is there
+  std::string espn = r.entry("ESPN");
+  r.watchLive(espn, 501);
+  std::string channel = r.channelOf(501);
+  std::optional<archive::Request> req = r.store->timingRequest(channel);
+  REQUIRE(req);
+  int clock = req->clock;
+  // The provider keeps 60-minute files and answers no byte range.
+  mtime::Seconds now = mtime::now();
+  mtime::Seconds first = archive::firstMoment(now), second = first + archive::kApart;
+  r.tv.pool.answer(req->live, timingClip(encoderPts(now - 3), 4));
+  r.tv.pool.answer(*req->linkFor(first), timingClip(encoderPts(hourOf(first, clock)), 5));
+  r.tv.pool.answer(*req->linkFor(second), timingClip(encoderPts(hourOf(second, clock)), 5));
+
+  // Rewind to 3 minutes into an hour, three hours back: measured first (a
+  // moment), then the hour asked for and read through to the minute.
+  mtime::Seconds hour = hourOf(now - 3 * 3600, clock), picked = hour + 3 * 60;
+  REQUIRE(r.session->replayFrom(picked, Why::Rewind));
+  CHECK(r.session->replay()->clockWait);
+  r.tv.pool.drain();
+  std::optional<archive::Timing> t = r.store->archiveTiming(channel);
+  REQUIRE(t);
+  CHECK(t->kind == archive::Kind::Chunked);
+  CHECK(t->chunkMinutes == 60);
+  CHECK(t->seekable == 0);
+  const Feed& asked = r.player->plays.back();
+  REQUIRE(isReplay(asked));
+  CHECK(asked.url.find(linkMinute(hour, clock)) != std::string::npos);
+  CHECK(asked.inside.skip == 180);
+  CHECK_FALSE(asked.inside.seek);
+  CHECK(r.session->replayAt() == picked);
+  // The relay says it began five seconds short: that's what shows.
+  r.player->began = 175;
+  r.picture();
+  CHECK(r.session->replayAt() >= hour + 175);
+  CHECK(r.session->replayAt() <= hour + 177);
+  // Its timeline: hours, and the four minutes read through after each.
+  marigold::engine::replay::Reach reach = r.session->reach();
+  CHECK(reach.chunk == 3600);
+  CHECK(reach.readThrough == 240);
+
+  // 25 minutes in: too far to read through; from the hour, and said so.
+  mtime::Seconds far = hour + 25 * 60;
+  REQUIRE(r.session->replayFrom(far, Why::Rewind));
+  CHECK_FALSE(r.session->replay()->clockWait);  // measured: nothing to wait for
+  CHECK(r.player->plays.back().inside.skip == 0);
+  CHECK(r.player->plays.back().url.find(linkMinute(hour, clock)) != std::string::npos);
+  CHECK(r.session->replayAt() == hour);
+
+  std::vector<std::string> lines = r.replayLines();
+  REQUIRE(lines.size() >= 3);
+  CHECK(std::count(lines.begin(), lines.end(), "archive: 60-min chunks, reads through up to 4 min") == 1);
+  CHECK(std::any_of(lines.begin(), lines.end(), [&](const std::string& l) {
+    return l.rfind("rewind to " + hm(picked) + " (chunk " + hm(hour) + ", skipped 3 min); ", 0) == 0;
+  }));
+  CHECK(lines.back().rfind("rewind to " + hm(far) + " (chunk " + hm(hour) + ", no skip); ", 0) == 0);
+  r.noLinks();
+  // Kept: ids and numbers only.
+  r.tv.pool.drain();
+  std::optional<std::string> kept = r.tv.files.read("archive-clocks.json");
+  REQUIRE(kept);
+  CHECK(kept->find("\"c60,") != std::string::npos);
+  CHECK(kept->find("://") == std::string::npos);
+}
+
+TEST_CASE("replay 1.0.15: no measurement in time plays as before; once a run; an exact archive's offset") {
+  Rig r;
+  std::string espn = r.entry("ESPN");
+  r.watchLive(espn, 501);
+  std::string channel = r.channelOf(501);
+  int clock = r.store->archiveClock(channel).offset.value_or(0);
+  // The reads don't come back in time: the stretch opens after the wait, as
+  // Build 170 would, and the reads stop (the account has one connection).
+  std::optional<archive::Request> req = r.store->timingRequest(channel);
+  REQUIRE(req);
+  r.tv.pool.answer(req->live, timingClip(encoderPts(mtime::now() - 3), 4));
+  mtime::Seconds picked = minuteOf(mtime::now() - 40 * 60);
+  size_t plays = r.player->plays.size();
+  REQUIRE(r.session->replayFrom(picked, Why::Rewind));
+  REQUIRE(r.session->replay()->clockWait);
+  r.tv.ms += Session::kClockWaitMs + 10;
+  r.session->tick(r.tv.ms);  // the reads still out
+  REQUIRE(r.player->plays.size() == plays + 1);
+  CHECK(r.player->plays.back().url.find(linkMinute(picked, clock)) != std::string::npos);
+  r.tv.pool.drain();  // too late: stopped at their first bytes
+  CHECK_FALSE(r.store->archiveTiming(channel));
+  CHECK(r.player->plays.size() == plays + 1);
+  // The next replay doesn't wait again this run.
+  REQUIRE(r.session->replayFrom(picked + 600, Why::Rewind));
+  CHECK_FALSE(r.session->replay()->clockWait);
+
+  // Measured since (Test all sources): exact, the recording a minute
+  // behind: asked a minute later, shows the minute picked.
+  archive::Timing exact;
+  exact.kind = archive::Kind::Exact;
+  exact.offset = 60;
+  r.store->noteArchiveTiming(channel, exact);
+  mtime::Seconds at = minuteOf(mtime::now() - 30 * 60);
+  REQUIRE(r.session->replayFrom(at, Why::Rewind));
+  CHECK(r.player->plays.back().url.find(linkMinute(at + 60, clock)) != std::string::npos);
+  CHECK(r.session->replayAt() == at);
+  CHECK(r.session->reach().anyMinute());
+  std::vector<std::string> lines = r.replayLines();
+  CHECK(std::count(lines.begin(), lines.end(), "archive: recording 1 min behind") == 1);
+  CHECK(lines.back().rfind("rewind to " + hm(at) + " (recording 1 min behind); ", 0) == 0);
+  r.noLinks();
+}
+
+TEST_CASE("replay 1.0.15: Start over on a chunked archive it can't skip into goes to the start before the programme") {
+  Rig r;  // no relay: nothing is skipped
+  std::string espn = r.entry("ESPN");
+  r.watchLive(espn, 501);
+  std::string channel = r.channelOf(501);
+  int clock = r.store->archiveClock(channel).offset.value_or(0);
+  archive::Timing chunk;
+  chunk.kind = archive::Kind::Chunked;
+  chunk.chunkMinutes = 30;
+  chunk.seekable = 0;
+  r.store->noteArchiveTiming(channel, chunk);
+  mtime::Seconds now = mtime::now();
+  // A programme that began at 40 minutes past an hour, two hours back.
+  mtime::Seconds hour = hourOf(now - 2 * 3600, clock), start = hour + 40 * 60;
+  marigold::engine::replay::Reach reach = r.session->reach();
+  CHECK(reach.chunk == 1800);
+  CHECK(reach.readThrough == 0);
+  REQUIRE(r.session->replayFrom(start, Why::StartOver));
+  CHECK(r.session->replay()->from == hour + 30 * 60);
+  CHECK(r.session->replayAt() == hour + 30 * 60);
+  CHECK(r.player->plays.back().url.find(linkMinute(hour + 30 * 60, clock)) != std::string::npos);
+  CHECK(r.player->plays.back().inside.skip == 0);
+  CHECK(r.replayLines().back().rfind("start over " + hm(hour + 30 * 60) + " (chunk " + hm(hour + 30 * 60) + "); ", 0) == 0);
+  r.noLinks();
 }

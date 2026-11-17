@@ -1,6 +1,7 @@
 #include "platform/http.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 
 #include "core/util/gunzip.hpp"
@@ -279,6 +280,10 @@ void Client::execute(Ticket::Job& job) {
   if (!r.headers.empty()) {
     out.etag = headerValue(r.headers, "ETag");
     out.lastModified = headerValue(r.headers, "Last-Modified");
+    out.contentRange = headerValue(r.headers, "Content-Range");
+    out.acceptRanges = headerValue(r.headers, "Accept-Ranges");
+    std::string length = headerValue(r.headers, "Content-Length");
+    out.contentLength = length.empty() ? 0 : std::strtoull(length.c_str(), nullptr, 10);
   }
   if (!streamed) out.body = std::move(r.body);
   out.bytes = streamed ? sink.bytes : out.body.size();

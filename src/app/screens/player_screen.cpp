@@ -785,7 +785,16 @@ class PlayerScreen : public Screen {
       const Listing* on = in.replayAt ? replayBanner(*g, *in.replayAt, in.now).show : current(g->id, in.now, nullptr);
       if (on) in.showStart = on->start;
     }
-    return engine::controls::startOver(in);
+    std::optional<time::Seconds> at = engine::controls::startOver(in);
+    // Build 172: where this channel's replay can really start, at or just
+    // before it (an archive in chunks it can't skip into).
+    if (at) {
+      time::Seconds snapped = engine::replay::startOverTarget(
+          p.reach(), *at, engine::replay::archiveStart(in.now, in.replayDays), in.now);
+      if (in.now - snapped < engine::Session::kLiveWithin) return std::nullopt;
+      at = snapped;
+    }
+    return at;
   }
   // The other version of the channel playing, when it has both.
   std::string otherCoast() const {
@@ -1041,6 +1050,9 @@ class PlayerScreen : public Screen {
     time::Seconds now = time::now();
     earliest_ = engine::replay::archiveStart(now, days);
     head_ = timelineFrom_ == From::Live ? now : p.replayAt();
+    // Build 172: where this channel's replay can start (any minute, or the
+    // chunk boundaries of an archive it can't skip into).
+    reach_ = p.reach();
     pastSerial_ = p.pastSerial();
     programmes_ = p.timeline(earliest_);
     span_ = engine::replay::opening(programmes_, now, earliest_);
@@ -1069,19 +1081,19 @@ class PlayerScreen : public Screen {
       case Key::Right:
         repeats_ = again ? repeats_ + 1 : 0;
         lastMove_ = e.key;
-        moved(engine::replay::step(head_, e.key == Key::Left ? -1 : 1, repeats_, earliest_, now));
+        moved(engine::replay::stepReach(reach_, head_, e.key == Key::Left ? -1 : 1, repeats_, earliest_, now));
         return true;
       case Key::Up:
       case Key::Down:
         if (e.wheel && app_.ms() - lastOkAt_ < kWheelAfterClickMs) return true;
         lastMove_ = e.key;
-        moved(engine::replay::jump(programmes_, head_, e.key == Key::Up ? -1 : 1, earliest_, now));
+        moved(engine::replay::jumpReach(reach_, programmes_, head_, e.key == Key::Up ? -1 : 1, earliest_, now));
         return true;
       case Key::Ok:
         // With the pointer on the bar, a click picks that time.
         if (pointer_ && barHover_ >= 0) {
           double at = (static_cast<double>(barHover_) + 0.5) / kBarSlices;
-          moved(engine::replay::at(span_, at, earliest_, now));
+          moved(engine::replay::snap(reach_, engine::replay::at(span_, at, earliest_, now), earliest_, now));
           return true;
         }
         playFromHead();
@@ -1187,6 +1199,13 @@ class PlayerScreen : public Screen {
       c.g.fill({lx - 9, barY - 4, 18, 18}, theme::hex(kRed), 9);
       shadowed(c, "LIVE", lx - 60, barY + 22, Weight::Bold, 16, theme::hex(kRed), 0);
     }
+    // Build 172: the starts this channel's replay has, as faint ticks (a
+    // chunked archive it can't skip into).
+    for (time::Seconds t : engine::replay::boundaries(reach_, span_)) {
+      if (t >= now) break;
+      float bx = barX(t, x0, w);
+      c.g.fill({bx - 1, barY - 6, 2, 22}, theme::white(0.35f));
+    }
     // Hour and half-hour marks under the bar.
     time::Seconds step = span_.length() > 6 * 3600 ? 3 * 3600 : span_.length() > 3 * 3600 ? 3600 : 1800;
     for (time::Seconds t = (span_.from / step + 1) * step; t < span_.to - step / 3; t += step) {
@@ -1215,9 +1234,13 @@ class PlayerScreen : public Screen {
       ui::labelIn(c, what, {bubble.x + 20, bubble.y + 42, bubble.w - 40, 28}, Weight::Regular, 20, theme::black(0.7f),
                   Align::Center);
     // How it's used.
+    std::string steps = "\xe2\x97\x80 \xe2\x96\xb6 1 minute (hold to speed up: 5, then 15)";
+    if (!reach_.anyMinute())
+      steps = "\xe2\x97\x80 \xe2\x96\xb6 " + std::to_string(reach_.chunk / 60) +
+              " minutes, where this channel\xe2\x80\x99s replay starts (hold to speed up)";
     shadowed(c,
-             "\xe2\x97\x80 \xe2\x96\xb6 1 minute (hold to speed up: 5, then 15) \xc2\xb7 \xe2\x96\xb2 \xe2\x96\xbc start of "
-             "the programme before / after \xc2\xb7 OK play from here \xc2\xb7 Back stay where you were",
+             steps + " \xc2\xb7 \xe2\x96\xb2 \xe2\x96\xbc start of the programme before / after \xc2\xb7 OK play from here "
+                     "\xc2\xb7 Back stay where you were",
              kLeft, top + 330, Weight::Regular, 21, theme::white(0.78f), gfx::kLayoutWidth - 2 * kLeft);
     (void)p;
   }
@@ -2339,6 +2362,7 @@ class PlayerScreen : public Screen {
   From timelineFrom_ = From::Live;
   std::string timelineEntry_;
   time::Seconds head_ = 0, earliest_ = 0;
+  engine::replay::Reach reach_;
   engine::replay::Span span_;
   std::vector<engine::replay::Programme> programmes_;
   int pastSerial_ = 0;

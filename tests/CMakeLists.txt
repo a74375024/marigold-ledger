@@ -1,7 +1,9 @@
 file(GLOB_RECURSE MARIGOLD_TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp)
-# The two home-network servers are plain POSIX sockets: tested on the host too.
+# The two home-network servers and the replay relay are plain POSIX sockets:
+# tested on the host too.
 add_executable(marigold_tests main.cpp ${MARIGOLD_TEST_SOURCES}
-  ${CMAKE_SOURCE_DIR}/src/platform/lan_server.cpp ${CMAKE_SOURCE_DIR}/src/platform/lan_share.cpp)
+  ${CMAKE_SOURCE_DIR}/src/platform/lan_server.cpp ${CMAKE_SOURCE_DIR}/src/platform/lan_share.cpp
+  ${CMAKE_SOURCE_DIR}/src/platform/replay_relay.cpp)
 # doctest is a system header to the warnings: its own float comparisons
 # (Approx) trip -Wdouble-promotion under clang.
 target_include_directories(marigold_tests SYSTEM PRIVATE third_party)

@@ -45,6 +45,7 @@ constexpr uint32_t kShortStretchMs = 20000;
 constexpr int kShortStretchesTried = 3;
 // The player's notice when no copy plays the moment asked.
 const char* const kReplayUnavailable = "Replay isn\xe2\x80\x99t available right now on this channel";
+const char* const kYoureLive = "You\xe2\x80\x99re live";
 
 }  // namespace
 
@@ -1061,17 +1062,30 @@ void Session::playReplay(size_t index, time::Seconds from, const std::string& wh
     r.video = index < infos.size() ? infos[index].expectVideo : true;
   }
   r.clockWait.reset();
+  r.base = r.from;
+  r.inside = false;
   // Build 170: a copy whose archive clock isn't known yet (its own guide
   // not read this run, its account taught none): the guide first, a few
   // seconds at most, so the very first replay asks for the right moment.
+  // Build 172: a copy whose archive timing was never measured is measured
+  // in the same few seconds (once a run); what isn't in by then serves the
+  // next replay.
   const std::string channel = feeds_[index].channelId;
-  if (!store_.archiveClock(channel).settled) {
+  bool clock = !store_.archiveClock(channel).settled;
+  bool measure = !store_.archiveTiming(channel) && !measureTried_.count(channel) &&
+                 store_.timingRequest(channel).has_value();
+  if (clock || measure) {
     int serial = ++clockSerial_;
-    r.clockWait = Replay::ClockWait{what, ms(), serial};
+    r.clockWait = Replay::ClockWait{what, ms(), serial, measure};
     if (hooks_.changed) hooks_.changed();
+    if (!clock) {
+      if (!startMeasure(channel, serial)) openReplay(what);
+      return;
+    }
     std::weak_ptr<int> alive = alive_;
-    store_.archiveTable(channel, [this, alive, serial](const Store::ArchiveTableAnswer&) {
+    store_.archiveTable(channel, [this, alive, serial, channel](const Store::ArchiveTableAnswer&) {
       if (alive.expired() || !replay_ || !replay_->clockWait || replay_->clockWait->serial != serial) return;
+      if (replay_->clockWait->measuring && startMeasure(channel, serial)) return;
       openReplay(replay_->clockWait->what);
     });
     return;
@@ -1079,25 +1093,98 @@ void Session::playReplay(size_t index, time::Seconds from, const std::string& wh
   openReplay(what);
 }
 
+bool Session::startMeasure(const std::string& channel, int serial) {
+  if (!replay_ || !replay_->clockWait) return false;
+  measureTried_.insert(channel);
+  uint32_t spent = ms() - replay_->clockWait->since;
+  if (spent + 500 >= kClockWaitMs) return false;
+  // The provider's connection is free for the reads: a picture the player
+  // still held (the timeline's pause) lets go now.
+  player_->stop();
+  std::weak_ptr<int> alive = alive_;
+  dropMeasure();
+  // Where the account allows a second connection, reads not done when the
+  // stretch opens carry on (what they find serves the next replay).
+  measureSpare_ = store_.spareConnection(channel);
+  measureAbort_ = store_.measureArchive(channel, kClockWaitMs - spent, [this, alive, serial](const archive::Outcome&) {
+    if (alive.expired() || !replay_ || !replay_->clockWait || replay_->clockWait->serial != serial) return;
+    measureAbort_.reset();
+    openReplay(replay_->clockWait->what);
+  });
+  return measureAbort_ != nullptr;
+}
+
 void Session::openReplay(const std::string& what) {
   Replay& r = *replay_;
   std::string line = what;  // `what` may be the wait's own
   r.clockWait.reset();
+  // Not in time: the reads stop, the provider's connection is the replay's.
+  dropMeasure();
   r.startedAt = ms();
+  time::Seconds now = time::now();
+  // Build 172: where the provider's archive really starts for this moment,
+  // and how the player gets to the moment (archive_timing.hpp).
+  const Feed& copy = feeds_[r.feed];
+  std::optional<archive::Timing> timing = store_.archiveTiming(copy.channelId);
+  int offset = store_.archiveClock(copy.channelId).offset.value_or(0);
+  bool canSkip = player_->startsInside(copy);
+  std::vector<time::Seconds> starts;
+  if (timing && timing->kind == archive::Kind::Programme) {
+    std::string entry = store_.entryOfChannel(copy.channelId);
+    for (const Listing& l : store_.pastListing(entry.empty() ? entry_ : entry, r.from - 8 * 3600))
+      starts.push_back(l.start);
+  }
+  archive::Plan plan = archive::plan(timing, r.from, offset, canSkip, r.next, starts);
+  if (timing && timingTold_.insert(copy.channelId).second) logReplay(archive::describe(*timing, canSkip), r.feed);
+  if (r.next && now - plan.shows < kLiveWithin) {
+    // The next start the archive has is live already.
+    logReplay("caught up", r.feed);
+    replayNotice_ = kYoureLive;
+    endReplay(true);
+    return;
+  }
   // The link carries the login: to the player only, never the log.
-  std::optional<Store::CatchupFeed> f = store_.catchupFeed(feeds_[r.feed], r.from, time::now());
+  std::optional<Store::CatchupFeed> f = store_.catchupFeed(copy, plan.ask, now);
   replayClock_.reset();
   if (f) replayClock_ = ReplayClock{f->clock.offset, f->clock.server, f->clock.from != Store::ClockFrom::Server};
   r.minutes = f ? f->minutes : 0;
+  r.base = plan.base;
+  r.atMs = static_cast<int64_t>(plan.shows) * 1000;
+  r.inside = plan.skip > 0;
+  std::string how = archive::planText(plan, timing, [this](time::Seconds t) { return localTime(t); });
+  if (!how.empty()) line += " " + how;
   if (hooks_.changed) hooks_.changed();
   if (!f) {
     logReplay(line, r.feed);
     replayFailed("no replay link could be made for this copy");
     return;
   }
+  if (plan.skip > 0) {
+    f->feed.inside.skip = plan.skip;
+    f->feed.inside.seek = plan.how == archive::Plan::How::Seek;
+    f->feed.inside.startByte = plan.startByte;
+    f->feed.inside.byteRate = plan.byteRate;
+  }
   logReplay(line, r.feed, true);
   player_->attempt();
   player_->play(f->feed, false);
+}
+
+void Session::dropMeasure() {
+  if (measureAbort_ && !measureSpare_) measureAbort_->store(true);
+  measureAbort_.reset();
+}
+
+replay::Reach Session::reachFor(size_t i) const {
+  if (i >= feeds_.size()) return {};
+  const Feed& copy = feeds_[i];
+  return archive::reach(store_.archiveTiming(copy.channelId), store_.archiveClock(copy.channelId).offset.value_or(0),
+                        player_->startsInside(copy));
+}
+
+replay::Reach Session::reach() const {
+  std::optional<size_t> copy = catchupCopy();
+  return copy ? reachFor(*copy) : replay::Reach{};
 }
 
 bool Session::replayFrom(time::Seconds from, ReplayWhy why) {
@@ -1116,6 +1203,14 @@ bool Session::replayFrom(time::Seconds from, ReplayWhy why) {
   }
   std::optional<size_t> copy = archiveCopyFor(from, live, replay_ ? replay_->feed : live);
   if (!copy) return false;
+  if (why == ReplayWhy::StartOver) {
+    // Build 172: where that copy's archive can start, at or before it.
+    from = replay::startOverTarget(reachFor(*copy), from, replay::archiveStart(now, days), now);
+    if (now - from < kLiveWithin) {
+      if (replay_) goLive();
+      return true;
+    }
+  }
   if (!replay_) {
     replayLive_ = rec_.feedIndex();
     replayLiveReady_ = rec_.sawFirstFrame();
@@ -1154,6 +1249,11 @@ bool Session::startReplayInstead(time::Seconds at, ReplayWhy why, size_t live) {
   // timeline's: an hour in hand).
   std::optional<size_t> copy = archiveCopyFor(at, live, live);
   if (!copy) return false;
+  if (why == ReplayWhy::StartOver || why == ReplayWhy::Game) {
+    // Build 172: where that copy's archive can start, at or before it.
+    at = replay::startOverTarget(reachFor(*copy), at, replay::archiveStart(now, longestArchive(live)), now);
+    if (now - at < kLiveWithin) return false;
+  }
   standAside();
   replayLive_ = live;
   replayLiveReady_ = false;
@@ -1300,6 +1400,7 @@ void Session::goLive(bool quiet) {
 
 void Session::endReplay(bool live) {
   if (!replay_) return;
+  dropMeasure();
   replay_.reset();
   replayTried_.clear();
   replayClock_.reset();
@@ -1368,6 +1469,7 @@ void Session::tickReplay(uint32_t now) {
   }
   if (r.clockWait) {
     // Build 170: its archive clock didn't come in time: the clock known.
+    // Build 172: nor its timing: as before, and it serves the next replay.
     if (now - r.clockWait->since >= kClockWaitMs) openReplay(r.clockWait->what);
     return;
   }
@@ -1381,6 +1483,14 @@ void Session::tickReplay(uint32_t now) {
       r.phase = Replay::Phase::Playing;
       r.pictureAt = std::max<uint32_t>(1, now);
       r.next = false;
+      if (r.inside) {
+        // Build 172: the moment shown is where the stream really began.
+        if (std::optional<int> in = player_->startedInside()) {
+          time::Seconds began = r.base + *in;
+          if (std::llabs(began - r.at()) >= 60) logReplay("it starts at " + localTime(began), r.feed);
+          r.atMs = static_cast<int64_t>(began) * 1000;
+        }
+      }
       // Watched, for Right: the channel counts as viewed (on its live copy).
       pictured_ = true;
       hadPicture_ = true;
@@ -1394,7 +1504,8 @@ void Session::tickReplay(uint32_t now) {
       replayFailed(error.empty() ? std::string("the player reported an error") : error);
       return;
     }
-    if (now - r.startedAt >= kReplayTimeoutMs) replayFailed("no picture after " + std::to_string(kReplayTimeoutMs / 1000) + " s");
+    uint32_t allowed = kReplayTimeoutMs + (r.inside ? kInsideExtraMs : 0);
+    if (now - r.startedAt >= allowed) replayFailed("no picture after " + std::to_string(allowed / 1000) + " s");
     return;
   }
   // Playing: the moment showing moves on while the picture does.
