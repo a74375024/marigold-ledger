@@ -42,6 +42,20 @@
 // whose clock was never measured reads its live picture and one stretch
 // near the moment picked (classifyQuick) before it starts, a few seconds
 // at most, so even that replay plays the hour picked.
+//
+// Build 174: the reads ask as the player asks. On an LG TV 1.0.16's reads
+// never once told a clock: the app's own HTTP client (rede) refused any
+// answer whose Content-Length was over the read's cap before its first
+// byte (an archive stretch says its whole size; live says none), said
+// "Nuvio/1.8" where the player's path says a browser's agent, asked for a
+// compressed body, wouldn't follow an https link to http; the read took a
+// first piece without a packet start for "not a stream" for good, and gave
+// a slow archive two seconds. Each read now goes out as the player's would (probe::asPlayer,
+// Request::media), tells a body from its first 4 KB together, follows an
+// HLS answer to its media (an archive's first segment), and says why it
+// failed in words for the log (never a link). A replay's own check stays
+// within its few seconds; the store's background check (Store::
+// clockCheckDue) gives the reads a minute.
 #pragma once
 
 #include <atomic>
@@ -156,6 +170,8 @@ bool answersRanges(int status, const std::string& contentRange, const std::strin
 // login: never logged). `linkFor` makes the archive link for a moment.
 struct Request {
   std::string live;  // the copy's live link, MPEG-TS
+  // The live read's (the copy's own). Build 174: the archive reads send none,
+  // as the player gets none for a replay (Store::catchupFeed).
   std::vector<std::string> headers;
   std::function<std::optional<std::string>(time::Seconds)> linkFor;
   int clock = 0;
@@ -171,7 +187,12 @@ struct Outcome {
   std::optional<Timing> timing;  // nullopt: nothing could be read
   bool refused = false;
   bool aborted = false;
-  std::string why;  // for the log ("http 404"), never a link
+  // For the log ("http 404"), never a link. Build 174: why the reads
+  // couldn't tell the clock, in words, with "(live)" or "(archive)" after
+  // ("no answer in 20 s (archive)", "not a video stream (text/html)
+  // (archive)", "out of time"); also set when `timing` is told without a
+  // clock.
+  std::string why;
 };
 // The first moment read: about two hours back, on minute 23 of its hour
 // (no chunk boundary), the second eleven minutes later.

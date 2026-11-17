@@ -63,6 +63,18 @@ Clock steadyClock() {
   };
 }
 
+std::vector<std::string> asPlayer(std::vector<std::string> headers) {
+  bool agent = false, encoding = false;
+  for (const std::string& h : headers) {
+    std::string name = lower(std::string_view(h).substr(0, h.find(':')));
+    agent = agent || name == "user-agent";
+    encoding = encoding || name == "accept-encoding";
+  }
+  if (!agent) headers.push_back(std::string("User-Agent: ") + http::kPlayerAgent);
+  if (!encoding) headers.emplace_back("Accept-Encoding: identity");
+  return headers;
+}
+
 bool refusal(int status, std::string_view error, std::string_view body) {
   if (status == 403 || status == 429 || status == 451 || status == 458) return true;
   if (status == 0) {
@@ -98,6 +110,7 @@ Outcome run(http::Pool& pool, const Request& req, const Clock& clock, const std:
     q.headers = req.headers;
     q.tag = "test.probe";
     q.priority = http::Priority::Background;
+    q.media = true;  // Build 174: redirects followed as the player follows them
     q.timeoutMs = timeoutMs - since(now) + 1000;
     q.maxBytes = kMaxBytes;
     q.onChunk = [&](std::string_view chunk) -> bool {
@@ -269,6 +282,7 @@ Outcome run(http::Pool& pool, const Request& req, const Clock& clock, const std:
         seg.headers = req.headers;
         seg.tag = "test.probe";
         seg.priority = http::Priority::Background;
+        seg.media = true;
         seg.timeoutMs = timeoutMs - since(at) + 1000;
         seg.maxBytes = kMaxBytes;
         uint64_t got = 0;

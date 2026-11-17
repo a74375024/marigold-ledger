@@ -271,6 +271,10 @@ struct ArchiveClocks {
     std::optional<int> lastMeasured;
     // Build 172: each copy's archive timing (archive_timing.hpp).
     std::map<std::string, archive::Timing> timings;
+    // Build 174: the account's clock checks failed in a row since its last
+    // clock found (0: none failed), and when the last one failed.
+    int checkFails = 0;
+    time::Seconds checkFailedAt = 0;
   };
   std::map<std::string, Account> accounts;
   // Records a copy's clock; true when something changed.
@@ -295,6 +299,13 @@ struct ArchiveClocks {
                                  bool any) const;
   // Build 173: every timing the account's copies told is exact (one at least).
   bool allExact(const std::string& accountId) const;
+  // Build 174: a clock check's end for the account: `ok` a clock found
+  // (the failures forgotten), else one more failed, at `at`. True when
+  // something changed.
+  bool noteCheck(const std::string& accountId, bool ok, time::Seconds at);
+  int checkFails(const std::string& accountId) const;
+  // Build 174: a clock measured from any of the account's copies.
+  bool anyMeasured(const std::string& accountId) const;
   std::string toJson() const;
   static ArchiveClocks fromJson(std::string_view text);
 };
@@ -405,6 +416,16 @@ struct Store::Impl {
   std::shared_ptr<PicturesWriter> clocksWriter = std::make_shared<PicturesWriter>();
   std::set<std::string> tablesRead;
   std::map<std::string, std::vector<std::function<void(const Store::ArchiveTableAnswer&)>>> tablesOut;
+  // Build 174: the archive clock checks (Store::clockCheckDue): by account,
+  // no check before this (ms; after a failure, the backoff); accounts whose
+  // video can't tell a clock (this run); a background check out (one at a
+  // time, app-wide); when the lineup was first seen loaded (ms, 0 not yet);
+  // Test all sources running.
+  std::map<std::string, uint32_t> clockCheckAt;
+  std::set<std::string> clockCantTell;
+  bool clockCheckOut = false;
+  uint32_t clockReadySince = 0;
+  bool sourceTestRunning = false;
   // Test all sources: providers that look like one service (Store::sameServices) and
   // what they were worked out from.
   std::vector<sourcetest::SameService> sameService;

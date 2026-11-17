@@ -1154,3 +1154,40 @@ TEST_CASE("test all sources 1.0.16: a timing turn that finds the archive an hour
   CHECK(r.logged("Dream: archive timing: exact on all replay channels"));
   r.noLinks();
 }
+
+TEST_CASE("test all sources 1.0.17: the replay probe asks as the player; a timing read that can't tell says why") {
+  Rig r;
+  for (int id : {601, 604, 701, 702}) r.tv.pool.answer(r.liveUrl(id), ts(1920, 1080, 60));
+  // Dream's replay starts with a few bytes before its packets, in a tiny
+  // first piece (1.0.16's reads gave up on such a start).
+  r.tv.pool.firstPiece = 40;
+  for (int id : {601, 701, 702})
+    r.tv.pool.answer(r.archiveUrl(id, st::kArchiveBack), std::string(20, '\0') + ts(1920, 1080, 30));
+  // Its timing reads: the live picture, an archive answering a web page.
+  auto req = r.store->timingRequest(r.copy(601));
+  REQUIRE(req);
+  r.tv.pool.answer(req->live, ts(1920, 1080, 60));
+  mtime::Seconds first = marigold::engine::archive::firstMoment(mtime::now());
+  for (mtime::Seconds at : {first, first + marigold::engine::archive::kApart}) {
+    r.tv.pool.answer(*req->linkFor(at), "<html><body>busy</body></html>");
+    r.tv.pool.mime(*req->linkFor(at), "text/html");
+  }
+  for (int id : {701, 702}) answerTiming(r, id, [](mtime::Seconds t) { return t; });
+  r.runner->start();
+  r.run(300000);
+  CHECK_FALSE(r.runner->running());
+  // The replay probe: the player's agent, no compressed body.
+  const std::vector<std::string>& sent = r.tv.pool.sent[r.archiveUrl(601, st::kArchiveBack)];
+  CHECK(std::find(sent.begin(), sent.end(), std::string("User-Agent: ") + marigold::http::kPlayerAgent) != sent.end());
+  CHECK(std::find(sent.begin(), sent.end(), "Accept-Encoding: identity") != sent.end());
+  // Dream's replay played; its clock couldn't be read, and the log says why.
+  const marigold::engine::scores::Record* rec = r.store->feedScores().find(r.copy(601));
+  REQUIRE(rec);
+  CHECK(rec->archiveOk == 1);
+  bool said = false;
+  for (const std::string& l : r.lines)
+    said = said || l.find("Dream: a replay's clock couldn't be read (") != std::string::npos;
+  CHECK(said);
+  CHECK(r.logged("not a video stream (text/html) (archive)"));
+  r.noLinks();
+}

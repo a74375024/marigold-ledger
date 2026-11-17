@@ -28,7 +28,7 @@ and update the pinned commit above.
 | `livestall.h` | live stall watchdog | other-platform branches removed |
 | `proxyts.c/.h` | local HLS→continuous TS proxy on 127.0.0.1, one session, 16 MiB ring | Per-segment cap 16 MiB instead of 48; the `ajustes_livetv_resolucao` extern became a per-session option (`proxyts_definir_resolucao`); `proxyts_iniciar` starts the server early; the 302 header buffer holds the whole source; `proxyts_resolver` and the `nvproxy:` prefix (Legacy's source lists) dropped; `MARIGOLD_PROXYTS_PURO` leaves only the playlist and MPEG-TS code for host tests |
 | `livetv_regras.h` | live TV rules | only the resolution option ↔ height pair the proxy uses; source types, name base, guide search and diagnostics dropped |
-| `rede.c/.h`, `rede_pedido.inc`, `redeurl.c`, `negcache.h/.inc`, `addonurl.h` | HTTP over the TV's libcurl (dlopen) | Drops the TMDB host fallback, the Discord raw TLS socket and the DTS range reader; own user agent and `MARIGOLD_REDE_*` env names |
+| `rede.c/.h`, `rede_pedido.inc`, `redeurl.c`, `negcache.h/.inc`, `addonurl.h` | HTTP over the TV's libcurl (dlopen) | Drops the TMDB host fallback, the Discord raw TLS socket and the DTS range reader; own user agent and `MARIGOLD_REDE_*` env names; a media read handed over in pieces (`rebaixar_midia` with `receber_corpo`) isn't refused for the size its answer declares (Build 174) |
 | `js.c/.h` | tolerant JSON reader | none |
 | `dados.c/.h` | data folder, atomic writes | `.marigold` folder names; disk-space accounting (`espaco.inc`) removed |
 | `sdlcompat.h` | SDL 2.0.2 compatibility | none |

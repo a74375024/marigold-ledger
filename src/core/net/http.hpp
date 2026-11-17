@@ -24,6 +24,12 @@ namespace marigold::http {
 // has a lane of its own, so it never queues behind guides, logos or jobs.
 enum class Priority { Background = 0, Normal = 1, Visible = 2, Long = 3, LongFirst = 4, Playback = 5 };
 
+// Build 174: the agent the app's own stream reads send when the copy names
+// none: the one the replay relay sends to the provider (replay_relay.cpp),
+// a browser's, not the HTTP library's (webOS rede says "Nuvio/1.8", which a
+// provider may answer differently from the player).
+inline constexpr const char* kPlayerAgent = "Mozilla/5.0 (Linux) AppleWebKit/537.36 (KHTML, like Gecko)";
+
 struct Response;
 // Worker thread, after the transfer and before the UI callback: the place to
 // parse or decode a body without blocking the UI.
@@ -39,6 +45,14 @@ struct Request {
   bool follow = true;
   bool personalServer = false;  // Emby on a LAN: self-signed certificates allowed
   bool gunzip = false;          // inflate a gzip body (sniffed; plain passes)
+  // Build 174: a media read (a provider's stream, read by the app beside
+  // the player): an https link that redirects to http is followed, as the
+  // player follows it, and a streamed body (onChunk) that says it is bigger
+  // than maxBytes is read all the same, up to maxBytes (webOS: rede's
+  // rebaixar_midia, which refused such an answer before its first byte: an
+  // archive stretch says its whole size, gigabytes; elsewhere the
+  // platform's stack only ever capped the bytes received).
+  bool media = false;
   Priority priority = Priority::Normal;
   std::string tag;  // for the log, e.g. "xtream.live"
   WorkerStep afterTransfer;

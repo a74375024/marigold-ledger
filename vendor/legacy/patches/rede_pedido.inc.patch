@@ -1,6 +1,21 @@
 --- upstream/src/rede_pedido.inc
 +++ vendor/legacy/src/rede_pedido.inc
-@@ -249,7 +249,7 @@
+@@ -72,7 +72,13 @@
+     fim = strchr(c->r->mime, ';'); if (fim) *fim = 0;
+   } else if (n > 12 && !strncasecmp(s, "Retry-After:", 12)) {
+     c->r->retry_after_s = retrySegundos(s + 12, n - 12);
+-  } else if (!c->head && !c->p->janela_corpo_ms && n > 15 && !strncasecmp(s, "Content-Length:", 15)) {
++  } else if (!c->head && !c->p->janela_corpo_ms && !(c->p->rebaixar_midia && c->p->receber_corpo) &&
++             n > 15 && !strncasecmp(s, "Content-Length:", 15)) {
++    /* marigold: a media read handed over in pieces (rebaixar_midia with
++     * receber_corpo) stops by itself after its first seconds of video; an
++     * archive stretch says its whole size (gigabytes) here, which is no
++     * reason to refuse it before a byte. max_bytes still caps what comes
++     * (pedidoCorpo). */
+     size_t i = 15, valor = 0;
+     while (i < n && (s[i] == ' ' || s[i] == '\t')) i++;
+     while (i < n && isdigit((unsigned char)s[i])) {
+@@ -249,7 +255,7 @@
    c.tetoCorpo = p->max_bytes ? p->max_bytes : REDE_CORPO_PADRAO;
    c.tetoCab = p->max_cabecalhos ? p->max_cabecalhos : REDE_CAB_PADRAO;
    if (!pedidoMetodo(metodo) || !pedidoOrigem(p->url, origem, sizeof origem, &tls) ||
@@ -9,7 +24,7 @@
        p->prazo_ms > 300000 || (p->n_corpo && !p->corpo) ||
        p->n_corpo > REDE_CORPO_PADRAO || ((c.head || !strcmp(metodo, "GET")) && p->n_corpo) ||
        p->janela_corpo_ms > 60000 || (p->janela_corpo_ms &&
-@@ -266,8 +266,12 @@
+@@ -266,8 +272,12 @@
    if (!abrir() || !curl_cleanup || !curl_getinfo || !slist_append || !slist_free) {
      r->erro = REDE_INDISPONIVEL; goto fim;
    }
@@ -23,7 +38,7 @@
    strcpy(url, p->url); corpo = p->corpo; nCorpo = p->n_corpo;
    for (hop = 0; ; hop++) {
      long status = 0;
-@@ -305,7 +309,7 @@
+@@ -305,7 +315,7 @@
        PEDIDO_OPT(OPT_SSL_VERIFYPEER, pessoal ? 0L : 1L);
        PEDIDO_OPT(OPT_SSL_VERIFYHOST, pessoal ? 0L : 2L);
      }
@@ -32,7 +47,7 @@
      PEDIDO_OPT(OPT_USERAGENT, "Nuvio/1.8");
      /* Media diagnostics measure the player's wire body, without transparent
       * gzip inflation. Buffered requests retain negotiated decompression. */
-@@ -332,7 +336,7 @@
+@@ -332,7 +342,7 @@
  #undef PEDIDO_OPT
      strcpy(r->final, url);
      rede_url_publica(url, r->host, sizeof r->host);
@@ -41,7 +56,7 @@
      { char *final = NULL;
        if (!curl_getinfo(curl, INFO_URL_FINAL, &final) && final)
          snprintf(r->final, sizeof r->final, "%s", final);
-@@ -390,7 +394,19 @@
+@@ -390,7 +400,19 @@
    r->ms = pedidoMs(pedidoAgoraMs() - c.inicio);
    if (!ok) { free(r->corpo); r->corpo = NULL; r->n_corpo = 0; }
    if (lista) slist_free(lista);

@@ -105,6 +105,9 @@ Result fetch(const Request& q, Handle* h, size_t wireCap, const std::function<bo
   p.max_bytes = wireCap;
   p.seguir = q.follow ? 1 : 0;
   p.tls_pessoal = q.personalServer ? 1 : 0;
+  // Build 174: a provider's stream read beside the player follows an
+  // https -> http redirect as the player's relay does.
+  p.rebaixar_midia = q.media ? 1 : 0;
   p.job = h ? h->rede : nullptr;
   p.parar = shouldStop;
   p.parar_usuario = &calls;

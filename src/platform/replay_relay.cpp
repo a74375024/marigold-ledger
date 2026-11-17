@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "core/media/ts_start.hpp"
+#include "core/net/http.hpp"
 #include "core/util/log.hpp"
 
 namespace marigold::platform {
@@ -38,7 +39,8 @@ constexpr int kConnectMs = 8000;
 constexpr int kIdleMs = 15000;     // no byte from the provider this long: it's over
 constexpr int kRedirects = 5;
 constexpr size_t kHeadMax = 16 * 1024;
-constexpr const char* kAgent = "Mozilla/5.0 (Linux) AppleWebKit/537.36 (KHTML, like Gecko)";
+// Build 174: the same agent the engine's archive reads send (http.hpp).
+constexpr const char* kAgent = http::kPlayerAgent;
 
 int64_t steadyMs() {
   using namespace std::chrono;

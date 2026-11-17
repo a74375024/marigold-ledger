@@ -425,11 +425,50 @@ class Store {
   // first. Returns the flag that stops it (nullptr: nothing to measure).
   // Build 173: `picked`, a replay's moment: read near it first, the live
   // read and that one within `quickMs` (archive::Request).
+  // Build 174: `priority`, the worker's queue (a background check's reads
+  // wait behind what is on screen).
   std::shared_ptr<std::atomic<bool>> measureArchive(const std::string& channelId, uint32_t budgetMs,
                                                     std::function<void(const archive::Outcome&)> done,
                                                     archive::Clock clock = nullptr,
                                                     std::optional<time::Seconds> picked = std::nullopt,
-                                                    uint32_t quickMs = 0);
+                                                    uint32_t quickMs = 0,
+                                                    http::Priority priority = http::Priority::Normal);
+  // Build 174, the archive clock checks: a copy's archive clock read from
+  // its video (archive::measure), by a replay waiting for it (Session) or
+  // in the background, per account.
+  //
+  // How far a copy's archive clock is trusted for a replay: measured from
+  // the video (its own, or taught by its account's: archiveClock's
+  // `measured`); not yet, its account's checks never having failed; or its
+  // account's last check failed (kept across a restart).
+  enum class ClockTrust : uint8_t { Measured, Unchecked, Failed };
+  ClockTrust clockTrust(const std::string& channelId) const;
+  // Whether a check of this copy may run now: its account isn't waiting out
+  // a failed one (clockCheckBackoff), nor known to have a video that can't
+  // tell a clock.
+  bool clockCheckReady(const std::string& channelId, uint32_t ms) const;
+  // A check's end other than a clock found (noteArchiveTiming takes that):
+  // Failed (counted; the account waits out the backoff), CantTell (the
+  // video's timestamps can't tell: not checked again this run), Stopped
+  // (given up for the viewer: tried again in a minute, nothing counted).
+  // Returns the wait before the account's next check (ms; 0 none).
+  enum class CheckEnd : uint8_t { Failed, CantTell, Stopped };
+  uint32_t noteClockCheck(const std::string& channelId, CheckEnd end, uint32_t ms);
+  // The wait after `fails` failed checks in a row: 2 min, 10 min, 30 min,
+  // then hourly.
+  static uint32_t clockCheckBackoff(int fails);
+  // The copy a background check reads now (nullopt: none due): of an
+  // Xtream account with replay whose clock no video has shown (or whose
+  // last check failed), past its backoff, once the lineup has been loaded
+  // kClockCheckFirstMs; not while Test all sources runs or a check is out;
+  // not an account in use by playback (`busyChannel`, "" none) that allows
+  // one connection. A different copy of the account after each failure.
+  std::optional<std::string> clockCheckDue(uint32_t ms, const std::string& busyChannel);
+  // A background check out (one at a time, app-wide).
+  void clockCheckOut(bool out);
+  // Test all sources running (its reads are the providers' connections).
+  void noteSourceTest(bool running);
+  static constexpr uint32_t kClockCheckFirstMs = 90000;
   // Emby: asks the server to open a feed (needsOpen); `done` gets it with
   // its URL, or nothing. Closes the stream opened before.
   void open(const Feed& feed, std::function<void(std::optional<Feed>)> done);

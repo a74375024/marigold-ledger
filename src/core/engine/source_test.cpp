@@ -675,6 +675,9 @@ std::optional<Runner::Carry> Runner::carry() const {
 
 bool Runner::tick(uint32_t ms) {
   ms_ = ms;
+  // Build 174: the store's background clock checks wait while a test runs
+  // (it reads the archives itself, and the providers' connections are its).
+  store_.noteSourceTest(run_.active);
   if (droppedOld_) {
     droppedOld_ = false;
     logLine(droppedStopped_ ? "a test stopped more than a week ago was dropped (start it again for fresh results)"
@@ -899,6 +902,10 @@ void Runner::readTiming(Slot& s, const Item& item, uint32_t ms) {
         }
         run_.done[k] = o.timing ? "t" + archive::encode(*o.timing) : std::string("f");
         dirty_ = true;
+        // Build 174: why a read couldn't tell, once a provider (never a link).
+        if ((!o.timing || !o.timing->clock) && !o.why.empty() &&
+            timingFailTold_.insert(plan_.providers[index]).second)
+          logLine(providerName(plan_.providers[index]) + ": a replay's clock couldn't be read (" + o.why + ")");
         slot.inFlight = false;
         slot.nextMs = at + kGapMinMs + static_cast<uint32_t>(random_() % (kGapMaxMs - kGapMinMs + 1));
       },
@@ -928,7 +935,9 @@ void Runner::probeItem(Slot& s, const Item& item, uint32_t ms, uint32_t started)
     std::optional<Store::CatchupFeed> c = store_.catchupFeed(*live, now - back, now);
     if (c) {
       req.url = c->feed.url;
-      req.headers = splitHeaders(c->feed.headers);
+      // Build 174: asked as the player asks it (its agent, no compressed
+      // body), so "replay worked" says what the player would get.
+      req.headers = probe::asPlayer(splitHeaders(c->feed.headers));
     }
   }
   if (req.url.empty()) {
@@ -956,7 +965,10 @@ void Runner::probeItem(Slot& s, const Item& item, uint32_t ms, uint32_t started)
   std::weak_ptr<bool> alive = alive_;
   size_t index = s.index;
   Item copy = item;
-  pool.post([&pool, req, probeClock, abort, result] { *result = probe::run(pool, req, probeClock, abort.get()); },
+  // Build 174: an archive may take a while to start.
+  uint32_t timeoutMs = item.kind == Kind::Live ? probe::kTimeoutMs : kArchiveProbeMs;
+  pool.post([&pool, req, probeClock, abort, result,
+             timeoutMs] { *result = probe::run(pool, req, probeClock, abort.get(), timeoutMs); },
             [this, alive, index, copy, result, abort, started] {
               if (alive.expired() || index >= slots_.size()) return;
               Slot& slot = slots_[index];

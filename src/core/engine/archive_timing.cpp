@@ -7,6 +7,7 @@
 #include <map>
 
 #include "core/engine/source_probe.hpp"
+#include "core/media/hls.hpp"
 #include "core/media/ts_start.hpp"
 
 namespace marigold::engine::archive {
@@ -73,74 +74,232 @@ struct StreamRead {
   bool ranges = false;
 };
 
-StreamRead readStream(http::Pool& pool, const std::string& url, std::vector<std::string> headers,
-                      const Clock& clock, const std::atomic<bool>* abort, uint32_t ms, bool askRange,
-                      bool firstOnly = false) {
+// Build 174: what a body is, told from its first bytes together (up to
+// kSniffMax), never from its first piece alone: a transfer can hand over a
+// few bytes first, or a stream whose packets start further in. 1.0.16 took
+// a first piece without a packet start in it for "not a stream" for good.
+constexpr size_t kSniffMax = 4096;
+constexpr size_t kTextMax = 2048;              // a message's text kept
+constexpr size_t kPlaylistMax = 256u * 1024u;  // a playlist's text
+constexpr int kHops = 3;                       // master, media playlist, segment
+
+enum class Body { Unknown, Ts, Playlist, Text, Other };
+
+bool printable(std::string_view head) {
+  if (head.empty()) return false;
+  size_t n = 0;
+  for (unsigned char c : head)
+    if ((c >= 0x20 && c < 0x7F) || c == '\n' || c == '\r' || c == '\t') ++n;
+  return n * 10 >= head.size() * 9;
+}
+
+// Packet starts 188 bytes apart (three where that much is in), from any of
+// the first bytes.
+bool hasPackets(std::string_view head) {
+  auto at = [&](size_t i) { return static_cast<unsigned char>(head[i]) == 0x47; };
+  for (size_t i = 0; i + 188 < head.size() && i < 2048; ++i)
+    if (at(i) && at(i + 188) && (i + 376 >= head.size() || at(i + 376))) return true;
+  return false;
+}
+
+// `done`: the body ended (what came is all there is).
+Body sniff(std::string_view head, bool done) {
+  if (head.empty()) return Body::Unknown;
+  if (media::hls::looksLikePlaylist(head)) return Body::Playlist;
+  if (hasPackets(head)) return Body::Ts;
+  if (done && static_cast<unsigned char>(head[0]) == 0x47 && head.size() < 189) return Body::Ts;
+  if (printable(head) && (head.size() >= 512 || done)) return Body::Text;
+  if (head.size() >= kSniffMax || done) return Body::Other;
+  return Body::Unknown;
+}
+
+std::string secondsText(uint32_t ms) { return std::to_string((ms + 500) / 1000) + " s"; }
+
+// An answer's type, for the log when it isn't a stream ("text/html");
+// nothing that isn't plainly a type.
+std::string typeText(const std::string& mime) {
+  std::string t;
+  for (char c : mime) {
+    char l = static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+    if (l == ';' || l == ' ') break;
+    if (!((l >= 'a' && l <= 'z') || (l >= '0' && l <= '9') || l == '/' || l == '.' || l == '+' || l == '-')) return {};
+    t += l;
+  }
+  return t.size() <= 40 && t.find('/') != std::string::npos ? t : std::string();
+}
+
+// A transfer that failed without an answer, in words (from our own short
+// codes, never an error text that could carry a link).
+std::string connectionWhy(const std::string& error, uint32_t wait) {
+  if (error == "timeout") return "no answer in " + secondsText(wait);
+  if (error == "redirect") return "a redirect it couldn't follow";
+  if (error == "body-cap") return "an answer too big to read";
+  auto curl = [&](int code) { return error.find("(curl " + std::to_string(code) + ")") != std::string::npos; };
+  if (curl(6)) return "server not found";
+  if (curl(35) || curl(51) || curl(58) || curl(60) || curl(77) || curl(83) || curl(90) || curl(91))
+    return "secure connection refused";
+  if (curl(52)) return "not a video stream (empty)";
+  if (curl(18) || curl(56)) return "the connection broke";
+  return "no connection";
+}
+
+// Build 174: reads `url` the way the player gets it (its agent, a redirect
+// from https to http followed, an HLS answer followed to its media: an
+// archive's first segment, live's latest), for its first video PTS. `ms`:
+// the whole read, the wait for its first byte included.
+StreamRead readStream(http::Pool& pool, std::string url, std::vector<std::string> headers, const Clock& clock,
+                      const std::atomic<bool>* abort, uint32_t ms, bool askRange, bool firstOnly = false,
+                      bool archiveRead = true) {
   StreamRead out;
+  headers = probe::asPlayer(std::move(headers));
   if (askRange) headers.push_back("Range: bytes=0-");
-  media::tsclock::TsClock ts;
-  std::string text;  // an answer that isn't a stream
-  bool stream = false, sniffed = false;
   const uint32_t t0 = clock();
-  http::Request q;
-  q.url = url;
-  q.headers = std::move(headers);
-  q.tag = "archive.timing";
-  q.priority = http::Priority::Background;
-  q.timeoutMs = ms + 1000;
-  q.maxBytes = 8u * 1024u * 1024u;
-  q.onChunk = [&](std::string_view chunk) -> bool {
-    if (abort && abort->load()) {
-      out.aborted = true;
-      return false;
+  auto spentMs = [&]() -> uint32_t { return clock() - t0; };
+  bool listed = false;  // a playlist was followed
+  for (int hop = 0; hop < kHops; ++hop) {
+    uint32_t spent = spentMs();
+    if (spent >= ms) {
+      out.why = (hop ? "no picture in " : "no answer in ") + secondsText(ms);
+      return out;
     }
-    if (!out.firstAt) out.firstAt = time::now();
-    if (!sniffed) {
-      sniffed = true;
-      stream = !chunk.empty() && static_cast<unsigned char>(chunk[0]) == 0x47;
-      if (!stream) {
-        // Not at a packet: a stream whose packets start further in, or
-        // a message.
-        size_t sync = chunk.find('\x47');
-        stream = sync != std::string_view::npos && sync + 188 < chunk.size() &&
-                 static_cast<unsigned char>(chunk[sync + 188]) == 0x47;
+    media::tsclock::TsClock ts;
+    std::string head, text;
+    Body kind = Body::Unknown;
+    bool cut = false;  // stopped here: the time was up
+    uint64_t bytes = 0;
+    auto feedTs = [&](std::string_view part) {
+      if (!part.empty()) ts.feed(reinterpret_cast<const uint8_t*>(part.data()), part.size());
+    };
+    http::Request q;
+    q.url = url;
+    q.headers = headers;
+    q.tag = "archive.timing";
+    q.priority = http::Priority::Background;
+    q.media = true;
+    q.timeoutMs = ms - spent + 1000;
+    q.maxBytes = 8u * 1024u * 1024u;
+    q.onChunk = [&](std::string_view chunk) -> bool {
+      if (abort && abort->load()) {
+        out.aborted = true;
+        return false;
+      }
+      bytes += chunk.size();
+      uint32_t now = spentMs();
+      if (kind == Body::Unknown) {
+        size_t took = std::min(chunk.size(), kSniffMax - std::min(kSniffMax, head.size()));
+        head.append(chunk.substr(0, took));
+        kind = sniff(head, false);
+        std::string_view rest = chunk.substr(took);
+        if (kind == Body::Unknown) {
+          if (now >= ms) {
+            cut = true;
+            return false;
+          }
+          return true;
+        }
+        if (kind == Body::Ts) {
+          out.firstAt = time::now();
+          feedTs(head);
+          feedTs(rest);
+        } else {
+          text = head;
+          text.append(rest.substr(0, std::min(rest.size(), kPlaylistMax - std::min(kPlaylistMax, text.size()))));
+        }
+      } else if (kind == Body::Ts) {
+        feedTs(chunk);
+      } else if (text.size() < kPlaylistMax) {
+        text.append(chunk.substr(0, std::min(chunk.size(), kPlaylistMax - text.size())));
+      }
+      switch (kind) {
+        case Body::Ts:
+          if (ts.first()) {
+            // Enough: a few seconds of video for its rate, or the time is up.
+            // Build 173: a first replay's reads want the first picture only.
+            if (firstOnly || ts.seconds() >= 3.0 || ts.bytes() >= 4u * 1024u * 1024u || now >= ms) return false;
+          } else if (now >= ms) {
+            cut = true;
+            return false;
+          }
+          return true;
+        case Body::Playlist:
+          if (now >= ms) {
+            cut = true;
+            return false;
+          }
+          return text.size() < kPlaylistMax;
+        default: return text.size() < kTextMax;
+      }
+    };
+    http::Response r = pool.fetchNow(std::move(q));
+    out.status = r.status;
+    if (out.aborted || (abort && abort->load())) {
+      out.aborted = true;
+      return out;
+    }
+    bool ok2xx = r.status >= 200 && r.status < 300;
+    if (kind == Body::Unknown && !head.empty()) {
+      // The body ended (or was cut) before it said what it was.
+      kind = sniff(head, true);
+      if (kind == Body::Ts) {
+        out.firstAt = time::now();
+        feedTs(head);
+      } else {
+        text = head;
       }
     }
-    if (!stream) {
-      text.append(chunk.substr(0, std::min<size_t>(chunk.size(), 2048 - std::min<size_t>(2048, text.size()))));
-      return text.size() < 2048;
+    out.ranges = answersRanges(r.status, r.contentRange, r.acceptRanges, r.contentLength);
+    if (probe::refusal(r.status, ts.first() || bytes ? std::string_view() : std::string_view(r.error),
+                       kind == Body::Text ? std::string_view(text) : std::string_view())) {
+      out.refused = true;
+      out.why = r.status && !ok2xx ? "http " + std::to_string(r.status) : std::string("refused");
+      return out;
     }
-    ts.feed(reinterpret_cast<const uint8_t*>(chunk.data()), chunk.size());
-    uint32_t spent = clock() - t0;
-    if (ts.first()) {
-      // Enough: a few seconds of video for its rate, or the time is up.
-      // Build 173: a first replay's reads want the first picture only.
-      if (firstOnly || ts.seconds() >= 3.0 || ts.bytes() >= 4u * 1024u * 1024u || spent >= ms) return false;
-    } else if (spent >= ms) {
-      return false;
+    if (kind == Body::Ts && ts.first()) {
+      out.pts = ts.first();
+      out.byteRate = ts.byteRate();
+      return out;
     }
-    return true;
-  };
-  http::Response r = pool.fetchNow(std::move(q));
-  out.status = r.status;
-  if (out.aborted || (abort && abort->load())) {
-    out.aborted = true;
+    if (r.status && !ok2xx) {
+      out.why = "http " + std::to_string(r.status);
+      return out;
+    }
+    if (kind == Body::Playlist && !cut) {
+      // An HLS answer: its media, as a player would play it.
+      media::hls::Playlist pl = media::hls::parse(text);
+      std::string next;
+      if (pl.master) {
+        if (const media::hls::Variant* v = media::hls::pickVariant(pl)) next = v->uri;
+      } else if (!pl.segments.empty() && !pl.encrypted && !pl.fragmentedMp4) {
+        next = archiveRead ? pl.segments.front().uri : pl.segments.back().uri;
+      }
+      if (next.empty()) {
+        out.why = pl.encrypted       ? "not a video stream (encrypted playlist)"
+                  : pl.fragmentedMp4 ? "not a video stream (fMP4 playlist)"
+                                     : "not a video stream (empty playlist)";
+        return out;
+      }
+      listed = true;
+      url = media::hls::resolve(url, next);
+      continue;
+    }
+    // Nothing that gives a picture: why, in words.
+    if (kind == Body::Ts) {
+      out.why = cut || spentMs() >= ms ? "no picture in " + secondsText(ms) : std::string("no picture");
+    } else if (kind == Body::Text || kind == Body::Other) {
+      std::string type = typeText(r.mime);
+      if (type.empty()) type = kind == Body::Text ? "text" : "unknown data";
+      out.why = "not a video stream (" + type + ")";
+    } else if (kind == Body::Playlist || cut) {
+      out.why = "no picture in " + secondsText(ms);
+    } else if (ok2xx && r.error.empty()) {
+      out.why = "not a video stream (empty)";
+    } else {
+      out.why = connectionWhy(r.error, ms);
+    }
+    if (listed && out.why.rfind("not a video", 0) != 0) out.why += " (after a playlist)";
     return out;
   }
-  out.ranges = answersRanges(r.status, r.contentRange, r.acceptRanges, r.contentLength);
-  if (probe::refusal(r.status, ts.first() ? std::string_view() : std::string_view(r.error), text)) {
-    out.refused = true;
-    out.why = r.status ? "http " + std::to_string(r.status) : std::string("refused");
-    return out;
-  }
-  out.pts = ts.first();
-  out.byteRate = ts.byteRate();
-  if (!out.pts) {
-    if (r.status && (r.status < 200 || r.status >= 300)) out.why = "http " + std::to_string(r.status);
-    else if (!text.empty()) out.why = "not a stream";
-    else if (!r.error.empty() && r.error != "cancelled") out.why = r.error;
-    else out.why = "no picture";
-  }
+  out.why = "not a video stream (playlists only)";
   return out;
 }
 
@@ -357,6 +516,12 @@ Outcome measure(http::Pool& pool, const Request& req, const Clock& clock, const 
   };
   StreamRead live;
   std::string why;
+  // Build 174: the archive asked as the player asks it: without the live
+  // copy's headers (Store::catchupFeed clears them for the player), with
+  // the player's agent (readStream).
+  const std::vector<std::string> archiveHeaders;
+  auto liveWhy = [](const std::string& w) { return w + " (live)"; };
+  auto archiveWhy = [](const std::string& w) { return w + " (archive)"; };
   if (req.picked) {
     // Build 173: a replay waiting: live and one stretch near its moment,
     // each to its first picture, within `quickMs`.
@@ -365,16 +530,17 @@ Outcome measure(http::Pool& pool, const Request& req, const Clock& clock, const 
       uint32_t spent = clock() - t0;
       return spent >= quickMs ? 0 : quickMs - spent;
     };
-    live = readStream(pool, req.live, req.headers, clock, abort, std::max<uint32_t>(300, quickLeft() / 2), false, true);
+    live = readStream(pool, req.live, req.headers, clock, abort, std::max<uint32_t>(300, quickLeft() / 2), false, true,
+                      false);
     if (stop(live)) return out;
     if (live.pts) rd.live = Read{live.firstAt ? live.firstAt : time::now(), live.pts};
     time::Seconds at = quickMoment(*req.picked, now);
     std::optional<std::string> link = req.linkFor ? req.linkFor(at) : std::nullopt;
     if (link && rd.live && quickLeft()) {
       StreamRead a =
-          readStream(pool, *link, req.headers, clock, abort, std::max<uint32_t>(300, quickLeft()), false, true);
+          readStream(pool, *link, archiveHeaders, clock, abort, std::max<uint32_t>(300, quickLeft()), false, true);
       if (stop(a)) return out;
-      if (!a.pts) why = a.why;
+      if (!a.pts) why = archiveWhy(a.why);
       rd.archive.push_back(Read{at, a.pts});
       if (std::optional<Timing> quick = classifyQuick(rd)) {
         out.timing = quick;
@@ -382,7 +548,7 @@ Outcome measure(http::Pool& pool, const Request& req, const Clock& clock, const 
       }
     }
   } else {
-    live = readStream(pool, req.live, req.headers, clock, abort, share(3), false);
+    live = readStream(pool, req.live, req.headers, clock, abort, share(3), false, false, false);
     if (stop(live)) return out;
     if (live.pts) rd.live = Read{live.firstAt ? live.firstAt : time::now(), live.pts};
   }
@@ -391,16 +557,16 @@ Outcome measure(http::Pool& pool, const Request& req, const Clock& clock, const 
     time::Seconds at = first + i * kApart;
     std::optional<std::string> link = req.linkFor ? req.linkFor(at) : std::nullopt;
     if (!link || !left()) break;
-    StreamRead a = readStream(pool, *link, req.headers, clock, abort, share(2 - i), i == 1);
+    StreamRead a = readStream(pool, *link, archiveHeaders, clock, abort, share(2 - i), i == 1);
     if (stop(a)) return out;
     if (i == 1) rd.seekable = a.status ? (a.ranges ? 1 : 0) : -1;
     rd.byteRate = std::max(rd.byteRate, a.byteRate);
-    if (!a.pts && why.empty()) why = a.why;
+    if (!a.pts && why.empty()) why = archiveWhy(a.why);
     rd.archive.push_back(Read{at, a.pts});
   }
   if (std::none_of(rd.archive.begin(), rd.archive.end(), [](const Read& a) { return a.pts.has_value(); })) {
-    out.why = why.empty() ? std::string("no archive read") : why;
-    if (!live.pts && !live.why.empty()) out.why = live.why;
+    out.why = why.empty() ? std::string(left() ? "no archive read" : "out of time") : why;
+    if (!live.pts && !live.why.empty()) out.why = liveWhy(live.why);
     return out;
   }
   std::vector<int> sizes;
@@ -412,12 +578,29 @@ Outcome measure(http::Pool& pool, const Request& req, const Clock& clock, const 
     time::Seconds at = decidingMoment(rd.live->asked - behind, sizes, req.clock);
     std::optional<std::string> link = req.linkFor ? req.linkFor(at) : std::nullopt;
     if (link && at < now - 30 * 60) {
-      StreamRead a = readStream(pool, *link, req.headers, clock, abort, share(1), false);
+      StreamRead a = readStream(pool, *link, archiveHeaders, clock, abort, share(1), false);
       if (stop(a)) return out;
       if (a.pts) {
         rd.archive.push_back(Read{at, a.pts});
         t = classify(rd, nullptr);
       }
+    }
+  }
+  size_t told = static_cast<size_t>(
+      std::count_if(rd.archive.begin(), rd.archive.end(), [](const Read& a) { return a.pts.has_value(); }));
+  if (!t.clock && rd.live && told < 2) {
+    // Build 174: one stretch read where the other wasn't (a server that
+    // answers a byte range badly, a read cut short): what the live read and
+    // the first one alone say, as for a first replay. The first moment (23
+    // past an hour) is no whole number of quarter hours after any chunk's
+    // start, as quickMoment's isn't.
+    Readings one = rd;
+    one.archive.clear();
+    if (!rd.archive.empty() && rd.archive.front().pts) one.archive.push_back(rd.archive.front());
+    if (std::optional<Timing> quick = classifyQuick(one)) {
+      quick->seekable = rd.seekable;
+      quick->byteRate = rd.byteRate;
+      t = *quick;
     }
   }
   // Build 173: reads the budget cut short tell nothing yet (the copy is
@@ -427,6 +610,13 @@ Outcome measure(http::Pool& pool, const Request& req, const Clock& clock, const 
     return out;
   }
   out.timing = t;
+  // Build 174: why the reads couldn't tell the archive's clock, for the log.
+  if (!t.clock) {
+    out.why = t.kind == Kind::Rewritten ? std::string("timestamps rewritten, the video can't tell")
+              : !live.pts && !live.why.empty() ? liveWhy(live.why)
+              : !why.empty()                   ? why
+                                               : std::string("the video couldn't tell");
+  }
   return out;
 }
 

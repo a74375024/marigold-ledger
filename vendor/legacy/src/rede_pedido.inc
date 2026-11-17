@@ -72,7 +72,13 @@ static size_t pedidoCab(void *b, size_t size, size_t count, void *u) {
     fim = strchr(c->r->mime, ';'); if (fim) *fim = 0;
   } else if (n > 12 && !strncasecmp(s, "Retry-After:", 12)) {
     c->r->retry_after_s = retrySegundos(s + 12, n - 12);
-  } else if (!c->head && !c->p->janela_corpo_ms && n > 15 && !strncasecmp(s, "Content-Length:", 15)) {
+  } else if (!c->head && !c->p->janela_corpo_ms && !(c->p->rebaixar_midia && c->p->receber_corpo) &&
+             n > 15 && !strncasecmp(s, "Content-Length:", 15)) {
+    /* marigold: a media read handed over in pieces (rebaixar_midia with
+     * receber_corpo) stops by itself after its first seconds of video; an
+     * archive stretch says its whole size (gigabytes) here, which is no
+     * reason to refuse it before a byte. max_bytes still caps what comes
+     * (pedidoCorpo). */
     size_t i = 15, valor = 0;
     while (i < n && (s[i] == ' ' || s[i] == '\t')) i++;
     while (i < n && isdigit((unsigned char)s[i])) {

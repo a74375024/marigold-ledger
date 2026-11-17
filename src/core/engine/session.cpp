@@ -425,6 +425,8 @@ void Session::playFeed(size_t index, uint64_t token) {
   sawPicture_ = sawBuffering_ = sawFailed_ = sawEnded_ = false;
   factsLogged_ = noPicture_ = false;
   measured_.reset();
+  // Build 174: the account's only connection is the player's now.
+  yieldClockCheck(feeds_[index].channelId);
   player_->attempt();
   const Feed& f = feeds_[index];
   MLOG_I("play", "feed %zu of %zu (%s)", index + 1, feeds_.size(), f.label.c_str());
@@ -836,6 +838,8 @@ bool Session::tick(uint32_t now) {
     time::Seconds last = store_.providersLoggedAt();
     providersLooked_ = (last > 0 && time::now() - last < 86400) || logProviders(false);
   }
+  // Build 174: the archive clock checked in the background where due.
+  tickClockCheck(now);
   // A long play goes into its copy's record every few minutes.
   if (playingSince_ != 0 && now - playingSince_ >= kPlayedFlushMs) {
     store_.notePlayed(playingId_, now - playingSince_);
@@ -939,32 +943,69 @@ uint16_t Session::longestArchive(size_t live) const {
   return best;
 }
 
+int Session::clockRank(size_t i) const {
+  if (i >= feeds_.size()) return 2;
+  switch (store_.clockTrust(feeds_[i].channelId)) {
+    case Store::ClockTrust::Measured: return 0;
+    case Store::ClockTrust::Unchecked: return 1;
+    case Store::ClockTrust::Failed: break;
+  }
+  return 2;
+}
+
 std::optional<size_t> Session::archiveCopyFor(time::Seconds at, size_t live, size_t playing,
-                                              const std::set<size_t>* skip) const {
+                                              const std::set<size_t>* skip, bool trusted) const {
   time::Seconds now = time::now();
   std::optional<size_t> best;
   uint16_t bestDays = 0;
+  int bestRank = 0;
   std::optional<double> bestScore;
   for (size_t i = 0; i < feeds_.size(); ++i) {
     if (!keepsArchive(i, live) || (skip && skip->count(i))) continue;
     uint16_t days = store_.catchupDays(feeds_[i].channelId);
+    // Never a copy whose archive doesn't reach the moment.
     if (!replay::covers(days, at, now)) continue;
     std::optional<double> score = store_.feedScore(feeds_[i].channelId);
+    // Build 174: the copies whose archive clock the video showed first,
+    // then those whose account's checks never failed, then the rest.
+    int rank = trusted ? clockRank(i) : 0;
     bool better = !best;
     if (best) {
       // The longest archive; then the copy playing; then a clearly better
       // measured one; else live order (the first found).
-      if (days != bestDays) better = days > bestDays;
+      if (rank != bestRank) better = rank < bestRank;
+      else if (days != bestDays) better = days > bestDays;
       else if ((i == playing) != (*best == playing)) better = i == playing;
       else if (score && bestScore) better = *score > *bestScore + scores::kClearlyBetter;
     }
     if (better) {
       best = i;
       bestDays = days;
+      bestRank = rank;
       bestScore = score;
     }
   }
   return best;
+}
+
+void Session::noteReplayChoice(std::optional<size_t> chosen, time::Seconds at, size_t live, size_t playing,
+                               const std::set<size_t>* skip) {
+  if (!chosen || *chosen >= feeds_.size()) return;
+  std::optional<size_t> plain = archiveCopyFor(at, live, playing, skip, false);
+  if (!plain || *plain == *chosen || *plain >= feeds_.size()) return;
+  const std::string& mine = feeds_[*chosen].channelId;
+  const std::string& other = feeds_[*plain].channelId;
+  if (!choiceTold_.insert(mine + "\n" + other).second) return;
+  // Provider names (the log may name them; the screen never does).
+  std::string name = store_.providerName(mine), otherName = store_.providerName(other);
+  std::string theirs = otherName.empty() || otherName == name ? std::string("the other copy's") : otherName + "'s";
+  std::string why;
+  if (store_.clockTrust(mine) == Store::ClockTrust::Measured)
+    why = "its clock is confirmed; " + theirs +
+          (store_.clockTrust(other) == Store::ClockTrust::Failed ? " clock check failed" : " isn't yet");
+  else
+    why = theirs + " clock check failed";
+  logReplay("replay from " + (name.empty() ? std::string("another copy") : name) + ": " + why, *chosen);
 }
 
 std::optional<size_t> Session::archiveCopy(size_t live) const {
@@ -1090,8 +1131,12 @@ void Session::playReplay(size_t index, time::Seconds from, const std::string& wh
   Store::ArchiveClock ac = store_.archiveClock(channel);
   bool table = !ac.settled;
   bool clockUnmeasured = !ac.measured;
-  bool measure = !measureTried_.count(channel) &&
-                 (clockUnmeasured || (!store_.archiveTiming(channel) && !store_.presumedExact(channel))) &&
+  // Build 174: a clock check whenever its account isn't waiting out a
+  // failed one (Store::clockCheckReady: 2, 10, 30 min, then hourly), not
+  // once a run; the timing of a copy whose clock is known, once a run.
+  bool measure = (clockUnmeasured ? store_.clockCheckReady(channel, ms())
+                                  : !timingTried_.count(channel) && !store_.archiveTiming(channel) &&
+                                        !store_.presumedExact(channel)) &&
                  store_.timingRequest(channel).has_value();
   if (table || measure) {
     int serial = ++clockSerial_;
@@ -1116,15 +1161,17 @@ void Session::playReplay(size_t index, time::Seconds from, const std::string& wh
 bool Session::startMeasure(const std::string& channel, int serial) {
   if (!replay_ || !replay_->clockWait) return false;
   Replay::ClockWait& wait = *replay_->clockWait;
-  measureTried_.insert(channel);
+  if (!wait.clock) timingTried_.insert(channel);
   // Build 173: the clock never measured: a second longer, all in.
   uint32_t limit = wait.clock ? kMeasureWaitMs : kClockWaitMs;
   uint32_t spent = ms() - wait.since;
   if (spent + 500 >= limit) return false;
   wait.limit = limit;
   // The provider's connection is free for the reads: a picture the player
-  // still held (the timeline's pause) lets go now.
+  // still held (the timeline's pause) lets go now; so does a background
+  // check on it (Build 174).
   player_->stop();
+  yieldClockCheck(channel);
   std::weak_ptr<int> alive = alive_;
   dropMeasure();
   // Where the account allows a second connection, reads not done when the
@@ -1132,14 +1179,30 @@ bool Session::startMeasure(const std::string& channel, int serial) {
   measureSpare_ = store_.spareConnection(channel);
   uint32_t left = limit - spent;
   uint32_t budget = measureSpare_ ? std::max(left, kMeasureOnMs) : left;
+  auto check = std::make_shared<ClockCheck>();
+  check->channel = channel;
+  check->clock = wait.clock;
+  check->since = ms();
   measureAbort_ = store_.measureArchive(
       channel, budget,
-      [this, alive, serial](const archive::Outcome&) {
-        if (alive.expired() || !replay_ || !replay_->clockWait || replay_->clockWait->serial != serial) return;
-        measureAbort_.reset();
+      [this, alive, serial, check](const archive::Outcome& o) {
+        if (alive.expired()) return;
+        bool waiting = replay_ && replay_->clockWait && replay_->clockWait->serial == serial;
+        if (check_ == check) {
+          check_.reset();
+          measureAbort_.reset();
+        }
+        // Build 174: every check's end in the log.
+        if (!check->logged) clockCheckEnded(*check, o, waiting ? CheckFrom::Waiting : CheckFrom::After);
+        if (!waiting) return;
+        // A check that failed: the replay opens at once, on the copy then
+        // ranked first (it may be another provider's, whose clock is
+        // trusted more).
+        rechoose_ = check->clock && !(o.timing && o.timing->clock);
         openReplay(replay_->clockWait->what);
       },
       nullptr, replay_->from, left);
+  if (measureAbort_) check_ = check;
   return measureAbort_ != nullptr;
 }
 
@@ -1148,7 +1211,25 @@ void Session::openReplay(const std::string& what) {
   std::string line = what;  // `what` may be the wait's own
   r.clockWait.reset();
   // Not in time: the reads stop, the provider's connection is the replay's.
-  dropMeasure();
+  bool rechoose = dropMeasure(true) || rechoose_;
+  rechoose_ = false;
+  if (rechoose && !r.next) {
+    // Build 174: its clock check failed: the copy ranked first now (its
+    // clock trusted more), without another wait.
+    std::set<size_t> skip = replayTried_;
+    skip.erase(r.feed);
+    std::optional<size_t> other = archiveCopyFor(r.from, replayLive_, r.feed, &skip);
+    if (other && *other != r.feed) {
+      noteReplayChoice(other, r.from, replayLive_, r.feed, &skip);
+      r.feed = *other;
+      r.days = store_.catchupDays(feeds_[*other].channelId);
+      replayTried_.insert(*other);
+      std::vector<playback::FeedInfo> infos = feedInfos(entry_);
+      r.video = *other < infos.size() ? infos[*other].expectVideo : true;
+    }
+  }
+  // Build 174: the replay's connection is the player's now.
+  yieldClockCheck(feeds_[r.feed].channelId);
   r.startedAt = ms();
   time::Seconds now = time::now();
   // Build 172: where the provider's archive really starts for this moment,
@@ -1201,9 +1282,204 @@ void Session::openReplay(const std::string& what) {
   player_->play(f->feed, false);
 }
 
-void Session::dropMeasure() {
+bool Session::dropMeasure(bool timeUp) {
+  bool failed = false;
+  if (check_ && !check_->logged && measureAbort_) {
+    ClockCheck& c = *check_;
+    uint32_t took = ms() - c.since;
+    std::string waited = std::to_string((took + 500) / 1000) + " s";
+    if (measureSpare_) {
+      // Its reads go on, on the account's second connection: their end is
+      // said when it comes.
+      if (timeUp)
+        logClockCheck(c, "clock check: not done in " + waited + "; this replay uses " + clockInUse(c.channel) +
+                             "; still reading");
+    } else if (timeUp) {
+      // Build 174: out of time: a failed check (the background one tells
+      // later replays).
+      c.logged = true;
+      archive::Outcome o;
+      o.why = "out of time (" + waited + ")";
+      clockCheckEnded(c, o, CheckFrom::Waiting);
+      failed = c.clock;
+    } else {
+      // The replay was left before its check ended.
+      c.logged = true;
+      archive::Outcome o;
+      o.aborted = true;
+      clockCheckEnded(c, o, CheckFrom::Waiting);
+    }
+  }
   if (measureAbort_ && !measureSpare_) measureAbort_->store(true);
+  if (!measureSpare_) check_.reset();
   measureAbort_.reset();
+  return failed;
+}
+
+// ----------------------------------------------- clock checks (Build 174)
+
+namespace {
+
+// The account part of a copy's id ("<source>|<stream>").
+std::string accountPart(const std::string& channelId) {
+  size_t bar = channelId.rfind('|');
+  return bar == std::string::npos ? channelId : channelId.substr(0, bar);
+}
+
+std::string waitText(uint32_t ms) {
+  uint32_t minutes = (ms + 30000) / 60000;
+  if (minutes >= 60 && minutes % 60 == 0) return std::to_string(minutes / 60) + " h";
+  return std::to_string(std::max<uint32_t>(1, minutes)) + " min";
+}
+
+}  // namespace
+
+std::string Session::clockInUse(const std::string& channel) const {
+  Store::ArchiveClock ac = store_.archiveClock(channel);
+  std::string clock = sources::xtream::offsetText(ac.offset.value_or(0));
+  switch (ac.from) {
+    case Store::ClockFrom::Measured: return "its measured " + clock;
+    case Store::ClockFrom::Learned: return (ac.measured ? "the account's measured " : "the account's ") + clock;
+    case Store::ClockFrom::Table: return "its table's " + clock;
+    case Store::ClockFrom::Server: break;
+  }
+  return ac.offset ? "the server's " + clock : std::string("UTC (the server says none)");
+}
+
+void Session::logClockCheck(const ClockCheck& check, const std::string& detail) {
+  std::string channel, feed, provider;
+  std::string entry = store_.entryOfChannel(check.channel);
+  if (const GuideChannel* g = store_.channels()->find(entry.empty() ? check.channel : entry)) channel = g->name;
+  for (const Feed& f : feeds_)
+    if (f.channelId == check.channel) feed = f.label;
+  provider = store_.providerName(check.channel);
+  // Never a link: the detail is ours, and goes through the log's filter too.
+  std::string safe = playback::safeMessage(detail);
+  MLOG_I("play", "replay: %s", safe.c_str());
+  log_.add(wallMs(), "replay", check.background ? 0 : session_, channel, feed, provider, safe);
+}
+
+void Session::clockCheckEnded(ClockCheck& check, const archive::Outcome& o, CheckFrom from) {
+  check.logged = true;
+  const std::string head = from == CheckFrom::Background ? "clock check (background): "
+                           : from == CheckFrom::After     ? "clock check, finished: "
+                                                          : "clock check: ";
+  Store::ArchiveClock ac = store_.archiveClock(check.channel);
+  if (o.timing && o.timing->clock) {
+    // A clock found (kept already: Store::noteArchiveTiming, which teaches
+    // the account's other copies and forgets its failed checks).
+    std::string line = head + sources::xtream::offsetText(*o.timing->clock) + " from the video";
+    if (ac.server && *ac.server == *o.timing->clock) line += ", as the server says";
+    else
+      line += " (server says " + (ac.server ? sources::xtream::offsetText(*ac.server) : std::string("nothing")) + ")";
+    if (from != CheckFrom::Waiting) line += "; the account's replays ask in it now";
+    logClockCheck(check, line);
+    return;
+  }
+  if (o.aborted) {
+    // Nothing counted. A background check given up for the viewer is tried
+    // again in a minute; a replay's, left before it ended, by the next
+    // replay.
+    if (!check.background) {
+      logClockCheck(check, head + "stopped, the replay was left");
+      return;
+    }
+    uint32_t wait = store_.noteClockCheck(check.channel, Store::CheckEnd::Stopped, ms());
+    logClockCheck(check, head + "stopped for playback; checking again in the background in " + waitText(wait));
+    return;
+  }
+  if (o.timing && o.timing->kind == archive::Kind::Rewritten) {
+    if (check.clock) store_.noteClockCheck(check.channel, Store::CheckEnd::CantTell, ms());
+    logClockCheck(check, head + "the video's timestamps can't tell the clock; replays use " +
+                             clockInUse(check.channel) + "; not checked again until the app restarts");
+    return;
+  }
+  std::string why = o.why.empty() ? std::string("the video couldn't tell") : o.why;
+  if (o.refused) why = why == "refused" ? why : "refused (" + why + ")";
+  if (!check.clock) {
+    // Only the timing of a copy whose clock is known.
+    logClockCheck(check, head + why + "; replays keep " + clockInUse(check.channel));
+    return;
+  }
+  uint32_t wait = store_.noteClockCheck(check.channel, Store::CheckEnd::Failed, ms());
+  std::string next = from == CheckFrom::Background
+                         ? "; replays use " + clockInUse(check.channel) + "; checking again in " + waitText(wait)
+                         : "; replays use " + clockInUse(check.channel) +
+                               " for now; checking again in the background in " + waitText(wait);
+  logClockCheck(check, head + why + next);
+}
+
+std::string Session::channelInUse() const {
+  if (entry_.empty() || feeds_.empty() || paused_) return {};
+  if (replay_) {
+    if (replay_->phase == Replay::Phase::Paused && replay_->released) return {};
+    return feeds_[std::min(replay_->feed, feeds_.size() - 1)].channelId;
+  }
+  if (failed()) return {};
+  return feeds_[std::min(rec_.feedIndex(), feeds_.size() - 1)].channelId;
+}
+
+void Session::yieldClockCheck(const std::string& channel) {
+  if (!bgCheck_ || !bgAbort_) return;
+  if (accountPart(channel) != accountPart(bgCheck_->channel) || store_.spareConnection(bgCheck_->channel)) return;
+  bgAbort_->store(true);
+  bgAbort_.reset();
+  store_.clockCheckOut(false);
+  std::shared_ptr<ClockCheck> check = std::move(bgCheck_);
+  if (!check->logged) {
+    archive::Outcome o;
+    o.aborted = true;
+    clockCheckEnded(*check, o, CheckFrom::Background);
+  }
+}
+
+void Session::tickClockCheck(uint32_t now) {
+  if (bgCheck_) {
+    // The viewer took its account's only connection: the check gives way.
+    std::string busy = channelInUse();
+    if (!busy.empty()) yieldClockCheck(busy);
+    // An answer that never came back (the accounts changed meanwhile, or
+    // its job never got a worker): given up, so checks go on.
+    if (bgCheck_ && now - bgCheck_->since > kBackgroundCheckMs + 4 * 60000) {
+      if (bgAbort_) bgAbort_->store(true);
+      bgAbort_.reset();
+      bgCheck_.reset();
+      store_.clockCheckOut(false);
+    }
+    return;
+  }
+  if (paused_ || static_cast<int32_t>(now - bgLookAt_) < 0) return;
+  bgLookAt_ = now + kClockLookMs;
+  // A replay's own check out: one at a time.
+  if (measureAbort_ || (replay_ && replay_->clockWait)) return;
+  std::optional<std::string> channel = store_.clockCheckDue(now, channelInUse());
+  if (!channel) return;
+  auto check = std::make_shared<ClockCheck>();
+  check->channel = *channel;
+  check->clock = true;
+  check->background = true;
+  check->since = now;
+  std::weak_ptr<int> alive = alive_;
+  bgCheck_ = check;
+  store_.clockCheckOut(true);
+  bgAbort_ = store_.measureArchive(
+      *channel, kBackgroundCheckMs,
+      [this, alive, check](const archive::Outcome& o) {
+        if (alive.expired()) return;
+        if (bgCheck_ == check) {
+          bgCheck_.reset();
+          bgAbort_.reset();
+          store_.clockCheckOut(false);
+        }
+        if (!check->logged) clockCheckEnded(*check, o, CheckFrom::Background);
+      },
+      nullptr, std::nullopt, 0, http::Priority::Background);
+  if (!bgAbort_) {
+    // Nothing to read (gone from the provider's list): not again soon.
+    bgCheck_.reset();
+    store_.clockCheckOut(false);
+    store_.noteClockCheck(*channel, Store::CheckEnd::Stopped, now);
+  }
 }
 
 replay::Reach Session::reachFor(size_t i) const {
@@ -1234,6 +1510,7 @@ bool Session::replayFrom(time::Seconds from, ReplayWhy why) {
   }
   std::optional<size_t> copy = archiveCopyFor(from, live, replay_ ? replay_->feed : live);
   if (!copy) return false;
+  noteReplayChoice(copy, from, live, replay_ ? replay_->feed : live);
   if (why == ReplayWhy::StartOver) {
     // Build 172: where that copy's archive can start, at or before it.
     from = replay::startOverTarget(reachFor(*copy), from, replay::archiveStart(now, days), now);
@@ -1280,6 +1557,7 @@ bool Session::startReplayInstead(time::Seconds at, ReplayWhy why, size_t live) {
   // timeline's: an hour in hand).
   std::optional<size_t> copy = archiveCopyFor(at, live, live);
   if (!copy) return false;
+  noteReplayChoice(copy, at, live, live);
   if (why == ReplayWhy::StartOver || why == ReplayWhy::Game) {
     // Build 172: where that copy's archive can start, at or before it.
     at = replay::startOverTarget(reachFor(*copy), at, replay::archiveStart(now, longestArchive(live)), now);
@@ -1417,6 +1695,7 @@ bool Session::resumePaused(bool quiet) {
     return true;
   }
   if (!r.released) player_->stop();
+  noteReplayChoice(copy, from, replayLive_, r.feed);
   replayTried_.clear();
   shortStretches_ = 0;
   playReplay(*copy, from, "resumed " + localTime(from));
@@ -1470,6 +1749,7 @@ void Session::replayFailed(const std::string& why) {
   std::optional<size_t> other = archiveCopyFor(at, replayLive_, r.feed, &tried);
   if (other) {
     logReplay("failed: " + why + "; another copy", r.feed);
+    noteReplayChoice(other, at, replayLive_, r.feed, &tried);
     shortStretches_ = 0;
     playReplay(*other, at, "another copy from " + localTime(at));
     return;

@@ -82,6 +82,9 @@ typedef struct {
   void *corpo_usuario;
   /* 1 = media Range read: follow an https->http redirect like the player does
    * (debrid links). Cross-origin hops already drop every caller header. */
+  /* marigold: with receber_corpo, a Content-Length over max_bytes is not
+   * refused up front either (the reader stops on its own; max_bytes still
+   * caps the bytes received). */
   int rebaixar_midia;
 } RedePedido;
 typedef struct {
