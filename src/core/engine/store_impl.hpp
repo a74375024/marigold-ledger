@@ -310,7 +310,7 @@ struct Store::Impl {
   // (guide::choice::Candidate::key).
   std::map<std::string, std::string> guidePicks;
   // Entry id -> the version that last played on it: it starts first next
-  // time unless one is pinned.
+  // time unless one is pinned (or a working copy has a better picture).
   std::map<std::string, std::string> lastFeed;
   std::map<std::string, std::vector<int>> reliability;  // source tag -> {worked, failed}
   // Starts of event feeds by provider group ("grp:us| nfhs ppv"), counted

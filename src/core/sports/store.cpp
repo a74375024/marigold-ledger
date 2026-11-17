@@ -672,17 +672,37 @@ std::vector<std::string> baseVersions(const std::string& id, const catalog::Entr
 }
 
 void directVersionsFirst(std::vector<std::string>& list, size_t keep,
-                         const std::function<bool(const std::string&)>& serverOpened) {
+                         const std::function<bool(const std::string&)>& serverOpened, const Holds& holds) {
   if (!serverOpened || keep >= list.size()) return;
-  std::stable_partition(list.begin() + static_cast<std::ptrdiff_t>(keep), list.end(),
-                        [&](const std::string& id) { return !serverOpened(id); });
+  if (!holds) {
+    std::stable_partition(list.begin() + static_cast<std::ptrdiff_t>(keep), list.end(),
+                          [&](const std::string& id) { return !serverOpened(id); });
+    return;
+  }
+  // Build 169: each direct version moves up past the server-opened ones
+  // before it, stopping at one that holds its place (a better picture
+  // measured working) or at another direct one: stable within each kind.
+  for (size_t i = keep + 1; i < list.size(); ++i) {
+    if (serverOpened(list[i])) continue;
+    for (size_t j = i; j > keep && serverOpened(list[j - 1]) && !holds(list[j - 1], list[j]); --j)
+      std::swap(list[j], list[j - 1]);
+  }
 }
 
 void leadServerVersions(std::vector<std::string>& list, const std::string& last,
-                        const std::function<bool(const std::string&)>& serverOpened) {
+                        const std::function<bool(const std::string&)>& serverOpened, const Holds& holds) {
   auto at = std::find(list.begin(), list.end(), last);
-  auto firstServer = std::find_if(list.begin(), list.end(), serverOpened);
-  if (at != list.end() && firstServer < at) std::rotate(firstServer, at, at + 1);
+  if (!holds) {
+    auto firstServer = std::find_if(list.begin(), list.end(), serverOpened);
+    if (at != list.end() && firstServer < at) std::rotate(firstServer, at, at + 1);
+    return;
+  }
+  if (at == list.end()) return;
+  // Build 169: up past the server-opened versions before it that don't
+  // hold their place; never past a direct one.
+  for (size_t j = static_cast<size_t>(at - list.begin());
+       j > 0 && serverOpened(list[j - 1]) && !holds(list[j - 1], list[j]); --j)
+    std::swap(list[j], list[j - 1]);
 }
 
 namespace {

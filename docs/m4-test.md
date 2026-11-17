@@ -2140,3 +2140,27 @@ The programme bar over the buttons (channels with replay) works the same live, w
 | No room | Replay from a few minutes before a show starts, close to live | The tick shows, no name |
 | Paused | Pause during a replay | The panel's bar ends at live (red dot, LIVE at the right) |
 | Rewind | FF or Rewind | The timeline exactly as before |
+
+## Build 169: 1.0.12, sources start on the best working picture
+
+After Test all sources, channels still started on a 720p copy ahead of a 1080p one. The picture made a tenth of a copy's score, so it never moved a copy by itself (a slightly faster 720p even won); the copy that played last stayed first whatever was measured since; and direct copies (Xtream) always went ahead of server-opened ones (Emby / Jellyfin). Now a channel starts on the copy with the best picture among those that work.
+
+- **Works:** a measured copy works when its starts show a picture (at least 0.8 by (shown + 0.9) / (all + 1), a probe counting as half a play, so the one probe Test all sources makes is enough but one failure in four starts is not) and its median time to picture is 4 seconds or less.
+- **Order:** the copies that work first, by measured picture: 1080p at 50 / 60 fps, then 1080p, then 720p at 50 / 60, then 720p, then lower (4K counts as 1080p). Within the same picture: faster and smoother first where clearly better, else the catalog's order. Copies that fail or start slowly go after them, as before.
+- **Copies never measured** keep their places among themselves. A working copy moves ahead of one only when that one's name claims a lower picture (HD or SD below a measured 1080p; SD below a measured 720p). A name's size counts at its best (FHD as 1080p at 60), and a copy whose name claims nothing isn't passed.
+- **Last played:** stays first only while no working copy has a better picture measured. "Always start with" (a pinned copy) still always goes first.
+- **Direct before server-opened:** only within the same picture (or where nothing is measured): a direct 720p no longer goes ahead of a server-opened 1080p that works, and a direct copy that fails doesn't pass a server-opened one that works. A server-opened copy that played last leads the server-opened ones, as before, but not past a better picture.
+- **Unchanged:** the backup from a separate service (Test all sources), copies this TV couldn't play going last, and the Sources panel's STARTS WITH and BACKUP tags, which read the same order.
+
+| Area | How to check | Pass |
+|---|---|---|
+| 1080p first | A channel with a 720p copy and a 1080p copy, both working in Test all sources (the 720p faster) | Sources: STARTS WITH on the 1080p copy; it plays first |
+| 60 before 30 | A channel with 1080p50/60 and 1080p30 copies, both working | The 50/60 copy starts |
+| Failing 1080p | A 1080p copy that failed in Test all sources, a working 720p | The 720p starts; the 1080p is further down |
+| Slow copy | A copy that takes over 4 s to a picture, another at 720p within 2 s | The fast 720p starts |
+| Last played | A channel whose last play was on its 720p copy; then Test all sources finds its 1080p copy working | Next tune starts on the 1080p copy |
+| Last played kept | Play a channel's 1080p copy, leave, tune back | The same copy starts |
+| Always start with | Sources › Always start with the 720p copy | It starts first whatever is measured |
+| Never measured | A channel nobody played or tested since the update | Same order as 1.0.11 |
+| Server-opened 1080p | A channel with a direct 720p and an Emby 1080p that starts within 4 s | The Emby 1080p starts; with both at 720p, the direct one does |
+| Backup | Three providers, two of them the same service underneath | BACKUP still on a copy from the separate one |

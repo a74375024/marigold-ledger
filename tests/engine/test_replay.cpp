@@ -1008,9 +1008,11 @@ TEST_CASE("feed scores in order: a clearly better copy goes first; none of it wi
   for (int i = 0; i < 3; ++i) r.store->noteStartFailed(c501);
   // 502 has no history: it keeps its place; the measured two swap.
   CHECK(order() == std::vector<std::string>{"503", "502", "501"});
-  // "Always start with" 501: it stays first.
+  // "Always start with" 501: it stays first. Build 169: behind it the
+  // working 1080p60 (503) goes ahead of 502, which isn't measured and
+  // claims less (HD).
   r.store->pinFeed(espn, c501);
-  CHECK(order() == std::vector<std::string>{"501", "502", "503"});
+  CHECK(order() == std::vector<std::string>{"501", "503", "502"});
   r.store->pinFeed(espn, "");
   CHECK(order() == std::vector<std::string>{"503", "502", "501"});
   // Probes (Test all sources, Build 166) feed the same records: 502 measured
@@ -1024,6 +1026,45 @@ TEST_CASE("feed scores in order: a clearly better copy goes first; none of it wi
   for (int i = 0; i < 4; ++i) r.store->recordProbe(r.channelOf(502), p);
   CHECK(order() == std::vector<std::string>{"502", "503", "501"});
   CHECK(r.store->feedScore(r.channelOf(502)));
+}
+
+// Build 169 (1.0.12): the copy that played last no longer locks first
+// place: a working copy with a better picture goes ahead of it. "Always
+// start with" still always wins.
+TEST_CASE("best working picture: the last played 720p gives way to a working 1080p; Always start with stays first") {
+  Rig r;
+  std::string espn = r.entry("ESPN");
+  auto order = [&r, &espn] {
+    std::vector<std::string> out;
+    for (const Feed& f : r.store->feeds(espn)) out.push_back(f.channelId.substr(f.channelId.size() - 3));
+    return out;
+  };
+  std::string c501 = r.channelOf(501), c502 = r.channelOf(502), c503 = r.channelOf(503);
+  auto probe = [&r](const std::string& id, int height, int fps, uint32_t ms) {
+    marigold::engine::scores::Probe p;
+    p.ok = true;
+    p.startMs = ms;
+    p.width = height * 16 / 9;
+    p.height = height;
+    p.fps = fps;
+    r.store->recordProbe(id, p);
+  };
+  // 502 (HD) played last, at 720p50; 501 (FHD) isn't measured.
+  probe(c502, 720, 50, 1400);
+  r.store->rememberFeed(espn, c502);
+  CHECK(order() == std::vector<std::string>{"502", "501", "503"});
+  // 503 measured at 1080p60 but failing: 502 stays first.
+  r.store->notePicture(c503, marigold::engine::quality::Picture{1080, 60, false});
+  for (int i = 0; i < 3; ++i) r.store->noteStartFailed(c503);
+  CHECK(order() == std::vector<std::string>{"502", "501", "503"});
+  // 501 measured working at 1080p (slower to start): it goes first now.
+  probe(c501, 1080, 30, 2800);
+  CHECK(order() == std::vector<std::string>{"501", "502", "503"});
+  // "Always start with" 502: first whatever is measured.
+  r.store->pinFeed(espn, c502);
+  CHECK(order() == std::vector<std::string>{"502", "501", "503"});
+  r.store->pinFeed(espn, "");
+  CHECK(order() == std::vector<std::string>{"501", "502", "503"});
 }
 
 TEST_CASE("providers in the playback log: once a day after the app starts, and on export") {

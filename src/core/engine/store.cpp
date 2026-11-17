@@ -3764,20 +3764,14 @@ double Store::reliabilityOf(const std::string& channelId) const {
 }
 
 std::vector<std::string> Store::versionsOf(const std::string& id) const {
-  // An entry's own versions, best first, the pinned (or last played) one
-  // first; a raw
-  // channel alone (sports::store::baseVersions, LiveTVStore.baseVersions).
+  // An entry's own versions, best first, the pinned one first (or the last
+  // played, unless a working copy has a better picture); a raw channel
+  // alone (sports::store::baseVersions, LiveTVStore.baseVersions).
   const Impl& m = *impl_;
   auto info = m.entryInfo.find(id);
   const EntryInfo* ei = info == m.entryInfo.end() ? nullptr : &m.catalog->entries[info->second];
-  // First: the pinned version, else the one that played last. Marigold: a
-  // server-opened version (Emby / Jellyfin, about 10 s to a picture) that
-  // played last goes first only when the direct versions (about 2.6 s)
-  // failed lately; otherwise it leads the server-opened ones.
   auto pin = m.pinned.find(id);
   auto last = m.lastFeed.find(id);
-  std::optional<std::string> pinned;
-  std::optional<std::string> leadServer;
   time::Seconds now = time::now();
   auto healthyDirect = [&] {
     if (!ei) return false;
@@ -3788,19 +3782,54 @@ std::vector<std::string> Store::versionsOf(const std::string& id) const {
     }
     return false;
   };
-  if (pin != m.pinned.end()) pinned = pin->second;
-  else if (last != m.lastFeed.end() && serverOpened(last->second) && healthyDirect()) leadServer = last->second;
-  else if (last != m.lastFeed.end()) pinned = last->second;
+  // Build 169 (1.0.12): what the order knows of each copy: its record
+  // (working or not, its score), its picture tier as measured (the record,
+  // else the pictures memory), else as its name claims.
+  std::map<std::string, scores::Standing> standings;
+  auto standing = [&](const std::string& c) {
+    auto it = standings.find(c);
+    if (it != standings.end()) return it->second;
+    scores::Standing s = m.scores.standing(c, now);
+    if (s.tier == 0) {
+      std::optional<quality::Picture> p = m.pictures.find(c);
+      s.tier = p ? scores::pictureTier(p->height, p->fps) : scores::claimedTier(claimedQuality(c));
+    }
+    standings.emplace(c, s);
+    return s;
+  };
+  auto unplayable = [&](const std::string& c) {
+    auto it = m.unplayable.find(c);
+    return it != m.unplayable.end() && now - it->second < kUnplayableFor;
+  };
+  // First: the pinned version ("Always start with": always). Else the one
+  // that played last, while no working copy has a better picture (Build
+  // 169: it no longer locks first place; one marked unplayable lately
+  // doesn't count as better). Marigold: a server-opened version (Emby /
+  // Jellyfin, about 10 s to a picture) that played last goes first only
+  // when the direct versions (about 2.6 s) failed lately; otherwise it
+  // leads the server-opened ones.
+  std::optional<std::string> pinned;
+  std::optional<std::string> leadServer;
+  if (pin != m.pinned.end()) {
+    pinned = pin->second;
+  } else if (last != m.lastFeed.end() && serverOpened(last->second) && healthyDirect()) {
+    leadServer = last->second;
+  } else if (last != m.lastFeed.end()) {
+    std::vector<std::string> rivals;
+    if (ei)
+      for (const std::string& c : ei->members)
+        if (m.indexByID.count(c) && !unplayable(c)) rivals.push_back(c);
+    if (scores::keepsFirst(last->second, rivals, standing)) pinned = last->second;
+  }
   std::vector<std::string> out = sports::store::baseVersions(
       id, ei, pinned, [this](const std::string& c) { return reliabilityOf(c); },
       [&m](const std::string& c) { return m.indexByID.count(c) > 0; });
-  // Build 166: a copy whose own plays show it clearly better goes ahead of
-  // the others measured; copies with no history keep their places, and the
-  // pinned (or last played) copy stays first.
-  {
-    size_t keep = pinned && !out.empty() && out.front() == *pinned ? 1 : 0;
-    scores::orderMeasured(out, keep, [&m, now](const std::string& c) { return m.scores.score(c, now); });
-  }
+  size_t keep = pinned && !out.empty() && out.front() == *pinned ? 1 : 0;
+  // Build 166, Build 169: the measured copies, the working ones by picture
+  // tier, then speed and smoothness; copies with no history keep their
+  // places unless a working copy has a better picture than they claim;
+  // the pinned (or kept last played) copy stays first.
+  scores::orderMeasured(out, keep, standing);
   // Test all sources: the backup (the second copy) from a separate service when the
   // first's provider and the second's look like one service underneath.
   if (out.size() >= 3 && m.accounts.size() >= 3) {
@@ -3812,13 +3841,15 @@ std::vector<std::string> Store::versionsOf(const std::string& id) const {
   // Marigold (Build 136): the catalog lists direct versions first, but the
   // record of a source can move a server-opened one ahead of them; while a
   // direct version hasn't failed lately they stay ahead (the pinned or last
-  // played version still leads).
-  if (healthyDirect()) {
-    size_t keep = pinned && !out.empty() && out.front() == *pinned ? 1 : 0;
-    sports::store::directVersionsFirst(out, keep, [this](const std::string& c) { return serverOpened(c); });
-  }
-  if (leadServer)
-    sports::store::leadServerVersions(out, *leadServer, [this](const std::string& c) { return serverOpened(c); });
+  // played version still leads). Build 169: within a picture tier only: a
+  // server-opened copy measured working with a better picture (or working
+  // where the direct one doesn't) keeps its place.
+  auto holds = [&standing](const std::string& ahead, const std::string& behind) {
+    return scores::holdsAhead(standing(ahead), standing(behind));
+  };
+  auto server = [this](const std::string& c) { return serverOpened(c); };
+  if (healthyDirect()) sports::store::directVersionsFirst(out, keep, server, holds);
+  if (leadServer) sports::store::leadServerVersions(out, *leadServer, server, holds);
   lastIfUnplayable(out, pin != m.pinned.end() ? std::optional<std::string>(pin->second) : std::nullopt);
   return out;
 }

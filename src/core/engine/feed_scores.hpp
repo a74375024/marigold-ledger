@@ -10,9 +10,10 @@
 // the newest kCap copies (the least recently seen dropped first) and is
 // saved as JSON: ids and numbers only, never a link.
 //
-// Uses: a clearly better measured copy goes ahead of the catalog's order
-// (orderMeasured); the provider roll-up (rollup) for the playback log, so
-// the providers can be compared; the channel report's measured_* columns.
+// Uses: the order a channel's copies are tried in (orderMeasured; Build
+// 169: the best working picture first); the provider roll-up (rollup) for
+// the playback log, so the providers can be compared; the channel report's
+// measured_* columns.
 #pragma once
 
 #include <cstddef>
@@ -43,6 +44,15 @@ constexpr double kEnoughProbes = 0.25;
 // more than this (scores run 0..1; like the source reliability's 0.25, a
 // margin, so near-equal copies keep the catalog's order).
 constexpr double kClearlyBetter = 0.12;
+// Build 169 (1.0.12): a measured copy "works" when its starts show a
+// picture and show it reasonably soon:
+//   works = (ok + 0.9) / (ok + bad + 1) >= kWorksAt
+// (ok and bad: plays and probes, a probe weighing kProbeWeight), and its
+// median start is at most kWorkingStartMs. The prior is lighter than the
+// score's (ok + 1) / (ok + bad + 2) so the one probe Test all sources makes
+// is enough (0.93) while one failure in four starts isn't (0.78).
+constexpr double kWorksAt = 0.8;
+constexpr uint32_t kWorkingStartMs = 4000;
 
 struct Record {
   time::Seconds seen = 0;  // the newest result; the weights are as of then
@@ -67,9 +77,25 @@ struct Record {
   double starts() const;
   // More of its starts (probes weighed in) showed no picture than did.
   bool mostlyFails() const;
+  // Build 169: (ok + 0.9) / (ok + bad + 1), probes weighed in.
+  double works() const;
+  // works() >= kWorksAt and the median start within kWorkingStartMs.
+  bool working() const;
   std::optional<uint32_t> medianStartMs() const;
   // Stalls per hour played (null: under a minute played).
   std::optional<double> stallsPerHour() const;
+};
+
+// Build 169: what the order knows of one copy (Book::standing; the store
+// fills in a tier from the pictures memory or the name when the record has
+// none).
+struct Standing {
+  bool measured = false;  // enough history to order by (Book::score's rule)
+  bool works = false;     // measured and Record::working()
+  // Its picture tier: measured when a picture was, else what its name
+  // claims; 0 not known.
+  int tier = 0;
+  double score = 0;  // scoreOf: start speed and smoothness, the tie-break
 };
 
 // What a probe found (Test all sources, Build 166).
@@ -106,6 +132,9 @@ class Book {
   void each(const std::function<void(const std::string&, const Record&)>& fn) const;
   // 0..1, higher better; null while the copy has too little history.
   std::optional<double> score(const std::string& feedId, time::Seconds now) const;
+  // Build 169: what the order knows of a copy from its record (see
+  // Standing); not measured while it has too little history (as score).
+  Standing standing(const std::string& feedId, time::Seconds now) const;
 
   // When the provider roll-up last went into the playback log (0 never).
   time::Seconds rolledUpAt = 0;
@@ -131,12 +160,43 @@ class Book {
 // The score of a record as it stands (no evidence check).
 double scoreOf(const Record& r);
 
-// A channel's copies, in the order they are tried: the measured ones (a
-// score) are reordered among their own places, a clearly better one ahead
-// (kClearlyBetter); a copy with no score keeps its place; the first `keep`
-// (the pinned or last played copy) stay first.
+// Build 169 (1.0.12): picture tiers, better higher: 0 not known, 1 under
+// 720 lines, 2 720p, 3 720p at 50 / 60 fps, 4 1080 lines or more, 5 the
+// same at 50 / 60 fps (49 fps and up; 4K counts as 1080).
+int pictureTier(int height, int fps);
+// The tier a name claims (quality::claimed's "FHD · 60", "HD", "SD", "4K"),
+// at its best: names seldom give the frame rate, so a size counts as at
+// 50 / 60 fps whether it says so or not (4K and FHD 5, HD 3, SD 1); 0 when
+// it claims no size. An unmeasured copy is then passed only by a picture
+// it can't have.
+int claimedTier(std::string_view claimed);
+
+// `a` is a working measured copy with a better picture than `b`: a higher
+// tier, where `b`'s is known (an unmeasured copy that claims nothing isn't
+// passed: it may well be as good).
+bool outranks(const Standing& a, const Standing& b);
+
+// A channel's copies, in the order they are tried (Build 169, 1.0.12):
+//  1. the measured copies are reordered among their own places: the
+//     working ones first, by picture tier, then (within a tier) by score
+//     where clearly better (kClearlyBetter), then the catalog's order; the
+//     ones that don't work after them, by score as before;
+//  2. a copy with no history keeps its place, except that a working
+//     measured copy behind it with a better picture than it claims
+//     (outranks) moves just ahead of it;
+//  3. the first `keep` (the pinned copy, or the last played one while
+//     keepsFirst) stay first.
 void orderMeasured(std::vector<std::string>& ids, size_t keep,
-                   const std::function<std::optional<double>(const std::string&)>& score);
+                   const std::function<Standing(const std::string&)>& standing);
+// The last played copy stays first unless another of `copies` outranks it
+// (a working measured copy with a better picture).
+bool keepsFirst(const std::string& first, const std::vector<std::string>& copies,
+                const std::function<Standing(const std::string&)>& standing);
+// Whether a direct copy may not pass `ahead` (a server-opened copy before
+// it) in directVersionsFirst / leadServerVersions: `ahead` outranks it, or
+// works while it is measured and doesn't. Otherwise (the same tier,
+// nothing measured) direct copies go first as before.
+bool holdsAhead(const Standing& ahead, const Standing& behind);
 
 // "xt:abc" of "xt:abc|123": the provider (account) of a copy.
 std::string_view providerOf(std::string_view feedId);
