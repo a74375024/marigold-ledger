@@ -40,6 +40,11 @@ std::string percent(double share) {
   return std::to_string(static_cast<int>(std::lround(std::clamp(share, 0.0, 1.0) * 100.0))) + "%";
 }
 
+// Build 174: how far a stopped test got, never rounded up to 100%.
+std::string flooredPercent(double share) {
+  return std::to_string(static_cast<int>(std::floor(std::clamp(share, 0.0, 1.0) * 100.0))) + "%";
+}
+
 std::string upper(std::string s) {
   for (char& ch : s)
     if (ch >= 'a' && ch <= 'z') ch = static_cast<char>(ch - 'a' + 'A');
@@ -255,30 +260,42 @@ class Results : public Screen {
         button_ = std::max(0, button_ - 1);
         return true;
       case Key::Right:
-        button_ = std::min(2, button_ + 1);
+        button_ = std::min(buttons() - 1, button_ + 1);
         return true;
       case Key::Ok: act(); return true;
       default: return e.key != Key::Back;
     }
   }
   void hover(int id) override {
-    if (id >= kHitButton && id < kHitButton + 3) button_ = id - kHitButton;
+    if (id >= kHitButton && id < kHitButton + buttons()) button_ = id - kHitButton;
   }
 
   void draw(ui::Ctx& c) override {
     c.g.fill({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight}, theme::hex(theme::kBackground));
     float left = 84, right = gfx::kLayoutWidth - 84;
-    ui::label(c, "Your providers, ranked", left, 60, Weight::Bold, 45, theme::white(), 900);
-    std::string when = app_.sourceTest().lastTested() > 0 ? testedLine(app_, app_.sourceTest().lastTested()) : "";
+    ui::label(c, carry_ ? "Your providers, ranked so far" : "Your providers, ranked", left, 60, Weight::Bold, 45,
+              theme::white(), 900);
+    // Build 174: a test stopped part way offers Carry on first.
+    float pillsW =
+        carry_ ? pills(c, right, 78, {"Carry on", "Keeping one or two", "Done", "Start over"}, button_, true,
+                       {true, roll_.providers.size() >= 2, true, true})
+               : pills(c, right, 78, {"Keeping one or two", "Done", "Test again"}, button_, true,
+                       {roll_.providers.size() >= 2, true, true});
+    time::Seconds at = carry_ ? carry_->stoppedAt : app_.sourceTest().lastTested();
+    std::string when = at > 0 ? testedLine(app_, at) : "";
     // "today, 1:12 AM"
     size_t space = when.find(' ');
     if (space != std::string::npos && (when.rfind("today", 0) == 0 || when.rfind("yesterday", 0) == 0))
       when.insert(space, ",");
-    std::string sub = when.empty() ? std::string("Not tested yet")
-                                   : "Tested " + when + " \xc2\xb7 every channel now starts with its best source";
-    ui::label(c, sub, left, 124, Weight::Regular, 27, theme::white(0.65f), 1050);
-    pills(c, right, 78, {"Keeping one or two", "Done", "Test again"}, button_, true,
-          {roll_.providers.size() >= 2, true, true});
+    std::string sub;
+    if (carry_)
+      sub = "Stopped at " + flooredPercent(carry_->fraction) + (when.empty() ? "" : " " + when) +
+            " \xc2\xb7 " + st::timeLeftText(carry_->leftSeconds * 1000u) + "; carry on any time this week";
+    else
+      sub = when.empty() ? std::string("Not tested yet")
+                         : "Tested " + when + " \xc2\xb7 every channel now starts with its best source";
+    ui::label(c, sub, left, 124, Weight::Regular, 27, theme::white(0.65f),
+              std::min(1050.0f, right - pillsW - left - 30));
 
     // The table: the provider, then six columns.
     const char* heads[] = {"Provider", "Has your channels", "Only here", "Replay", "Starts in", "Didn't play",
@@ -311,8 +328,17 @@ class Results : public Screen {
       c.g.fill(b, i == 0 ? theme::white() : theme::white(0.18f), badge * 0.5f);
       ui::labelIn(c, std::to_string(i + 1), b, Weight::Bold, 24, i == 0 ? theme::black() : theme::white(),
                   Align::Center);
-      ui::labelIn(c, names_[order_[i]], {b.x + badge + 18, ry, firstW - badge - 60, rowH}, Weight::Bold, 28,
-                  theme::white());
+      Rect nameBox{b.x + badge + 18, ry, firstW - badge - 60, rowH};
+      auto tested = carry_ ? carry_->providers.find(f.provider) : std::map<std::string, double>::const_iterator();
+      if (carry_ && tested != carry_->providers.end()) {
+        // Build 174: how much of it the stopped test got to.
+        ui::labelIn(c, names_[order_[i]], {nameBox.x, ry + rowH * 0.5f - 36, nameBox.w, 40}, Weight::Bold, 28,
+                    theme::white());
+        ui::labelIn(c, flooredPercent(tested->second) + " tested", {nameBox.x, ry + rowH * 0.5f + 2, nameBox.w, 30},
+                    Weight::Regular, 20, theme::white(0.55f));
+      } else {
+        ui::labelIn(c, names_[order_[i]], nameBox, Weight::Bold, 28, theme::white());
+      }
       auto cell = [&](int k, const std::string& text, Color col) {
         float x = left + firstW + colW * static_cast<float>(k - 1) + 18;
         ui::labelIn(c, text, {x, ry, colW - 24, rowH}, Weight::Regular, 25, col);
@@ -352,7 +378,10 @@ class Results : public Screen {
   }
 
  private:
+  int buttons() const { return carry_ ? 4 : 3; }
   void load() {
+    carry_ = app_.sourceTest().carry();
+    button_ = std::min(button_, buttons() - 1);
     roll_ = app_.store().providerRollup();
     order_ = st::rank(roll_);
     names_.clear();
@@ -376,7 +405,15 @@ class Results : public Screen {
     }
   }
   void act() {
-    switch (button_) {
+    // Build 174: with a stopped test, Carry on comes first.
+    int b = carry_ ? button_ - 1 : button_;
+    if (b < 0) {
+      app_.sourceTest().carryOn();
+      app_.nav().pop();
+      app_.nav().push(makeTesting(app_));
+      return;
+    }
+    switch (b) {
       case 0:
         if (roll_.providers.size() >= 2) app_.nav().push(makeKeepingPairs(app_));
         break;
@@ -392,6 +429,7 @@ class Results : public Screen {
   std::vector<size_t> order_;
   std::vector<std::string> names_;
   std::string sameNote_;
+  std::optional<st::Runner::Carry> carry_;
   int button_ = 0;
 };
 
@@ -518,6 +556,8 @@ std::string testAllSourcesLine(App& app) {
     st::Runner::Status s = t.status();
     return (s.waitingForPlay ? "Paused while you watch \xc2\xb7 " : "Testing now \xc2\xb7 ") + percent(s.fraction);
   }
+  if (std::optional<st::Runner::Carry> carry = t.carry())
+    return "Stopped at " + flooredPercent(carry->fraction) + " \xc2\xb7 carry on any time";
   if (t.lastTested() > 0) return "Last tested: " + testedLine(app, t.lastTested());
   return "Last tested: never";
 }

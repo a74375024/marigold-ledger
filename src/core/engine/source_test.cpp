@@ -451,13 +451,23 @@ void Runner::load() {
   if (!r.isObject()) return;
   time::Seconds started = r["started"].asInt();
   if (started <= 0) return;
-  if (time::now() - started > kRunKeptFor) {
+  time::Seconds now = time::now();
+  // Build 174: a run stopped part way is kept a week from when it stopped,
+  // for carrying on; one under way, two days from its start (or from when
+  // it was last carried on).
+  bool stopped = r["stopped"].asBool();
+  time::Seconds stoppedAt = r["stoppedAt"].asInt(), resumed = r["resumed"].asInt();
+  if (stopped ? now - stoppedAt > kStoppedKeptFor : now - std::max(started, resumed) > kRunKeptFor) {
     // Too old to carry on: dropped (what it found stays in the records).
     droppedOld_ = true;
+    droppedStopped_ = stopped;
     dirty_ = true;
     return;
   }
-  run_.active = true;
+  run_.active = !stopped;
+  run_.stopped = stopped;
+  run_.stoppedAt = stoppedAt;
+  run_.resumed = resumed;
   run_.started = started;
   for (const auto& [k, val] : r["done"].fields()) run_.done[k] = val.asString();
   for (const auto& [id, a] : r["accounts"].fields()) {
@@ -474,9 +484,14 @@ void Runner::save(bool now) {
   json::Value v = json::Value::object();
   v.set("v", 1);
   v.set("lastTested", static_cast<int64_t>(lastTested_));
-  if (run_.active) {
+  if (run_.active || run_.stopped) {
     json::Value r = json::Value::object();
     r.set("started", static_cast<int64_t>(run_.started));
+    if (run_.stopped) {
+      r.set("stopped", true);
+      r.set("stoppedAt", static_cast<int64_t>(run_.stoppedAt));
+    }
+    if (run_.resumed) r.set("resumed", static_cast<int64_t>(run_.resumed));
     json::Value done = json::Value::object();
     for (const auto& [k, val] : run_.done) done.set(k, val);
     r.set("done", std::move(done));
@@ -550,6 +565,7 @@ uint32_t Runner::estimateNow() const {
 void Runner::start() {
   abortAll();
   run_ = Run{};
+  carryCache_.reset();
   run_.active = true;
   run_.started = time::now();
   planned_ = false;
@@ -577,16 +593,92 @@ void Runner::endRun(bool stopped) {
   run_.active = false;
   lastTested_ = time::now();
   ++ended_;
-  logLine(stopped ? "stopped by you; what was found so far is kept" : "finished");
+  // Build 174: part way (stopped by you, or providers that turned it away
+  // with copies still untested): kept, to carry on from here.
+  bool left = !planned_;
+  for (size_t i = 0; planned_ && i < plan_.queues.size() && !left; ++i)
+    for (const Item& item : plan_.queues[i])
+      if (!run_.done.count(key(item.channelId, item.kind))) {
+        left = true;
+        break;
+      }
+  if (left && !run_.done.empty()) {
+    run_.stopped = true;
+    run_.stoppedAt = lastTested_;
+    logLine(stopped ? "stopped by you; what was found so far is kept, and it can carry on from here this week"
+                    : "ended part way (providers turned it away); it can carry on from here this week");
+  } else {
+    // Done: what it found stays for the results screen (found so far);
+    // nothing to carry on.
+    run_.stopped = false;
+    logLine(stopped ? "stopped by you; what was found so far is kept" : "finished");
+  }
   if (!sum.empty()) logLine("summary: " + sum);
   save(true);
+}
+
+bool Runner::canCarryOn() const {
+  return !run_.active && run_.stopped && time::now() - run_.stoppedAt <= kStoppedKeptFor;
+}
+
+void Runner::carryOn() {
+  if (!canCarryOn()) return;
+  abortAll();
+  std::optional<Carry> where = carry();
+  carryCache_.reset();
+  run_.active = true;
+  run_.stopped = false;
+  run_.stoppedAt = 0;
+  run_.resumed = time::now();
+  for (auto& [id, acc] : run_.accounts) {
+    // Another try for providers that turned it away; the rest re-checked
+    // against what's left (next() marks them finished again).
+    acc.refusals = 0;
+    acc.until = 0;
+    acc.stopped = false;
+    acc.finished = false;
+    acc.logged = false;
+  }
+  planned_ = false;
+  slots_.clear();
+  waitingForPlay_ = false;
+  resumeAt_ = 0;
+  logLine("carried on from " + std::to_string(static_cast<int>(std::floor((where ? where->fraction : 0) * 100))) +
+          "%");
+  save(true);
+}
+
+std::optional<Runner::Carry> Runner::carry() const {
+  if (!canCarryOn()) return std::nullopt;
+  // Asked by the Settings line and the results screen: worked out once per
+  // stop (the plan over the lineup isn't free on a TV).
+  if (carryCache_ && carryCache_->stoppedAt == run_.stoppedAt) return carryCache_;
+  std::vector<std::string> ids;
+  for (const auto& [id, name] : store_.providerNames()) ids.push_back(id);
+  Plan p = plan(store_.lineupRows(), ids, [this](const std::string& c) { return store_.directCopy(c); });
+  Carry out;
+  out.stoppedAt = run_.stoppedAt;
+  size_t done = 0, total = 0;
+  for (size_t i = 0; i < p.queues.size(); ++i) {
+    size_t mine = 0;
+    for (const Item& item : p.queues[i]) mine += run_.done.count(key(item.channelId, item.kind));
+    const size_t all = p.queues[i].size();
+    done += mine;
+    total += all;
+    if (all) out.providers[p.providers[i]] = static_cast<double>(mine) / static_cast<double>(all);
+    out.leftSeconds = std::max(out.leftSeconds, static_cast<uint32_t>((all - mine) * kItemMs / 1000));
+  }
+  out.fraction = total ? static_cast<double>(done) / static_cast<double>(total) : 0;
+  carryCache_ = out;
+  return out;
 }
 
 bool Runner::tick(uint32_t ms) {
   ms_ = ms;
   if (droppedOld_) {
     droppedOld_ = false;
-    logLine("an unfinished test from more than two days ago was dropped");
+    logLine(droppedStopped_ ? "a test stopped more than a week ago was dropped (start it again for fresh results)"
+                            : "an unfinished test from more than two days ago was dropped");
     save(true);
   }
   if (!run_.active) return false;

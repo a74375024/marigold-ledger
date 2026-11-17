@@ -612,6 +612,126 @@ TEST_CASE("test all sources: stopping keeps what was found so far") {
   CHECK(r.store->feedScores().size() == 2);
 }
 
+TEST_CASE("test all sources 1.0.17: a test stopped part way carries on from where it stopped") {
+  Rig r(0, 0);
+  for (int id : {601, 604, 701, 702}) r.tv.pool.answer(r.liveUrl(id), ts(1920, 1080, 60));
+  CHECK_FALSE(r.runner->canCarryOn());
+  CHECK_FALSE(r.runner->carry());
+  r.runner->start();
+  r.run(1000);  // one test each
+  r.runner->stop();
+  CHECK_FALSE(r.runner->running());
+  CHECK(r.runner->canCarryOn());
+  CHECK(r.logged("it can carry on from here this week"));
+  auto c = r.runner->carry();
+  REQUIRE(c);
+  CHECK(c->fraction == doctest::Approx(0.5));
+  CHECK(c->stoppedAt > 0);
+  CHECK(c->leftSeconds > 0);
+  REQUIRE(c->providers.size() == 2);
+  for (const auto& [id, share] : c->providers) CHECK(share == doctest::Approx(0.5));
+  // Nothing more runs while it's stopped.
+  r.run(30000);
+  CHECK(r.store->feedScores().size() == 2);
+
+  // Kept across a restart, still stopped.
+  r.runner->saveNow();
+  r.tv.pool.drain();
+  r.runner.reset();
+  r.makeRunner();
+  CHECK_FALSE(r.runner->running());
+  CHECK(r.runner->canCarryOn());
+  REQUIRE(r.runner->carry());
+  CHECK(r.runner->carry()->fraction == doctest::Approx(0.5));
+
+  // Carry on: only what's left is tested.
+  r.runner->carryOn();
+  CHECK(r.runner->running());
+  CHECK(r.logged("carried on from 50%"));
+  r.run(60000);
+  CHECK_FALSE(r.runner->running());
+  for (int id : {601, 604, 701, 702}) CHECK(r.tv.pool.asked[r.liveUrl(id)] == 1);
+  CHECK(r.store->feedScores().size() == 4);
+  CHECK(r.logged("finished"));
+  // Done: nothing to carry on, and the saved file holds no run.
+  CHECK_FALSE(r.runner->canCarryOn());
+  r.runner->saveNow();
+  r.tv.pool.drain();
+  auto saved = r.tv.files.read(st::kFile);
+  REQUIRE(saved);
+  CHECK(saved->find("\"run\"") == std::string::npos);
+  r.noLinks();
+}
+
+TEST_CASE("test all sources 1.0.17: Start over tests everything again; a stopped test is kept a week") {
+  Rig r(0, 0);
+  for (int id : {601, 604, 701, 702}) r.tv.pool.answer(r.liveUrl(id), ts(1920, 1080, 60));
+  r.runner->start();
+  r.run(1000);
+  r.runner->stop();
+  REQUIRE(r.runner->canCarryOn());
+  // Start over: from the beginning.
+  r.runner->start();
+  CHECK_FALSE(r.runner->canCarryOn());
+  r.run(60000);
+  CHECK_FALSE(r.runner->running());
+  // The two tested before Stop, twice; the other two once.
+  int asked = 0, twice = 0;
+  for (int id : {601, 604, 701, 702}) {
+    asked += r.tv.pool.asked[r.liveUrl(id)];
+    twice += r.tv.pool.asked[r.liveUrl(id)] == 2;
+  }
+  CHECK(asked == 6);
+  CHECK(twice == 2);
+
+  // Stopped, then left more than a week: dropped.
+  r.runner->start();
+  r.run(1000);
+  r.runner->stop();
+  r.runner->saveNow();
+  r.tv.pool.drain();
+  r.runner.reset();
+  mtime::advanceForTests(6 * 86400);
+  r.makeRunner();
+  CHECK(r.runner->canCarryOn());  // six days: still there
+  r.runner.reset();
+  mtime::advanceForTests(86400 + 60);
+  r.makeRunner();
+  CHECK_FALSE(r.runner->canCarryOn());
+  CHECK_FALSE(r.runner->running());
+  r.run(1000);
+  CHECK(r.logged("a test stopped more than a week ago was dropped"));
+}
+
+TEST_CASE("test all sources 1.0.17: a run that ended because a provider turned it away carries on, trying it again") {
+  Rig r(0, 0);
+  r.tv.pool.answer(r.liveUrl(701), "", 429);
+  r.tv.pool.answer(r.liveUrl(702), "", 429);
+  r.tv.pool.answer(r.liveUrl(601), ts(1920, 1080, 60));
+  r.tv.pool.answer(r.liveUrl(604), ts(1920, 1080, 60));
+  r.runner->start();
+  r.run(31000);
+  mtime::advanceForTests(15 * 60 + 1);
+  r.run(2000);
+  REQUIRE_FALSE(r.runner->running());
+  CHECK(r.logged("ended part way (providers turned it away)"));
+  REQUIRE(r.runner->canCarryOn());
+  auto c = r.runner->carry();
+  REQUIRE(c);
+  CHECK(c->fraction == doctest::Approx(0.5));
+  // Trex works again: carrying on tests only its copies.
+  r.tv.pool.answer(r.liveUrl(701), ts(1920, 1080, 60));
+  r.tv.pool.answer(r.liveUrl(702), ts(1920, 1080, 60));
+  r.runner->carryOn();
+  r.run(60000);
+  CHECK_FALSE(r.runner->running());
+  CHECK(r.tv.pool.asked[r.liveUrl(601)] == 1);
+  CHECK(r.tv.pool.asked[r.liveUrl(604)] == 1);
+  CHECK(r.store->feedScores().size() == 4);
+  CHECK_FALSE(r.runner->canCarryOn());
+  r.noLinks();
+}
+
 // --------------------------------------------------------- the results
 
 TEST_CASE("test all sources: providers ranked by playing reliably, then speed and picture, then lineup and replay") {

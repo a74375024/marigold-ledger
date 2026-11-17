@@ -10,7 +10,9 @@
 // this run, the others carry on. The whole test pauses while anything plays
 // (and while the app is away) and carries on after. Progress is saved
 // (which copies are done), so a restart carries on; a run older than two
-// days is dropped instead.
+// days is dropped instead. Build 174: a run stopped part way (by you, or
+// because the providers left turned it away) is kept a week and can be
+// carried on from where it stopped (carryOn()); Start over is start().
 //
 // Results go into the copies' records (Store::recordProbe), which order a
 // channel's copies, and into the screens: the providers ranked (rank()),
@@ -57,6 +59,9 @@ constexpr time::Seconds kArchiveBack = 2 * 3600;
 constexpr time::Seconds kEdgeMargin = 90 * 60;
 // A run not finished in this long is dropped (not carried on).
 constexpr time::Seconds kRunKeptFor = 2 * 86400;
+// Build 174: a run stopped part way (by you, or providers that turned it
+// away) can be carried on this long after it stopped.
+constexpr time::Seconds kStoppedKeptFor = 7 * 86400;
 // The saved progress.
 constexpr const char* kFile = "source-test.json";
 
@@ -216,9 +221,26 @@ class Runner {
 
   // A new run from the start (the last one's results stay in the records).
   void start();
-  // Stops; what was found so far is kept.
+  // Stops; what was found so far is kept, and (Build 174) where it got to:
+  // carryOn() picks up from there.
   void stop();
   bool running() const { return run_.active; }
+
+  // Build 174: a run that stopped part way (by you, or because every
+  // provider left had turned it away), within kStoppedKeptFor.
+  bool canCarryOn() const;
+  // Carries it on: what was tested stays, the rest is tested; providers
+  // that turned it away get another try. Nothing when !canCarryOn().
+  void carryOn();
+  struct Carry {
+    time::Seconds stoppedAt = 0;
+    double fraction = 0;   // of the whole run, done
+    uint32_t leftSeconds = 0;  // the rest at the default pace
+    std::map<std::string, double> providers;  // provider id -> its share tested
+  };
+  // Where a stopped run got to (against today's lineup); nullopt when
+  // there's nothing to carry on.
+  std::optional<Carry> carry() const;
   // When a run last ended (finished or stopped), 0 never.
   time::Seconds lastTested() const { return lastTested_; }
   // Moves when a run ends, for the screen showing it.
@@ -291,6 +313,10 @@ class Runner {
       bool finished = false;
     };
     std::map<std::string, Account> accounts;
+    // Build 174: stopped part way and kept for carrying on (active false).
+    bool stopped = false;
+    time::Seconds stoppedAt = 0;
+    time::Seconds resumed = 0;  // carried on last (the age rule counts from it)
   };
   Run run_;
   time::Seconds lastTested_ = 0;
@@ -313,6 +339,8 @@ class Runner {
   std::vector<Slot> slots_;
   bool waitingForPlay_ = false;
   bool droppedOld_ = false;  // a run too old to carry on was dropped (logged on the first tick)
+  bool droppedStopped_ = false;  // Build 174: it was a stopped one
+  mutable std::optional<Carry> carryCache_;  // carry(), for the stop it was worked out for
   uint32_t resumeAt_ = 0;
   uint32_t ms_ = 0;
   bool dirty_ = false;
