@@ -242,12 +242,24 @@ class Session {
     bool quiet = false;       // ... by the Rewind timeline: still live, as far as Right goes
     bool next = false;        // the stretch opening follows one that ended
     bool video = true;        // the channel shows a picture (not radio)
+    // Build 170: the copy's archive clock isn't known yet: its own guide is
+    // asked for first (Store::archiveTable), at most kClockWaitMs, then the
+    // stretch opens in whatever clock is known by then. `what` is its log
+    // line; `since` when the wait began (ms).
+    struct ClockWait {
+      std::string what;
+      uint32_t since = 0;
+      int serial = 0;
+    };
+    std::optional<ClockWait> clockWait;
     time::Seconds at() const { return static_cast<time::Seconds>(atMs / 1000); }
   };
   // Why a replay starts from a moment (its log line). Game: a game's
   // replay started from Live Events (tuneGameReplay).
   enum class ReplayWhy { StartOver, Rewind, Back, Resume, Game };
   static constexpr uint32_t kReplayTimeoutMs = 10000;
+  // Build 170: the longest a first replay waits for its copy's archive clock.
+  static constexpr uint32_t kClockWaitMs = 3000;
   // Paused: the stream is closed this long after the picture was held.
   static constexpr uint32_t kReleaseMs = 3000;
   // A replay this close to live is live.
@@ -467,6 +479,9 @@ class Session {
   void flushPlayed();
   void standAside();
   void playReplay(size_t feed, time::Seconds from, const std::string& what, bool next = false);
+  // The stretch set up by playReplay, handed to the player now (its clock
+  // known, or the wait for it over).
+  void openReplay(const std::string& what);
   void tickReplay(uint32_t now);
   void replayFailed(const std::string& why);
   void endReplay(bool live);
@@ -542,12 +557,20 @@ class Session {
   // The replay on now; the copy that played live before it and whether it
   // had a picture; the copies tried for this moment; the server clock the
   // stretch was asked in; stretches in a row that ended early; the last
-  // tick; the notice for the player.
+  // tick; the notice for the player. Build 170: the clock the stretch was
+  // asked in, the copies whose archive clock was told against the server's
+  // (once each), the clock waits started.
   std::optional<Replay> replay_;
   size_t replayLive_ = 0;
   bool replayLiveReady_ = false;
   std::set<size_t> replayTried_;
-  std::optional<int> replayOffset_;
+  struct ReplayClock {
+    std::optional<int> offset, server;  // seconds east of UTC
+    bool archive = false;               // the copy's own archive clock or its account's
+  };
+  std::optional<ReplayClock> replayClock_;
+  std::set<std::string> clockTold_;
+  int clockSerial_ = 0;
   int shortStretches_ = 0;
   uint32_t replayTick_ = 0;
   std::string replayNotice_;

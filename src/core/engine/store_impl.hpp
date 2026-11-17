@@ -249,6 +249,27 @@ struct EventsState {
 // Build 167: a tested copy's archive (scores::Record::archiveOk, archiveDays).
 using ArchiveSeen = std::unordered_map<std::string, std::pair<int, uint16_t>>;
 ArchiveSeen archiveSeen(const scores::Book& book);
+// Build 170: the archive clocks read from Xtream copies' own guides
+// (get_simple_data_table), seconds east of UTC, by account id and stream
+// id: archive-clocks.json, ids and numbers only, bounded.
+struct ArchiveClocks {
+  static constexpr size_t kStreamsKept = 4000;  // per account
+  static constexpr size_t kAccountsKept = 64;
+  struct Account {
+    std::map<std::string, int> streams;
+    std::optional<int> last;  // the one read most recently
+  };
+  std::map<std::string, Account> accounts;
+  // Records a copy's clock; true when something changed.
+  bool note(const std::string& accountId, const std::string& streamId, int offset);
+  std::optional<int> stream(const std::string& accountId, const std::string& streamId) const;
+  // The account's learned clock: the value most of its copies showed; a
+  // tie goes to the one read last. nullopt: none read yet.
+  std::optional<int> learned(const std::string& accountId) const;
+  std::string toJson() const;
+  static ArchiveClocks fromJson(std::string_view text);
+};
+
 // A row's replayDays from its copies with an archive (ChannelRows::Row::archive).
 uint16_t rowReplayDays(const std::vector<std::pair<std::string, uint16_t>>& archive, const ArchiveSeen& seen);
 
@@ -348,6 +369,13 @@ struct Store::Impl {
   // (Record::archiveOk, archiveDays), for the rows' replayDays; made again
   // when the records are read or a probe's archive result comes in.
   std::shared_ptr<const ArchiveSeen> archiveSeen = std::make_shared<const ArchiveSeen>();
+  // Build 170: the copies' archive clocks (archive-clocks.json, its own
+  // file and writer); the copies whose table was read this run (answered or
+  // not); the table requests out, with who waits for each.
+  ArchiveClocks archiveClocks;
+  std::shared_ptr<PicturesWriter> clocksWriter = std::make_shared<PicturesWriter>();
+  std::set<std::string> tablesRead;
+  std::map<std::string, std::vector<std::function<void(const Store::ArchiveTableAnswer&)>>> tablesOut;
   // Test all sources: providers that look like one service (Store::sameServices) and
   // what they were worked out from.
   std::vector<sourcetest::SameService> sameService;

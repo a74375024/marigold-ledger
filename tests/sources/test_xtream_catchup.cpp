@@ -1,5 +1,7 @@
 // Build 163, the catch-up test: the Xtream archive link (timeshift) and the
 // panel's clock it is asked in (server_info), kept on the account.
+#include <cstdio>
+#include <optional>
 #include <string>
 
 #include "core/sources/account.hpp"
@@ -228,4 +230,100 @@ TEST_CASE("replay: get_simple_data_table's listings, base64 titles and numbers o
   CHECK(xtream::parseSimpleDataTable(200, R"({"epg_listings":[)").empty());
   CHECK(xtream::parseSimpleDataTable(404, body).empty());
   CHECK(xtream::parseSimpleDataTable(200, R"({"epg_listings":[]})").empty());
+}
+
+// ------------------------------------------------ Build 170: archive clock
+
+namespace {
+
+// One get_simple_data_table entry: its local start text ("" none), its Unix
+// start and a title in base64 ("Show").
+std::string entry(const std::string& local, time::Seconds start) {
+  std::string out = R"({"title":"U2hvdw==",)";
+  if (!local.empty()) out += R"("start":")" + local + R"(","end":")" + local + R"(",)";
+  return out + R"("start_timestamp":")" + std::to_string(start) + R"(","stop_timestamp":")" +
+         std::to_string(start + 3600) + R"(","has_archive":1})";
+}
+
+// A table of `n` hourly programmes from 2026-11-16 10:00 UTC, their local
+// starts `offset` seconds east (plus `jitter` seconds).
+std::string table(int offset, int n = 4, int jitter = 0) {
+  std::string body = R"({"epg_listings":[)";
+  for (int i = 0; i < n; ++i) {
+    time::Seconds start = utc(2026, 11, 16, 10 + i, 0);
+    time::Civil c = time::civilFromSeconds(start + offset + jitter);
+    char local[32];
+    std::snprintf(local, sizeof local, "%04d-%02d-%02d %02d:%02d:%02d", c.year, c.month, c.day, c.hour, c.minute,
+                  c.second);
+    body += (i ? "," : "") + entry(local, start);
+  }
+  return body + "]}";
+}
+
+}  // namespace
+
+TEST_CASE("replay 1.0.13: a channel's archive clock from its own guide, local start against Unix start") {
+  for (int offset : {3600, 0, -5 * 3600, 5 * 3600 + 1800, 5 * 3600 + 2700, -(3 * 3600 + 1800), 14 * 3600}) {
+    xtream::ArchiveTable t = xtream::parseArchiveTable(200, table(offset));
+    CHECK(t.programmes.size() == 4);
+    REQUIRE(t.clock);
+    CHECK(*t.clock == offset);
+  }
+  // To the nearest quarter hour: a panel a few minutes off.
+  CHECK(xtream::parseArchiveTable(200, table(3600, 4, 130)).clock == 3600);
+  CHECK(xtream::parseArchiveTable(200, table(3600, 4, -420)).clock == 3600);
+  CHECK(xtream::parseArchiveTable(200, table(3600, 4, 480)).clock == 3600 + 900);
+  // Beyond 14 h is no clock.
+  CHECK_FALSE(xtream::parseArchiveTable(200, table(15 * 3600)).clock);
+  // The programmes are as before (parseSimpleDataTable is the same list).
+  CHECK(xtream::parseSimpleDataTable(200, table(3600)).size() == 4);
+  CHECK(xtream::parseArchiveTable(200, table(3600)).programmes[0].title == "Show");
+  // Failures: no clock.
+  CHECK_FALSE(xtream::parseArchiveTable(404, table(3600)).clock);
+  CHECK_FALSE(xtream::parseArchiveTable(200, "").clock);
+  CHECK_FALSE(xtream::parseArchiveTable(200, R"({"epg_listings":[]})").clock);
+}
+
+TEST_CASE("replay 1.0.13: mixed and broken entries: the most common clock; entries without both are left out") {
+  time::Seconds t0 = utc(2026, 11, 16, 10, 0);
+  auto hour = [&](int i) { return t0 + i * 3600; };
+  // Three at UTC+1, one at UTC, and the rest unusable for the clock.
+  std::string body = std::string(R"({"epg_listings":[)") +
+                     entry("2026-11-16 11:00:00", hour(0)) + "," +  // +1
+                     entry("2026-11-16 12:00:00", hour(1)) + "," +  // +1
+                     entry("2026-11-16 12:00:00", hour(2)) + "," +  // UTC
+                     entry("2026-11-16 14:00:00", hour(3)) + "," +  // +1
+                     entry("", hour(4)) + "," +                     // no start text
+                     entry("garbage", hour(5)) + "," +
+                     entry("2026-13-40 99:00:00", hour(6)) + "," +
+                     R"({"title":"U2hvdw==","start":1800000000,"start_timestamp":"1800000000","stop_timestamp":"1800003600"},)"
+                     R"({"title":"U2hvdw==","start":"2026-11-16 20:00:00","stop_timestamp":"1800003600"},)"
+                     R"({"title":"U2hvdw==","start":"2026-11-16 21:00:00","start_timestamp":"soon","stop_timestamp":"1800003600"},)"
+                     R"("not an object"]})";
+  xtream::ArchiveTable t = xtream::parseArchiveTable(200, body);
+  REQUIRE(t.clock);
+  CHECK(*t.clock == 3600);
+  CHECK(t.programmes.size() == 8);  // the clock never drops a programme
+  // A tie goes to the clock of the latest programme.
+  CHECK(xtream::archiveOffset({{hour(0) + 3600, hour(0)}, {hour(1), hour(1)}}) == 0);
+  CHECK(xtream::archiveOffset({{hour(1), hour(1)}, {hour(0) + 3600, hour(0)}}) == 0);
+  CHECK(xtream::archiveOffset({{hour(0), hour(0)}, {hour(1) + 3600, hour(1)}}) == 3600);
+  // Entries with only Unix times (no local text): no clock, the guide as before.
+  std::string bare = std::string(R"({"epg_listings":[)") +
+                     R"({"title":"U2hvdw==","start_timestamp":"1800000000","stop_timestamp":"1800003600"}]})";
+  xtream::ArchiveTable b = xtream::parseArchiveTable(200, bare);
+  CHECK_FALSE(b.clock);
+  CHECK(b.programmes.size() == 1);
+  CHECK_FALSE(xtream::archiveOffset({}));
+  CHECK_FALSE(xtream::archiveOffset({{hour(0), 0}}));
+}
+
+TEST_CASE("replay 1.0.13: the timeshift link in the archive's clock, not the server's") {
+  xtream::Client c = client();
+  time::Seconds start = utc(2026, 11, 16, 20, 15);
+  // The server says UTC; the channel's archive is on UTC+1: 21:15.
+  std::optional<int> clock = xtream::parseArchiveTable(200, table(3600)).clock;
+  REQUIRE(clock);
+  CHECK(c.timeshiftURL("7", start, 60, *clock)->find("/2026-11-16:21-15/7.ts") != std::string::npos);
+  CHECK(c.timeshiftURL("7", start, 60, 0)->find("/2026-11-16:20-15/7.ts") != std::string::npos);
 }

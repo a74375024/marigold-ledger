@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <mutex>
 
 #include "core/engine/quality.hpp"
 #include "core/engine/store.hpp"
+#include "core/sources/xtream.hpp"
 #include "core/util/json.hpp"
 
 namespace marigold::engine::sourcetest {
@@ -19,7 +21,9 @@ std::string percent(double share) {
   return std::to_string(static_cast<int>(std::lround(std::clamp(share, 0.0, 1.0) * 100.0))) + "%";
 }
 
-char kindLetter(Kind k) { return k == Kind::Archive ? 'A' : k == Kind::Depth ? 'D' : 'L'; }
+char kindLetter(Kind k) {
+  return k == Kind::Archive ? 'A' : k == Kind::Depth ? 'D' : k == Kind::Clock ? 'C' : 'L';
+}
 
 // The live outcome "o1080,60,1400": its height, frame rate and time to
 // picture; nothing for "f" and the rest.
@@ -664,6 +668,19 @@ void Runner::next(Slot& s, uint32_t ms) {
     acc.finished = true;
     s.nowText.clear();
     logLine(providerName(id) + ": done");
+    // Build 170: the clocks its replay copies' archives are on.
+    std::vector<int> clocks;
+    std::set<std::string> seen;
+    std::optional<int> server;
+    for (const Item& item : q) {
+      if (item.kind != Kind::Archive || !seen.insert(item.channelId).second) continue;
+      auto c = run_.done.find(key(item.channelId, Kind::Clock));
+      if (c == run_.done.end() || c->second.size() < 2 || c->second[0] != 'o') continue;
+      clocks.push_back(std::atoi(c->second.c_str() + 1));
+      if (!server) server = store_.archiveClock(item.channelId).server;
+    }
+    std::string words = clocksText(clocks, server);
+    if (!words.empty()) logLine(providerName(id) + ": archive clocks: " + words);
     dirty_ = true;
     return;
   }
@@ -683,6 +700,54 @@ void Runner::next(Slot& s, uint32_t ms) {
       return;
     }
   }
+  // Build 170: a copy with catch-up: its own guide first, for its clock.
+  if (item.kind == Kind::Archive && !run_.done.count(key(item.channelId, Kind::Clock)) &&
+      store_.catchupDays(item.channelId) > 0) {
+    readClock(s, item, ms);
+    return;
+  }
+  probeItem(s, item, ms, ms);
+}
+
+void Runner::readClock(Slot& s, const Item& item, uint32_t ms) {
+  const scores::LineupRow& row = rows_[item.row];
+  std::string name = row.name.empty() ? std::string("a channel") : row.name;
+  s.nowText = name + " \xc2\xb7 archive clock";
+  s.inFlight = true;
+  s.startedMs = ms;
+  s.abort = std::make_shared<std::atomic<bool>>(false);
+  std::shared_ptr<std::atomic<bool>> abort = s.abort;
+  std::weak_ptr<bool> alive = alive_;
+  size_t index = s.index;
+  Item copy = item;
+  store_.archiveTable(item.channelId, [this, alive, index, copy, abort, ms](const Store::ArchiveTableAnswer& a) {
+    if (alive.expired() || index >= slots_.size()) return;
+    Slot& slot = slots_[index];
+    if (slot.abort != abort || !slot.inFlight) return;  // dropped meanwhile
+    uint32_t at = host_.ms ? host_.ms() : ms_;
+    if (abort->load()) {
+      slot.inFlight = false;
+      slot.nextMs = at + kGapMinMs;
+      return;
+    }
+    if (a.refused) {
+      // As a probe's refusal: the provider is left alone a while.
+      probe::Outcome o;
+      o.refused = true;
+      o.why = a.why;
+      finishItem(index, copy, o, at, ms);
+      return;
+    }
+    run_.done[key(copy.channelId, Kind::Clock)] = a.clock ? "o" + std::to_string(*a.clock) : std::string("f");
+    dirty_ = true;
+    // Its archive probe straight after, in the clock just read.
+    slot.inFlight = false;
+    probeItem(slot, copy, at, ms);
+  });
+}
+
+void Runner::probeItem(Slot& s, const Item& item, uint32_t ms, uint32_t started) {
+  std::string k = key(item.channelId, item.kind);
   std::optional<Feed> live = store_.copyFeed(item.channelId);
   probe::Request req;
   const scores::LineupRow& row = rows_[item.row];
@@ -726,7 +791,7 @@ void Runner::next(Slot& s, uint32_t ms) {
   size_t index = s.index;
   Item copy = item;
   pool.post([&pool, req, probeClock, abort, result] { *result = probe::run(pool, req, probeClock, abort.get()); },
-            [this, alive, index, copy, result, abort, ms] {
+            [this, alive, index, copy, result, abort, started] {
               if (alive.expired() || index >= slots_.size()) return;
               Slot& slot = slots_[index];
               if (slot.abort != abort || !slot.inFlight) return;  // dropped meanwhile
@@ -736,7 +801,7 @@ void Runner::next(Slot& s, uint32_t ms) {
                 slot.nextMs = at + kGapMinMs;
                 return;
               }
-              finishItem(index, copy, *result, at, ms);
+              finishItem(index, copy, *result, at, started);
             },
             http::Priority::Background);
 }
@@ -951,6 +1016,28 @@ std::string Runner::summary() const {
   }
   std::string out;
   for (size_t i = 0; i < parts.size(); ++i) out += (i ? "; " : "") + parts[i];
+  return out;
+}
+
+std::string clocksText(const std::vector<int>& clocks, std::optional<int> server) {
+  if (clocks.empty()) return "";
+  std::map<int, size_t> counts;
+  for (int c : clocks) ++counts[c];
+  std::vector<std::pair<int, size_t>> order(counts.begin(), counts.end());
+  std::stable_sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+  std::string out;
+  if (order.size() == 1) {
+    out = sources::xtream::offsetText(order[0].first) + " on all replay channels";
+  } else {
+    for (size_t i = 0; i < order.size(); ++i) {
+      size_t n = order[i].second;
+      const char* word = 2 * n > clocks.size() ? "most" : 2 * n == clocks.size() ? "half" : "some";
+      if (i) out += ", ";
+      out += sources::xtream::offsetText(order[i].first) + " (" + word + ")";
+    }
+  }
+  if (server != order[0].first)
+    out += "; server says " + (server ? sources::xtream::offsetText(*server) : std::string("nothing"));
   return out;
 }
 

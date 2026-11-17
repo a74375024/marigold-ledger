@@ -1213,3 +1213,184 @@ TEST_CASE("replay marks 1.0.11: the guide's Start over tunes straight into the a
   CHECK_FALSE(isReplay(r.player->plays.back()));
   r.noLinks();
 }
+
+// ------------------------------------------- Build 170: the archive's clock
+
+namespace {
+
+// A copy's own guide (get_simple_data_table) for the last six hours, its
+// local start texts `offset` seconds east of UTC.
+std::string clockTable(int offset) {
+  mtime::Seconds hour = mtime::now() - mtime::now() % 3600;
+  std::string body = R"({"epg_listings":[)";
+  for (int i = 6; i >= 0; --i) {
+    mtime::Seconds start = hour - i * 3600;
+    mtime::Civil c = mtime::civilFromSeconds(start + offset);
+    char local[32];
+    std::snprintf(local, sizeof local, "%04d-%02d-%02d %02d:%02d:%02d", c.year, c.month, c.day, c.hour, c.minute,
+                  c.second);
+    body += std::string(i == 6 ? "" : ",") + R"({"title":"U2hvdw==","start":")" + local +
+            R"(","start_timestamp":")" + std::to_string(start) + R"(","stop_timestamp":")" +
+            std::to_string(start + 3600) + R"(","has_archive":1})";
+  }
+  return body + "]}";
+}
+
+// "2026-11-15:20-52": `t` in a clock `offset` seconds east of UTC.
+std::string minuteIn(mtime::Seconds t, int offset) {
+  mtime::Civil c = mtime::civilFromSeconds(t + offset);
+  char buf[32];
+  std::snprintf(buf, sizeof buf, "%04d-%02d-%02d:%02d-%02d", c.year, c.month, c.day, c.hour, c.minute);
+  return buf;
+}
+
+std::string tableUrl(int id) { return mockClient().simpleDataTableRequest(std::to_string(id)).url; }
+
+}  // namespace
+
+TEST_CASE("replay 1.0.13: the copy's own archive clock over the server's; the log tells it once, never a link") {
+  Rig r;  // the server says UTC−5
+  r.tv.pool.answer(tableUrl(501), clockTable(3600));
+  std::string espn = r.entry("ESPN");
+  r.watchLive(espn, 502);
+  // Read while live played (its account had taught no clock yet).
+  CHECK(r.tv.pool.asked[tableUrl(501)] == 1);
+  Store::ArchiveClock clock = r.store->archiveClock(r.channelOf(501));
+  CHECK(clock.from == Store::ClockFrom::Table);
+  CHECK(clock.offset == 3600);
+  CHECK(clock.server == -5 * 3600);
+  CHECK(clock.settled);
+
+  size_t plays = r.player->plays.size();
+  mtime::Seconds from = minuteOf(mtime::now() - 40 * 60);
+  REQUIRE(r.session->replayFrom(from, Why::Rewind));
+  REQUIRE(r.player->plays.size() == plays + 1);  // nothing to wait for
+  CHECK(r.player->plays.back().url.find("/" + minuteIn(from, 3600) + "/501.ts") != std::string::npos);
+  CHECK(r.player->plays.back().url.find("/" + serverMinute(from) + "/") == std::string::npos);
+  r.picture();
+  mtime::Seconds to = minuteOf(mtime::now() - 20 * 60);
+  REQUIRE(r.session->replayFrom(to, Why::Rewind));
+  CHECK(r.player->plays.back().url.find("/" + minuteIn(to, 3600) + "/501.ts") != std::string::npos);
+
+  std::vector<std::string> lines = r.replayLines();
+  REQUIRE(lines.size() == 2);
+  CHECK(lines[0] == "rewind to " + hm(from) + "; archive clock UTC+1 (server says UTC\xe2\x88\x92" "5)");
+  CHECK(lines[1] == "rewind to " + hm(to) + "; archive clock UTC+1");
+  r.noLinks();
+
+  // A table on the server's own clock: told as the archive's, nothing more.
+  Rig same;
+  same.tv.pool.answer(tableUrl(501), clockTable(-5 * 3600));
+  same.watchLive(same.entry("ESPN"), 502);
+  REQUIRE(same.session->replayFrom(from, Why::Rewind));
+  CHECK(same.player->plays.back().url.find("/" + serverMinute(from) + "/501.ts") != std::string::npos);
+  REQUIRE(same.replayLines().size() == 1);
+  CHECK(same.replayLines()[0] == "rewind to " + hm(from) + "; archive clock UTC\xe2\x88\x92" "5");
+}
+
+TEST_CASE("replay 1.0.13: a copy without its own table takes its account's clock, kept across a restart") {
+  Rig r;
+  r.tv.pool.answer(tableUrl(501), clockTable(3600));
+  r.watchLive(r.entry("ESPN"), 502);
+  // 503 never had its table read: the clock its account's copies showed.
+  Store::ArchiveClock clock = r.store->archiveClock(r.channelOf(503));
+  CHECK(clock.from == Store::ClockFrom::Learned);
+  CHECK(clock.offset == 3600);
+  CHECK(clock.settled);
+  mtime::Seconds now = mtime::now(), from = minuteOf(now - 3600);
+  std::optional<Feed> f503 = r.store->copyFeed(r.channelOf(503));
+  REQUIRE(f503);
+  std::optional<Store::CatchupFeed> c = r.store->catchupFeed(*f503, from, now);
+  REQUIRE(c);
+  CHECK(c->feed.url.find("/" + minuteIn(from, 3600) + "/503.ts") != std::string::npos);
+  CHECK(c->clock.from == Store::ClockFrom::Learned);
+
+  // archive-clocks.json: ids and numbers only.
+  r.tv.pool.drain();
+  std::optional<std::string> saved = r.tv.files.read("archive-clocks.json");
+  REQUIRE(saved);
+  CHECK(saved->find("\"501\":3600") != std::string::npos);
+  CHECK(saved->find("://") == std::string::npos);
+  CHECK(saved->find("example.invalid") == std::string::npos);
+  CHECK(saved->find(std::string(mock::kPass)) == std::string::npos);
+
+  // The next launch: both known before any table is read.
+  Store again(r.tv.host());
+  fake::settle(again, r.tv);
+  Store::ArchiveClock own = again.archiveClock(r.channelOf(501));
+  CHECK(own.from == Store::ClockFrom::Table);
+  CHECK(own.offset == 3600);
+  Store::ArchiveClock learned = again.archiveClock(r.channelOf(503));
+  CHECK(learned.from == Store::ClockFrom::Learned);
+  CHECK(learned.offset == 3600);
+  CHECK(learned.settled);
+  CHECK(r.tv.pool.asked[tableUrl(501)] == 1);
+}
+
+TEST_CASE("replay 1.0.13: the first replay waits for the copy's table, then plays in its clock") {
+  Rig r;
+  r.tv.pool.answer(tableUrl(501), clockTable(3600));
+  r.tv.pool.hold(tableUrl(501));  // a slow panel
+  r.watchLive(r.entry("ESPN"), 502);
+  CHECK_FALSE(r.store->archiveClock(r.channelOf(501)).settled);
+  size_t plays = r.player->plays.size();
+  mtime::Seconds from = minuteOf(mtime::now() - 40 * 60);
+  REQUIRE(r.session->replayFrom(from, Why::StartOver));
+  REQUIRE(r.session->replay());
+  CHECK(r.session->replay()->clockWait);
+  CHECK(r.session->opening());
+  // Rewind's timeline asks for the same table: no second request.
+  r.session->wantPast();
+  r.run(1000);
+  CHECK(r.player->plays.size() == plays);
+  r.tv.pool.letGo(tableUrl(501));
+  r.run(250);
+  REQUIRE(r.player->plays.size() == plays + 1);
+  CHECK(r.player->plays.back().url.find("/" + minuteIn(from, 3600) + "/501.ts") != std::string::npos);
+  CHECK_FALSE(r.session->replay()->clockWait);
+  CHECK(r.tv.pool.asked[tableUrl(501)] == 1);
+  std::vector<std::string> lines = r.replayLines();
+  CHECK(std::count(lines.begin(), lines.end(),
+                   "start over " + hm(from) + "; archive clock UTC+1 (server says UTC\xe2\x88\x92" "5)") == 1);
+  CHECK(std::count_if(lines.begin(), lines.end(),
+                      [](const std::string& l) { return l.rfind("past listings: ", 0) == 0; }) == 1);
+  r.picture();
+  CHECK(r.session->replay()->phase == Phase::Playing);
+  r.noLinks();
+}
+
+TEST_CASE("replay 1.0.13: no table within 3 s: the server's clock; the table that comes later serves the next") {
+  Rig r;
+  r.tv.pool.answer(tableUrl(501), clockTable(3600));
+  r.tv.pool.hold(tableUrl(501));
+  r.watchLive(r.entry("ESPN"), 502);
+  size_t plays = r.player->plays.size();
+  mtime::Seconds from = minuteOf(mtime::now() - 40 * 60);
+  REQUIRE(r.session->replayFrom(from, Why::Rewind));
+  r.run(2750);
+  CHECK(r.player->plays.size() == plays);
+  r.run(500);
+  REQUIRE(r.player->plays.size() == plays + 1);
+  CHECK(r.player->plays.back().url.find("/" + serverMinute(from) + "/501.ts") != std::string::npos);
+  CHECK(r.replayLines().back() == "rewind to " + hm(from) + "; server clock UTC\xe2\x88\x92" "5");
+  r.picture();
+  REQUIRE(r.session->replay()->phase == Phase::Playing);
+  // The table at last: kept, and the stretch playing isn't disturbed.
+  r.tv.pool.letGo(tableUrl(501));
+  r.run(250);
+  CHECK(r.player->plays.size() == plays + 1);
+  CHECK(r.store->archiveClock(r.channelOf(501)).from == Store::ClockFrom::Table);
+  mtime::Seconds to = minuteOf(mtime::now() - 20 * 60);
+  REQUIRE(r.session->replayFrom(to, Why::Rewind));
+  CHECK(r.player->plays.back().url.find("/" + minuteIn(to, 3600) + "/501.ts") != std::string::npos);
+  CHECK(r.replayLines().back() == "rewind to " + hm(to) + "; archive clock UTC+1 (server says UTC\xe2\x88\x92" "5)");
+  r.noLinks();
+
+  // A panel that never has the table: one wait, then the server's clock at once.
+  Rig n;
+  n.watchLive(n.entry("ESPN"), 502);  // its table failed while live played
+  CHECK(n.store->archiveClock(n.channelOf(501)).settled);
+  size_t before = n.player->plays.size();
+  REQUIRE(n.session->replayFrom(from, Why::Rewind));
+  CHECK(n.player->plays.size() == before + 1);
+}

@@ -2164,3 +2164,27 @@ After Test all sources, channels still started on a 720p copy ahead of a 1080p o
 | Never measured | A channel nobody played or tested since the update | Same order as 1.0.11 |
 | Server-opened 1080p | A channel with a direct 720p and an Emby 1080p that starts within 4 s | The Emby 1080p starts; with both at 720p, the direct one does |
 | Backup | Three providers, two of them the same service underneath | BACKUP still on a copy from the separate one |
+
+## Build 170: 1.0.13, replay plays the moment picked
+
+On some channels a replay started earlier than the moment picked. An Xtream provider's replay link asks for a moment in the provider's own clock, and the app took that clock from what the server says about itself. Some channels' archives are kept on another clock (a channel's guide in another time zone, or a different machine behind the same address), so the moment asked for was off by the difference, usually an hour.
+
+Now each channel's own guide with its past (the one Rewind's timeline reads) also tells the clock its archive is on: every programme in it has its start written in the provider's local time next to the exact moment, and the difference between the two, to the nearest quarter hour (the most common one when they disagree), is that channel's archive clock. Replay links for the channel ask in that clock. A channel whose own guide hasn't been read yet uses the clock most of the same provider's channels showed; a provider none of whose channels has been read yet uses what its server says, as before. What was learned is kept, so it holds after the app restarts.
+
+While nothing has been learned for a provider yet, the channel's guide is read in the background as soon as its live picture shows, so a replay rarely has to wait. If it hasn't come in when a replay starts, the replay waits for it up to 3 seconds, then plays in the server's clock; the guide that comes later serves the next replay.
+
+Test all sources reads the guide of every channel with replay just before testing its archive, so its archive is tested in its own clock and every replay channel's clock is known up front. A provider that refuses that request is paused as it is for a refused test. When a provider is done, its playback log has one line in words, such as "Dream: archive clocks: UTC+1 on all replay channels; server says UTC", or "UTC+1 (most), UTC (some)".
+
+In the playback log, each replay line says the clock used. "archive clock UTC+1" means the channel's own clock (or the provider's learned one); the first replay on a channel whose archive clock differs from the server's adds "(server says UTC)". "server clock UTC−5" means nothing was learned and the server's own was used. The safety margin of an hour at the archive's far end is unchanged.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Picked moment | On a news or sports channel with an on-screen clock, on each provider: Rewind, pick a time 30 minutes back | The on-screen clock shows the time picked (within a minute), on every provider |
+| Start over | Menu › Start over on a programme that began 20 minutes ago | It opens at the programme's start, not an hour before or after |
+| Sports channel | The same on a Dream sports channel that played too early in 1.0.12 | The moment picked |
+| Log | Playback log after a replay on a Dream sports channel | The first replay line names the clock found, with what the server says when they differ ("archive clock UTC+1 (server says UTC)"), later ones the clock alone; no links |
+| Same clock | A channel whose archive is on the server's clock | "archive clock UTC" with nothing after it |
+| First replay | Fresh install, add a provider, tune a replay channel, Start over within a few seconds of the picture | It starts within about 3 seconds, at the right moment |
+| Restart | Quit and reopen, replay on a channel never rewound before on that provider | It starts at once, at the right moment; the line says "archive clock" |
+| Test all sources | Run it with a provider whose channels keep replay | Its "done" line is followed by "archive clocks: …" in words, no counts; replay worked as before or better |
+| Second clock | After Test all sources, replay on a channel of the provider where the log said "(some)" | The moment picked |

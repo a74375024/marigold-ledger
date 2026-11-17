@@ -156,6 +156,7 @@ constexpr const char* kListsFile = "lists.json";
 constexpr const char* kLineupFile = "lineup.json";
 constexpr const char* kPicturesFile = "pictures.json";  // measured pictures (Build 136)
 constexpr const char* kScoresFile = "feed-scores.json";  // what each copy's plays showed (Build 166)
+constexpr const char* kClocksFile = "archive-clocks.json";  // the copies' archive clocks (Build 170)
 constexpr const char* kM3uStreamsFile = "m3u-streams.json";  // secret
 constexpr const char* kStationsFile = "stations-v2.json";  // v2: two-city cells, MyNetworkTV
 constexpr const char* kOldLogoIndexFile = "logo-index.json";  // downloaded by builds before 89
@@ -848,6 +849,7 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
     m.scores = scores::Book::fromJson(*text);
     m.archiveSeen = std::make_shared<const ArchiveSeen>(archiveSeen(m.scores));
   }
+  if (auto text = st.read(kClocksFile)) m.archiveClocks = ArchiveClocks::fromJson(*text);
   // The saved M3U links (tens of thousands) are read on a worker once the
   // first frame is up (tick): only a tune needs them.
   for (sources::Account& a : m.accounts) {
@@ -1403,6 +1405,7 @@ void Store::refreshAll() {
   Impl& m = *impl_;
   ++m.generation;
   host_.pool.cancelAll();
+  m.tablesOut.clear();  // Build 170: their answers won't come
   if (host_.requestsCancelled) host_.requestsCancelled();
   // A patch on its way was dropped with the rest: published again.
   if (m.patching) {
@@ -3564,6 +3567,17 @@ void Store::saveScoresLater() {
   Impl& m = *impl_;
   m.scoresDirty = false;
   writeLater(host_, m.disk, m.scoresWriter, kScoresFile, m.scores.toJson());
+}
+
+void Store::saveArchiveClocksLater() {
+  Impl& m = *impl_;
+  // Only the accounts still here.
+  for (auto it = m.archiveClocks.accounts.begin(); it != m.archiveClocks.accounts.end();) {
+    bool kept = std::any_of(m.accounts.begin(), m.accounts.end(),
+                            [&](const sources::Account& a) { return a.id == it->first; });
+    it = kept ? std::next(it) : m.archiveClocks.accounts.erase(it);
+  }
+  writeLater(host_, m.disk, m.clocksWriter, kClocksFile, m.archiveClocks.toJson());
 }
 
 void Store::saveScoresNow() {
