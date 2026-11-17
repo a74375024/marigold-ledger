@@ -29,6 +29,19 @@
 // provider answers ranges, else by reading the stream through when the
 // moment is at most four minutes into the chunk; otherwise it plays from
 // the chunk, and everything shown says so. Not measured: as Build 170.
+//
+// Build 173: the archive's hour from the video itself. A lag behind every
+// moment asked that is a whole number of quarter hours (to within a
+// minute), from 15 minutes to 14 hours either way, isn't the recording
+// running late: the provider's archive is on another clock than the one
+// the links asked in (its server and its own table can both say UTC while
+// the archive runs on UTC+1). That lag becomes the channel's archive
+// clock (Timing::clock, kept by the store as measured, over what the table
+// or the server says, and taught to the account's other channels); only a
+// smaller lag stays the recording's offset. A first replay on a channel
+// whose clock was never measured reads its live picture and one stretch
+// near the moment picked (classifyQuick) before it starts, a few seconds
+// at most, so even that replay plays the hour picked.
 #pragma once
 
 #include <atomic>
@@ -63,8 +76,28 @@ struct Timing {
   int seekable = -1;      // byte ranges: 1 answered, 0 not, -1 not known
   uint32_t byteRate = 0;  // bytes a second of video (0 not known)
   time::Seconds at = 0;   // when measured
+  // Build 173: the clock the archive is really on (seconds east of UTC):
+  // the clock the reads asked in, moved by a whole quarter-hour lag where
+  // there was one. nullopt: the reads couldn't tell. Not saved with the
+  // timing: the store keeps it as the copy's measured archive clock.
+  std::optional<int> clock;
   bool told() const { return kind != Kind::Unknown; }
 };
+
+// Build 173: a lag (seconds the archive starts before the moment asked;
+// negative: after) as a clock error and the recording's offset. `clock`: a
+// whole number of quarter hours from 15 min to 14 h when the lag is that
+// to within a minute (else 0); `offset`: the rest, whole minutes (under
+// 45 s is none). `usable` false: no clock error and an offset over 90
+// minutes (nothing a recording does).
+struct LagParts {
+  int clock = 0;
+  int offset = 0;
+  bool usable = true;
+};
+LagParts splitLag(time::Seconds lag);
+inline constexpr int kClockStep = 15 * 60;
+inline constexpr int kClockMost = 14 * 3600;
 
 // The chunk sizes looked for, in minutes.
 inline constexpr int kChunkMinutes[] = {5, 10, 15, 20, 30, 60, 120};
@@ -95,8 +128,21 @@ struct Readings {
   time::Seconds at = 0;
 };
 // What the reads say. `ambiguous` (when set) gets the chunk sizes still
-// possible when more than one is (a third read decides).
+// possible when more than one is (a third read decides). Build 173: with
+// the clock the archive is on (Timing::clock) wherever the reads tell it;
+// a chunked archive on another clock is found too.
 Timing classify(const Readings& r, std::vector<int>* ambiguous = nullptr);
+// Build 173: what the live read and the first archive read alone say, for
+// a first replay that can't wait for more: Exact, with its clock and
+// offset, when the stretch starts a whole number of quarter hours (zero
+// included) before or after the moment asked, to within a minute, and not
+// on a programme's start; nullopt otherwise (a chunk, a programme, a
+// stream that isn't the broadcast's: the full reads tell).
+std::optional<Timing> classifyQuick(const Readings& r);
+// The moment read for a replay of `picked`: the minute nearest it that is 7
+// past a quarter hour (no chunk of any size in kChunkMinutes starts a
+// whole number of quarter hours before it), at least ten minutes back.
+time::Seconds quickMoment(time::Seconds picked, time::Seconds now);
 // The moment for a third read that tells `sizes` apart (after the first
 // archive read's start `start`).
 time::Seconds decidingMoment(time::Seconds start, const std::vector<int>& sizes, int clock);
@@ -114,6 +160,12 @@ struct Request {
   std::function<std::optional<std::string>(time::Seconds)> linkFor;
   int clock = 0;
   std::vector<time::Seconds> programmeStarts;
+  // Build 173: a replay's moment: the first archive read is near it
+  // (quickMoment), each read stops at its first picture, and when those
+  // two alone tell (classifyQuick) nothing more is read. `quickMs`: the
+  // most the live read and that one may take together (0: the budget).
+  std::optional<time::Seconds> picked;
+  uint32_t quickMs = 0;
 };
 struct Outcome {
   std::optional<Timing> timing;  // nullopt: nothing could be read
@@ -128,7 +180,10 @@ inline constexpr time::Seconds kApart = 11 * 60;
 // Runs the reads on the calling worker thread: live, then the two
 // moments (the second asking a byte range from 0), a third when two chunk
 // sizes fit. `budgetMs`: the whole of it (each read stops at its first
-// picture and a few seconds of video, sooner near the end).
+// picture and a few seconds of video, sooner near the end). Build 173:
+// with `req.picked`, a read near it first (see Request); and reads cut
+// short by the budget tell nothing (nullopt), so the copy is measured
+// again rather than kept as not measurable.
 using Clock = std::function<uint32_t()>;
 Outcome measure(http::Pool& pool, const Request& req, const Clock& clock, const std::atomic<bool>* abort,
                 uint32_t budgetMs, time::Seconds now);
@@ -176,6 +231,9 @@ std::string planText(const Plan& p, const std::optional<Timing>& t,
 std::string providerText(const std::vector<Timing>& all);
 
 // Saved: "e|c30|p|r|u", then ",<offset>,<seekable>,<rate>,<at>".
+// Build 173: an offset of a whole number of quarter hours (to within a
+// minute) is a clock error 1.0.15 kept as an offset: not read back, so
+// the copy is measured again.
 std::string encode(const Timing& t);
 std::optional<Timing> decode(const std::string& s);
 

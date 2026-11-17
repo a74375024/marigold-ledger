@@ -4,6 +4,8 @@
 // can rest, and what is kept.
 #include <doctest.h>
 
+#include <cstdlib>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -485,4 +487,230 @@ TEST_CASE("archive timing: measured over the network, a range asked on the secon
   CHECK(archive::providerText({ex, ex}) == "exact on all replay channels");
   CHECK(archive::providerText({ex, ex, ex, ch}) == "exact 75%, 30-min chunks (skips to the minute) 25%");
   CHECK(archive::providerText({}).empty());
+}
+
+// ------------------------------------------- Build 173: the hour from the video
+
+TEST_CASE("archive clock 1.0.16: a whole number of quarter hours is the clock, a smaller lag the recording's") {
+  // The lag split.
+  CHECK(archive::splitLag(3600).clock == 3600);
+  CHECK(archive::splitLag(3600).offset == 0);
+  CHECK(archive::splitLag(3600 + 59).clock == 3600);  // within a minute
+  CHECK(archive::splitLag(3600 + 59).offset == 60);
+  CHECK(archive::splitLag(3600 - 70).offset == -60);
+  CHECK(archive::splitLag(-3600).clock == -3600);
+  CHECK(archive::splitLag(900).clock == 900);
+  CHECK(archive::splitLag(-2700).clock == -2700);
+  CHECK(archive::splitLag(14 * 3600).clock == 14 * 3600);
+  CHECK(archive::splitLag(14 * 3600 + 900).clock == 0);  // beyond any clock
+  CHECK_FALSE(archive::splitLag(14 * 3600 + 900).usable);
+  for (int lag : {0, 30, 60, 120, 20 * 60, 3600 + 150, 7 * 60})
+    CHECK(archive::splitLag(lag).clock == 0);
+  CHECK(archive::splitLag(20 * 60).offset == 20 * 60);
+  CHECK(archive::splitLag(30).offset == 0);
+
+  time::Seconds now = 1800000000;
+  // The user's case: asked in UTC, the archive on UTC+1 starts an hour early.
+  Timing hour = archive::classify(readings(now, [](time::Seconds t) { return t - 3600; }));
+  CHECK(hour.kind == Kind::Exact);
+  CHECK(hour.offset == 0);
+  REQUIRE(hour.clock);
+  CHECK(*hour.clock == 3600);
+  // Asked in UTC−5 (the server's): the archive's clock, not a correction.
+  Timing east = archive::classify(readings(now, [](time::Seconds t) { return t - 3600; }, -5 * 3600));
+  CHECK(east.clock == -4 * 3600);
+  // A quarter hour, with the recording a minute behind as well.
+  Timing quarter = archive::classify(readings(now, [](time::Seconds t) { return t - 900 - 60; }));
+  CHECK(quarter.kind == Kind::Exact);
+  CHECK(quarter.clock == 900);
+  CHECK(quarter.offset == 60);
+  // Fourteen hours: still a clock.
+  CHECK(archive::classify(readings(now, [](time::Seconds t) { return t - 14 * 3600; })).clock == 14 * 3600);
+  // The archive later than asked (1.0.15: "timestamps rewritten").
+  Timing later = archive::classify(readings(now, [](time::Seconds t) { return t + 3600; }));
+  CHECK(later.kind == Kind::Exact);
+  CHECK(later.clock == -3600);
+  Timing later2 = archive::classify(readings(now, [](time::Seconds t) { return t + 3600 + 1800; }));
+  CHECK(later2.clock == -3600 - 1800);
+  // Smaller lags stay the recording's, in the clock asked.
+  Timing small = archive::classify(readings(now, [](time::Seconds t) { return t - 120; }));
+  CHECK(small.kind == Kind::Exact);
+  CHECK(small.offset == 120);
+  CHECK(small.clock == 0);
+  Timing twenty = archive::classify(readings(now, [](time::Seconds t) { return t - 20 * 60; }));
+  CHECK(twenty.offset == 20 * 60);
+  CHECK(twenty.clock == 0);
+  // Two hours and seven minutes: neither.
+  Timing odd = archive::classify(readings(now, [](time::Seconds t) { return t - 2 * 3600 - 7 * 60; }));
+  CHECK(odd.kind == Kind::Unmeasured);
+  CHECK_FALSE(odd.clock);
+  // Past fourteen hours: nothing the broadcast's clock explains.
+  CHECK_FALSE(archive::classify(readings(now, [](time::Seconds t) { return t - 15 * 3600; })).clock);
+
+  // Chunks on another clock: 30-minute files on UTC+1, asked in UTC.
+  Timing chunks = archive::classify(readings(now, [](time::Seconds t) { return chunkOf(t, 30, 3600) - 3600; }));
+  CHECK(chunks.kind == Kind::Chunked);
+  CHECK(chunks.chunkMinutes == 30);
+  CHECK(chunks.clock == 3600);
+  // Chunks on the clock asked: that clock.
+  CHECK(archive::classify(readings(now, [](time::Seconds t) { return chunkOf(t, 30); })).clock == 0);
+  // Planned in the measured clock: asked for its chunk, on its boundaries.
+  archive::Plan p = archive::plan(chunks, now - 3 * 3600 + 40 * 60, 3600, false, false, {});
+  CHECK(p.ask == now - 3 * 3600 + 30 * 60);
+}
+
+TEST_CASE("archive clock 1.0.16: a first replay's two reads, the moment read, and 1.0.15's kept offsets") {
+  time::Seconds now = 1800000000;
+  // Read 7 minutes past a quarter hour, near the moment picked, ten
+  // minutes back at least.
+  for (time::Seconds picked : {now - 2 * 3600, now - 2 * 3600 + 3 * 60, now - 3600 + 14 * 60, now - 40 * 60 + 37}) {
+    time::Seconds at = archive::quickMoment(picked, now);
+    CHECK((at / 60) % 15 == 7);
+    CHECK(at % 60 == 0);
+    CHECK(std::abs(at - picked) <= 8 * 60);
+  }
+  CHECK(archive::quickMoment(now - 2 * 3600, now) == now - 2 * 3600 + 7 * 60);
+  time::Seconds close = archive::quickMoment(now - 5 * 60, now);
+  CHECK(close <= now - 10 * 60);
+  CHECK((close / 60) % 15 == 7);
+
+  auto quick = [now](std::function<time::Seconds(time::Seconds)> startOf, int clock = 0,
+                     std::vector<time::Seconds> programmes = {}) {
+    archive::Readings r;
+    r.clock = clock;
+    r.live = archive::Read{now, broadcast(now - 4)};
+    time::Seconds at = archive::quickMoment(now - 2 * 3600, now);
+    r.archive.push_back({at, broadcast(startOf(at))});
+    r.programmeStarts = std::move(programmes);
+    return archive::classifyQuick(r);
+  };
+  std::optional<Timing> hour = quick([](time::Seconds t) { return t - 3600; });
+  REQUIRE(hour);
+  CHECK(hour->kind == Kind::Exact);
+  CHECK(hour->clock == 3600);
+  CHECK(quick([](time::Seconds t) { return t + 3600; })->clock == -3600);
+  CHECK(quick([](time::Seconds t) { return t; })->clock == 0);
+  CHECK(quick([](time::Seconds t) { return t - 60; })->offset == 60);
+  CHECK(quick([](time::Seconds t) { return t - 3600; }, 3600)->clock == 7200);
+  // A chunk's or a programme's start: the full reads tell.
+  for (int size : {5, 10, 15, 20, 30, 60, 120})
+    CHECK_FALSE(quick([size](time::Seconds t) { return chunkOf(t, size); }));
+  CHECK_FALSE(quick([](time::Seconds t) { return chunkOf(t, 60) - 3600; }));
+  time::Seconds show = archive::quickMoment(now - 2 * 3600, now) - 3600;
+  CHECK_FALSE(quick([show](time::Seconds) { return show; }, 0, {show}));
+  CHECK_FALSE(quick([](time::Seconds t) { return t - 2 * 3600 - 7 * 60; }));
+  // Nothing without live.
+  archive::Readings alone;
+  alone.archive.push_back({now - 7200, broadcast(now - 7200)});
+  CHECK_FALSE(archive::classifyQuick(alone));
+
+  // 1.0.15 kept a clock error as the recording's offset: not read back.
+  CHECK_FALSE(archive::decode("e,3600,-1,0,1800000000"));
+  CHECK_FALSE(archive::decode("e,-3600,-1,0,1800000000"));
+  CHECK_FALSE(archive::decode("c30,900,1,5,6"));
+  CHECK(archive::decode("e,60,-1,0,1800000000"));
+  CHECK(archive::decode("e,1200,-1,0,1800000000"));
+}
+
+TEST_CASE("archive clock 1.0.16: tables' and measured clocks kept apart; measured wins; 1.0.15's file read as tables") {
+  // A 1.0.15 file: every clock from a table, a timing with an hour's offset.
+  engine::ArchiveClocks old = engine::ArchiveClocks::fromJson(
+      R"({"v":1,"accounts":{"acc":{"last":0,"streams":{"501":0,"502":0,"509":7200},)"
+      R"("timing":{"501":"e,3600,-1,0,1800000000","502":"e,0,-1,0,1800000000"}}}})");
+  CHECK(old.stream("acc", "501") == 0);
+  CHECK_FALSE(old.measuredStream("acc", "501"));
+  CHECK_FALSE(old.timing("acc", "501"));  // measured again
+  CHECK(old.timing("acc", "502"));
+  CHECK_FALSE(old.measuredFor("acc", 0, 0, true));  // nothing measured yet
+
+  // A measurement on 501: UTC+1 where its table said UTC.
+  CHECK(old.noteMeasured("acc", "501", 3600));
+  CHECK_FALSE(old.noteMeasured("acc", "501", 3600));  // nothing changed
+  CHECK(old.measuredStream("acc", "501") == 3600);
+  CHECK(old.stream("acc", "501") == 0);  // the table's, still kept as the table's
+  // Another copy whose table says UTC too: UTC+1.
+  CHECK(old.measuredFor("acc", 0, 0, false) == 3600);
+  // One whose own table says something else keeps it; one without a table
+  // takes what most measured copies showed.
+  CHECK_FALSE(old.measuredFor("acc", 7200, 0, false));
+  CHECK(old.measuredFor("acc", 0, std::nullopt, true) == 3600);
+  // The account's copies disagree: the most common measured value.
+  old.noteMeasured("acc", "502", 3600);
+  old.noteMeasured("acc", "503", 0);
+  CHECK(old.measuredFor("acc", 0, 0, false) == 3600);
+  CHECK(old.measuredFor("acc", 99, 0, true) == 3600);
+
+  // Saved apart, ids and numbers only, and read back.
+  std::string json = old.toJson();
+  CHECK(json.find("\"measured\":{\"501\":3600,\"502\":3600,\"503\":0}") != std::string::npos);
+  CHECK(json.find("\"streams\":{\"501\":0,\"502\":0,\"509\":7200}") != std::string::npos);
+  CHECK(json.find("http") == std::string::npos);
+  engine::ArchiveClocks back = engine::ArchiveClocks::fromJson(json);
+  CHECK(back.measuredStream("acc", "501") == 3600);
+  CHECK(back.stream("acc", "501") == 0);
+  CHECK(back.measuredFor("acc", 0, 0, false) == 3600);
+  // Junk measured entries left out.
+  engine::ArchiveClocks junk = engine::ArchiveClocks::fromJson(
+      R"({"v":2,"accounts":{"acc":{"measured":{"1":3600,"2":"x","../3":0,"4":99999999}}}})");
+  CHECK(junk.measuredStream("acc", "1") == 3600);
+  CHECK(junk.accounts["acc"].measured.size() == 1);
+
+  // Exact everywhere measured: a copy not measured yet is taken as exact.
+  engine::ArchiveClocks ex;
+  Timing e;
+  e.kind = Kind::Exact;
+  CHECK_FALSE(ex.allExact("a"));
+  ex.noteTiming("a", "1", e);
+  CHECK(ex.allExact("a"));
+  Timing c;
+  c.kind = Kind::Chunked;
+  c.chunkMinutes = 30;
+  ex.noteTiming("a", "2", c);
+  CHECK_FALSE(ex.allExact("a"));
+}
+
+TEST_CASE("archive clock 1.0.16: over the network for a replay: two reads when they tell, the full ones when not") {
+  fake::Tv tv;
+  time::Seconds now = time::now();
+  archive::Request req;
+  req.live = "http://m.example.invalid/live/u/p/9.ts";
+  req.linkFor = [](time::Seconds at) { return "http://m.example.invalid/timeshift/x/" + std::to_string(at) + "/9.ts"; };
+  time::Seconds picked = now - 2 * 3600 - (now % 3600);
+  req.picked = picked;
+  req.quickMs = 4000;
+  time::Seconds at = archive::quickMoment(picked, now);
+  time::Seconds first = archive::firstMoment(now), second = first + archive::kApart;
+  tv.pool.answer(req.live, clip(broadcast(now - 3), 4));
+  tv.pool.answer(*req.linkFor(at), clip(broadcast(at - 3600), 5));
+  uint32_t ms = 0;
+  archive::Clock ticking = [&ms] { return ms += 5; };
+  archive::Outcome o = archive::measure(tv.pool, req, ticking, nullptr, 4000, now);
+  REQUIRE(o.timing);
+  CHECK(o.timing->kind == Kind::Exact);
+  CHECK(o.timing->clock == 3600);
+  CHECK(tv.pool.asked[*req.linkFor(first)] == 0);  // nothing more read
+  CHECK(tv.pool.asked[*req.linkFor(second)] == 0);
+
+  // 30-minute chunks: the read near the moment can't tell; the full reads do.
+  fake::Tv chunked;
+  chunked.pool.answer(req.live, clip(broadcast(now - 3), 4));
+  chunked.pool.answer(*req.linkFor(at), clip(broadcast(chunkOf(at, 30)), 5));
+  chunked.pool.answer(*req.linkFor(first), clip(broadcast(chunkOf(first, 30)), 5));
+  chunked.pool.answer(*req.linkFor(second), clip(broadcast(chunkOf(second, 30)), 5));
+  archive::Outcome c = archive::measure(chunked.pool, req, ticking, nullptr, 20000, now);
+  REQUIRE(c.timing);
+  CHECK(c.timing->kind == Kind::Chunked);
+  CHECK(c.timing->chunkMinutes == 30);
+  CHECK(c.timing->clock == 0);
+
+  // Out of time before the full reads tell: nothing (measured again), not
+  // "not measured".
+  fake::Tv slow;
+  slow.pool.answer(req.live, clip(broadcast(now - 3), 4));
+  slow.pool.answer(*req.linkFor(at), clip(broadcast(chunkOf(at, 30)), 5));
+  uint32_t slowMs = 0;
+  archive::Clock crawling = [&slowMs] { return slowMs += 400; };
+  archive::Outcome s = archive::measure(slow.pool, req, crawling, nullptr, 4000, now);
+  CHECK_FALSE(s.timing);
+  CHECK(s.why.find("://") == std::string::npos);
 }

@@ -674,10 +674,17 @@ void Runner::next(Slot& s, uint32_t ms) {
     std::optional<int> server;
     for (const Item& item : q) {
       if (item.kind != Kind::Archive || !seen.insert(item.channelId).second) continue;
+      // Build 173: the clock its timing turn measured from the video, over
+      // what its table said.
+      Store::ArchiveClock ac = store_.archiveClock(item.channelId);
+      if (!server) server = ac.server;
+      if (ac.from == Store::ClockFrom::Measured && ac.offset) {
+        clocks.push_back(*ac.offset);
+        continue;
+      }
       auto c = run_.done.find(key(item.channelId, Kind::Clock));
       if (c == run_.done.end() || c->second.size() < 2 || c->second[0] != 'o') continue;
       clocks.push_back(std::atoi(c->second.c_str() + 1));
-      if (!server) server = store_.archiveClock(item.channelId).server;
     }
     std::string words = clocksText(clocks, server);
     if (!words.empty()) logLine(providerName(id) + ": archive clocks: " + words);

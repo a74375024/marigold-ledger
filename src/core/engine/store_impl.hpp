@@ -253,25 +253,48 @@ ArchiveSeen archiveSeen(const scores::Book& book);
 // Build 170: the archive clocks read from Xtream copies' own guides
 // (get_simple_data_table), seconds east of UTC, by account id and stream
 // id: archive-clocks.json, ids and numbers only, bounded.
+//
+// Build 173: each kept clock says where it came from. `streams` holds what
+// each copy's table said (all a 1.0.13 / 1.0.15 file holds), `measured`
+// what its video showed (archive_timing.hpp: the lag behind the moment
+// asked). The server's own clock is never kept: it is read with the
+// account. A measurement replaces a table's clock for its copy, and
+// teaches the account's other copies (measuredFor).
 struct ArchiveClocks {
   static constexpr size_t kStreamsKept = 4000;  // per account
   static constexpr size_t kAccountsKept = 64;
   struct Account {
-    std::map<std::string, int> streams;
+    std::map<std::string, int> streams;  // from each copy's table
     std::optional<int> last;  // the one read most recently
+    // Build 173: from each copy's video, and the one measured most recently.
+    std::map<std::string, int> measured;
+    std::optional<int> lastMeasured;
     // Build 172: each copy's archive timing (archive_timing.hpp).
     std::map<std::string, archive::Timing> timings;
   };
   std::map<std::string, Account> accounts;
   // Records a copy's clock; true when something changed.
   bool note(const std::string& accountId, const std::string& streamId, int offset);
+  // Build 173: a copy's clock measured from its video; true when something
+  // changed.
+  bool noteMeasured(const std::string& accountId, const std::string& streamId, int offset);
   // Build 172: a copy's archive timing (bounded like the clocks).
   bool noteTiming(const std::string& accountId, const std::string& streamId, const archive::Timing& t);
   std::optional<archive::Timing> timing(const std::string& accountId, const std::string& streamId) const;
   std::optional<int> stream(const std::string& accountId, const std::string& streamId) const;
+  std::optional<int> measuredStream(const std::string& accountId, const std::string& streamId) const;
   // The account's learned clock: the value most of its copies showed; a
   // tie goes to the one read last. nullopt: none read yet.
   std::optional<int> learned(const std::string& accountId) const;
+  // Build 173: the clock the account's measured copies teach a copy whose
+  // table (else its server) says `said`: the value most often measured on
+  // copies whose table (else server) said the same; else, when `any`, the
+  // value most often measured at all (a tie: the one measured last).
+  // nullopt: nothing measured that fits.
+  std::optional<int> measuredFor(const std::string& accountId, std::optional<int> said, std::optional<int> server,
+                                 bool any) const;
+  // Build 173: every timing the account's copies told is exact (one at least).
+  bool allExact(const std::string& accountId) const;
   std::string toJson() const;
   static ArchiveClocks fromJson(std::string_view text);
 };

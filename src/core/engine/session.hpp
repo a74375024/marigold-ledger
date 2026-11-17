@@ -262,6 +262,10 @@ class Session {
       uint32_t since = 0;
       int serial = 0;
       bool measuring = false;  // Build 172: its archive timing is measured meanwhile
+      // Build 173: how long it may wait (ms): kClockWaitMs for the table,
+      // kMeasureWaitMs once its archive clock is being measured.
+      uint32_t limit = kClockWaitMs;
+      bool clock = false;  // Build 173: its archive clock was never measured
     };
     std::optional<ClockWait> clockWait;
     // Build 172: the moment the stream asked for begins with (a chunk's
@@ -281,6 +285,12 @@ class Session {
   static constexpr uint32_t kInsideExtraMs = 15000;
   // Build 170: the longest a first replay waits for its copy's archive clock.
   static constexpr uint32_t kClockWaitMs = 3000;
+  // Build 173: the longest a first replay on a copy whose archive clock was
+  // never measured (nor its account's) waits for it, all in; and how long
+  // the reads may carry on after it where the account has a connection to
+  // spare.
+  static constexpr uint32_t kMeasureWaitMs = 4000;
+  static constexpr uint32_t kMeasureOnMs = 15000;
   // Paused: the stream is closed this long after the picture was held.
   static constexpr uint32_t kReleaseMs = 3000;
   // A replay this close to live is live.
@@ -598,6 +608,7 @@ class Session {
   struct ReplayClock {
     std::optional<int> offset, server;  // seconds east of UTC
     bool archive = false;               // the copy's own archive clock or its account's
+    bool measured = false;              // Build 173: from the video (the copy's or its account's)
   };
   std::optional<ReplayClock> replayClock_;
   std::set<std::string> clockTold_;

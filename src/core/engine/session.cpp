@@ -1005,9 +1005,18 @@ void Session::logReplay(std::string detail, size_t copy, bool clock) {
       // Build 170: the copy's own archive clock (or its account's); once per
       // copy, what the server said when it differs.
       detail += "; archive clock " + sources::xtream::offsetText(*c->offset);
-      if (c->server != c->offset && copy < feeds_.size() && clockTold_.insert(feeds_[copy].channelId).second)
-        detail += " (server says " +
-                  (c->server ? sources::xtream::offsetText(*c->server) : std::string("nothing")) + ")";
+      // Build 173: "(measured; server says UTC)" when it came from the video
+      // (told again once measured).
+      bool differs = c->server != c->offset;
+      std::string told = copy < feeds_.size() ? feeds_[copy].channelId + (c->measured ? "#m" : "") : std::string();
+      if ((differs || c->measured) && !told.empty() && clockTold_.insert(told).second) {
+        std::vector<std::string> notes;
+        if (c->measured) notes.push_back("measured");
+        if (differs)
+          notes.push_back("server says " +
+                          (c->server ? sources::xtream::offsetText(*c->server) : std::string("nothing")));
+        detail += " (" + notes[0] + (notes.size() > 1 ? "; " + notes[1] : std::string()) + ")";
+      }
     } else {
       std::optional<int> offset = c ? c->offset : std::nullopt;
       detail += "; server clock " +
@@ -1070,15 +1079,26 @@ void Session::playReplay(size_t index, time::Seconds from, const std::string& wh
   // Build 172: a copy whose archive timing was never measured is measured
   // in the same few seconds (once a run); what isn't in by then serves the
   // next replay.
+  // Build 173: a copy whose archive clock was never measured from its
+  // video (nor any of its account's copies like it) is measured before it
+  // starts, kMeasureWaitMs at most: the live picture and one stretch near
+  // the moment picked tell the hour the archive is really on. Once its
+  // account has one measured, its other copies start at once in that clock
+  // (and, where all its measured archives are exact, without their own
+  // timing measured first).
   const std::string channel = feeds_[index].channelId;
-  bool clock = !store_.archiveClock(channel).settled;
-  bool measure = !store_.archiveTiming(channel) && !measureTried_.count(channel) &&
+  Store::ArchiveClock ac = store_.archiveClock(channel);
+  bool table = !ac.settled;
+  bool clockUnmeasured = !ac.measured;
+  bool measure = !measureTried_.count(channel) &&
+                 (clockUnmeasured || (!store_.archiveTiming(channel) && !store_.presumedExact(channel))) &&
                  store_.timingRequest(channel).has_value();
-  if (clock || measure) {
+  if (table || measure) {
     int serial = ++clockSerial_;
     r.clockWait = Replay::ClockWait{what, ms(), serial, measure};
+    r.clockWait->clock = measure && clockUnmeasured;
     if (hooks_.changed) hooks_.changed();
-    if (!clock) {
+    if (!table) {
       if (!startMeasure(channel, serial)) openReplay(what);
       return;
     }
@@ -1095,9 +1115,13 @@ void Session::playReplay(size_t index, time::Seconds from, const std::string& wh
 
 bool Session::startMeasure(const std::string& channel, int serial) {
   if (!replay_ || !replay_->clockWait) return false;
+  Replay::ClockWait& wait = *replay_->clockWait;
   measureTried_.insert(channel);
-  uint32_t spent = ms() - replay_->clockWait->since;
-  if (spent + 500 >= kClockWaitMs) return false;
+  // Build 173: the clock never measured: a second longer, all in.
+  uint32_t limit = wait.clock ? kMeasureWaitMs : kClockWaitMs;
+  uint32_t spent = ms() - wait.since;
+  if (spent + 500 >= limit) return false;
+  wait.limit = limit;
   // The provider's connection is free for the reads: a picture the player
   // still held (the timeline's pause) lets go now.
   player_->stop();
@@ -1106,11 +1130,16 @@ bool Session::startMeasure(const std::string& channel, int serial) {
   // Where the account allows a second connection, reads not done when the
   // stretch opens carry on (what they find serves the next replay).
   measureSpare_ = store_.spareConnection(channel);
-  measureAbort_ = store_.measureArchive(channel, kClockWaitMs - spent, [this, alive, serial](const archive::Outcome&) {
-    if (alive.expired() || !replay_ || !replay_->clockWait || replay_->clockWait->serial != serial) return;
-    measureAbort_.reset();
-    openReplay(replay_->clockWait->what);
-  });
+  uint32_t left = limit - spent;
+  uint32_t budget = measureSpare_ ? std::max(left, kMeasureOnMs) : left;
+  measureAbort_ = store_.measureArchive(
+      channel, budget,
+      [this, alive, serial](const archive::Outcome&) {
+        if (alive.expired() || !replay_ || !replay_->clockWait || replay_->clockWait->serial != serial) return;
+        measureAbort_.reset();
+        openReplay(replay_->clockWait->what);
+      },
+      nullptr, replay_->from, left);
   return measureAbort_ != nullptr;
 }
 
@@ -1146,7 +1175,9 @@ void Session::openReplay(const std::string& what) {
   // The link carries the login: to the player only, never the log.
   std::optional<Store::CatchupFeed> f = store_.catchupFeed(copy, plan.ask, now);
   replayClock_.reset();
-  if (f) replayClock_ = ReplayClock{f->clock.offset, f->clock.server, f->clock.from != Store::ClockFrom::Server};
+  if (f)
+    replayClock_ = ReplayClock{f->clock.offset, f->clock.server, f->clock.from != Store::ClockFrom::Server,
+                               f->clock.measured};
   r.minutes = f ? f->minutes : 0;
   r.base = plan.base;
   r.atMs = static_cast<int64_t>(plan.shows) * 1000;
@@ -1470,7 +1501,10 @@ void Session::tickReplay(uint32_t now) {
   if (r.clockWait) {
     // Build 170: its archive clock didn't come in time: the clock known.
     // Build 172: nor its timing: as before, and it serves the next replay.
-    if (now - r.clockWait->since >= kClockWaitMs) openReplay(r.clockWait->what);
+    // Build 173: nor its clock measured (kMeasureWaitMs): as before; the
+    // account's other copies measure on their first replay, this one next
+    // run (or now, on a connection to spare).
+    if (now - r.clockWait->since >= r.clockWait->limit) openReplay(r.clockWait->what);
     return;
   }
   PlayerState s = player_->state();

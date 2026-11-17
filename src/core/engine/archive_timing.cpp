@@ -38,6 +38,20 @@ bool near(time::Seconds measured, time::Seconds predicted) {
   return d >= -kSame && d <= 2 * kSame;
 }
 
+// Where an archive read really begins, by the live read: live's PTS is
+// this far ahead of it.
+time::Seconds startOf(const Read& live, const Read& a) {
+  time::Seconds behind = static_cast<time::Seconds>(media::tsclock::ahead(*live.pts, *a.pts) / kHz);
+  return live.asked - behind;
+}
+
+// Build 173: a start no archive clock can put that far from the moment
+// asked (14 hours either way, and ten minutes) isn't the broadcast's.
+bool withinClocks(time::Seconds start, time::Seconds asked) {
+  constexpr time::Seconds kMost = kClockMost + 10 * 60;
+  return start <= asked + kMost && start >= asked - kMost;
+}
+
 std::string minutesText(int seconds) { return std::to_string(std::abs(seconds) / 60) + " min"; }
 
 std::string chunkWords(const Timing& t) {
@@ -60,7 +74,8 @@ struct StreamRead {
 };
 
 StreamRead readStream(http::Pool& pool, const std::string& url, std::vector<std::string> headers,
-                      const Clock& clock, const std::atomic<bool>* abort, uint32_t ms, bool askRange) {
+                      const Clock& clock, const std::atomic<bool>* abort, uint32_t ms, bool askRange,
+                      bool firstOnly = false) {
   StreamRead out;
   if (askRange) headers.push_back("Range: bytes=0-");
   media::tsclock::TsClock ts;
@@ -99,7 +114,8 @@ StreamRead readStream(http::Pool& pool, const std::string& url, std::vector<std:
     uint32_t spent = clock() - t0;
     if (ts.first()) {
       // Enough: a few seconds of video for its rate, or the time is up.
-      if (ts.seconds() >= 3.0 || ts.bytes() >= 4u * 1024u * 1024u || spent >= ms) return false;
+      // Build 173: a first replay's reads want the first picture only.
+      if (firstOnly || ts.seconds() >= 3.0 || ts.bytes() >= 4u * 1024u * 1024u || spent >= ms) return false;
     } else if (spent >= ms) {
       return false;
     }
@@ -159,15 +175,18 @@ Timing classify(const Readings& r, std::vector<int>* ambiguous) {
   }
   // Where each stretch really begins: live's PTS is this far ahead of it.
   std::vector<time::Seconds> starts;
+  bool plausible = true;
   for (const Read& a : reads) {
-    time::Seconds behind = static_cast<time::Seconds>(media::tsclock::ahead(*r.live->pts, *a.pts) / kHz);
-    time::Seconds start = r.live->asked - behind;
-    // Not the broadcast's clock: a start after the moment asked, or hours
-    // before it.
-    if (start > a.asked + 10 * 60 || start < a.asked - 4 * 3600) {
+    time::Seconds start = startOf(*r.live, a);
+    // Not the broadcast's clock: further from the moment asked than any
+    // archive clock can put it.
+    if (!withinClocks(start, a.asked)) {
       t.kind = Kind::Rewritten;
       return t;
     }
+    // Further than a recording or a chunk puts it (after the moment asked,
+    // or hours before it): only another clock can explain it.
+    if (start > a.asked + 10 * 60 || start < a.asked - 4 * 3600) plausible = false;
     starts.push_back(start);
   }
   // Exact: the same lag behind every moment asked.
@@ -180,38 +199,115 @@ Timing classify(const Readings& r, std::vector<int>* ambiguous) {
     sum += lag;
   }
   if (high - low <= kSame) {
-    time::Seconds lag = sum / static_cast<time::Seconds>(reads.size());
-    // The live stream's own delay is a few seconds: under 45 s is none.
-    t.offset = std::abs(lag) < 45 ? 0 : static_cast<int>(std::lround(static_cast<double>(lag) / 60.0)) * 60;
-    if (std::abs(t.offset) > 90 * 60) {
-      t.kind = Kind::Unmeasured;
-      t.offset = 0;
+    // Build 173: a whole number of quarter hours is the archive's clock;
+    // the rest (the live stream's own few seconds aside) the recording's.
+    LagParts parts = splitLag(sum / static_cast<time::Seconds>(reads.size()));
+    if (!parts.usable || (!parts.clock && !plausible)) {
+      t.kind = plausible ? Kind::Unmeasured : Kind::Rewritten;
       return t;
     }
     t.kind = Kind::Exact;
+    t.offset = parts.offset;
+    t.clock = r.clock + parts.clock;
     return t;
   }
-  // Chunked: the sizes whose boundaries give every start.
-  std::vector<int> fits;
-  for (int size : kChunkMinutes) {
-    bool all = true;
-    for (size_t i = 0; i < reads.size() && all; ++i) all = near(starts[i], chunkStart(reads[i].asked, size, r.clock));
-    if (all) fits.push_back(size);
-  }
-  if (!fits.empty()) {
+  // Chunked: the sizes whose boundaries give every start, in the clock
+  // asked in or (Build 173) one `shift` seconds east of it, whose
+  // boundaries fall `shift` earlier than those of the clock asked in.
+  auto chunkSizes = [&](int shift) {
+    std::vector<int> fits;
+    for (int size : kChunkMinutes) {
+      bool all = true;
+      for (size_t i = 0; i < reads.size() && all; ++i)
+        all = near(starts[i], chunkStart(reads[i].asked, size, r.clock) - shift);
+      if (all) fits.push_back(size);
+    }
+    return fits;
+  };
+  auto chunked = [&](const std::vector<int>& fits, int shift) {
     if (ambiguous && fits.size() > 1) *ambiguous = fits;
     t.kind = Kind::Chunked;
     t.chunkMinutes = fits.front();
+    t.clock = r.clock + shift;
     return t;
-  }
+  };
+  if (std::vector<int> fits = chunkSizes(0); !fits.empty()) return chunked(fits, 0);
   // The programme's start.
   bool programme = !r.programmeStarts.empty();
   for (size_t i = 0; i < reads.size() && programme; ++i) {
     std::optional<time::Seconds> s = programmeStart(r.programmeStarts, reads[i].asked);
     programme = s && near(starts[i], *s);
   }
-  t.kind = programme ? Kind::Programme : Kind::Unmeasured;
+  if (programme) {
+    t.kind = Kind::Programme;
+    t.clock = r.clock;
+    return t;
+  }
+  // Build 173: chunks on another clock, the nearest first.
+  for (int shift = kClockStep; shift <= kClockMost; shift += kClockStep)
+    for (int east : {shift, -shift})
+      if (std::vector<int> fits = chunkSizes(east); !fits.empty()) return chunked(fits, east);
+  t.kind = plausible ? Kind::Unmeasured : Kind::Rewritten;
   return t;
+}
+
+std::optional<Timing> classifyQuick(const Readings& r) {
+  if (!r.live || !r.live->pts || r.archive.empty() || !r.archive.front().pts) return std::nullopt;
+  const Read& a = r.archive.front();
+  // A stretch whose clock starts near zero may be rewritten: the full
+  // reads tell.
+  if (*a.pts < 60 * kHz) return std::nullopt;
+  time::Seconds start = startOf(*r.live, a);
+  if (!withinClocks(start, a.asked)) return std::nullopt;
+  time::Seconds lag = a.asked - start;
+  LagParts parts = splitLag(lag);
+  // Whole quarter hours only (none included), to within a minute: read 7
+  // minutes past a quarter hour, no chunk starts that far before it.
+  if (!parts.usable || (parts.clock == 0 && std::abs(parts.offset) > 60)) return std::nullopt;
+  // A programme's start can be any minute: a stretch starting on one says
+  // nothing of the clock.
+  if (std::abs(lag) >= 45)
+    for (time::Seconds s : r.programmeStarts)
+      if (near(start, s)) return std::nullopt;
+  Timing t;
+  t.kind = Kind::Exact;
+  t.offset = parts.offset;
+  t.clock = r.clock + parts.clock;
+  t.seekable = r.seekable;
+  t.byteRate = r.byteRate;
+  t.at = r.at;
+  return t;
+}
+
+time::Seconds quickMoment(time::Seconds picked, time::Seconds now) {
+  time::Seconds minute = floorDiv(picked, 60) * 60;
+  // The minute 7 past a quarter hour at or before it, and the one after.
+  time::Seconds before = minute - mod(minute - 7 * 60, kClockStep);
+  time::Seconds after = before + kClockStep;
+  time::Seconds latest = now - 10 * 60;
+  time::Seconds best = (after - picked < picked - before && after <= latest) ? after : before;
+  while (best > latest) best -= kClockStep;
+  return best;
+}
+
+LagParts splitLag(time::Seconds lag) {
+  auto minutes = [](time::Seconds s) {
+    return std::abs(s) < 45 ? 0 : static_cast<int>(std::lround(static_cast<double>(s) / 60.0)) * 60;
+  };
+  LagParts p;
+  time::Seconds q = static_cast<time::Seconds>(std::lround(static_cast<double>(lag) / kClockStep)) * kClockStep;
+  if (q != 0 && std::abs(q) <= kClockMost) {
+    int rest = minutes(lag - q);
+    if (std::abs(rest) <= 60) {
+      p.clock = static_cast<int>(q);
+      p.offset = rest;
+      return p;
+    }
+  }
+  p.offset = minutes(lag);
+  p.usable = std::abs(p.offset) <= 90 * 60;
+  if (!p.usable) p.offset = 0;
+  return p;
 }
 
 time::Seconds decidingMoment(time::Seconds start, const std::vector<int>& sizes, int clock) {
@@ -259,11 +355,38 @@ Outcome measure(http::Pool& pool, const Request& req, const Clock& clock, const 
     }
     return s.aborted || s.refused;
   };
-  StreamRead live = readStream(pool, req.live, req.headers, clock, abort, share(3), false);
-  if (stop(live)) return out;
-  if (live.pts) rd.live = Read{live.firstAt ? live.firstAt : time::now(), live.pts};
-  time::Seconds first = firstMoment(now);
+  StreamRead live;
   std::string why;
+  if (req.picked) {
+    // Build 173: a replay waiting: live and one stretch near its moment,
+    // each to its first picture, within `quickMs`.
+    const uint32_t quickMs = req.quickMs ? std::min(req.quickMs, budgetMs) : budgetMs;
+    auto quickLeft = [&]() -> uint32_t {
+      uint32_t spent = clock() - t0;
+      return spent >= quickMs ? 0 : quickMs - spent;
+    };
+    live = readStream(pool, req.live, req.headers, clock, abort, std::max<uint32_t>(300, quickLeft() / 2), false, true);
+    if (stop(live)) return out;
+    if (live.pts) rd.live = Read{live.firstAt ? live.firstAt : time::now(), live.pts};
+    time::Seconds at = quickMoment(*req.picked, now);
+    std::optional<std::string> link = req.linkFor ? req.linkFor(at) : std::nullopt;
+    if (link && rd.live && quickLeft()) {
+      StreamRead a =
+          readStream(pool, *link, req.headers, clock, abort, std::max<uint32_t>(300, quickLeft()), false, true);
+      if (stop(a)) return out;
+      if (!a.pts) why = a.why;
+      rd.archive.push_back(Read{at, a.pts});
+      if (std::optional<Timing> quick = classifyQuick(rd)) {
+        out.timing = quick;
+        return out;
+      }
+    }
+  } else {
+    live = readStream(pool, req.live, req.headers, clock, abort, share(3), false);
+    if (stop(live)) return out;
+    if (live.pts) rd.live = Read{live.firstAt ? live.firstAt : time::now(), live.pts};
+  }
+  time::Seconds first = firstMoment(now);
   for (int i = 0; i < 2; ++i) {
     time::Seconds at = first + i * kApart;
     std::optional<std::string> link = req.linkFor ? req.linkFor(at) : std::nullopt;
@@ -282,9 +405,10 @@ Outcome measure(http::Pool& pool, const Request& req, const Clock& clock, const 
   }
   std::vector<int> sizes;
   Timing t = classify(rd, &sizes);
-  if (sizes.size() > 1 && left() > 300 && rd.live && rd.archive[0].pts) {
+  auto read = std::find_if(rd.archive.begin(), rd.archive.end(), [](const Read& a) { return a.pts.has_value(); });
+  if (sizes.size() > 1 && left() > 300 && rd.live && t.clock == req.clock) {
     // Two sizes fit: a third moment where they differ.
-    time::Seconds behind = static_cast<time::Seconds>(media::tsclock::ahead(*rd.live->pts, *rd.archive[0].pts) / kHz);
+    time::Seconds behind = static_cast<time::Seconds>(media::tsclock::ahead(*rd.live->pts, *read->pts) / kHz);
     time::Seconds at = decidingMoment(rd.live->asked - behind, sizes, req.clock);
     std::optional<std::string> link = req.linkFor ? req.linkFor(at) : std::nullopt;
     if (link && at < now - 30 * 60) {
@@ -295,6 +419,12 @@ Outcome measure(http::Pool& pool, const Request& req, const Clock& clock, const 
         t = classify(rd, nullptr);
       }
     }
+  }
+  // Build 173: reads the budget cut short tell nothing yet (the copy is
+  // measured again), not that its archive can't be measured.
+  if (t.kind == Kind::Unmeasured && !left()) {
+    out.why = "out of time";
+    return out;
   }
   out.timing = t;
   return out;
@@ -481,6 +611,8 @@ std::optional<Timing> decode(const std::string& s) {
     default: return std::nullopt;
   }
   if (offset % 60 || std::abs(offset) > 90 * 60 || seekable < -1 || seekable > 1) return std::nullopt;
+  // Build 173: 1.0.15 kept a clock error as an offset: measured again.
+  if (splitLag(offset).clock) return std::nullopt;
   t.offset = offset;
   t.seekable = seekable;
   t.byteRate = rate;

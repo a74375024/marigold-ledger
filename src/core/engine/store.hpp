@@ -355,12 +355,20 @@ class Store {
   // known (asked as UTC). `settled` false: the copy's table hasn't been
   // read this run and its account has taught none yet, so a first replay
   // waits for it a moment (Session).
-  enum class ClockFrom : uint8_t { Server, Table, Learned };
+  // Build 173: a clock measured from the copy's own video (its archive's
+  // lag behind the moment asked, archive_timing.hpp) comes first
+  // (Measured); then what the account's measured copies showed where their
+  // table (or server) said what this copy's says, or, for a copy without a
+  // table, what most of them showed (Learned, `measured` set); then the
+  // copy's table, the account's tables, the server. `measured` false: a
+  // first replay measures it before it starts (Session).
+  enum class ClockFrom : uint8_t { Server, Table, Learned, Measured };
   struct ArchiveClock {
     std::optional<int> offset;
     std::optional<int> server;  // what server_info says
     ClockFrom from = ClockFrom::Server;
     bool settled = true;
+    bool measured = false;
   };
   ArchiveClock archiveClock(const std::string& channelId) const;
   struct CatchupFeed {
@@ -399,7 +407,12 @@ class Store {
   // Build 172: a copy's archive timing (archive_timing.hpp), kept with its
   // archive clock; nullopt: never measured.
   std::optional<archive::Timing> archiveTiming(const std::string& channelId) const;
+  // Build 173: with the clock it found (Timing::clock), kept as the copy's
+  // measured archive clock.
   void noteArchiveTiming(const std::string& channelId, const archive::Timing& t);
+  // Build 173: every archive timing its account's copies told is exact, so
+  // a copy not measured yet is taken as exact too (no wait for it).
+  bool presumedExact(const std::string& channelId) const;
   // What measuring a copy's archive needs (its links: secret, for the
   // reads only), in the clock its links ask in; nullopt for a copy that
   // keeps no archive or isn't Xtream.
@@ -410,9 +423,13 @@ class Store {
   // Measures a copy's archive on a worker (archive::measure, `budgetMs` in
   // all); `done` runs on the UI thread with the outcome, the timing kept
   // first. Returns the flag that stops it (nullptr: nothing to measure).
+  // Build 173: `picked`, a replay's moment: read near it first, the live
+  // read and that one within `quickMs` (archive::Request).
   std::shared_ptr<std::atomic<bool>> measureArchive(const std::string& channelId, uint32_t budgetMs,
                                                     std::function<void(const archive::Outcome&)> done,
-                                                    archive::Clock clock = nullptr);
+                                                    archive::Clock clock = nullptr,
+                                                    std::optional<time::Seconds> picked = std::nullopt,
+                                                    uint32_t quickMs = 0);
   // Emby: asks the server to open a feed (needsOpen); `done` gets it with
   // its URL, or nothing. Closes the stream opened before.
   void open(const Feed& feed, std::function<void(std::optional<Feed>)> done);

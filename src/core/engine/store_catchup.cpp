@@ -11,7 +11,9 @@
 #include "core/util/json.hpp"
 
 #include <algorithm>
+#include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -68,21 +70,84 @@ time::Seconds coverage(const std::vector<Listing>& list, time::Seconds from, tim
 
 // ------------------------------------------------- archive clocks (Build 170)
 
+namespace {
+
+// The value counted most; a tie goes to `last`, else the smallest.
+std::optional<int> mostCounted(const std::map<int, size_t>& counts, std::optional<int> last) {
+  std::optional<int> best;
+  size_t top = 0;
+  for (const auto& [value, n] : counts)
+    if (n > top || (n == top && last == value)) {
+      best = value;
+      top = n;
+    }
+  return best;
+}
+
+bool noteIn(std::map<std::string, int>& kept, const std::string& streamId, int offset) {
+  auto it = kept.find(streamId);
+  if (it != kept.end()) {
+    bool changed = it->second != offset;
+    it->second = offset;
+    return changed;
+  }
+  if (kept.size() >= ArchiveClocks::kStreamsKept) kept.erase(kept.begin());
+  kept.emplace(streamId, offset);
+  return true;
+}
+
+}  // namespace
+
 bool ArchiveClocks::note(const std::string& accountId, const std::string& streamId, int offset) {
   if (accountId.empty() || streamId.empty() || offset < -kMostOffset || offset > kMostOffset) return false;
   if (!accounts.count(accountId) && accounts.size() >= kAccountsKept) return false;
   Account& a = accounts[accountId];
   bool changed = a.last != offset;
   a.last = offset;
-  auto it = a.streams.find(streamId);
-  if (it != a.streams.end()) {
-    changed = changed || it->second != offset;
-    it->second = offset;
-    return changed;
+  return noteIn(a.streams, streamId, offset) || changed;
+}
+
+bool ArchiveClocks::noteMeasured(const std::string& accountId, const std::string& streamId, int offset) {
+  if (accountId.empty() || streamId.empty() || offset < -kMostOffset || offset > kMostOffset) return false;
+  if (!accounts.count(accountId) && accounts.size() >= kAccountsKept) return false;
+  Account& a = accounts[accountId];
+  bool changed = a.lastMeasured != offset;
+  a.lastMeasured = offset;
+  return noteIn(a.measured, streamId, offset) || changed;
+}
+
+std::optional<int> ArchiveClocks::measuredStream(const std::string& accountId, const std::string& streamId) const {
+  auto a = accounts.find(accountId);
+  if (a == accounts.end()) return std::nullopt;
+  auto it = a->second.measured.find(streamId);
+  if (it == a->second.measured.end()) return std::nullopt;
+  return it->second;
+}
+
+std::optional<int> ArchiveClocks::measuredFor(const std::string& accountId, std::optional<int> said,
+                                              std::optional<int> server, bool any) const {
+  auto a = accounts.find(accountId);
+  if (a == accounts.end()) return std::nullopt;
+  std::map<int, size_t> same, all;
+  for (const auto& [id, clock] : a->second.measured) {
+    ++all[clock];
+    auto table = a->second.streams.find(id);
+    std::optional<int> theirs = table != a->second.streams.end() ? std::optional<int>(table->second) : server;
+    if (theirs == said) ++same[clock];
   }
-  if (a.streams.size() >= kStreamsKept) a.streams.erase(a.streams.begin());
-  a.streams.emplace(streamId, offset);
-  return true;
+  if (std::optional<int> v = mostCounted(same, a->second.lastMeasured)) return v;
+  return any ? mostCounted(all, a->second.lastMeasured) : std::nullopt;
+}
+
+bool ArchiveClocks::allExact(const std::string& accountId) const {
+  auto a = accounts.find(accountId);
+  if (a == accounts.end()) return false;
+  size_t exact = 0;
+  for (const auto& [id, t] : a->second.timings) {
+    if (t.kind == archive::Kind::Exact) ++exact;
+    else if (t.kind == archive::Kind::Chunked || t.kind == archive::Kind::Programme) return false;
+  }
+  return exact > 0;
 }
 
 bool ArchiveClocks::noteTiming(const std::string& accountId, const std::string& streamId,
@@ -117,19 +182,14 @@ std::optional<int> ArchiveClocks::learned(const std::string& accountId) const {
   if (a == accounts.end()) return std::nullopt;
   std::map<int, size_t> counts;
   for (const auto& [id, off] : a->second.streams) ++counts[off];
-  std::optional<int> best;
-  size_t top = 0;
-  for (const auto& [off, n] : counts)
-    if (n > top || (n == top && a->second.last == off)) {
-      best = off;
-      top = n;
-    }
+  std::optional<int> best = mostCounted(counts, a->second.last);
   return best ? best : a->second.last;
 }
 
 std::string ArchiveClocks::toJson() const {
   json::Value root = json::Value::object();
-  root.set("v", 1);
+  // Build 173: 2, with the measured clocks apart from the tables' ("streams").
+  root.set("v", 2);
   json::Value list = json::Value::object();
   for (const auto& [id, a] : accounts) {
     json::Value x = json::Value::object();
@@ -137,6 +197,12 @@ std::string ArchiveClocks::toJson() const {
     json::Value streams = json::Value::object();
     for (const auto& [stream, off] : a.streams) streams.set(stream, off);
     x.set("streams", std::move(streams));
+    if (!a.measured.empty()) {
+      json::Value measured = json::Value::object();
+      for (const auto& [stream, off] : a.measured) measured.set(stream, off);
+      x.set("measured", std::move(measured));
+    }
+    if (a.lastMeasured) x.set("lastMeasured", *a.lastMeasured);
     // Build 172: ids and numbers only ("c30,0,1,625000,<when>").
     if (!a.timings.empty()) {
       json::Value timings = json::Value::object();
@@ -163,16 +229,24 @@ ArchiveClocks ArchiveClocks::fromJson(std::string_view text) {
     if (out.accounts.size() >= kAccountsKept || !sources::isSafeItemId(id)) continue;
     Account a;
     a.last = sane(x["last"]);
+    // 1.0.13 / 1.0.15 kept only the tables' clocks, here: still the
+    // tables', so a measurement replaces them.
     for (const auto& [stream, off] : x["streams"].fields()) {
       if (a.streams.size() >= kStreamsKept) break;
       if (std::optional<int> v = sane(off); v && sources::isSafeItemId(stream)) a.streams.emplace(stream, *v);
     }
+    for (const auto& [stream, off] : x["measured"].fields()) {
+      if (a.measured.size() >= kStreamsKept) break;
+      if (std::optional<int> v = sane(off); v && sources::isSafeItemId(stream)) a.measured.emplace(stream, *v);
+    }
+    a.lastMeasured = sane(x["lastMeasured"]);
     for (const auto& [stream, v] : x["timing"].fields()) {
       if (a.timings.size() >= kStreamsKept) break;
       if (!v.isString() || !sources::isSafeItemId(stream)) continue;
       if (std::optional<archive::Timing> t = archive::decode(v.asString())) a.timings.emplace(stream, *t);
     }
-    if (a.last || !a.streams.empty() || !a.timings.empty()) out.accounts.emplace(id, std::move(a));
+    if (a.last || !a.streams.empty() || !a.measured.empty() || !a.timings.empty())
+      out.accounts.emplace(id, std::move(a));
   }
   return out;
 }
@@ -185,8 +259,22 @@ Store::ArchiveClock Store::archiveClock(const std::string& channelId) const {
   if (!account) return out;
   out.server = account->serverOffset;
   out.offset = account->serverOffset;
-  if (std::optional<int> own = m.archiveClocks.stream(account->id, c->itemId)) {
+  std::optional<int> table = m.archiveClocks.stream(account->id, c->itemId);
+  if (std::optional<int> own = m.archiveClocks.measuredStream(account->id, c->itemId)) {
+    // Build 173: the copy's own video over anything said.
     out.offset = own;
+    out.from = ClockFrom::Measured;
+    out.measured = true;
+  } else if (std::optional<int> taught = m.archiveClocks.measuredFor(account->id, table ? table : account->serverOffset,
+                                                                    account->serverOffset, !table)) {
+    // Build 173: what the account's measured copies showed where their
+    // table (or server) said what this copy's says; for a copy without a
+    // table, what most of them showed.
+    out.offset = taught;
+    out.from = ClockFrom::Learned;
+    out.measured = true;
+  } else if (table) {
+    out.offset = table;
     out.from = ClockFrom::Table;
   } else if (std::optional<int> learned = m.archiveClocks.learned(account->id)) {
     out.offset = learned;
@@ -386,7 +474,18 @@ void Store::noteArchiveTiming(const std::string& channelId, const archive::Timin
   const Channel* c = nullptr;
   const sources::Account* account = xtreamAccount(m.accounts, *m.channels, m.indexByID, channelId, &c);
   if (!account) return;
-  if (m.archiveClocks.noteTiming(account->id, c->itemId, t)) saveArchiveClocksLater();
+  bool changed = m.archiveClocks.noteTiming(account->id, c->itemId, t);
+  // Build 173: the clock its video showed is the copy's archive clock, and
+  // teaches the account's other copies.
+  if (t.clock) changed = m.archiveClocks.noteMeasured(account->id, c->itemId, *t.clock) || changed;
+  if (changed) saveArchiveClocksLater();
+}
+
+bool Store::presumedExact(const std::string& channelId) const {
+  const Impl& m = *impl_;
+  const Channel* c = nullptr;
+  const sources::Account* account = xtreamAccount(m.accounts, *m.channels, m.indexByID, channelId, &c);
+  return account && m.archiveClocks.allExact(account->id);
 }
 
 std::optional<archive::Request> Store::timingRequest(const std::string& channelId) const {
@@ -433,9 +532,12 @@ bool Store::spareConnection(const std::string& channelId) const {
 
 std::shared_ptr<std::atomic<bool>> Store::measureArchive(const std::string& channelId, uint32_t budgetMs,
                                                          std::function<void(const archive::Outcome&)> done,
-                                                         archive::Clock clock) {
+                                                         archive::Clock clock, std::optional<time::Seconds> picked,
+                                                         uint32_t quickMs) {
   std::optional<archive::Request> req = timingRequest(channelId);
   if (!req) return nullptr;
+  req->picked = picked;
+  req->quickMs = quickMs;
   auto abort = std::make_shared<std::atomic<bool>>(false);
   auto result = std::make_shared<archive::Outcome>();
   if (!clock) clock = probe::steadyClock();

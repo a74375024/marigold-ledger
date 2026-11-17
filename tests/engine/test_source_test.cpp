@@ -1001,3 +1001,36 @@ TEST_CASE("test all sources 1.0.15: a timing read refused pauses the provider; t
   CHECK_FALSE(r.store->archiveTiming(r.copy(701)));
   r.noLinks();
 }
+
+TEST_CASE("test all sources 1.0.16: a timing turn that finds the archive an hour off sets the provider's clock") {
+  Rig r;  // both servers say UTC
+  auto dream = client(std::string(mock::kHost));
+  // Dream's table says UTC too; its archive runs on UTC+1.
+  r.tv.pool.answer(dream.simpleDataTableRequest("601").url, clockTable(0));
+  for (int id : {601, 604, 701, 702}) r.tv.pool.answer(r.liveUrl(id), ts(1920, 1080, 60));
+  for (int id : {601, 701, 702}) r.tv.pool.answer(r.archiveUrl(id, st::kArchiveBack), ts(1920, 1080, 30));
+  answerTiming(r, 601, [](mtime::Seconds t) { return t - 3600; });
+  for (int id : {701, 702}) answerTiming(r, id, [](mtime::Seconds t) { return t; });
+  r.runner->start();
+  r.run(300000);
+  CHECK_FALSE(r.runner->running());
+  // Measured: UTC+1, over its table's UTC; the recording itself exact.
+  Store::ArchiveClock c601 = r.store->archiveClock(r.copy(601));
+  CHECK(c601.from == Store::ClockFrom::Measured);
+  CHECK(c601.offset == 3600);
+  auto t601 = r.store->archiveTiming(r.copy(601));
+  REQUIRE(t601);
+  CHECK(t601->kind == marigold::engine::archive::Kind::Exact);
+  CHECK(t601->offset == 0);
+  // The account's other copies take it at once.
+  Store::ArchiveClock c604 = r.store->archiveClock(r.copy(604));
+  CHECK(c604.measured);
+  CHECK(c604.offset == 3600);
+  // Trex measured on its own clock: unchanged.
+  CHECK(r.store->archiveClock(r.copy(701)).offset == 0);
+  CHECK(r.store->archiveClock(r.copy(701)).measured);
+  // Its line says the clock the video showed.
+  CHECK(r.logged("Dream: archive clocks: UTC+1 on all replay channels; server says UTC"));
+  CHECK(r.logged("Dream: archive timing: exact on all replay channels"));
+  r.noLinks();
+}
