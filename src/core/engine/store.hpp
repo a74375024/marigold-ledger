@@ -612,8 +612,21 @@ class Store {
   // A game Right goes back to is found again by it after a rebuild.
   std::string eventGameId(const std::string& eventId) const;
   std::string eventOfGame(const std::string& gameId) const;
+  // The tile with this id: on the day shown (Build 176) when it's another
+  // day's, else on today's board.
   const EventTile* eventTile(const std::string& id) const;
   WhereToWatch whereToWatch(const std::string& eventId) const;
+  // Build 176, Live Events by day (events_day.hpp). The day panel's rows:
+  // past days as far back as your channels keep replays, Today, the days
+  // ahead with games.
+  std::vector<DayRow> eventsDays() const;
+  // Shows another day's board (0, or today's start: today's). A past day's
+  // games are fetched unless kept from this session (or on `retry`: Try
+  // again); a day ahead's are the week's already in.
+  void showEventsDay(time::Seconds day, bool retry = false);
+  time::Seconds eventsDay() const;
+  // The day shown's board (null on today's: events()).
+  std::shared_ptr<const EventsBoard> dayBoard() const;
   // The player's game banner for what plays: a game (its event id), or a
   // guide channel showing a game the board matched, by the clock now.
   // Nullopt for anything else (the channel's usual banner). Only what the
@@ -922,6 +935,16 @@ class Store {
   // guide being built).
   bool eventsInBackground(uint32_t ms);
   void pumpScores(uint32_t ms);
+  // Build 176: another day's board (store_events.cpp, "by day"): its fetch,
+  // its games' sources, its board; the replay sources kept and saved.
+  void dayTick(uint32_t ms);
+  void pumpDay(uint32_t ms);
+  void startDayEvents();
+  void startDayBoard(uint32_t ms);
+  void showDayStatus();
+  void saveReplaySources();
+  // The day's own key: what its board is made from (settings, picks, games).
+  std::string dayBoardKey() const;
   // The scores' focus (Build 145) from what the screens are on
   // (eventsFocus) and your teams.
   void scoresFocus(sports::scores::RoundInput& in) const;

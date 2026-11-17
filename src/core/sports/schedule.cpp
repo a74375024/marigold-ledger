@@ -1891,6 +1891,26 @@ bool Schedule::takeBatch() {
   return b;
 }
 
+void Schedule::noteRefused(const std::map<std::string, Seconds>& until) {
+  for (const auto& [source, at] : until) {
+    Seconds& kept = saved_.refusedUntil[source];
+    if (at > kept) {
+      kept = at;
+      dirty_ = true;
+    }
+  }
+}
+
+void Schedule::notePlainForm(const std::set<std::string>& leagues) {
+  for (const std::string& league : leagues) {
+    std::string& form = saved_.leagueForm[league];
+    if (form != "plain") {
+      form = "plain";
+      dirty_ = true;
+    }
+  }
+}
+
 bool Schedule::takeDirty() {
   bool d = dirty_;
   dirty_ = false;

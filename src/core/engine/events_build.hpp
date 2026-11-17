@@ -223,6 +223,10 @@ struct BoardInput {
   // Finals of the last boards in the "Full games" row (or with replay)
   // that the games no longer hold: put back while their replay lasts.
   std::vector<sports::SportsEvent> kept;
+  // Build 176: one day's board (Live Events by day, events_day.hpp): its
+  // games laid out as sports::board::Input::day says, a past day's tiles
+  // made with events_day::pastTile.
+  std::optional<sports::board::Input::Day> day;
 };
 
 struct BoardMade {

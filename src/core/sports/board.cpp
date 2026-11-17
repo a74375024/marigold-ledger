@@ -1305,10 +1305,15 @@ Board build(const Input& in) {
   };
   auto shown = [&](const SportsEvent& e) {
     if (board.studio.count(e.id)) return false;
-    State state = stateOf(e);
-    bool timely = state == State::live || state == State::mayHaveEnded || state == State::upcoming ||
-                  state == State::postponed || recentFinal(e);
-    if (!timely || !e.start || *e.start >= horizon) return false;
+    if (in.day) {
+      // Build 176: one day's games, whatever their state.
+      if (!e.start || *e.start < in.day->from || *e.start >= in.day->to) return false;
+    } else {
+      State state = stateOf(e);
+      bool timely = state == State::live || state == State::mayHaveEnded || state == State::upcoming ||
+                    state == State::postponed || recentFinal(e);
+      if (!timely || !e.start || *e.start >= horizon) return false;
+    }
     // Tennis lists every match on every court: only the ones you can watch.
     if (e.game && e.game->isTennis()) return !e.sources.empty();
     // Cricket too: the listing has every domestic match as well.
@@ -1336,6 +1341,13 @@ Board build(const Input& in) {
   };
   const Seconds today = text::startOfDay(now, in.zone);
   auto bucket = [&](const SportsEvent& e) -> Bucket {
+    // Build 176: a day's row has no headers: what plays first (a past day's
+    // replays), then what is on your channels, then what isn't.
+    if (in.day) {
+      if (e.sources.empty()) return {2, ""};
+      if (in.day->past) return {in.keepsReplay && in.keepsReplay(e) ? 0 : 1, ""};
+      return {0, ""};
+    }
     if (str::startsWith(e.id, "whip|")) return {-1, "Whip-around"};
     if (e.sources.empty()) return {90, "Not in your channels"};
     if (e.dayOver && stateOf(e) == State::live) return {1, "Between days"};
@@ -1485,7 +1497,7 @@ Board build(const Input& in) {
     Seconds x = a.start.value_or(INT64_MAX), y = b.start.value_or(INT64_MAX);
     return x != y ? x < y : a.id < b.id;
   });
-  if (!live.empty()) {
+  if (!live.empty() && !in.day) {
     drafts.push_back({"live", "Live now", live, {}, static_cast<int>(live.size()), mixed(live)});
   }
   std::map<std::string, std::vector<SportsEvent>> bySport;
@@ -1541,7 +1553,7 @@ Board build(const Input& in) {
   }
   // Build 167: Finals you follow whose start an archive still holds, past
   // the 12 h a Final stays in its row (Input::keepsReplay).
-  if (in.keepsReplay) {
+  if (in.keepsReplay && !in.day) {
     std::vector<SportsEvent> full;
     for (const SportsEvent& e : all) {
       if (!e.game || e.sources.empty() || board.studio.count(e.id) || stateOf(e) != State::finished) continue;
@@ -1555,6 +1567,11 @@ Board build(const Input& in) {
     });
     if (!full.empty()) drafts.push_back({"full", "Full games", full, {}, 0, mixed(full)});
   }
+  // Build 176: a day's board is Your teams and the sports' rows only.
+  if (in.day) {
+    unlisted.clear();
+    more.clear();
+  }
   if (!unlisted.empty()) {
     Grouped g = grouped(unlisted);
     int unlistedLive = static_cast<int>(std::count_if(unlisted.begin(), unlisted.end(), isLive));
@@ -1567,6 +1584,7 @@ Board build(const Input& in) {
   }
   std::vector<SportsEvent> untimed;
   for (const SportsEvent& e : all) {
+    if (in.day) break;
     if (stateOf(e) == State::unknownTime && !e.sources.empty() && !board.studio.count(e.id)) untimed.push_back(e);
   }
   if (!untimed.empty()) drafts.push_back({"untimed", "Time not listed", untimed, {}, 0, true});
@@ -1707,7 +1725,7 @@ Board build(const Input& in) {
     }
     board.rows.push_back(std::move(row));
   }
-  if (!in.families.empty()) {
+  if (!in.families.empty() && !in.day) {
     Row row;
     row.id = "families";
     row.title = "Event channels";

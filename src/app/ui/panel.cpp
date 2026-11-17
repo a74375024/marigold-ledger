@@ -46,6 +46,7 @@ std::string ListPanel::look() const {
     out += it.busy ? '1' : '0';
     out += it.ask ? '1' : '0';
     out += it.replay ? '1' : '0';
+    out += it.replayText;
     add(std::to_string(it.choice) + ',' + std::to_string(it.coast));
     add(it.title);
     add(it.detail);
@@ -330,6 +331,17 @@ void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
       spinner(c, right - 12, row.y + row.h * 0.5f, 11, sub);
       right -= 40;
     }
+    // Build 176: "↺ Replay on some" at the right (the day panel).
+    const bool replayRight = it.replay && !it.replayText.empty();
+    if (replayRight) {
+      Color blue = theme::hex(focused ? theme::kReplayTextOnLight : theme::kReplayText);
+      float tw = std::min(textWidth(c, it.replayText, Weight::Bold, 19), row.w * 0.4f);
+      labelIn(c, it.replayText, {right - tw, row.y, tw, row.h}, Weight::Bold, 19, blue, Align::Right);
+      right -= tw + 8;
+      float mw = replayMark(c, right - 18, row.y + (row.h - 18) * 0.5f, 18,
+                            theme::hex(focused ? theme::kReplayTextOnLight : theme::kReplay));
+      right -= (mw > 0 ? mw : 0) + 16;
+    }
     if (!it.value.empty()) {
       float vw = std::min(textWidth(c, it.value, Weight::Medium, 19), row.w * 0.4f);
       labelIn(c, it.value, {right - vw, row.y, vw, row.h}, Weight::Medium, 19, sub, Align::Right);
@@ -341,7 +353,8 @@ void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
     }
     float tw = right - x;
     const std::string& second = secondLine(it);
-    float titleY = second.empty() && !it.replay ? row.y + (row.h - c.t.lineHeight(Weight::Bold, 25)) * 0.5f : row.y + 12;
+    const bool replayLine = it.replay && !replayRight;
+    float titleY = second.empty() && !replayLine ? row.y + (row.h - c.t.lineHeight(Weight::Bold, 25)) * 0.5f : row.y + 12;
     float titleW = label(c, it.title, x, titleY, Weight::Bold, 25, fg, tw);
     if (it.coast >= 0) coastChip(c, it.coast == 1, x + titleW + 12, titleY + 5, 13);
     if (!it.tag.empty()) {
@@ -356,7 +369,7 @@ void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
     else if (!second.empty() && it.warn)
       label(c, second, x, row.y + 46, Weight::Medium, 17,
             theme::hex(focused ? theme::kWarningOnLight : theme::kWarning), tw);
-    else if (it.replay) {
+    else if (replayLine) {
       // Build 167: "Sports · ↺ Replay".
       float lx = x;
       if (!second.empty()) {
