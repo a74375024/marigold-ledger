@@ -2206,3 +2206,14 @@ In the playback log, each replay line says the clock used. "archive clock UTC+1"
 | Restart | Quit and reopen, replay on a channel never rewound before on that provider | It starts at once, at the right moment; the line says "archive clock" |
 | Test all sources | Run it with a provider whose channels keep replay | Its "done" line is followed by "archive clocks: …" in words, no counts; replay worked as before or better |
 | Second clock | After Test all sources, replay on a channel of the provider where the log said "(some)" | The moment picked |
+
+## Build 171: 1.0.14, the game banner during a replay of a channel showing a game
+
+A game watched through its channel (tuned from the guide, or a channel showing a game) kept the game banner's live look during a replay: the banner chose the game by the clock now and only treated it as a replay when the game itself had been tuned from Live Events. The banner now chooses the game on at the replay's minute, and any replay behind live shows the replay version (REPLAY and how far in, no clock status, "Live now" in one muted line). Rewound to before the game began, the channel's own replay banner shows instead.
+
+| Check | How | Pass |
+|---|---|---|
+| Game on its channel | Tune a channel showing a live game from the guide, then Rewind or Start over | Banner: REPLAY · "N min in", no LIVE, "Live now" line |
+| Game tuned from Live Events | Start over from the hold-OK menu | Same as before (REPLAY) |
+| Before the game | Rewind the channel to before the game's start | The channel's replay banner with the show on then |
+| Caught up | Go live | The game banner as before |

@@ -1559,11 +1559,17 @@ class PlayerScreen : public Screen {
   const GameBanner* gameShown(const ui::Ctx& c) {
     std::string id = pendingFlip_.empty() ? app_.playback().entry() : pendingFlip_;
     uint64_t board = app_.store().events() ? app_.store().events()->version : 0;
-    if (id != gameFor_ || board != gameBoard_ || c.now - gameAt_ >= kGameRecheck || c.now < gameAt_) {
+    // Behind live, the game on at the moment playing (a channel showing a
+    // game is asked at the replay's minute, not now's).
+    Playback& p = app_.playback();
+    time::Seconds at = pendingFlip_.empty() && p.replay() ? engine::replay::minuteOf(p.replayAt()) : 0;
+    if (id != gameFor_ || board != gameBoard_ || at != gameReplayAt_ || c.now - gameAt_ >= kGameRecheck ||
+        c.now < gameAt_) {
       gameFor_ = id;
       gameBoard_ = board;
       gameAt_ = c.now;
-      game_ = id.empty() ? std::nullopt : app_.store().gameBanner(id, c.now);
+      gameReplayAt_ = at;
+      game_ = id.empty() ? std::nullopt : app_.store().gameBanner(id, at ? at : c.now);
     }
     return game_ ? &*game_ : nullptr;
   }
@@ -1870,7 +1876,9 @@ class PlayerScreen : public Screen {
     sports::banner::Status st = sports::banner::status(b.start, b.end, b.postponed, c.now);
     Playback& p = app_.playback();
     engine::views::GameReplayBanner rb;
-    if (p.replay() && p.entry() == b.id) {
+    // Behind live on the game shown, whether it was tuned as a game or as
+    // the channel showing it (gameShown asks at the replay's minute).
+    if (p.replay()) {
       // The channel whose archive plays (not the live source's).
       size_t copy = p.replay()->feed;
       if (copy < p.feeds().size())
@@ -2371,6 +2379,7 @@ class PlayerScreen : public Screen {
   std::optional<GameBanner> game_;  // the game banner for gameFor_, if it's a game
   std::string gameFor_;
   time::Seconds gameAt_ = 0;
+  time::Seconds gameReplayAt_ = 0;  // the replay's minute game_ was asked at (0: live)
   uint64_t gameBoard_ = 0;
 };
 
