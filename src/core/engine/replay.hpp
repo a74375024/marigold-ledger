@@ -111,6 +111,12 @@ time::Seconds startOverTarget(const Reach& r, time::Seconds start, time::Seconds
 // before the programme (Up) or the next one after it (Down).
 time::Seconds jumpReach(const Reach& r, const std::vector<Programme>& list, time::Seconds at, int dir,
                         time::Seconds earliest, time::Seconds live);
+// Build 177: the same, also stopping at `stops` (a sports game's break
+// ends, engine::breaks::stops: reachable starts already): the nearest of
+// them and the programme start, before (Up) or after (Down) the playhead
+// (one within half a minute after a stop is at it).
+time::Seconds jumpReach(const Reach& r, const std::vector<Programme>& list, time::Seconds at, int dir,
+                        time::Seconds earliest, time::Seconds live, const std::vector<time::Seconds>& stops);
 // The boundaries on the bar (its faint ticks), at most `limit`.
 std::vector<time::Seconds> boundaries(const Reach& r, Span shown, size_t limit = 200);
 
@@ -131,8 +137,10 @@ std::string behindMinutes(time::Seconds behind);
 // Rewind. Build 169 took Start over out of the row (and off the banner
 // after a tune); Build 170 puts it back after Rewind where `startOver`
 // (engine::controls::startOver: it can work). Never on the banner.
-enum class Button { GoLive, Pause, Rewind, StartOver };
-std::vector<Button> buttons(uint16_t days, bool behind, bool lgPause, bool startOver = false);
+// Build 177: Skip break last, during a break of a sports game's replay
+// that can be skipped (engine::breaks::moment).
+enum class Button { GoLive, Pause, Rewind, StartOver, SkipBreak };
+std::vector<Button> buttons(uint16_t days, bool behind, bool lgPause, bool startOver = false, bool skipBreak = false);
 
 // Build 169: the "−17:05 behind live" tag at the top right. It shows for
 // kShowMs once a replay starts or plays from another moment (a jump),

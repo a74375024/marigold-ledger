@@ -39,7 +39,8 @@ Group groupOf(Button b) {
     case Button::Live:
     case Button::Pause:
     case Button::Rewind:
-    case Button::StartOver: return Group::Watching;
+    case Button::StartOver:
+    case Button::SkipBreak: return Group::Watching;
     case Button::Subtitles:
     case Button::Sources:
     case Button::Swap:
@@ -51,13 +52,15 @@ Group groupOf(Button b) {
 std::vector<Button> row(const RowIn& in) {
   std::vector<Button> out;
   // Build 169: replay's buttons as engine::replay::buttons has them (LG's
-  // Pause after Live behind live); Build 170: Start over after Rewind.
-  for (replay::Button b : replay::buttons(in.replayDays, in.behind, in.lgPause, in.startOver)) {
+  // Pause after Live behind live); Build 170: Start over after Rewind;
+  // Build 177: Skip break after it.
+  for (replay::Button b : replay::buttons(in.replayDays, in.behind, in.lgPause, in.startOver, in.skipBreak)) {
     switch (b) {
       case replay::Button::GoLive: out.push_back(Button::Live); break;
       case replay::Button::Pause: out.push_back(Button::Pause); break;
       case replay::Button::Rewind: out.push_back(Button::Rewind); break;
       case replay::Button::StartOver: out.push_back(Button::StartOver); break;
+      case replay::Button::SkipBreak: out.push_back(Button::SkipBreak); break;
     }
   }
   out.push_back(Button::Subtitles);
@@ -82,6 +85,9 @@ std::optional<time::Seconds> startOver(const StartOverIn& in) {
 }
 
 int opening(const std::vector<Button>& row, bool behind) {
+  // Build 177: a break to skip comes first.
+  for (size_t i = 0; i < row.size(); ++i)
+    if (row[i] == Button::SkipBreak) return static_cast<int>(i);
   Button first = behind ? Button::Live : Button::Subtitles;
   for (size_t i = 0; i < row.size(); ++i)
     if (row[i] == first) return static_cast<int>(i);
@@ -104,6 +110,11 @@ Label label(Button b, const LabelIn& in) {
       // Build 170: "Start over · from 7:30".
       l.title = "Start over";
       if (!in.startOverFrom.empty()) l.state = "from " + in.startOverFrom;
+      break;
+    case Button::SkipBreak:
+      // Build 177: "Skip break · about 2 min".
+      l.title = "Skip break";
+      l.state = in.skipAbout;
       break;
     case Button::Subtitles:
       l.title = "Subtitles";

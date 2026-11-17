@@ -28,6 +28,7 @@
 #include "core/engine/quality.hpp"
 #include "core/engine/search.hpp"
 #include "core/engine/source_test.hpp"
+#include "core/sports/plays.hpp"
 
 namespace marigold {
 struct Channel;
@@ -632,6 +633,16 @@ class Store {
   // Nullopt for anything else (the channel's usual banner). Only what the
   // board holds already: nothing is asked for.
   std::optional<GameBanner> gameBanner(const std::string& entryId, time::Seconds now) const;
+  // Build 177, Skip break (store_breaks.cpp): a sports game's replay plays
+  // (or opens): its play-by-play is fetched in the background (once; a
+  // game still on, every few minutes while asked) and its breaks kept
+  // (sports::plays). `eventId`: the board's game (today's, or the day
+  // shown's). Call it every few seconds while the replay plays: a game no
+  // longer asked for isn't fetched. Nothing for a league without
+  // play-by-play, or a game the board doesn't know.
+  void wantBreaks(const std::string& eventId);
+  // The game's breaks read so far (null: none yet, or none to be had).
+  std::shared_ptr<const sports::plays::Breaks> breaks(const std::string& eventId) const;
   // How a tile came about, in plain lines (the preview tool's detail card):
   // the schedule game or the channel title, its live status, its feeds.
   std::vector<std::string> eventNotes(const std::string& eventId) const;
@@ -935,6 +946,8 @@ class Store {
   // guide being built).
   bool eventsInBackground(uint32_t ms);
   void pumpScores(uint32_t ms);
+  // Build 177: the play-by-play requests (store_breaks.cpp).
+  void pumpBreaks(uint32_t ms);
   // Build 176: another day's board (store_events.cpp, "by day"): its fetch,
   // its games' sources, its board; the replay sources kept and saved.
   void dayTick(uint32_t ms);
