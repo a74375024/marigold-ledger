@@ -100,6 +100,9 @@ class TsVideoProbe {
   // next one starts (or its PES ends).
   int pictures() const { return pictures_; }
   int intraPictures() const { return intraPictures_; }
+  // Build 177: whether the PMT lists SCTE-35 ad markers (stream type 0x86,
+  // or a "CUEI" registration); -1 before a PMT is read.
+  int adMarkersDeclared() const { return havePmt_ ? (adMarkers_ ? 1 : 0) : -1; }
 
  private:
   struct Window {
@@ -141,6 +144,7 @@ class TsVideoProbe {
   int videoStreams_ = 0;
   uint32_t audioPids_[8] = {};  // PIDs of the program's sound, 0 = none
   bool conditionalAccess_ = false;
+  bool adMarkers_ = false;  // Build 177
 
   // Packets.
   uint64_t packets_ = 0, nulls_ = 0;
@@ -203,6 +207,7 @@ class StreamCheck {
     std::string detail;
     VideoFacts facts;
     uint64_t packets = 0;
+    int adMarkers = -1;  // Build 177: TsVideoProbe::adMarkersDeclared()
   };
   Snapshot snapshot() const;
 

@@ -209,6 +209,7 @@ bool Session::begin(const std::string& entryId, std::vector<Feed> feeds, const s
   // Before the recovery picks a version: the one it played last time isn't
   // this channel's.
   logEvent("tune", std::to_string(feeds_.size()) + (feeds_.size() == 1 ? " feed" : " feeds"), false);
+  adMarkersTune_ = true;  // Build 177: its first attempt says the stream's ad markers
   // Right to a replay left (Build 165): the archive from that moment, in
   // place of a live start, while it still holds it.
   if (replayInstead_) {
@@ -424,6 +425,10 @@ void Session::playFeed(size_t index, uint64_t token) {
   if (!attemptReconnect_) feedPictured_ = false;
   sawPicture_ = sawBuffering_ = sawFailed_ = sawEnded_ = false;
   factsLogged_ = noPicture_ = false;
+  if (adMarkersTune_) {
+    adMarkersTune_ = false;
+    adMarkersLogged_ = false;
+  }
   measured_.reset();
   // Build 174: the account's only connection is the player's now.
   yieldClockCheck(feeds_[index].channelId);
@@ -909,6 +914,14 @@ bool Session::tick(uint32_t now) {
     logEvent("video", s.facts);
     measured_ = quality::fromFacts(s.facts);
   }
+  // Build 177: whether the stream's tables declare SCTE-35 ad markers, once
+  // a tune, with its picture, where the relay reads it (webOS through its
+  // relay).
+  if (sawPicture_ && !adMarkersLogged_ && s.streamChecked && s.adMarkersDeclared >= 0) {
+    adMarkersLogged_ = true;
+    logEvent("video", s.adMarkersDeclared ? "ad markers: declared (SCTE-35 in the stream's tables)"
+                                          : "ad markers: none declared");
+  }
   // Build 136: the picture is remembered for the feed's rows once it has
   // played a while (a placeholder clip is caught before that).
   if (measured_ && sawPicture_ && rec_.phase() == playback::Recovery::Phase::Playing && ready() &&
@@ -1365,6 +1378,10 @@ void Session::clockCheckEnded(ClockCheck& check, const archive::Outcome& o, Chec
                            : from == CheckFrom::After     ? "clock check, finished: "
                                                           : "clock check: ";
   Store::ArchiveClock ac = store_.archiveClock(check.channel);
+  // Build 177: what its reads found of SCTE-35 ad markers, at the end of
+  // whichever line it gets.
+  std::string ads = archive::adMarkersText(o);
+  if (!ads.empty()) ads = "; " + ads;
   if (o.timing && o.timing->clock) {
     // A clock found (kept already: Store::noteArchiveTiming, which teaches
     // the account's other copies and forgets its failed checks).
@@ -1373,7 +1390,7 @@ void Session::clockCheckEnded(ClockCheck& check, const archive::Outcome& o, Chec
     else
       line += " (server says " + (ac.server ? sources::xtream::offsetText(*ac.server) : std::string("nothing")) + ")";
     if (from != CheckFrom::Waiting) line += "; the account's replays ask in it now";
-    logClockCheck(check, line);
+    logClockCheck(check, line + ads);
     return;
   }
   if (o.aborted) {
@@ -1381,24 +1398,24 @@ void Session::clockCheckEnded(ClockCheck& check, const archive::Outcome& o, Chec
     // again in a minute; a replay's, left before it ended, by the next
     // replay.
     if (!check.background) {
-      logClockCheck(check, head + "stopped, the replay was left");
+      logClockCheck(check, head + "stopped, the replay was left" + ads);
       return;
     }
     uint32_t wait = store_.noteClockCheck(check.channel, Store::CheckEnd::Stopped, ms());
-    logClockCheck(check, head + "stopped for playback; checking again in the background in " + waitText(wait));
+    logClockCheck(check, head + "stopped for playback; checking again in the background in " + waitText(wait) + ads);
     return;
   }
   if (o.timing && o.timing->kind == archive::Kind::Rewritten) {
     if (check.clock) store_.noteClockCheck(check.channel, Store::CheckEnd::CantTell, ms());
     logClockCheck(check, head + "the video's timestamps can't tell the clock; replays use " +
-                             clockInUse(check.channel) + "; not checked again until the app restarts");
+                             clockInUse(check.channel) + "; not checked again until the app restarts" + ads);
     return;
   }
   std::string why = o.why.empty() ? std::string("the video couldn't tell") : o.why;
   if (o.refused) why = why == "refused" ? why : "refused (" + why + ")";
   if (!check.clock) {
     // Only the timing of a copy whose clock is known.
-    logClockCheck(check, head + why + "; replays keep " + clockInUse(check.channel));
+    logClockCheck(check, head + why + "; replays keep " + clockInUse(check.channel) + ads);
     return;
   }
   uint32_t wait = store_.noteClockCheck(check.channel, Store::CheckEnd::Failed, ms());
@@ -1406,7 +1423,7 @@ void Session::clockCheckEnded(ClockCheck& check, const archive::Outcome& o, Chec
                          ? "; replays use " + clockInUse(check.channel) + "; checking again in " + waitText(wait)
                          : "; replays use " + clockInUse(check.channel) +
                                " for now; checking again in the background in " + waitText(wait);
-  logClockCheck(check, head + why + next);
+  logClockCheck(check, head + why + next + ads);
 }
 
 std::string Session::channelInUse() const {
@@ -1519,6 +1536,8 @@ bool Session::replayFrom(time::Seconds from, ReplayWhy why) {
       return true;
     }
   }
+  // Build 177: a replay replaced says its ad markers first.
+  replayMarkers(replay_.has_value());
   if (!replay_) {
     replayLive_ = rec_.feedIndex();
     replayLiveReady_ = rec_.sawFirstFrame();
@@ -1566,6 +1585,7 @@ bool Session::startReplayInstead(time::Seconds at, ReplayWhy why, size_t live) {
   standAside();
   replayLive_ = live;
   replayLiveReady_ = false;
+  replayMarkers(false);
   replay_ = Replay{};
   replayTried_.clear();
   shortStretches_ = 0;
@@ -1708,8 +1728,16 @@ void Session::goLive(bool quiet) {
   endReplay(true);
 }
 
+void Session::replayMarkers(bool log) {
+  std::optional<media::scte35::Tally> t = player_->takeReplayAdMarkers();
+  if (!log || !replay_ || !t || !t->read()) return;
+  // Never a link: our words, counts and minutes.
+  logReplay(media::scte35::replayText(*t), replay_->feed);
+}
+
 void Session::endReplay(bool live) {
   if (!replay_) return;
+  replayMarkers(true);
   dropMeasure();
   replay_.reset();
   replayTried_.clear();

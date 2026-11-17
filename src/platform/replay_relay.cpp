@@ -320,12 +320,25 @@ struct ReplaySession {
   std::atomic<int> generation{0};
   std::atomic<int> opens{0};
   std::atomic<uint64_t> lastRange{0};
+  // Build 177: what was passed on, read for ad markers (the connection's
+  // thread feeds it; takeAdMarkers() reads it).
+  std::mutex adsMu;
+  media::scte35::Scanner ads;
 };
 
 struct ReplayRelay::Core {
   std::mutex mu;
   std::shared_ptr<ReplaySession> current;
   unsigned serial = 0;
+  // Build 177: the ad markers of sessions ended since the last take.
+  media::scte35::Tally ads;
+  // Under `mu`: a session ending hands over its ad markers.
+  void endSession() {
+    if (!current) return;
+    current->cancel = true;
+    std::lock_guard<std::mutex> lock(current->adsMu);
+    ads.merge(current->ads.take());
+  }
   std::atomic<bool> stopping{false};
   int listenFd = -1;
 };
@@ -388,6 +401,11 @@ void serve(int fd, std::shared_ptr<ReplayRelay::Core> core) {
   };
   auto pass = [&](const char* p, size_t n) {
     if (n == 0) return true;
+    {
+      // Build 177: read for ad markers as it goes (O(1) a packet).
+      std::lock_guard<std::mutex> lock(s->adsMu);
+      s->ads.feed(reinterpret_cast<const uint8_t*>(p), n);
+    }
     if (!answer() || !sendAll(fd, p, n)) {
       playerGone = true;
       return false;
@@ -547,7 +565,7 @@ std::string ReplayRelay::localUrl(const std::string& source, const std::string& 
   }
   {
     std::lock_guard<std::mutex> lock(core_->mu);
-    if (core_->current) core_->current->cancel = true;
+    core_->endSession();
     s->id = ++core_->serial;
     core_->current = s;
   }
@@ -557,8 +575,20 @@ std::string ReplayRelay::localUrl(const std::string& source, const std::string& 
 void ReplayRelay::stop() {
   if (!core_) return;
   std::lock_guard<std::mutex> lock(core_->mu);
-  if (core_->current) core_->current->cancel = true;
+  core_->endSession();
   core_->current.reset();
+}
+
+media::scte35::Tally ReplayRelay::takeAdMarkers() {
+  if (!core_) return {};
+  std::lock_guard<std::mutex> lock(core_->mu);
+  media::scte35::Tally out = core_->ads;
+  core_->ads = media::scte35::Tally{};
+  if (core_->current) {
+    std::lock_guard<std::mutex> l(core_->current->adsMu);
+    out.merge(core_->current->ads.take());
+  }
+  return out;
 }
 
 std::optional<int> ReplayRelay::skipped() const {

@@ -48,6 +48,10 @@ struct Player final : marigold::engine::Player {
     // Build 172: the replay relay is there; where it said the stream began.
     bool inside = false;
     std::optional<int> began;
+    // Build 177: what the relay's stream said of ad markers (nullopt: the
+    // relay wasn't in the path); taken once.
+    std::optional<marigold::media::scte35::Tally> ads;
+    int adTakes = 0;
   };
   explicit Player(std::shared_ptr<Shared> s) : s_(std::move(s)) {}
   void attempt() override { s_->state = {}; }
@@ -60,6 +64,12 @@ struct Player final : marigold::engine::Player {
   PlayerState state() const override { return s_->state; }
   bool startsInside(const Feed&) const override { return s_->inside; }
   std::optional<int> startedInside() const override { return s_->began; }
+  std::optional<marigold::media::scte35::Tally> takeReplayAdMarkers() override {
+    ++s_->adTakes;
+    std::optional<marigold::media::scte35::Tally> out = s_->ads;
+    s_->ads.reset();
+    return out;
+  }
   std::shared_ptr<Shared> s_;
 };
 
@@ -1737,7 +1747,7 @@ TEST_CASE("replay 1.0.16: server and tables say UTC, the archive runs on UTC+1: 
   // Build 174: the check itself said, on the copy's provider.
   REQUIRE(r.clockLines().size() == 1);
   CHECK(r.clockLines()[0].first == "Mock IPTV");
-  CHECK(r.clockLines()[0].second == "clock check: UTC+1 from the video (server says UTC)");
+  CHECK(r.clockLines()[0].second == "clock check: UTC+1 from the video (server says UTC); ad markers: none");
   // Only what the first replay needs was read: none of the full reads.
   CHECK(archiveAsks(r, 501) == 1);
 
@@ -1849,7 +1859,7 @@ TEST_CASE("replay 1.0.16: not measured within 4 s plays as before; a spare conne
       REQUIRE(clocks.size() == 2);
       CHECK(clocks[0].second == "clock check: not done in 5 s; this replay uses the server's UTC; still reading");
       CHECK(clocks[1].second == "clock check, finished: UTC+1 from the video (server says UTC); "
-                                "the account's replays ask in it now");
+                                "the account's replays ask in it now; ad markers: none");
       r.picture();
       REQUIRE(r.session->replayFrom(picked + 600, Why::Rewind));
       CHECK_FALSE(r.session->replay()->clockWait);
@@ -1953,7 +1963,7 @@ TEST_CASE("replay 1.0.17: Dream says UTC, its archive runs on UTC+1, its reads f
   REQUIRE(clocks.size() == 1);
   CHECK(clocks[0].first == "Dream");
   CHECK(clocks[0].second == "clock check: not a video stream (text/html) (archive); replays use the server's UTC "
-                            "for now; checking again in the background in 2 min");
+                            "for now; checking again in the background in 2 min; ad markers: none (live only)");
   std::vector<std::string> lines = r.replayLines();
   CHECK(std::count(lines.begin(), lines.end(), "replay from Trex: Dream's clock check failed") == 1);
   CHECK(lines.back() == "rewind to " + hm(picked) + "; server clock UTC+1");
@@ -1980,7 +1990,8 @@ TEST_CASE("replay 1.0.17: Dream says UTC, its archive runs on UTC+1, its reads f
   REQUIRE(clocks.size() == 2);
   CHECK(clocks[1].first == "Dream");
   CHECK(clocks[1].second ==
-        "clock check (background): UTC+1 from the video (server says UTC); the account's replays ask in it now");
+        "clock check (background): UTC+1 from the video (server says UTC); the account's replays ask in it now; "
+        "ad markers: none");
   CHECK(archiveAsks(r, 701) == 0);  // Trex never read while it played
   CHECK(r.session->replay()->feed == trex);  // the replay playing isn't disturbed
 
@@ -2121,5 +2132,73 @@ TEST_CASE("replay 1.0.17: one connection: no background check while it plays, an
   r.picture();
   r.run(120000);
   CHECK(r.clockLines().size() == 1);
+  r.noLinks();
+}
+
+// -------------------------------------- Build 177: the relay's ad markers
+
+TEST_CASE("replay Build 177: what the replay relay passed on, one ad markers line when the replay is replaced or ends") {
+  Rig r;
+  r.watchLive(r.entry("ESPN"), 502);
+  size_t copy = r.feedOf(501);
+  // A replay starting from live: whatever the relay held before is dropped unsaid.
+  marigold::media::scte35::Tally stale;
+  stale.packets = 10;
+  r.player->ads = stale;
+  mtime::Seconds start = minuteOf(mtime::now() - 50 * 60);
+  REQUIRE(r.session->replayFrom(start, Why::StartOver));
+  r.tv.pool.drain();
+  CHECK_FALSE(r.player->ads);
+  r.picture();
+  r.run(60000);
+
+  // Rewound: the replay it replaces says what the relay passed on of it.
+  marigold::media::scte35::Tally t;
+  t.packets = 900000;
+  t.tables = t.declared = true;
+  t.cues = t.spliceInsert = 3;
+  t.outOfNetwork = 2;
+  t.videoMs = 41 * 60 * 1000;
+  r.player->ads = t;
+  mtime::Seconds to = minuteOf(mtime::now() - 30 * 60);
+  REQUIRE(r.session->replayFrom(to, Why::Rewind));
+  r.picture();
+  // Ended: the next one's (declared, nothing seen).
+  marigold::media::scte35::Tally quiet;
+  quiet.packets = 1000;
+  quiet.tables = quiet.declared = true;
+  quiet.videoMs = 12 * 60 * 1000;
+  r.player->ads = quiet;
+  r.player->state = {};
+  r.session->goLive();
+  r.run(250);
+
+  std::vector<std::string> lines = r.replayLines();
+  auto entries = r.replayEntries();
+  auto at = [&](const std::string& s) { return std::find(lines.begin(), lines.end(), s) - lines.begin(); };
+  long seen = at("ad markers seen 3 times in 41 min (splice_insert, out of network)");
+  long rewind = at("rewind to " + hm(to) + "; server clock UTC\xe2\x88\x92" "5");
+  long declared = at("ad markers declared, none seen in 12 min");
+  REQUIRE(seen < static_cast<long>(lines.size()));
+  REQUIRE(declared < static_cast<long>(lines.size()));
+  CHECK(seen < rewind);  // said before the new one starts
+  CHECK(entries[static_cast<size_t>(seen)].feed == r.session->feeds()[copy].label);
+  CHECK(entries[static_cast<size_t>(seen)].provider == "Mock IPTV");
+  // Only those two: the relay is in a replay's path only for some stretches.
+  CHECK(std::count_if(lines.begin(), lines.end(), [](const std::string& l) {
+          return l.find("ad markers") != std::string::npos;
+        }) == 2);
+
+  // A replay the relay never carried: no line.
+  r.picture();
+  r.run(5000);
+  REQUIRE(r.session->replayFrom(minuteOf(mtime::now() - 20 * 60), Why::Rewind));
+  r.picture();
+  r.session->goLive();
+  r.run(250);
+  std::vector<std::string> after = r.replayLines();
+  CHECK(std::count_if(after.begin(), after.end(), [](const std::string& l) {
+          return l.find("ad markers") != std::string::npos;
+        }) == 2);
   r.noLinks();
 }

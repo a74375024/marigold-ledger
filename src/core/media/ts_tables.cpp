@@ -55,8 +55,9 @@ int patFirstProgram(const uint8_t* p, size_t n) {
 
 namespace {
 
-// What the descriptors of one stream say: a CA descriptor, a private audio codec.
-void descriptors(const uint8_t* d, size_t n, bool& ca, const char*& audio) {
+// What the descriptors of one stream say: a CA descriptor, a private audio
+// codec, a "CUEI" registration (SCTE-35).
+void descriptors(const uint8_t* d, size_t n, bool& ca, const char*& audio, bool& cuei) {
   size_t i = 0;
   while (i + 2 <= n) {
     uint8_t tag = d[i];
@@ -74,6 +75,7 @@ void descriptors(const uint8_t* d, size_t n, bool& ca, const char*& audio) {
           if (std::memcmp(v, "AC-3", 4) == 0) audio = "ac3";
           else if (std::memcmp(v, "EAC3", 4) == 0) audio = "eac3";
           else if (std::memcmp(v, "DTS", 3) == 0) audio = "dts";
+          else if (std::memcmp(v, "CUEI", 4) == 0) cuei = true;
         }
         break;
       default: break;
@@ -88,17 +90,18 @@ bool parsePmt(const uint8_t* p, size_t n, ProgramMap& out) {
   if (n < 16 || p[0] != 0x02) return false;
   out.streams.clear();
   out.conditionalAccess = false;
+  out.cuei = false;
   size_t end = n - 4;
   size_t info = ((p[10] & 0x0F) << 8) | p[11];
   const char* unused = "";
-  if (12 + info <= end) descriptors(p + 12, info, out.conditionalAccess, unused);
+  if (12 + info <= end) descriptors(p + 12, info, out.conditionalAccess, unused, out.cuei);
   size_t i = 12 + info;
   while (i + 5 <= end) {
     Stream s;
     s.type = p[i];
     s.pid = ((p[i + 1] & 0x1F) << 8) | p[i + 2];
     size_t esInfo = ((p[i + 3] & 0x0F) << 8) | p[i + 4];
-    if (i + 5 + esInfo <= end) descriptors(p + i + 5, esInfo, out.conditionalAccess, s.privateAudio);
+    if (i + 5 + esInfo <= end) descriptors(p + i + 5, esInfo, out.conditionalAccess, s.privateAudio, s.cuei);
     out.streams.push_back(s);
     i += 5 + esInfo;
   }

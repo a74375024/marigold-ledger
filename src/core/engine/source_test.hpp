@@ -38,6 +38,7 @@
 #include "core/engine/feed_scores.hpp"
 #include "core/engine/host.hpp"
 #include "core/engine/source_probe.hpp"
+#include "core/media/ts_ad_markers.hpp"
 #include "core/util/time.hpp"
 
 namespace marigold::engine {
@@ -84,7 +85,14 @@ constexpr const char* kFile = "source-test.json";
 // item, under the same pacing and refusal rules, and kept with its archive
 // clock. Saved under the Timing key ("t<encoded>", "f" nothing read, "x"
 // nothing to measure); no plan item has that kind either.
-enum class Kind : uint8_t { Archive, Depth, Live, Clock, Timing };
+//
+// Build 177: what each copy's streams said of SCTE-35 ad markers (its
+// archive and edge probes and its timing turn's archive reads; its live
+// probe and the timing turn's live read), under the Markers key: two
+// characters, replay then live, each '-' (no stream's tables read) or a
+// digit (1 declared, 2 cues seen, 3 both). No plan item has that kind; the
+// run's end logs a line per provider from it (adMarkersLine()).
+enum class Kind : uint8_t { Archive, Depth, Live, Clock, Timing, Markers };
 
 struct Item {
   size_t row = 0, copy = 0;  // in the rows the plan was made from
@@ -208,6 +216,11 @@ constexpr uint32_t kArchiveProbeMs = 20000;
 // when the most common one differs from it. Shares in words, never a
 // count; "" for none.
 std::string clocksText(const std::vector<int>& clocks, std::optional<int> server);
+// Build 177: a provider's ad markers for the run's log, from its copies'
+// Markers values ("-1", "3-", ...): "ad markers in replays: declared on 40%
+// of copies tested, cues seen on 0%" (`live`: "ad markers live: ...").
+// Percentages only, never a count; "" when no copy's stream was read.
+std::string adMarkersLine(const std::vector<std::string>& values, bool live);
 
 // ------------------------------------------------------------- the runner
 
@@ -293,6 +306,9 @@ class Runner {
   void probeItem(Slot& s, const Item& item, uint32_t ms, uint32_t started);
   void finishItem(size_t provider, const Item& item, const probe::Outcome& o, uint32_t ms, uint32_t started);
   void endRun(bool stopped);
+  // Build 177: what a stream read of a copy said of ad markers, kept with
+  // the run (`live`: its live stream, else its archive).
+  void noteAds(const std::string& channelId, const media::scte35::Tally& t, bool live);
   void abortAll();
   void logLine(const std::string& detail);
   std::string providerName(const std::string& id) const;

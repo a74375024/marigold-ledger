@@ -1,6 +1,7 @@
 // Synthetic MPEG-TS for the picture check tests: the tables, a video stream
 // whose pictures have the sizes and types a real encoder gives a scene (a
-// normal one, black, a slate...), sound, padding, scrambling. The streams of
+// normal one, black, a slate...), sound, padding, scrambling; Build 177:
+// SCTE-35 ad markers (a stream for them in the PMT, splice_info_sections). The streams of
 // the black-screen analysis are rebuilt from their measured numbers here, so
 // no media file is kept in the repository.
 #pragma once
@@ -18,6 +19,7 @@ using Bytes = std::vector<uint8_t>;
 constexpr int kPmtPid = 0x1000;
 constexpr int kVideoPid = 0x100;
 constexpr int kAudioPid = 0x101;
+constexpr int kCuePid = 0x102;  // Build 177: SCTE-35
 
 inline void add(Bytes& to, const Bytes& more) { to.insert(to.end(), more.begin(), more.end()); }
 
@@ -251,11 +253,13 @@ inline Bytes pat() {
   return s;
 }
 
-// `videoType` 0: no video stream; `audioType` 0: no sound.
-inline Bytes pmt(int videoType, int audioType, bool ca = false) {
+// `videoType` 0: no video stream; `audioType` 0: no sound; `cueType`
+// (Build 177) 0x86: an SCTE-35 stream on kCuePid (0: none).
+inline Bytes pmt(int videoType, int audioType, bool ca = false, int cueType = 0) {
   Bytes body;
   if (videoType) add(body, {static_cast<uint8_t>(videoType), 0xE0 | (kVideoPid >> 8), kVideoPid & 0xFF, 0xF0, 0x00});
   if (audioType) add(body, {static_cast<uint8_t>(audioType), 0xE0 | (kAudioPid >> 8), kAudioPid & 0xFF, 0xF0, 0x00});
+  if (cueType) add(body, {static_cast<uint8_t>(cueType), 0xE0 | (kCuePid >> 8), kCuePid & 0xFF, 0xF0, 0x00});
   Bytes programInfo;
   if (ca) programInfo = {0x09, 0x04, 0x0B, 0x00, 0xE7, 0xD0};
   size_t len = 9 + programInfo.size() + body.size() + 4;
@@ -267,6 +271,78 @@ inline Bytes pmt(int videoType, int audioType, bool ca = false) {
   withCrc(s);
   return s;
 }
+
+// ------------------------------------------------- SCTE-35 (Build 177)
+
+// A PMT's elementary stream entry, with its descriptors.
+inline Bytes esEntry(int type, int pid, const Bytes& descriptors = {}) {
+  Bytes e = {static_cast<uint8_t>(type), static_cast<uint8_t>(0xE0 | (pid >> 8)), static_cast<uint8_t>(pid & 0xFF),
+             static_cast<uint8_t>(0xF0 | (descriptors.size() >> 8)), static_cast<uint8_t>(descriptors.size() & 0xFF)};
+  add(e, descriptors);
+  return e;
+}
+
+// A registration descriptor: format_identifier "CUEI".
+inline Bytes cuei() { return {0x05, 0x04, 'C', 'U', 'E', 'I'}; }
+
+// A PMT from its entries (esEntry), with program descriptors.
+inline Bytes pmtOf(const Bytes& entries, const Bytes& programInfo = {}) {
+  size_t len = 9 + programInfo.size() + entries.size() + 4;
+  Bytes s = {0x02, static_cast<uint8_t>(0xB0 | (len >> 8)), static_cast<uint8_t>(len & 0xFF), 0x00, 0x01, 0xC1, 0x00,
+             0x00, static_cast<uint8_t>(0xE0 | (kVideoPid >> 8)), kVideoPid & 0xFF,
+             static_cast<uint8_t>(0xF0 | (programInfo.size() >> 8)), static_cast<uint8_t>(programInfo.size() & 0xFF)};
+  add(s, programInfo);
+  add(s, entries);
+  withCrc(s);
+  return s;
+}
+
+// A splice_info_section around a command (`commandLength` -1: its own
+// size; anything else is written as given, for broken sections).
+inline Bytes spliceSection(uint8_t type, const Bytes& command, const Bytes& descriptors = {},
+                           int commandLength = -1) {
+  size_t cmdLen = commandLength < 0 ? command.size() : static_cast<size_t>(commandLength);
+  size_t len = 14 + command.size() + 2 + descriptors.size() + 4 - 3;
+  Bytes s = {0xFC,
+             static_cast<uint8_t>(0x30 | (len >> 8)),
+             static_cast<uint8_t>(len & 0xFF),
+             0x00,  // protocol_version
+             0x00, 0x00, 0x00, 0x00, 0x00,  // not encrypted, pts_adjustment 0
+             0x00,  // cw_index
+             0xFF, static_cast<uint8_t>(0xF0 | ((cmdLen >> 8) & 0x0F)), static_cast<uint8_t>(cmdLen & 0xFF),
+             type};
+  add(s, command);
+  s.push_back(static_cast<uint8_t>(descriptors.size() >> 8));
+  s.push_back(static_cast<uint8_t>(descriptors.size() & 0xFF));
+  add(s, descriptors);
+  withCrc(s);
+  return s;
+}
+
+inline Bytes spliceTime(int64_t pts) {
+  uint64_t p = static_cast<uint64_t>(pts) & ((uint64_t{1} << 33) - 1);
+  return {static_cast<uint8_t>(0xFE | (p >> 32)), static_cast<uint8_t>(p >> 24), static_cast<uint8_t>(p >> 16),
+          static_cast<uint8_t>(p >> 8), static_cast<uint8_t>(p)};
+}
+
+// splice_insert(): out of the network (or back in), a break of
+// `breakSeconds` (0: no duration said), at once or at `pts`.
+inline Bytes spliceInsert(uint32_t eventId, bool out, int breakSeconds = 0, bool immediate = true, int64_t pts = 0) {
+  Bytes c = {static_cast<uint8_t>(eventId >> 24), static_cast<uint8_t>(eventId >> 16), static_cast<uint8_t>(eventId >> 8),
+             static_cast<uint8_t>(eventId), 0x7F};
+  c.push_back(static_cast<uint8_t>((out ? 0x80 : 0) | 0x40 | (breakSeconds ? 0x20 : 0) | (immediate ? 0x10 : 0) | 0x0F));
+  if (!immediate) add(c, spliceTime(pts));
+  if (breakSeconds) {
+    uint64_t d = static_cast<uint64_t>(breakSeconds) * 90000;
+    add(c, {static_cast<uint8_t>(0xFE | (d >> 32)), static_cast<uint8_t>(d >> 24), static_cast<uint8_t>(d >> 16),
+            static_cast<uint8_t>(d >> 8), static_cast<uint8_t>(d)});
+  }
+  add(c, {0x00, 0x01, 0x00, 0x00});  // unique_program_id, avail_num, avails_expected
+  return spliceSection(0x05, c);
+}
+
+inline Bytes timeSignal(int64_t pts) { return spliceSection(0x06, spliceTime(pts)); }
+inline Bytes spliceNull() { return spliceSection(0x00, {}); }
 
 inline Bytes ts90(uint8_t marker, int64_t t) {
   uint64_t p = static_cast<uint64_t>(t) & ((uint64_t{1} << 33) - 1);
@@ -366,6 +442,11 @@ struct Scene {
   std::function<size_t(int, bool)> size = [](int, bool intra) { return intra ? 47000u : 20000u; };
   // Constant bit rate padding (bits a second): filler NAL units and null packets.
   int cbrKbps = 0;
+  // Build 177: SCTE-35. `cueType` 0x86 lists a stream for it on kCuePid
+  // (0: the PMT lists none); a splice_insert (out, a 30 s break) goes out
+  // on kCuePid at each of `cueFrames`.
+  int cueType = 0;
+  std::vector<int> cueFrames;
 };
 
 inline Bytes build(const Scene& s) {
@@ -380,8 +461,10 @@ inline Bytes build(const Scene& s) {
   for (int i = 0; i < frames; ++i) {
     if (i % 10 == 0) {
       m.section(0, pat());
-      m.section(kPmtPid, pmt(s.video ? videoType : 0, s.audio ? s.audioType : 0, s.ca));
+      m.section(kPmtPid, pmt(s.video ? videoType : 0, s.audio ? s.audioType : 0, s.ca, s.cueType));
     }
+    for (int f : s.cueFrames)
+      if (f == i) m.section(kCuePid, spliceInsert(static_cast<uint32_t>(100 + i), true, 30));
     int second = static_cast<int>(i / s.fps);
     int64_t dts = 900000 + static_cast<int64_t>(i * tick);
     if (s.tablesOnly) {

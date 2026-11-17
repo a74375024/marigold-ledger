@@ -2342,3 +2342,23 @@ Live Events gets a day button, "Today ▼", beside Filter (Up from the first row
 | Log | Export the playback log | "live events: Monday's games, N leagues, fine"; no link, host or login |
 | LG | On the LG TV, pick a past day and scroll the rows | No pause in the UI while it loads; the board scrolls as today's |
 | Other platforms | Android / Fire TV, Apple TV, Mac | Same |
+
+## Build 177: ad marker check
+
+A quiet diagnostic for one question: do the providers' streams carry SCTE-35 ad markers (the broadcast's own cues for its commercial breaks)? With them, a replay could one day skip a break exactly; without, it can't. This build only looks and writes what it found in the playback log. Nothing changes on screen and nothing is skipped. It reads only bytes the app already reads (no new request): the PMT says whether a stream for the markers is declared (stream type 0x86, or a "CUEI" registration), and the cues themselves (splice_insert, time_signal, splice_null) are counted where they come.
+
+- **After a replay's clock check.** The "clock check" line of the replay log now ends with what its reads found: "; ad markers: none", "; ad markers: declared, no cue in the first seconds", or "; ad markers: 2 cues (splice_insert, out of network, break 120 s)". The check reads a few seconds of each stretch, so a cue is rarely in them; "declared" is the useful word. "(live: ...)" after it when the live read found otherwise, "(live only)" when only live was read.
+- **After a replay that went through the replay relay.** When the replay ends or another replaces it: "replay: ad markers seen 3 times in 41 min (splice_insert, out of network)", or "ad markers declared, none seen in 41 min", or "no ad markers in 41 min" (minutes of video the relay passed on). The relay is in the path only for a stretch started inside an archive chunk (a chunked archive, the moment past the chunk's start, an http link), so most replays have no such line.
+- **Live on LG through its relay.** Once a tune, when the LG relay reads the stream (subtitles on, Play through Marigold, HLS feeds): a "video" line "ad markers: declared (SCTE-35 in the stream's tables)" or "ad markers: none declared". Live played directly has none.
+- **After Test all sources.** At the end of the run, before its summary, two lines per provider: "Dream: ad markers in replays: declared on 40% of copies tested, cues seen on 0%" and "Dream: ad markers live: declared on 0% of copies tested, cues seen on 0%". A copy counts as tested when a probe (or its timing turn) read its stream's tables. Percentages only.
+
+| Check | How | Pass |
+|---|---|---|
+| Clock check | Fresh start; Rewind on a channel whose clock hasn't been checked (CNN) | The "clock check: ..." line ends with "; ad markers: ..." |
+| Relay replay | On a chunked archive, Rewind to a minute well inside a chunk (the replay line says "skipped N min"), watch a few minutes, then Go live | A "replay: ad markers ..." line after "back to live", with the minutes watched (about) |
+| Replaced | In that replay, Rewind again | The ad markers line for the first replay comes before "rewind to ..." |
+| LG live | With subtitles on, tune a channel | One "video: ad markers: ..." line for the tune |
+| Test all sources | Run it to the end (or Stop it) | Before "summary:", an "ad markers in replays" and an "ad markers live" line per provider tested, percentages only |
+| No links | Export the playback log | No link, host, path or login in any ad markers line; no count of channels |
+| Nothing else | Watch, replay, Rewind as usual | Nothing new on screen; replays play exactly as in 1.0.19 |
+| Other platforms | Android / Fire TV, Apple TV, Mac | Clock check and Test all sources lines the same; the relay line where the relay was used; no "video: ad markers" line (no LG relay) |

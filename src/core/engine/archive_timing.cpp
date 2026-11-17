@@ -72,6 +72,7 @@ struct StreamRead {
   time::Seconds firstAt = 0;  // wall clock when the first bytes came
   uint32_t byteRate = 0;
   bool ranges = false;
+  media::scte35::Tally ads;  // Build 177: the stream's ad markers, as far as it was read
 };
 
 // Build 174: what a body is, told from its first bytes together (up to
@@ -163,12 +164,15 @@ StreamRead readStream(http::Pool& pool, std::string url, std::vector<std::string
       return out;
     }
     media::tsclock::TsClock ts;
+    media::scte35::Scanner ads;  // Build 177: on the same bytes, inline
     std::string head, text;
     Body kind = Body::Unknown;
     bool cut = false;  // stopped here: the time was up
     uint64_t bytes = 0;
     auto feedTs = [&](std::string_view part) {
-      if (!part.empty()) ts.feed(reinterpret_cast<const uint8_t*>(part.data()), part.size());
+      if (part.empty()) return;
+      ts.feed(reinterpret_cast<const uint8_t*>(part.data()), part.size());
+      ads.feed(reinterpret_cast<const uint8_t*>(part.data()), part.size());
     };
     http::Request q;
     q.url = url;
@@ -247,7 +251,8 @@ StreamRead readStream(http::Pool& pool, std::string url, std::vector<std::string
         text = head;
       }
     }
-    out.ranges = answersRanges(r.status, r.contentRange, r.acceptRanges, r.contentLength);
+    out.ads.merge(ads.tally());
+    out.ranges =answersRanges(r.status, r.contentRange, r.acceptRanges, r.contentLength);
     if (probe::refusal(r.status, ts.first() || bytes ? std::string_view() : std::string_view(r.error),
                        kind == Body::Text ? std::string_view(text) : std::string_view())) {
       out.refused = true;
@@ -521,6 +526,8 @@ Outcome measure(http::Pool& pool, const Request& req, const Clock& clock, const 
   // the player's agent (readStream).
   const std::vector<std::string> archiveHeaders;
   auto liveWhy = [](const std::string& w) { return w + " (live)"; };
+  // Build 177: each read's ad markers, by kind.
+  auto ads = [&out](const StreamRead& s, bool isLive) { (isLive ? out.liveAds : out.archiveAds).merge(s.ads); };
   auto archiveWhy = [](const std::string& w) { return w + " (archive)"; };
   if (req.picked) {
     // Build 173: a replay waiting: live and one stretch near its moment,
@@ -532,6 +539,7 @@ Outcome measure(http::Pool& pool, const Request& req, const Clock& clock, const 
     };
     live = readStream(pool, req.live, req.headers, clock, abort, std::max<uint32_t>(300, quickLeft() / 2), false, true,
                       false);
+    ads(live, true);
     if (stop(live)) return out;
     if (live.pts) rd.live = Read{live.firstAt ? live.firstAt : time::now(), live.pts};
     time::Seconds at = quickMoment(*req.picked, now);
@@ -539,6 +547,7 @@ Outcome measure(http::Pool& pool, const Request& req, const Clock& clock, const 
     if (link && rd.live && quickLeft()) {
       StreamRead a =
           readStream(pool, *link, archiveHeaders, clock, abort, std::max<uint32_t>(300, quickLeft()), false, true);
+      ads(a, false);
       if (stop(a)) return out;
       if (!a.pts) why = archiveWhy(a.why);
       rd.archive.push_back(Read{at, a.pts});
@@ -549,6 +558,7 @@ Outcome measure(http::Pool& pool, const Request& req, const Clock& clock, const 
     }
   } else {
     live = readStream(pool, req.live, req.headers, clock, abort, share(3), false, false, false);
+    ads(live, true);
     if (stop(live)) return out;
     if (live.pts) rd.live = Read{live.firstAt ? live.firstAt : time::now(), live.pts};
   }
@@ -558,6 +568,7 @@ Outcome measure(http::Pool& pool, const Request& req, const Clock& clock, const 
     std::optional<std::string> link = req.linkFor ? req.linkFor(at) : std::nullopt;
     if (!link || !left()) break;
     StreamRead a = readStream(pool, *link, archiveHeaders, clock, abort, share(2 - i), i == 1);
+    ads(a, false);
     if (stop(a)) return out;
     if (i == 1) rd.seekable = a.status ? (a.ranges ? 1 : 0) : -1;
     rd.byteRate = std::max(rd.byteRate, a.byteRate);
@@ -579,6 +590,7 @@ Outcome measure(http::Pool& pool, const Request& req, const Clock& clock, const 
     std::optional<std::string> link = req.linkFor ? req.linkFor(at) : std::nullopt;
     if (link && at < now - 30 * 60) {
       StreamRead a = readStream(pool, *link, archiveHeaders, clock, abort, share(1), false);
+      ads(a, false);
       if (stop(a)) return out;
       if (a.pts) {
         rd.archive.push_back(Read{at, a.pts});
@@ -711,6 +723,16 @@ std::string describe(const Timing& t, bool canSkip) {
     case Kind::Unknown: break;
   }
   return out + "not measured yet";
+}
+
+std::string adMarkersText(const Outcome& o) {
+  namespace ad = media::scte35;
+  ad::Found archive = ad::found(o.archiveAds), live = ad::found(o.liveAds);
+  if (archive == ad::Found::NotRead && live == ad::Found::NotRead) return {};
+  if (archive == ad::Found::NotRead) return "ad markers: " + ad::readText(o.liveAds) + " (live only)";
+  std::string out = "ad markers: " + ad::readText(o.archiveAds);
+  if (live != ad::Found::NotRead && live != archive) out += " (live: " + ad::readText(o.liveAds) + ")";
+  return out;
 }
 
 std::string planText(const Plan& p, const std::optional<Timing>& t,

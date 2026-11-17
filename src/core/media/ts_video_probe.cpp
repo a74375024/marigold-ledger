@@ -346,6 +346,9 @@ void TsVideoProbe::readPmt(const uint8_t* p, size_t n) {
   if (!ts::parsePmt(p, n, map_)) return;
   havePmt_ = true;
   conditionalAccess_ = map_.conditionalAccess;
+  adMarkers_ = map_.cuei || std::any_of(map_.streams.begin(), map_.streams.end(), [](const ts::Stream& s) {
+                 return s.type == 0x86 || s.cuei;
+               });
   int video = -1;
   Codec codec = Codec::None;
   videoStreams_ = 0;
@@ -807,6 +810,7 @@ StreamCheck::Snapshot StreamCheck::snapshot() const {
   s.detail = probe_.detail();
   s.facts = probe_.facts();
   s.packets = probe_.packets();
+  s.adMarkers = probe_.adMarkersDeclared();
   return s;
 }
 
