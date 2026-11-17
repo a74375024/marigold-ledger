@@ -2352,7 +2352,7 @@ In a sports game's replay, the breaks (commercials, timeouts, the ends of period
 - **The tag.** When a break begins (or a jump lands in one), the top-right tag shows for its usual few seconds with a white BREAK chip: "about 2 min · OK to skip". A break that runs to live: "BREAK · live is in it too".
 - **Skip break.** OK opens the controls on Skip break ("Skip break · about 2 min"), after Start over in the first group. OK on it plays from just before the next play (the minute at or before 10 s before it; on a channel whose archive comes in chunks, the start at or before that), with no banner. The notice: "Skipped a 2 min break" / "OK again to go back"; OK while it shows plays from where you were.
 - **Near live.** In a break that runs to live there is no Skip break: the controls open on Live, as behind live.
-- **Rewind.** The timeline's bar shows the breaks hatched, halftime named under its block, "Breaks" in the key line, and ▲ ▼ stop at the end of each break as well as at programme starts ("▲ ▼ start of the break or programme before / after"). The controls' replay bar shows the same blocks (with "in a break" under the moment during one); under a game's banner, as before, there is no bar.
+- **Rewind.** The timeline's bar shows the breaks hatched, halftime named under its block, "Breaks" in the key line, and ▲ ▼ stop at the end of each break as well as at programme starts ("▲ ▼ end of a break or start of a programme, before / after"). The controls' replay bar shows the same blocks (with "in a break" under the moment during one); under a game's banner, as before, there is no bar.
 - **No data.** A league without play-by-play, a game without times, or no answer: no tag, no button, no blocks.
 - The log: "breaks: 7 found in NFL play-by-play" once per game per session (or "breaks: no play-by-play for MLB", "breaks: NFL play-by-play has no times"), "skipped a break (2 min 10 s)", "went back to the break". Never a link.
 
@@ -2368,7 +2368,7 @@ In a sports game's replay, the breaks (commercials, timeouts, the ends of period
 | Basketball / hockey | An NBA or NHL game's replay | The same at timeouts and between periods |
 | A channel's replay | Rewind on a channel airing a game the board shows (the game banner shows it) | The same tag and Skip break |
 | Near live | A live game about 1 min behind live, in a commercial | Tag "BREAK · live is in it too"; OK opens on Live; no Skip break |
-| Rewind | Open Rewind during a game's replay | Hatched blocks on the bar, "Halftime" under its block, "Breaks" in the key line; ▲ ▼ stop at each break's end and at programme starts; "▲ ▼ start of the break or programme before / after" |
+| Rewind | Open Rewind during a game's replay | Hatched blocks on the bar, "Halftime" under its block, "Breaks" in the key line; ▲ ▼ stop at each break's end and at programme starts; "▲ ▼ end of a break or start of a programme, before / after" |
 | Controls bar | OK during a channel's replay of a game (channel banner) | The same blocks on the bar over the buttons; "in a break" under the moment during one |
 | Chunks | A channel whose archive comes in chunks (◀ ▶ "10 minutes, where this channel's replay starts") | Skip break plays from the chunk start at or before the next play, or isn't offered when that is before the break |
 | No data | A baseball or soccer game's replay | No tag change, no button, no blocks; log "breaks: no play-by-play for MLB" once |

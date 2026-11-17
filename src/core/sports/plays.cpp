@@ -106,7 +106,7 @@ Kind kindOf(std::string_view type, std::string_view text, bool scoring) {
   if (has(e, "halftime") || has(e, "end of half") || has(e, "end half") || has(e, "end of 1st half") ||
       has(e, "end of first half"))
     return Kind::HalfEnd;
-  if (has(e, "end period") || has(e, "end of period") || has(e, "end of quarter") || has(e, "end quarter") ||
+  if (has(e, "end period") || has(e, "period end") || has(e, "end of period") || has(e, "end of quarter") || has(e, "end quarter") ||
       has(e, "end of regulation") || has(e, "end of the ") || has(e, "end of 1st") || has(e, "end of 2nd") ||
       has(e, "end of 3rd") || has(e, "end of 4th"))
     return Kind::PeriodEnd;

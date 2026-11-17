@@ -1415,7 +1415,7 @@ class PlayerScreen : public Screen {
       hx0 += shadowed(c, "Breaks", hx0, top + 330, Weight::Regular, 21, theme::white(0.78f)) + 24;
     }
     std::string upDown =
-        breaksShown ? "start of the break or programme before / after" : "start of the programme before / after";
+        breaksShown ? "end of a break or start of a programme, before / after" : "start of the programme before / after";
     shadowed(c,
              steps + " \xc2\xb7 \xe2\x96\xb2 \xe2\x96\xbc " + upDown + " \xc2\xb7 OK play from here "
                      "\xc2\xb7 Back stay where you were",
