@@ -4,6 +4,7 @@
 // can rest, and what is kept.
 #include <doctest.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <functional>
 #include <string>
@@ -713,4 +714,151 @@ TEST_CASE("archive clock 1.0.16: over the network for a replay: two reads when t
   archive::Outcome s = archive::measure(slow.pool, req, crawling, nullptr, 4000, now);
   CHECK_FALSE(s.timing);
   CHECK(s.why.find("://") == std::string::npos);
+}
+
+// ------------------------------------- Build 174: the reads ask as the player
+
+TEST_CASE("archive clock 1.0.17: a tiny first piece, bytes before the packets: still a stream") {
+  time::Seconds now = time::now();
+  archive::Request req;
+  req.live = "http://m.example.invalid/live/u/p/9.ts";
+  req.linkFor = [](time::Seconds at) { return "http://m.example.invalid/timeshift/x/" + std::to_string(at) + "/9.ts"; };
+  time::Seconds picked = now - 2 * 3600 - (now % 3600);
+  req.picked = picked;
+  req.quickMs = 5000;
+  time::Seconds at = archive::quickMoment(picked, now);
+  uint32_t ms = 0;
+  archive::Clock ticking = [&ms] { return ms += 5; };
+  for (size_t piece : {size_t{1}, size_t{60}, size_t{187}, size_t{500}}) {
+    CAPTURE(piece);
+    fake::Tv tv;
+    tv.pool.firstPiece = piece;
+    // Some bytes before the first packet (what 1.0.16 took for "not a
+    // stream" when the first piece had no packet start in it).
+    tv.pool.answer(req.live, std::string(37, '\0') + clip(broadcast(now - 3), 4));
+    tv.pool.answer(*req.linkFor(at), std::string(5, '\xff') + clip(broadcast(at - 3600), 5));
+    archive::Outcome o = archive::measure(tv.pool, req, ticking, nullptr, 5000, now);
+    REQUIRE(o.timing);
+    CHECK(o.timing->clock == 3600);
+    CHECK(o.why.empty());
+  }
+}
+
+TEST_CASE("archive clock 1.0.17: an HLS answer is followed to its first segment; a master to its variant") {
+  time::Seconds now = time::now();
+  archive::Request req;
+  req.live = "http://m.example.invalid/live/u/p/9.ts";
+  req.linkFor = [](time::Seconds at) {
+    return "http://m.example.invalid/timeshift/x/" + std::to_string(at) + "/9.m3u8";
+  };
+  time::Seconds picked = now - 2 * 3600 - (now % 3600);
+  req.picked = picked;
+  time::Seconds at = archive::quickMoment(picked, now);
+  std::string link = *req.linkFor(at);
+  std::string dir = link.substr(0, link.rfind('/') + 1);
+  uint32_t ms = 0;
+  archive::Clock ticking = [&ms] { return ms += 5; };
+
+  fake::Tv tv;
+  tv.pool.answer(req.live, clip(broadcast(now - 3), 4));
+  tv.pool.answer(link, "#EXTM3U\n#EXT-X-TARGETDURATION:10\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:10,\nseg-0.ts\n"
+                       "#EXTINF:10,\nseg-1.ts\n#EXT-X-ENDLIST\n");
+  // The stretch's start is the first segment's (the second starts later).
+  tv.pool.answer(dir + "seg-0.ts", clip(broadcast(at - 3600), 5));
+  tv.pool.answer(dir + "seg-1.ts", clip(broadcast(at - 3600 + 10), 5));
+  archive::Outcome o = archive::measure(tv.pool, req, ticking, nullptr, 5000, now);
+  REQUIRE(o.timing);
+  CHECK(o.timing->clock == 3600);
+  CHECK(tv.pool.asked[dir + "seg-0.ts"] == 1);
+  CHECK(tv.pool.asked[dir + "seg-1.ts"] == 0);
+
+  // A master playlist: its variant, then the variant's first segment.
+  fake::Tv master;
+  master.pool.answer(req.live, clip(broadcast(now - 3), 4));
+  master.pool.answer(link, "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080\nhi/index.m3u8\n");
+  master.pool.answer(dir + "hi/index.m3u8", "#EXTM3U\n#EXTINF:6,\na.ts\n#EXT-X-ENDLIST\n");
+  master.pool.answer(dir + "hi/a.ts", clip(broadcast(at - 3600), 5));
+  archive::Outcome m = archive::measure(master.pool, req, ticking, nullptr, 5000, now);
+  REQUIRE(m.timing);
+  CHECK(m.timing->clock == 3600);
+
+  // An encrypted one can't be read: said so.
+  fake::Tv locked;
+  locked.pool.answer(req.live, clip(broadcast(now - 3), 4));
+  locked.pool.answer(link, "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"k\"\n#EXTINF:6,\na.ts\n#EXT-X-ENDLIST\n");
+  archive::Outcome l = archive::measure(locked.pool, req, ticking, nullptr, 5000, now);
+  CHECK_FALSE(l.timing);
+  CHECK(l.why == "not a video stream (encrypted playlist) (archive)");
+}
+
+TEST_CASE("archive clock 1.0.17: asked as the player asks; why a read failed, in words, never a link") {
+  time::Seconds now = time::now();
+  archive::Request req;
+  req.live = "http://m.example.invalid/live/u/p/9.ts";
+  req.headers = {"Referer: http://m.example.invalid/"};
+  req.linkFor = [](time::Seconds at) { return "http://m.example.invalid/timeshift/x/" + std::to_string(at) + "/9.ts"; };
+  time::Seconds picked = now - 2 * 3600 - (now % 3600);
+  req.picked = picked;
+  time::Seconds at = archive::quickMoment(picked, now);
+  std::string link = *req.linkFor(at);
+  uint32_t ms = 0;
+  archive::Clock ticking = [&ms] { return ms += 5; };
+  auto has = [](const std::vector<std::string>& h, const std::string& line) {
+    return std::find(h.begin(), h.end(), line) != h.end();
+  };
+  auto run = [&](const std::function<void(fake::Pool&)>& answer) {
+    fake::Tv tv;
+    tv.pool.answer(req.live, clip(broadcast(now - 3), 4));
+    answer(tv.pool);
+    archive::Outcome o = archive::measure(tv.pool, req, ticking, nullptr, 5000, now);
+    CHECK(o.why.find("://") == std::string::npos);
+    CHECK(o.why.find("example") == std::string::npos);
+    CHECK(o.why.find("/u/p/") == std::string::npos);
+    // The player's agent, no compressed body; the archive without the live
+    // copy's headers (the player gets none for it).
+    CHECK(has(tv.pool.sent[link], std::string("User-Agent: ") + marigold::http::kPlayerAgent));
+    CHECK(has(tv.pool.sent[link], "Accept-Encoding: identity"));
+    CHECK_FALSE(has(tv.pool.sent[link], "Referer: http://m.example.invalid/"));
+    CHECK(has(tv.pool.sent[req.live], "Referer: http://m.example.invalid/"));
+    return o;
+  };
+  archive::Outcome html = run([&](fake::Pool& p) {
+    p.answer(link, "<html><body>Your stream is being prepared, please wait</body></html>" + std::string(600, ' '));
+    p.mime(link, "text/html; charset=utf-8");
+  });
+  CHECK_FALSE(html.timing);
+  CHECK(html.why == "not a video stream (text/html) (archive)");
+  archive::Outcome missing = run([&](fake::Pool& p) { p.answer(link, "", 404); });
+  CHECK(missing.why == "http 404 (archive)");
+  archive::Outcome empty = run([&](fake::Pool& p) { p.answer(link, ""); });
+  CHECK(empty.why == "not a video stream (empty) (archive)");
+  archive::Outcome junk = run([&](fake::Pool& p) { p.answer(link, std::string(5000, '\x01')); });
+  CHECK(junk.why == "not a video stream (unknown data) (archive)");
+  archive::Outcome none = run([&](fake::Pool&) {});
+  CHECK(none.why == "no connection (archive)");
+  // The live picture not read: said of live.
+  fake::Tv dark;
+  dark.pool.answer(req.live, "", 503);
+  archive::Outcome d = archive::measure(dark.pool, req, ticking, nullptr, 5000, now);
+  CHECK(d.why == "http 503 (live)");
+}
+
+TEST_CASE("archive clock 1.0.17: one stretch read where the other wasn't still tells the clock") {
+  // The second read asks a byte range; a server that answers it badly
+  // leaves one stretch: with the live picture, enough for the clock.
+  fake::Tv tv;
+  time::Seconds now = time::now();
+  archive::Request req;
+  req.live = "http://m.example.invalid/live/u/p/9.ts";
+  req.linkFor = [](time::Seconds at) { return "http://m.example.invalid/timeshift/x/" + std::to_string(at) + "/9.ts"; };
+  time::Seconds first = archive::firstMoment(now), second = first + archive::kApart;
+  tv.pool.answer(req.live, clip(broadcast(now - 3), 4));
+  tv.pool.answer(*req.linkFor(first), clip(broadcast(first - 3600), 5));
+  tv.pool.answer(*req.linkFor(second), "", 416);
+  uint32_t ms = 0;
+  archive::Clock ticking = [&ms] { return ms += 5; };
+  archive::Outcome o = archive::measure(tv.pool, req, ticking, nullptr, 60000, now);
+  REQUIRE(o.timing);
+  CHECK(o.timing->kind == Kind::Exact);
+  CHECK(o.timing->clock == 3600);
 }

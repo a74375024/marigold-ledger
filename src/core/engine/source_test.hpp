@@ -190,7 +190,13 @@ std::string secondsText(uint32_t ms);
 // "54% · 1 day", "None".
 std::string replayCell(const scores::ProviderFigures& f);
 // Build 172: how long a timing measurement may take, all reads together.
-constexpr uint32_t kTimingBudgetMs = 20000;
+// Build 174: room for an archive that is slow to start (its server builds
+// the stretch first): about 12 s a read, as a probe has.
+constexpr uint32_t kTimingBudgetMs = 36000;
+// Build 174: an archive probe's time to its first picture (a live one has
+// probe::kTimeoutMs): the server may build the stretch before its first
+// byte.
+constexpr uint32_t kArchiveProbeMs = 20000;
 // Build 170: a provider's archive clocks in words, from each replay copy's
 // clock (seconds east of UTC) and its server's: "UTC+1 on all replay
 // channels", "UTC+1 (most), UTC (some)", with "; server says UTC" after
@@ -313,6 +319,8 @@ class Runner {
   std::vector<Slot> slots_;
   bool waitingForPlay_ = false;
   bool droppedOld_ = false;  // a run too old to carry on was dropped (logged on the first tick)
+  // Build 174: the providers whose replay timing read failing was said (once a run).
+  std::set<std::string> timingFailTold_;
   uint32_t resumeAt_ = 0;
   uint32_t ms_ = 0;
   bool dirty_ = false;

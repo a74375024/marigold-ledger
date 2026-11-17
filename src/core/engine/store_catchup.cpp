@@ -150,6 +150,32 @@ bool ArchiveClocks::allExact(const std::string& accountId) const {
   return exact > 0;
 }
 
+bool ArchiveClocks::noteCheck(const std::string& accountId, bool ok, time::Seconds at) {
+  if (accountId.empty()) return false;
+  auto it = accounts.find(accountId);
+  if (ok) {
+    if (it == accounts.end() || !it->second.checkFails) return false;
+    it->second.checkFails = 0;
+    it->second.checkFailedAt = 0;
+    return true;
+  }
+  if (it == accounts.end() && accounts.size() >= kAccountsKept) return false;
+  Account& a = accounts[accountId];
+  a.checkFails = std::min(a.checkFails + 1, 99);
+  a.checkFailedAt = at;
+  return true;
+}
+
+int ArchiveClocks::checkFails(const std::string& accountId) const {
+  auto a = accounts.find(accountId);
+  return a == accounts.end() ? 0 : a->second.checkFails;
+}
+
+bool ArchiveClocks::anyMeasured(const std::string& accountId) const {
+  auto a = accounts.find(accountId);
+  return a != accounts.end() && !a->second.measured.empty();
+}
+
 bool ArchiveClocks::noteTiming(const std::string& accountId, const std::string& streamId,
                                const archive::Timing& t) {
   if (accountId.empty() || streamId.empty() || !t.told()) return false;
@@ -209,6 +235,11 @@ std::string ArchiveClocks::toJson() const {
       for (const auto& [stream, t] : a.timings) timings.set(stream, archive::encode(t));
       x.set("timing", std::move(timings));
     }
+    // Build 174: the clock checks failed in a row, and when the last did.
+    if (a.checkFails) {
+      x.set("checkFails", a.checkFails);
+      x.set("checkFailedAt", static_cast<int64_t>(a.checkFailedAt));
+    }
     list.set(id, std::move(x));
   }
   root.set("accounts", std::move(list));
@@ -245,7 +276,13 @@ ArchiveClocks ArchiveClocks::fromJson(std::string_view text) {
       if (!v.isString() || !sources::isSafeItemId(stream)) continue;
       if (std::optional<archive::Timing> t = archive::decode(v.asString())) a.timings.emplace(stream, *t);
     }
-    if (a.last || !a.streams.empty() || !a.measured.empty() || !a.timings.empty())
+    if (x["checkFails"].isNumber()) {
+      int64_t n = x["checkFails"].asInt();
+      a.checkFails = n > 0 ? static_cast<int>(std::min<int64_t>(n, 99)) : 0;
+      if (a.checkFails && x["checkFailedAt"].isNumber())
+        a.checkFailedAt = static_cast<time::Seconds>(x["checkFailedAt"].asInt());
+    }
+    if (a.last || !a.streams.empty() || !a.measured.empty() || !a.timings.empty() || a.checkFails)
       out.accounts.emplace(id, std::move(a));
   }
   return out;
@@ -477,7 +514,12 @@ void Store::noteArchiveTiming(const std::string& channelId, const archive::Timin
   bool changed = m.archiveClocks.noteTiming(account->id, c->itemId, t);
   // Build 173: the clock its video showed is the copy's archive clock, and
   // teaches the account's other copies.
-  if (t.clock) changed = m.archiveClocks.noteMeasured(account->id, c->itemId, *t.clock) || changed;
+  if (t.clock) {
+    changed = m.archiveClocks.noteMeasured(account->id, c->itemId, *t.clock) || changed;
+    // Build 174: a clock found: the account's failed checks are over.
+    changed = m.archiveClocks.noteCheck(account->id, true, time::now()) || changed;
+    m.clockCheckAt.erase(account->id);
+  }
   if (changed) saveArchiveClocksLater();
 }
 
@@ -533,7 +575,7 @@ bool Store::spareConnection(const std::string& channelId) const {
 std::shared_ptr<std::atomic<bool>> Store::measureArchive(const std::string& channelId, uint32_t budgetMs,
                                                          std::function<void(const archive::Outcome&)> done,
                                                          archive::Clock clock, std::optional<time::Seconds> picked,
-                                                         uint32_t quickMs) {
+                                                         uint32_t quickMs, http::Priority priority) {
   std::optional<archive::Request> req = timingRequest(channelId);
   if (!req) return nullptr;
   req->picked = picked;
@@ -553,9 +595,105 @@ std::shared_ptr<std::atomic<bool>> Store::measureArchive(const std::string& chan
         if (result->timing) noteArchiveTiming(channelId, *result->timing);
         if (done) done(*result);
       },
-      http::Priority::Normal);
+      priority);
   return abort;
 }
+
+// ------------------------------------------------ clock checks (Build 174)
+
+Store::ClockTrust Store::clockTrust(const std::string& channelId) const {
+  const Impl& m = *impl_;
+  const Channel* c = nullptr;
+  const sources::Account* account = xtreamAccount(m.accounts, *m.channels, m.indexByID, channelId, &c);
+  if (!account) return ClockTrust::Unchecked;
+  if (archiveClock(channelId).measured) return ClockTrust::Measured;
+  return m.archiveClocks.checkFails(account->id) > 0 ? ClockTrust::Failed : ClockTrust::Unchecked;
+}
+
+bool Store::clockCheckReady(const std::string& channelId, uint32_t ms) const {
+  const Impl& m = *impl_;
+  const Channel* c = nullptr;
+  const sources::Account* account = xtreamAccount(m.accounts, *m.channels, m.indexByID, channelId, &c);
+  if (!account || m.clockCantTell.count(account->id)) return false;
+  auto at = m.clockCheckAt.find(account->id);
+  return at == m.clockCheckAt.end() || static_cast<int32_t>(ms - at->second) >= 0;
+}
+
+uint32_t Store::clockCheckBackoff(int fails) {
+  if (fails <= 1) return 2 * 60000;
+  if (fails == 2) return 10 * 60000;
+  if (fails == 3) return 30 * 60000;
+  return 60 * 60000;
+}
+
+uint32_t Store::noteClockCheck(const std::string& channelId, CheckEnd end, uint32_t ms) {
+  Impl& m = *impl_;
+  const Channel* c = nullptr;
+  const sources::Account* account = xtreamAccount(m.accounts, *m.channels, m.indexByID, channelId, &c);
+  if (!account) return 0;
+  uint32_t wait = 0;
+  switch (end) {
+    case CheckEnd::Failed:
+      if (m.archiveClocks.noteCheck(account->id, false, time::now())) saveArchiveClocksLater();
+      wait = clockCheckBackoff(std::max(1, m.archiveClocks.checkFails(account->id)));
+      break;
+    case CheckEnd::CantTell:
+      // Its timestamps aren't the broadcast's: nothing a read can tell, so
+      // not read again this run (replays go by its table or server).
+      m.clockCantTell.insert(account->id);
+      m.clockCheckAt.erase(account->id);
+      return 0;
+    case CheckEnd::Stopped: wait = 60000; break;
+  }
+  m.clockCheckAt[account->id] = ms + wait;
+  return wait;
+}
+
+std::optional<std::string> Store::clockCheckDue(uint32_t ms, const std::string& busyChannel) {
+  Impl& m = *impl_;
+  if (m.loading || !m.channels || m.channels->empty()) return std::nullopt;
+  if (!m.clockReadySince) {
+    m.clockReadySince = ms ? ms : 1;
+    return std::nullopt;
+  }
+  if (ms - m.clockReadySince < kClockCheckFirstMs || m.sourceTestRunning || m.clockCheckOut) return std::nullopt;
+  const Channel* bc = nullptr;
+  const sources::Account* busy =
+      busyChannel.empty() ? nullptr : xtreamAccount(m.accounts, *m.channels, m.indexByID, busyChannel, &bc);
+  for (const sources::Account& a : m.accounts) {
+    if (a.kind != sources::AccountKind::Xtream || m.clockCantTell.count(a.id)) continue;
+    int fails = m.archiveClocks.checkFails(a.id);
+    // Its clock shown by the video already, and no check failed since.
+    if (m.archiveClocks.anyMeasured(a.id) && !fails) continue;
+    auto at = m.clockCheckAt.find(a.id);
+    if (at != m.clockCheckAt.end() && static_cast<int32_t>(ms - at->second) < 0) continue;
+    // Its only connection playing: not now.
+    if (busy && busy->id == a.id && a.maxConnections.value_or(1) < 2) continue;
+    // Its copies with an archive, those in the lineup first; a different
+    // one after each failure.
+    std::vector<std::string> listed, others;
+    std::string source = a.sourceId();
+    for (const Channel& c : *m.channels) {
+      if (c.serverId != source || c.archiveDays == 0) continue;
+      bool inLineup = m.catalog && m.catalog->entryOf.count(c.id);
+      std::vector<std::string>& to = inLineup ? listed : others;
+      if (to.size() < 32) to.push_back(c.id);
+      if (listed.size() >= 32) break;
+    }
+    std::vector<std::string>& copies = listed.empty() ? others : listed;
+    if (copies.empty()) {
+      // No replay here: looked at again in an hour.
+      m.clockCheckAt[a.id] = ms + 60 * 60000;
+      continue;
+    }
+    return copies[static_cast<size_t>(fails) % copies.size()];
+  }
+  return std::nullopt;
+}
+
+void Store::clockCheckOut(bool out) { impl_->clockCheckOut = out; }
+
+void Store::noteSourceTest(bool running) { impl_->sourceTestRunning = running; }
 
 std::vector<std::string> Store::takeGuideLog() {
   std::vector<std::string> out;

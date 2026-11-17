@@ -141,10 +141,11 @@ struct Rig {
   // CNN none; Trex: ESPN and TNT keeping one day. `trexFirst`: Trex's
   // account added first.
   struct Two {};
-  Rig(Two, bool trexFirst) {
+  // Build 174: each server's clock as its server_info says.
+  Rig(Two, bool trexFirst, int dreamOffset = -5 * 3600, int trexOffset = -5 * 3600) {
     auto dream = mockClient(), trex = mockClient(kTrexHost);
     for (auto* c : {&dream, &trex}) {
-      tv.pool.answer(c->accountInfoRequest().url, accountInfo());
+      tv.pool.answer(c->accountInfoRequest().url, accountInfo(c == &dream ? dreamOffset : trexOffset));
       tv.pool.answer(c->categoriesRequest().url,
                      R"([{"category_id":"1","category_name":"US| SPORTS"},{"category_id":"2","category_name":"US| NEWS"}])");
     }
@@ -228,9 +229,24 @@ struct Rig {
       if (e.event == event) out.push_back(e);
     return out;
   }
+  // The replay's own lines (Build 174: the clock checks' apart, clockLines).
   std::vector<std::string> replayLines() const {
     std::vector<std::string> out;
-    for (const auto& e : logged("replay")) out.push_back(e.detail);
+    for (const auto& e : logged("replay"))
+      if (e.detail.rfind("clock check", 0) != 0) out.push_back(e.detail);
+    return out;
+  }
+  std::vector<marigold::report::PlaybackLog::Entry> replayEntries() const {
+    std::vector<marigold::report::PlaybackLog::Entry> out;
+    for (const auto& e : logged("replay"))
+      if (e.detail.rfind("clock check", 0) != 0) out.push_back(e);
+    return out;
+  }
+  // Build 174: the clock checks' lines, with the provider each names.
+  std::vector<std::pair<std::string, std::string>> clockLines() const {
+    std::vector<std::pair<std::string, std::string>> out;
+    for (const auto& e : logged("replay"))
+      if (e.detail.rfind("clock check", 0) == 0) out.emplace_back(e.provider, e.detail);
     return out;
   }
   // No line of the log carries a link or the login.
@@ -386,7 +402,7 @@ TEST_CASE("replay: start over plays the programme's start on the archive copy; r
   CHECK(lines[0] == "start over " + hm(start) + "; server clock UTC\xe2\x88\x92" "5");
   CHECK(lines[1] == "rewind to " + hm(to) + "; server clock UTC\xe2\x88\x92" "5");
   CHECK(lines[2] == "back to live");
-  auto entries = r.logged("replay");
+  auto entries = r.replayEntries();
   CHECK(entries[0].feed == r.session->feeds()[copy].label);
   CHECK(entries[0].provider == "Mock IPTV");
   CHECK(entries[2].feed == liveFeed.label);
@@ -556,7 +572,7 @@ TEST_CASE("replay: a copy that fails tries the next with an archive, then goes l
   CHECK(lines[1].find("; another copy") != std::string::npos);
   CHECK(lines[2].rfind("another copy from " + hm(from), 0) == 0);
   CHECK(lines[3] == "failed: no picture after 10 s; back to live");
-  auto entries = r.logged("replay");
+  auto entries = r.replayEntries();
   CHECK(entries[1].feed == r.session->feeds()[first].label);
   CHECK(entries[3].feed == r.session->feeds()[other].label);
   r.noLinks();
@@ -861,6 +877,14 @@ TEST_CASE("replay 1.0.10: Dream (2 days) and Trex (1 day) copies, either order: 
     Rig r(Rig::Two{}, trexFirst);
     std::string espn = r.entry("ESPN");
     REQUIRE(!espn.empty());
+    // Build 174: Dream's archive clock measured already (as its server
+    // says): the copies' clocks don't decide here, their archives do.
+    {
+      marigold::engine::archive::Timing exact;
+      exact.kind = marigold::engine::archive::Kind::Exact;
+      exact.clock = -5 * 3600;
+      r.store->noteArchiveTiming(r.channelOf(601), exact);
+    }
     // Live on the Trex copy: replay still reaches two days back, on Dream.
     r.watchLive(espn, 701);
     REQUIRE(r.session->feeds().size() == 2);
@@ -1710,6 +1734,10 @@ TEST_CASE("replay 1.0.16: server and tables say UTC, the archive runs on UTC+1: 
   std::vector<std::string> lines = r.replayLines();
   CHECK(std::count(lines.begin(), lines.end(), "archive: exact") == 1);
   CHECK(lines.back() == "rewind to " + hm(picked) + "; archive clock UTC+1 (measured; server says UTC)");
+  // Build 174: the check itself said, on the copy's provider.
+  REQUIRE(r.clockLines().size() == 1);
+  CHECK(r.clockLines()[0].first == "Mock IPTV");
+  CHECK(r.clockLines()[0].second == "clock check: UTC+1 from the video (server says UTC)");
   // Only what the first replay needs was read: none of the full reads.
   CHECK(archiveAsks(r, 501) == 1);
 
@@ -1801,15 +1829,27 @@ TEST_CASE("replay 1.0.16: not measured within 4 s plays as before; a spare conne
     r.tv.pool.drain();
     CHECK(r.player->plays.size() == plays + 1);  // the stretch playing isn't disturbed
     Store::ArchiveClock after = r.store->archiveClock(r.channelOf(501));
+    auto clocks = r.clockLines();
     if (connections == 1) {
       // The reads stopped for the replay's connection: nothing measured,
       // nothing kept that would stop the next try.
       CHECK_FALSE(after.measured);
       CHECK_FALSE(r.store->archiveTiming(r.channelOf(501)));
+      // Build 174: said, with what happens next.
+      REQUIRE(clocks.size() == 1);
+      CHECK(clocks[0].first == "Mock IPTV");
+      CHECK(clocks[0].second == "clock check: out of time (5 s); replays use the server's UTC for now; "
+                                "checking again in the background in 2 min");
+      CHECK(r.store->clockTrust(r.channelOf(501)) == Store::ClockTrust::Failed);
     } else {
       // They carried on: the next replay is right at once.
       CHECK(after.measured);
       CHECK(after.offset == 3600);
+      // Build 174: both said: the stretch opening without it, its end.
+      REQUIRE(clocks.size() == 2);
+      CHECK(clocks[0].second == "clock check: not done in 5 s; this replay uses the server's UTC; still reading");
+      CHECK(clocks[1].second == "clock check, finished: UTC+1 from the video (server says UTC); "
+                                "the account's replays ask in it now");
       r.picture();
       REQUIRE(r.session->replayFrom(picked + 600, Why::Rewind));
       CHECK_FALSE(r.session->replay()->clockWait);
@@ -1842,5 +1882,244 @@ TEST_CASE("replay 1.0.16: server and table say UTC-5, the archive runs on UTC-4:
   CHECK(r.store->archiveClock(channel).offset == -4 * 3600);
   CHECK(r.replayLines().back() == "rewind to " + hm(picked) +
                                      "; archive clock UTC\xe2\x88\x92" "4 (measured; server says UTC\xe2\x88\x92" "5)");
+  r.noLinks();
+}
+
+// ------------------------------------------- Build 174: clock checks that keep trying
+
+namespace {
+
+// Answers a copy's background check: its live picture now (a few seconds
+// stale is fine: the clock is whole quarter hours), and the full reads (the
+// two moments about two hours back, for the hour to come) on an archive
+// starting at `startOf(moment asked)`.
+void answerFull(Rig& r, int id, const std::function<mtime::Seconds(mtime::Seconds)>& startOf) {
+  std::optional<archive::Request> req = r.store->timingRequest(r.channelOf(id));
+  REQUIRE(req);
+  mtime::Seconds now = mtime::now();
+  r.tv.pool.answer(req->live, timingClip(encoderPts(now - 3), 2));
+  for (int k = 0; k < 60; ++k) {
+    mtime::Seconds first = archive::firstMoment(now + k * 60);
+    for (mtime::Seconds at : {first, first + archive::kApart})
+      r.tv.pool.answer(*req->linkFor(at), timingClip(encoderPts(startOf(at)), 2));
+  }
+}
+
+// The app's loop for `ms`, the live picture of copy `id` answered afresh
+// every ten seconds (its clock read against the wall clock).
+void runLive(Rig& r, int id, uint32_t ms) {
+  std::optional<archive::Request> req = r.store->timingRequest(r.channelOf(id));
+  REQUIRE(req);
+  for (uint32_t t = 0; t < ms; t += 10000) {
+    r.tv.pool.answer(req->live, timingClip(encoderPts(mtime::now() - 3), 2));
+    r.run(10000);
+  }
+}
+
+}  // namespace
+
+TEST_CASE("replay 1.0.17: Dream says UTC, its archive runs on UTC+1, its reads fail at first; Trex says UTC+1") {
+  // The user's case. Dream's server says UTC; its archive really runs on
+  // UTC+1. Trex's server says UTC+1, rightly. Dream keeps two days, Trex one.
+  Rig r(Rig::Two{}, false, 0, 3600);
+  std::string espn = r.entry("ESPN");
+  REQUIRE(!espn.empty());
+  r.watchLive(espn, 601);
+  size_t dream = r.feedOf(601), trex = r.feedOf(701);
+  REQUIRE(dream < r.session->feeds().size());
+  REQUIRE(trex < r.session->feeds().size());
+  // Dream's live picture comes; its archive answers a web page.
+  mtime::Seconds now = mtime::now();
+  mtime::Seconds picked = hourOf(now - 3 * 3600, 0);
+  std::optional<archive::Request> req = r.store->timingRequest(r.channelOf(601));
+  REQUIRE(req);
+  r.tv.pool.answer(req->live, timingClip(encoderPts(now - 3), 2));
+  std::string page = *req->linkFor(archive::quickMoment(picked, now));
+  r.tv.pool.answer(page, "<html><body>The archive is being prepared, please wait.</body></html>" +
+                             std::string(600, ' '));
+  r.tv.pool.mime(page, "text/html");
+
+  // 21:00 picked: Dream's check fails, so the replay starts at once on
+  // Trex, whose clock nothing contradicts, in its UTC+1.
+  REQUIRE(r.session->replayFrom(picked, Why::Rewind));
+  r.tv.pool.drain();
+  REQUIRE(r.session->replay());
+  CHECK(r.session->replay()->feed == trex);
+  const Feed& f = r.player->plays.back();
+  REQUIRE(isReplay(f));
+  CHECK(f.url.rfind(std::string(kTrexHost) + "/timeshift/", 0) == 0);
+  CHECK(f.url.find(linkMinute(picked, 3600) + "701.ts") != std::string::npos);
+  auto clocks = r.clockLines();
+  REQUIRE(clocks.size() == 1);
+  CHECK(clocks[0].first == "Dream");
+  CHECK(clocks[0].second == "clock check: not a video stream (text/html) (archive); replays use the server's UTC "
+                            "for now; checking again in the background in 2 min");
+  std::vector<std::string> lines = r.replayLines();
+  CHECK(std::count(lines.begin(), lines.end(), "replay from Trex: Dream's clock check failed") == 1);
+  CHECK(lines.back() == "rewind to " + hm(picked) + "; server clock UTC+1");
+  CHECK(r.logged("replay").back().provider == "Trex");
+  CHECK(r.store->clockTrust(r.channelOf(601)) == Store::ClockTrust::Failed);
+  CHECK(r.store->clockTrust(r.channelOf(701)) == Store::ClockTrust::Unchecked);
+  r.picture();
+
+  // A minute on: Dream isn't read again yet (its two minutes), and Trex's
+  // only connection plays.
+  answerFull(r, 601, [](mtime::Seconds asked) { return asked - 3600; });
+  int asked = archiveAsks(r, 601);
+  runLive(r, 601, 60000);
+  CHECK(archiveAsks(r, 601) == asked);
+  CHECK(archiveAsks(r, 701) == 0);
+  // Then the background check reads Dream (its connection free) and finds
+  // UTC+1; the account's copies learn it.
+  for (int i = 0; i < 20 && !r.store->archiveClock(r.channelOf(601)).measured; ++i) runLive(r, 601, 10000);
+  Store::ArchiveClock learned = r.store->archiveClock(r.channelOf(601));
+  CHECK(learned.measured);
+  CHECK(learned.offset == 3600);
+  CHECK(r.store->clockTrust(r.channelOf(601)) == Store::ClockTrust::Measured);
+  clocks = r.clockLines();
+  REQUIRE(clocks.size() == 2);
+  CHECK(clocks[1].first == "Dream");
+  CHECK(clocks[1].second ==
+        "clock check (background): UTC+1 from the video (server says UTC); the account's replays ask in it now");
+  CHECK(archiveAsks(r, 701) == 0);  // Trex never read while it played
+  CHECK(r.session->replay()->feed == trex);  // the replay playing isn't disturbed
+
+  // Now Dream's copy is the one trusted, and the longer: asked in UTC+1.
+  mtime::Seconds again = picked + 20 * 60;
+  REQUIRE(r.session->replayFrom(again, Why::Rewind));
+  r.tv.pool.drain();
+  CHECK(r.session->replay()->feed == dream);
+  CHECK(r.player->plays.back().url.rfind(std::string(mock::kHost) + "/timeshift/", 0) == 0);
+  CHECK(r.player->plays.back().url.find(linkMinute(again, 3600) + "601.ts") != std::string::npos);
+  CHECK(r.replayLines().back() == "rewind to " + hm(again) + "; archive clock UTC+1 (measured; server says UTC)");
+  // Kept: the measured clock, the failure forgotten; ids and numbers only.
+  r.tv.pool.drain();
+  std::optional<std::string> saved = r.tv.files.read("archive-clocks.json");
+  REQUIRE(saved);
+  CHECK(saved->find("\"measured\":{\"601\":3600}") != std::string::npos);
+  CHECK(saved->find("checkFails") == std::string::npos);
+  CHECK(saved->find("://") == std::string::npos);
+  r.noLinks();
+}
+
+TEST_CASE("replay 1.0.17: a copy whose clock the video showed plays first, where its archive reaches") {
+  Rig r(Rig::Two{}, false, 0, 3600);
+  std::string espn = r.entry("ESPN");
+  archive::Timing exact;
+  exact.kind = archive::Kind::Exact;
+  exact.clock = 3600;
+  r.store->noteArchiveTiming(r.channelOf(701), exact);  // Trex measured
+  r.watchLive(espn, 601);
+  size_t dream = r.feedOf(601), trex = r.feedOf(701);
+  // Three hours back: both reach it; Trex's clock is confirmed.
+  mtime::Seconds picked = minuteOf(mtime::now() - 3 * 3600);
+  REQUIRE(r.session->replayFrom(picked, Why::Rewind));
+  r.tv.pool.drain();
+  CHECK(r.session->replay()->feed == trex);
+  CHECK_FALSE(r.session->replay()->clockWait);
+  CHECK(r.player->plays.back().url.find(linkMinute(picked, 3600) + "701.ts") != std::string::npos);
+  std::vector<std::string> lines = r.replayLines();
+  CHECK(std::count(lines.begin(), lines.end(), "replay from Trex: its clock is confirmed; Dream's isn't yet") == 1);
+  // Said once.
+  r.picture();
+  REQUIRE(r.session->replayFrom(picked + 600, Why::Rewind));
+  lines = r.replayLines();
+  CHECK(std::count(lines.begin(), lines.end(), "replay from Trex: its clock is confirmed; Dream's isn't yet") == 1);
+  // Thirty hours back only Dream's archive reaches: Dream, whatever its clock.
+  r.picture();
+  mtime::Seconds far = minuteOf(mtime::now() - 30 * 3600);
+  REQUIRE(r.session->replayFrom(far, Why::Rewind));
+  r.tv.pool.drain();
+  CHECK(r.session->replay()->feed == dream);
+  r.noLinks();
+}
+
+TEST_CASE("replay 1.0.17: background checks back off: 2 min, 10 min, 30 min, then hourly; kept across a restart") {
+  CHECK(Store::clockCheckBackoff(1) == 2 * 60000u);
+  CHECK(Store::clockCheckBackoff(2) == 10 * 60000u);
+  CHECK(Store::clockCheckBackoff(3) == 30 * 60000u);
+  CHECK(Store::clockCheckBackoff(4) == 60 * 60000u);
+  CHECK(Store::clockCheckBackoff(9) == 60 * 60000u);
+  Rig r({}, 0);  // nothing watched; the provider's archive never answers
+  std::vector<uint32_t> at;
+  size_t seen = 0;
+  uint32_t start = r.tv.ms;
+  for (int s = 0; s < 50 * 60 && at.size() < 4; ++s) {
+    r.run(1000, 1000);
+    std::vector<std::pair<std::string, std::string>> c = r.clockLines();
+    if (c.size() > seen) {
+      at.push_back(r.tv.ms);
+      seen = c.size();
+    }
+  }
+  REQUIRE(at.size() == 4);
+  // A little after launch, once the lineup is in.
+  CHECK(at[0] - start >= Store::kClockCheckFirstMs);
+  CHECK(at[0] - start <= Store::kClockCheckFirstMs + 7000);
+  auto within = [](uint32_t gap, uint32_t want) { return gap >= want && gap <= want + 7000; };
+  CHECK(within(at[1] - at[0], 2 * 60000));
+  CHECK(within(at[2] - at[1], 10 * 60000));
+  CHECK(within(at[3] - at[2], 30 * 60000));
+  std::vector<std::pair<std::string, std::string>> c = r.clockLines();
+  REQUIRE(c.size() == 4);
+  const std::string head = "clock check (background): no connection (live); replays use the server's UTC; ";
+  CHECK(c[0].second == head + "checking again in 2 min");
+  CHECK(c[1].second == head + "checking again in 10 min");
+  CHECK(c[2].second == head + "checking again in 30 min");
+  CHECK(c[3].second == head + "checking again in 1 h");
+  CHECK(c[0].first == "Mock IPTV");
+  // One copy at a time: never two out.
+  // Kept: the failures, numbers only; a restart still ranks the account last.
+  r.tv.pool.drain();
+  r.run(1000);
+  std::optional<std::string> saved = r.tv.files.read("archive-clocks.json");
+  REQUIRE(saved);
+  CHECK(saved->find("\"checkFails\":4") != std::string::npos);
+  Store again(r.tv.host());
+  fake::settle(again, r.tv);
+  CHECK(again.clockTrust(r.channelOf(501)) == Store::ClockTrust::Failed);
+  r.noLinks();
+}
+
+TEST_CASE("replay 1.0.17: one connection: no background check while it plays, and one out gives way") {
+  for (int connections : {1, 2}) {
+    CAPTURE(connections);
+    Rig r({}, 0, connections);
+    r.watchLive(r.entry("ESPN"), 501);
+    r.run(Store::kClockCheckFirstMs + 30000);
+    if (connections == 2) {
+      // A second connection: checked while live plays.
+      CHECK(r.clockLines().size() == 1);
+      continue;
+    }
+    CHECK(r.clockLines().empty());
+    // Nothing playing: checked within a few seconds.
+    r.session->stop();
+    r.run(10000);
+    REQUIRE(r.clockLines().size() == 1);
+    CHECK(r.clockLines()[0].second.rfind("clock check (background): ", 0) == 0);
+  }
+
+  // A check out when the viewer tunes the account (one connection): it
+  // stops at once, said, and nothing is counted against the account.
+  Rig r({}, 0, 1);
+  std::string espn = r.entry("ESPN");
+  for (uint32_t t = 0; t < Store::kClockCheckFirstMs + 10000; t += 1000) {
+    r.tv.ms += 1000;
+    r.session->tick(r.tv.ms);  // the network held: the check stays out
+  }
+  r.session->setShowingFull(true);
+  REQUIRE(r.session->tune(espn));
+  r.tv.ms += 100;
+  r.session->tick(r.tv.ms);  // the next frame: the account's connection is playback's
+  r.tv.pool.drain();
+  std::vector<std::pair<std::string, std::string>> c = r.clockLines();
+  REQUIRE(c.size() == 1);
+  CHECK(c[0].second == "clock check (background): stopped for playback; checking again in the background in 1 min");
+  CHECK(r.store->clockTrust(r.channelOf(501)) == Store::ClockTrust::Unchecked);
+  // Watching on: not checked again.
+  r.picture();
+  r.run(120000);
+  CHECK(r.clockLines().size() == 1);
   r.noLinks();
 }

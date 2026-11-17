@@ -57,6 +57,13 @@ Clock steadyClock();
 Outcome run(http::Pool& pool, const Request& req, const Clock& clock, const std::atomic<bool>* abort,
             uint32_t timeoutMs = kTimeoutMs);
 
+// Build 174: `headers` as the player sends them to a provider: the copy's
+// own, with the player's agent (http::kPlayerAgent) where they name none
+// and no compressed body asked for (the relay asks none). For the app's
+// own reads of a stream (an archive's above all), so the provider answers
+// them as it answers the player.
+std::vector<std::string> asPlayer(std::vector<std::string> headers);
+
 // An answer that refuses the connection: HTTP 403, 429, 451 or 458, a
 // connection refused, or a body that says the connections are used up
 // ("max connections").

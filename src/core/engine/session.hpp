@@ -27,6 +27,7 @@
 #include <string_view>
 #include <vector>
 
+#include "core/engine/archive_timing.hpp"
 #include "core/engine/host.hpp"
 #include "core/engine/model.hpp"
 #include "core/engine/quality.hpp"
@@ -289,8 +290,16 @@ class Session {
   // never measured (nor its account's) waits for it, all in; and how long
   // the reads may carry on after it where the account has a connection to
   // spare.
-  static constexpr uint32_t kMeasureWaitMs = 4000;
-  static constexpr uint32_t kMeasureOnMs = 15000;
+  // Build 174: five seconds, the reads asked as the player asks (the user
+  // waits no more than that; what isn't told by then the background check
+  // tells later), and half a minute on after it.
+  static constexpr uint32_t kMeasureWaitMs = 5000;
+  static constexpr uint32_t kMeasureOnMs = 30000;
+  // Build 174, the background clock check (Store::clockCheckDue): looked
+  // for every few seconds; its reads have a minute (each a generous wait
+  // for its first byte: nobody is waiting).
+  static constexpr uint32_t kClockLookMs = 5000;
+  static constexpr uint32_t kBackgroundCheckMs = 60000;
   // Paused: the stream is closed this long after the picture was held.
   static constexpr uint32_t kReleaseMs = 3000;
   // A replay this close to live is live.
@@ -299,7 +308,9 @@ class Session {
   // channel's own copies whose provider keeps an archive covering the
   // moment, the longest archive, then the copy playing, then a clearly
   // better measured one (feed_scores.hpp), then live order; for now, that
-  // is the longest archive. Offered once live has drawn a picture (or
+  // is the longest archive. Build 174: first of all, the copies whose
+  // archive clock the video showed (Store::ClockTrust), then those whose
+  // account's checks never failed, then the rest. Offered once live has drawn a picture (or
   // during a replay), not on a race camera. nullopt: no copy keeps one
   // (the controls look as they always did).
   std::optional<size_t> catchupCopy() const;
@@ -507,8 +518,14 @@ class Session {
   uint16_t longestArchive(size_t live) const;
   // The copy to replay `at` on (catchupCopy's order), `playing` preferred
   // over others of the same archive, none in `skip`; nullopt: none covers it.
+  // Build 174: `trusted` false: without the clocks' trust (what 1.0.16 chose).
   std::optional<size_t> archiveCopyFor(time::Seconds at, size_t live, size_t playing,
-                                       const std::set<size_t>* skip = nullptr) const;
+                                       const std::set<size_t>* skip = nullptr, bool trusted = true) const;
+  // Build 174: says once when the clocks' trust changed the copy chosen
+  // ("replay from Trex: its clock is confirmed; Dream's isn't yet").
+  void noteReplayChoice(std::optional<size_t> chosen, time::Seconds at, size_t live, size_t playing,
+                        const std::set<size_t>* skip = nullptr);
+  int clockRank(size_t i) const;
   // Build 166: what the copy playing taught (Store::noteStart and the rest):
   // the time its picture played so far goes into its record.
   void flushPlayed();
@@ -529,7 +546,31 @@ class Session {
   replay::Reach reachFor(size_t i) const;
   bool startMeasure(const std::string& channel, int serial);
   // The measurement out stops, unless its account has a connection to spare.
-  void dropMeasure();
+  // Build 174: `timeUp`: the replay's wait is over (said in the log, and a
+  // clock check stopped for it counts as failed: true then); else the
+  // replay was left.
+  bool dropMeasure(bool timeUp = false);
+  // Build 174, the clock checks (Store::clockCheckDue): one out, its copy,
+  // whether it checks the archive clock (else only the timing of a copy
+  // whose clock is known), whether it runs in the background, and whether
+  // its end was said.
+  struct ClockCheck {
+    std::string channel;
+    bool clock = false, background = false, logged = false;
+    uint32_t since = 0;
+  };
+  enum class CheckFrom { Waiting, After, Background };
+  // Its end in the log (and the store's record of it): what the video
+  // showed, or why not and what happens next. Never a link.
+  void clockCheckEnded(ClockCheck& check, const archive::Outcome& o, CheckFrom from);
+  void logClockCheck(const ClockCheck& check, const std::string& detail);
+  // "the server's UTC": the clock the copy's replays ask in for now.
+  std::string clockInUse(const std::string& channel) const;
+  // The background check: started when due, given way for playback.
+  void tickClockCheck(uint32_t now);
+  void yieldClockCheck(const std::string& channel);
+  // The copy whose provider connection playback holds ("" none).
+  std::string channelInUse() const;
   std::string localTime(time::Seconds t) const;
   void saveLog(uint32_t ms, bool all = false);
   uint32_t ms() const { return host_.ms(); }
@@ -614,9 +655,20 @@ class Session {
   std::set<std::string> clockTold_;
   // Build 172: the copies whose archive timing was said (once each), those
   // measured during a replay's wait this run, and the measurement out.
-  std::set<std::string> timingTold_, measureTried_;
+  // Build 174: those whose timing (their clock known) was read during a
+  // replay's wait this run; a clock check is retried with backoff per
+  // account (Store::clockCheckReady) instead of once a run.
+  std::set<std::string> timingTold_, timingTried_;
   std::shared_ptr<std::atomic<bool>> measureAbort_;
   bool measureSpare_ = false;
+  // Build 174: the replay's check out (null: none) and the background one,
+  // when the background was last looked at, a failed check's re-choice of
+  // copy for the replay opening, and the copy choices said.
+  std::shared_ptr<ClockCheck> check_, bgCheck_;
+  std::shared_ptr<std::atomic<bool>> bgAbort_;
+  uint32_t bgLookAt_ = 0;
+  bool rechoose_ = false;
+  std::set<std::string> choiceTold_;
   int clockSerial_ = 0;
   int shortStretches_ = 0;
   uint32_t replayTick_ = 0;

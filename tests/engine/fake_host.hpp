@@ -35,12 +35,15 @@ class Pool final : public http::Pool {
     std::string body;
     std::string contentRange, acceptRanges;
     uint64_t contentLength = 0;
+    std::string mime;  // Build 174: its Content-Type ("" none)
   };
 
   // Links not answered here fail like a network that is down.
   void answer(const std::string& url, std::string body, int status = 200) {
-    canned_[url] = {status, std::move(body), {}, {}, 0};
+    canned_[url] = {status, std::move(body), {}, {}, 0, {}};
   }
+  // Build 174: the type an answer says it is.
+  void mime(const std::string& url, std::string type) { canned_[url].mime = std::move(type); }
   // Build 172: the range headers an answer carries.
   void ranges(const std::string& url, std::string contentRange, std::string acceptRanges, uint64_t length) {
     Canned& c = canned_[url];
@@ -112,6 +115,9 @@ class Pool final : public http::Pool {
   // gets the size), and a look in after each piece (on the same thread).
   bool announceLength = false;
   std::function<void()> duringBody;
+  // Build 174: the first piece of a streamed body this many bytes (0: as
+  // the others), as a transfer can hand over a few bytes first.
+  size_t firstPiece = 0;
 
  private:
   http::Response run(http::Request& req) {
@@ -127,15 +133,18 @@ class Pool final : public http::Pool {
       r.contentRange = it->second.contentRange;
       r.acceptRanges = it->second.acceptRanges;
       r.contentLength = it->second.contentLength;
+      r.mime = it->second.mime;
       const std::string& body = it->second.body;
       r.bytes = body.size();
       if (req.onChunk) {
         // In pieces, like a real transfer, with the progress the pool
         // reports (the size only when the server is to have given it).
         constexpr size_t kPiece = 4096;
-        for (size_t at = 0; at < body.size(); at += kPiece) {
-          if (!req.onChunk(std::string_view(body).substr(at, kPiece))) break;
-          if (req.onProgress) req.onProgress(std::min(body.size(), at + kPiece), announceLength ? body.size() : 0);
+        for (size_t at = 0; at < body.size();) {
+          size_t piece = at == 0 && firstPiece ? firstPiece : kPiece;
+          if (!req.onChunk(std::string_view(body).substr(at, piece))) break;
+          at += piece;
+          if (req.onProgress) req.onProgress(std::min(body.size(), at), announceLength ? body.size() : 0);
           if (duringBody) duringBody();
         }
       } else {
