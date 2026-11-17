@@ -1711,6 +1711,7 @@ void Store::eventsTick(uint32_t ms) {
   }
   pumpRace(ms);
   pumpPhotos(ms);
+  pumpBreaks(ms);  // Build 177
   // A board made on a worker goes in; boards no screen holds any more are
   // freed on a worker.
   if (e.boardDone) putBoard();

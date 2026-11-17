@@ -31,6 +31,15 @@
 // on the banner. Behind live the bar runs from the
 // programme watched to live, always its right end. Channels without
 // catch-up have no replay buttons and no bar.
+//
+// Build 177, Skip break in a sports game's replay (engine::breaks): no new
+// key. During a break the top-right tag says "BREAK · about 2 min · OK to
+// skip" (its few seconds from when the break begins); OK opens the controls
+// on Skip break (after Start over); OK on it plays from just before the
+// next play and the notice says "Skipped a 2 min break · OK again to go
+// back" (OK while it shows goes back). A break that runs to live: "live is
+// in it too", no button. The Rewind timeline and the replay bar draw the
+// breaks hatched; the timeline's Up / Down stop at each break's end.
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -43,6 +52,7 @@
 #include "app/store/store.hpp"
 #include "core/captions/caption_style.hpp"
 #include "core/captions/sentence_case.hpp"
+#include "core/engine/breaks.hpp"
 #include "core/engine/controls.hpp"
 #include "core/engine/replay.hpp"
 #include "core/engine/views.hpp"
@@ -141,6 +151,12 @@ class PlayerScreen : public Screen {
     if (endCard() && endCardKey(e)) return true;
     if (p.failed() || p.noPicture()) return failedKey(e);
     if (zone_ == Zone::Row) return rowKey(e);
+    // Build 177: OK while "Skipped a 2 min break · OK again to go back"
+    // shows (a second OK right after the skip is a double press: ignored).
+    if (e.key == Key::Ok && backToBreakOffered()) {
+      if (app_.ms() - skippedMs_ >= kDoubleOkMs) backToBreak();
+      return true;
+    }
     if (zone_ == Zone::EdgeGuide || zone_ == Zone::EdgeLast) {
       if (e.key == Key::Ok) {
         Zone z = zone_;
@@ -536,7 +552,8 @@ class PlayerScreen : public Screen {
     startOverFor_.clear();
     buildPills();
     zone_ = Zone::Row;
-    // Subtitles first; behind live, Live.
+    // Subtitles first; behind live, Live; Build 177: during a break to
+    // skip, Skip break.
     pill_ = focus ? engine::controls::opening(pills_, app_.playback().replay().has_value()) : -1;
     controlsAt_ = app_.ms();
     backAskUntil_ = 0;
@@ -614,6 +631,7 @@ class PlayerScreen : public Screen {
     in.behind = p.replay().has_value();
     in.lgPause = app_.window().remoteKeys() == RemoteKeys::lg();
     in.startOver = startOverAt_.has_value();
+    in.skipBreak = breakMoment().kind == engine::breaks::Moment::Kind::Skip;
     in.bothVersions = !otherCoast().empty();
     in.cameras = cameras_;
     in.back = !backName().empty();
@@ -720,6 +738,10 @@ class PlayerScreen : public Screen {
         closeControls();
         if (startOverAt_) startOver(*startOverAt_);
         break;
+      case Ctl::SkipBreak:
+        closeControls();
+        skipBreak();
+        break;
       case Ctl::Cameras: panel(makeCameraPanel(app_)); break;
       // Build 169: one Subtitles button: its panel has the languages and
       // their look (Green still turns them on or off from anywhere).
@@ -761,6 +783,43 @@ class PlayerScreen : public Screen {
     if (!p.replayFrom(at, engine::Session::ReplayWhy::StartOver)) return;
     zone_ = Zone::None;
     showBanner();
+  }
+  // Build 177: Skip break: the replay plays from just before the next play
+  // (engine::breaks::playFrom, where this channel's archive can start), as
+  // the timeline's "Play from" does; the notice says so and how to go back,
+  // as Favorites' "OK again to undo". No banner: the tag says where it is.
+  void skipBreak() {
+    Playback& p = app_.playback();
+    engine::breaks::Moment m = breakMoment();
+    if (m.kind != engine::breaks::Moment::Kind::Skip || !m.in) return;
+    time::Seconds now = time::now(), at = p.replayAt();
+    time::Seconds back =
+        engine::breaks::backTo(at, p.reach(), engine::replay::archiveStart(now, p.catchupDays()), now);
+    time::Seconds from = m.in->from, saved = m.saves;
+    if (!p.replayFrom(m.target, engine::Session::ReplayWhy::Rewind)) return;
+    p.logNote("replay", "skipped a break (" + engine::breaks::lengthText(saved) + ")");
+    skipped_ = from;
+    undoTo_ = back;
+    notice(engine::breaks::skippedTitle(saved), engine::breaks::kBackLine, kNoticeMs);
+    undoUntil_ = noticeUntil_;
+    skippedMs_ = app_.ms();
+    zone_ = Zone::None;
+  }
+  // "OK again to go back": while that notice shows, for the replay it skipped.
+  bool backToBreakOffered() const {
+    uint32_t ms = app_.ms();
+    return undoUntil_ && undoUntil_ == noticeUntil_ && ms < undoUntil_ && !notice_.empty() &&
+           app_.playback().replay().has_value();
+  }
+  void backToBreak() {
+    Playback& p = app_.playback();
+    time::Seconds to = undoTo_;
+    undoUntil_ = 0;
+    notice_.clear();
+    skipped_ = 0;
+    if (!p.replayFrom(to, engine::Session::ReplayWhy::Back)) return;
+    p.logNote("replay", "went back to the break");
+    zone_ = Zone::None;
   }
   // Build 170: where the row's Start over goes (engine::controls::
   // startOver), or none: the start of the game on screen, else of the
@@ -1034,6 +1093,17 @@ class PlayerScreen : public Screen {
       if (!mark.empty()) behindTag_.jumped();
     }
     if (r && r->phase == ReplayPhase::Opening && !r->next) behindTag_.jumped();
+    // Build 177: a sports replay's breaks; one beginning (or landed in)
+    // brings the tag's few seconds again, saying so.
+    if (breaksTick(ms)) changed = true;
+    engine::breaks::Moment bm = breakMoment();
+    time::Seconds inBreak = bm.in ? bm.in->from : 0;
+    if (inBreak != breakTagFor_) {
+      breakTagFor_ = inBreak;
+      if (inBreak) behindTag_.jumped();
+      changed = true;
+    }
+    if (skipped_ && !inBreakFrom(skipped_)) skipped_ = 0;
     bool covered = tagCovered();
     behindTag_.tick(ms, covered);
     float shown = behindTag_.opacity(ms, covered);
@@ -1044,6 +1114,62 @@ class PlayerScreen : public Screen {
     if (uint32_t next = behindTag_.nextChange(ms)) wake_.at(next);
     return changed;
   }
+  // Build 177: the game the replay shows (the board's id; "" none): the one
+  // its replay was started from (Live Events), else the game the board has
+  // on the channel at the replay's minute (live: now's), as the game
+  // banner finds it. Asked again when the minute, the channel or the board
+  // changes.
+  const std::string& breaksGame() {
+    Playback& p = app_.playback();
+    if (const engine::Session::GameReplay* g = p.gameReplay()) {
+      breakGame_ = g->eventId;
+      breakGameKey_.clear();
+      return breakGame_;
+    }
+    time::Seconds at = engine::replay::minuteOf(p.replay() ? p.replayAt() : time::now());
+    uint64_t board = app_.store().events() ? app_.store().events()->version : 0;
+    std::string key = p.entry() + " " + std::to_string(at) + " " + std::to_string(board);
+    if (key != breakGameKey_) {
+      breakGameKey_ = key;
+      std::optional<GameBanner> b = p.entry().empty() ? std::nullopt : app_.store().gameBanner(p.entry(), at);
+      breakGame_ = b ? b->id : std::string();
+    }
+    return breakGame_;
+  }
+  // Build 177, once a second (or `now`): while a sports game's replay
+  // plays, its play-by-play is asked for (Store::wantBreaks); the breaks
+  // read so far. True when they changed.
+  bool breaksTick(uint32_t ms, bool now = false) {
+    if (!now && breaksAsked_ && ms - breaksAskedMs_ < 1000) return false;
+    breaksAsked_ = true;
+    breaksAskedMs_ = ms;
+    Playback& p = app_.playback();
+    const std::string& game = breaksGame();
+    if (!game.empty() && p.replay()) app_.store().wantBreaks(game);
+    std::shared_ptr<const sports::plays::Breaks> b = game.empty() ? nullptr : app_.store().breaks(game);
+    if (b == breaks_) return false;
+    breaks_ = std::move(b);
+    return true;
+  }
+  // Where the replay's moment is among the breaks (engine::breaks::moment):
+  // nothing live, paused, or without breaks.
+  engine::breaks::Moment breakMoment() const {
+    const Playback& p = app_.playback();
+    const auto& r = p.replay();
+    if (!breaks_ || !r || r->phase == ReplayPhase::Paused) return {};
+    time::Seconds now = time::now();
+    return engine::breaks::moment(breaks_->list, p.replayAt(), now, p.reach(),
+                                  engine::replay::archiveStart(now, p.catchupDays()), skipped_);
+  }
+  // The replay's moment is in the break that starts at `from`.
+  bool inBreakFrom(time::Seconds from) const {
+    if (!breaks_) return false;
+    time::Seconds at = app_.playback().replayAt();
+    for (const engine::breaks::Break& b : breaks_->list)
+      if (b.from == from) return at >= b.from && (b.open || at < b.to);
+    return false;
+  }
+
   // What hides the tag: the banner (it says how far behind itself), the
   // controls, a channel key pending.
   bool tagCovered() const { return bannerVisible() || zone_ == Zone::Row || !pendingFlip_.empty(); }
@@ -1068,6 +1194,11 @@ class PlayerScreen : public Screen {
     reach_ = p.reach();
     pastSerial_ = p.pastSerial();
     programmes_ = p.timeline(earliest_);
+    // Build 177: a sports game's breaks: their ends are stops for Up / Down.
+    breaksTick(app_.ms(), true);
+    timelineBreaks_ = breaks_;
+    breakStops_ = timelineBreaks_ ? engine::breaks::stops(timelineBreaks_->list, reach_, earliest_, now)
+                                  : std::vector<time::Seconds>{};
     span_ = engine::replay::opening(programmes_, now, earliest_);
     span_ = engine::replay::follow(span_, head_, earliest_, now);
     timelineEntry_ = p.entry();
@@ -1102,7 +1233,8 @@ class PlayerScreen : public Screen {
       case Key::Down:
         if (e.wheel && app_.ms() - lastOkAt_ < kWheelAfterClickMs) return true;
         lastMove_ = e.key;
-        moved(engine::replay::jumpReach(reach_, programmes_, head_, e.key == Key::Up ? -1 : 1, earliest_, now));
+        moved(engine::replay::jumpReach(reach_, programmes_, head_, e.key == Key::Up ? -1 : 1, earliest_, now,
+                                        breakStops_));
         return true;
       case Key::Ok:
         // With the pointer on the bar, a click picks that time.
@@ -1209,6 +1341,22 @@ class PlayerScreen : public Screen {
     if (earliest_ > span_.from) c.g.fill({x0, barY, barX(earliest_, x0, w) - x0, 10}, theme::black(0.6f), 5);
     float hx = barX(head_, x0, w);
     c.g.fill({x0, barY, hx - x0, 10}, theme::hex(kBlue), 5);
+    // Build 177: a sports game's breaks, hatched on the bar; halftime named
+    // under its block (the hour marks give way to it).
+    std::vector<std::pair<float, float>> named;
+    bool breaksShown = false;
+    if (timelineBreaks_) {
+      for (const engine::breaks::Block& k : engine::breaks::blocks(timelineBreaks_->list, span_.from, span_.to, now)) {
+        float a = x0 + static_cast<float>(k.from) * w, b = x0 + static_cast<float>(k.to) * w;
+        hatch(c, {a, barY - 4, std::max(4.0f, b - a), 18});
+        breaksShown = true;
+        if (!k.halftime) continue;
+        float lw = ui::textWidth(c, "Halftime", Weight::Regular, 17);
+        float lx = std::min(a, x0 + w - lw);
+        shadowed(c, "Halftime", lx, barY + 24, Weight::Regular, 17, theme::white(0.65f));
+        named.push_back({lx - 10, lx + lw + 10});
+      }
+    }
     if (span_.to >= now - 1) {
       float lx = barX(now, x0, w);
       c.g.fill({lx - 9, barY - 4, 18, 18}, theme::hex(kRed), 9);
@@ -1226,7 +1374,12 @@ class PlayerScreen : public Screen {
     for (time::Seconds t = (span_.from / step + 1) * step; t < span_.to - step / 3; t += step) {
       float mx = barX(t, x0, w);
       c.g.fill({mx - 1, barY + 12, 2, 8}, theme::white(0.4f));
-      ui::label(c, timeText(c, t), mx - 60, barY + 24, Weight::Regular, 17, theme::white(0.6f), 120, Align::Center);
+      std::string mark = timeText(c, t);
+      float half = ui::textWidth(c, mark, Weight::Regular, 17) * 0.5f;
+      bool taken = std::any_of(named.begin(), named.end(), [&](const std::pair<float, float>& n) {
+        return mx + half > n.first && mx - half < n.second;
+      });
+      if (!taken) ui::label(c, mark, mx - 60, barY + 24, Weight::Regular, 17, theme::white(0.6f), 120, Align::Center);
     }
     // Pointer: the bar in slices, each a time.
     for (int i = 0; i < kBarSlices; ++i) {
@@ -1253,10 +1406,20 @@ class PlayerScreen : public Screen {
     if (!reach_.anyMinute())
       steps = "\xe2\x97\x80 \xe2\x96\xb6 " + std::to_string(reach_.chunk / 60) +
               " minutes, where this channel\xe2\x80\x99s replay starts (hold to speed up)";
+    // Build 177: with breaks on the bar, their key first, and Up / Down
+    // stop at them too.
+    float hx0 = kLeft;
+    if (breaksShown) {
+      hatch(c, {hx0, top + 336, 33, 15});
+      hx0 += 33 + 10;
+      hx0 += shadowed(c, "Breaks", hx0, top + 330, Weight::Regular, 21, theme::white(0.78f)) + 24;
+    }
+    std::string upDown =
+        breaksShown ? "start of the break or programme before / after" : "start of the programme before / after";
     shadowed(c,
-             steps + " \xc2\xb7 \xe2\x96\xb2 \xe2\x96\xbc start of the programme before / after \xc2\xb7 OK play from here "
+             steps + " \xc2\xb7 \xe2\x96\xb2 \xe2\x96\xbc " + upDown + " \xc2\xb7 OK play from here "
                      "\xc2\xb7 Back stay where you were",
-             kLeft, top + 330, Weight::Regular, 21, theme::white(0.78f), gfx::kLayoutWidth - 2 * kLeft);
+             hx0, top + 330, Weight::Regular, 21, theme::white(0.78f), gfx::kLayoutWidth - kLeft - hx0);
     (void)p;
   }
 
@@ -1451,6 +1614,13 @@ class PlayerScreen : public Screen {
     if (!r || r->phase == ReplayPhase::Paused || c.covered) return;
     float a = behindTag_.opacity(app_.ms(), tagCovered());
     constexpr float kTop = 52, kH = 52;
+    // Build 177: during a sports replay's break, the same tag says so.
+    engine::breaks::Moment bm = breakMoment();
+    if (bm.kind != engine::breaks::Moment::Kind::None) {
+      if (a > 0) drawBreakTag(c, a, engine::breaks::tagText(bm), kTop, kH);
+      if (finalReplay()) drawEndCard(c, kTop + kH + 16);
+      return;
+    }
     if (const engine::Session::GameReplay* g = finalReplay()) {
       // Build 167: a Final's replay counts from the game's start ("REPLAY ·
       // 48:10 in"), not behind live.
@@ -1482,6 +1652,35 @@ class PlayerScreen : public Screen {
     if (unsigned icon = c.icons ? c.icons->get("ui-replay") : 0)
       c.g.textureAlpha(icon, {ix, box.y + 13, 26, 26}, theme::white(a));
     ui::label(c, text, ix + 36, box.y + 11, Weight::Bold, 24, theme::white(a));
+  }
+
+  // Build 177: the tag during a break: a white-ish BREAK chip with the
+  // double chevron, then what it says ("about 2 min · OK to skip").
+  void drawBreakTag(ui::Ctx& c, float a, const std::string& text, float top, float h) {
+    float chipW = ui::chipWidth(c, "BREAK", 17) + 26;
+    float tw = ui::textWidth(c, text, Weight::Bold, 24);
+    float w = 14 + chipW + 14 + tw + 24;
+    Rect box{gfx::kLayoutWidth - 64 - w, top, w, h};
+    c.g.fill(box, theme::black(0.6f * a), 26);
+    Rect chip{box.x + 12, box.y + 11, chipW, 30};
+    c.g.fill(chip, theme::white(0.22f * a), 15);
+    if (unsigned icon = c.icons ? c.icons->get("ctl-skip") : 0)
+      c.g.textureAlpha(icon, {chip.x + 10, chip.y + 7, 16, 16}, theme::white(a));
+    ui::labelIn(c, "BREAK", {chip.x + 30, chip.y, chip.w - 36, chip.h}, Weight::Bold, 17, theme::white(a));
+    ui::label(c, text, chip.x + chip.w + 14, box.y + 11, Weight::Bold, 24, theme::white(a));
+  }
+  // Build 177: a break's block: dark, with light diagonal stripes (the
+  // ui-hatch tile, repeated; a plain dark block without it).
+  void hatch(ui::Ctx& c, Rect r) {
+    c.g.fill(r, theme::hex(0x0E1117, 0.95f), 3);
+    unsigned tile = c.icons ? c.icons->get("ui-hatch") : 0;
+    if (!tile) {
+      c.g.stroke(r, theme::white(0.35f), 3, 1);
+      return;
+    }
+    c.g.pushClip(r);
+    for (float x = r.x; x < r.x + r.w; x += r.h) c.g.textureAlpha(tile, {x, r.y, r.h, r.h}, theme::white(0.4f));
+    c.g.popClip();
   }
 
   // The programme's bar above the controls (engine::controls::bar). Live:
@@ -1527,6 +1726,11 @@ class PlayerScreen : public Screen {
     c.g.fill({x0, y, w, 4}, theme::white(0.28f), 2);
     float ax = xAt(bar.at);
     c.g.fill({x0, y, ax - x0, 4}, theme::hex(kBlue), 2);
+    // Build 177: a sports game's breaks, as on the Rewind timeline (only
+    // shown here).
+    if (breaks_)
+      for (const engine::breaks::Block& k : engine::breaks::blocks(breaks_->list, bar.from, bar.to, now))
+        hatch(c, {xAt(k.from), y - 3, std::max(3.0f, xAt(k.to) - xAt(k.from)), 10});
     for (size_t i = 0; i < bar.ticks.size(); ++i)
       c.g.fill({xAt(bar.ticks[i].at) - 1, y - 5, 2, 14}, theme::white(i == 0 ? 0.55f : 0.4f), 1);
     c.g.fill({x0 + w - 11, y - 9, 22, 22}, theme::hex(kRed, 0.25f), 11);
@@ -1534,7 +1738,9 @@ class PlayerScreen : public Screen {
     // The moment: a white dot with a blue halo, its clock under it.
     c.g.fill({ax - 12, y - 10, 24, 24}, theme::hex(kBlue, 0.5f), 12);
     c.g.fill({ax - 8, y - 6, 16, 16}, theme::white(), 8);
-    std::string clock = ui::clock(c, p.replayAt());
+    // Build 177: in a break, that in place of the clock.
+    std::string clock = breakMoment().kind != engine::breaks::Moment::Kind::None ? std::string("in a break")
+                                                                                   : ui::clock(c, p.replayAt());
     float cw = ui::textWidth(c, clock, Weight::Bold, kPx);
     float cx = std::clamp(ax - cw * 0.5f, kLeft, x0 + w - cw);
     shadowed(c, clock, cx, y + 14, Weight::Bold, kPx, theme::white());
@@ -2233,6 +2439,7 @@ class PlayerScreen : public Screen {
       case Ctl::Pause: name = "ctl-pause"; break;
       case Ctl::Rewind: name = "ui-replay"; break;
       case Ctl::StartOver: name = "ctl-start"; break;
+      case Ctl::SkipBreak: name = "ctl-skip"; break;
       case Ctl::Subtitles: name = "ctl-subtitles"; break;
       case Ctl::Sources: name = "ctl-sources"; break;
       case Ctl::Swap: name = "ctl-swap"; break;
@@ -2266,6 +2473,9 @@ class PlayerScreen : public Screen {
     const float y = kRowY - 6, room = gfx::kLayoutWidth - 2 * kLeft;
     ctl::LabelIn in = labelIn(g);
     if (startOverAt_) in.startOverFrom = ui::clock(c, *startOverAt_, false);
+    // Build 177: "Skip break · about 2 min".
+    if (engine::breaks::Moment bm = breakMoment(); bm.kind == engine::breaks::Moment::Kind::Skip)
+      in.skipAbout = engine::breaks::about(bm.saves);
     std::vector<ctl::Label> labels;
     for (Ctl b : pills_) labels.push_back(ctl::label(b, in));
     bool focused = pill_ >= 0 && static_cast<size_t>(pill_) < pills_.size();
@@ -2394,6 +2604,19 @@ class PlayerScreen : public Screen {
   engine::replay::BehindTag behindTag_;
   std::string tagMark_;
   float tagShown_ = 0;
+  // Build 177, Skip break: the game the replay shows and what it was
+  // worked out for; its breaks (the timeline's as it opened) and the
+  // timeline's stops at their ends; when they were last asked for; the
+  // break the tag last came up for and the one just skipped (their starts,
+  // 0 none); "OK again to go back": where to, until when (the notice's),
+  // and when the skip was.
+  std::string breakGame_, breakGameKey_;
+  std::shared_ptr<const sports::plays::Breaks> breaks_, timelineBreaks_;
+  std::vector<time::Seconds> breakStops_;
+  bool breaksAsked_ = false;
+  uint32_t breaksAskedMs_ = 0;
+  time::Seconds breakTagFor_ = 0, skipped_ = 0, undoTo_ = 0;
+  uint32_t undoUntil_ = 0, skippedMs_ = 0;
   // Build 167: a Final's replay past its final: "End of the game" until
   // then (app ms; 0 none), its focused button (0 Back to Live Events).
   uint32_t endCardUntil_ = 0;

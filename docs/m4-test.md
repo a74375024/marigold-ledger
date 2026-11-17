@@ -2342,3 +2342,37 @@ Live Events gets a day button, "Today ▼", beside Filter (Up from the first row
 | Log | Export the playback log | "live events: Monday's games, N leagues, fine"; no link, host or login |
 | LG | On the LG TV, pick a past day and scroll the rows | No pause in the UI while it loads; the board scrolls as today's |
 | Other platforms | Android / Fire TV, Apple TV, Mac | Same |
+
+## Build 177: Skip break
+
+In a sports game's replay, the breaks (commercials, timeouts, the ends of periods, halftime) can be skipped, inside the controls you already have. No key changes, no setting, never automatic. It works where the app knows the game: a replay started from Live Events (a live game's Start over, a Final's Watch replay, a past day's tile), or a channel's replay whose listing at that moment is a game on the board (the game banner shows it). Football (NFL, college), basketball (NBA, WNBA, college) and hockey (NHL, college); not soccer, baseball, racing, tennis, golf, fights or cricket.
+
+- **The data.** While such a replay plays (or opens), the game's play-by-play is asked for once in the background, from the same site as the scores, with their politeness: one request at a time, spaced, at most 120 a day, backed off after a failure, and a site that refuses (429, 403) the scores or these is left alone for the rest of the day. A game still on is asked again every 2.5 min while its replay is behind live. Nothing about you is sent. The answer (up to about a megabyte for football) is read on a worker; only the breaks are kept.
+- **A break.** Two plays at least 75 s apart where the first is a timeout, the end of a period or half, a score, the two-minute warning, an injury or a review (or any two plays 150 s apart), from 10 s after the first to 10 s before the next, at least 45 s long. Halftime: after the second quarter (the first half in men's college basketball).
+- **The tag.** When a break begins (or a jump lands in one), the top-right tag shows for its usual few seconds with a white BREAK chip: "about 2 min · OK to skip". A break that runs to live: "BREAK · live is in it too".
+- **Skip break.** OK opens the controls on Skip break ("Skip break · about 2 min"), after Start over in the first group. OK on it plays from just before the next play (the minute at or before 10 s before it; on a channel whose archive comes in chunks, the start at or before that), with no banner. The notice: "Skipped a 2 min break" / "OK again to go back"; OK while it shows plays from where you were.
+- **Near live.** In a break that runs to live there is no Skip break: the controls open on Live, as behind live.
+- **Rewind.** The timeline's bar shows the breaks hatched, halftime named under its block, "Breaks" in the key line, and ▲ ▼ stop at the end of each break as well as at programme starts ("▲ ▼ start of the break or programme before / after"). The controls' replay bar shows the same blocks (with "in a break" under the moment during one); under a game's banner, as before, there is no bar.
+- **No data.** A league without play-by-play, a game without times, or no answer: no tag, no button, no blocks.
+- The log: "breaks: 7 found in NFL play-by-play" once per game per session (or "breaks: no play-by-play for MLB", "breaks: NFL play-by-play has no times"), "skipped a break (2 min 10 s)", "went back to the break". Never a link.
+
+| Check | How | Pass |
+|---|---|---|
+| A break starts | A football game's replay from Live Events (Start over on a live game, or a Final's Watch replay); wait for a timeout or a score | The tag at the top right for a few seconds: BREAK chip with the double chevron, "about 2 min · OK to skip"; then it fades |
+| The controls | OK during the break | The row opens on Skip break, after Start over, reading "Skip break · about 2 min"; Live (and LG's Pause) still first |
+| Skip | OK on Skip break | The game resumes a few seconds before the snap; no banner; the notice "Skipped a 2 min break" / "OK again to go back"; the REPLAY tag after the jump |
+| Go back | OK while the notice shows | It plays from where the break was; the BREAK tag again |
+| Not too soon | Press OK twice quickly on Skip break | One skip; the second OK isn't taken as "go back" |
+| Late in a break | Wait until under half a minute of the break is left, OK | No Skip break; the row opens on Live as behind live |
+| Halftime | Skip at halftime | "Skipped a 15 min break" (or so); lands just before the second half's kickoff |
+| Basketball / hockey | An NBA or NHL game's replay | The same at timeouts and between periods |
+| A channel's replay | Rewind on a channel airing a game the board shows (the game banner shows it) | The same tag and Skip break |
+| Near live | A live game about 1 min behind live, in a commercial | Tag "BREAK · live is in it too"; OK opens on Live; no Skip break |
+| Rewind | Open Rewind during a game's replay | Hatched blocks on the bar, "Halftime" under its block, "Breaks" in the key line; ▲ ▼ stop at each break's end and at programme starts; "▲ ▼ start of the break or programme before / after" |
+| Controls bar | OK during a channel's replay of a game (channel banner) | The same blocks on the bar over the buttons; "in a break" under the moment during one |
+| Chunks | A channel whose archive comes in chunks (◀ ▶ "10 minutes, where this channel's replay starts") | Skip break plays from the chunk start at or before the next play, or isn't offered when that is before the break |
+| No data | A baseball or soccer game's replay | No tag change, no button, no blocks; log "breaks: no play-by-play for MLB" once |
+| Live game | Watch a live game's replay 10 min behind live through a few timeouts | Breaks newer than when the replay started show on the Rewind bar within about 3 min, and can be skipped |
+| Log | Export the playback log | "breaks: N found in NFL play-by-play" once; "skipped a break (2 min 10 s)"; "went back to the break"; no link |
+| LG | On the LG TV, a football replay | No pause in the picture or the UI when the play-by-play comes in |
+| Other platforms | Android / Fire TV, Apple TV, Mac | Same |

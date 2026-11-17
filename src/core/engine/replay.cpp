@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <optional>
 
 namespace marigold::engine::replay {
 namespace {
@@ -226,6 +227,20 @@ time::Seconds jumpReach(const Reach& r, const std::vector<Programme>& list, time
   return ahead;
 }
 
+time::Seconds jumpReach(const Reach& r, const std::vector<Programme>& list, time::Seconds at, int dir,
+                        time::Seconds earliest, time::Seconds live, const std::vector<time::Seconds>& stops) {
+  time::Seconds to = jumpReach(r, list, at, dir, earliest, live);
+  std::optional<time::Seconds> best;
+  for (time::Seconds s : stops) {
+    if (s < earliest || s >= live) continue;
+    if (dir < 0 && s < at - kAtStart && (!best || s > *best)) best = s;
+    if (dir > 0 && s > at + kAtStart && (!best || s < *best)) best = s;
+  }
+  if (!best) return to;
+  if (dir < 0) return to >= at || *best > to ? *best : to;
+  return to <= at || *best < to ? *best : to;
+}
+
 std::vector<time::Seconds> boundaries(const Reach& r, Span shown, size_t limit) {
   std::vector<time::Seconds> out;
   if (r.anyMinute() || shown.to <= shown.from) return out;
@@ -272,7 +287,7 @@ std::string behindMinutes(time::Seconds behind) {
   return buf;
 }
 
-std::vector<Button> buttons(uint16_t days, bool behind, bool lgPause, bool startOver) {
+std::vector<Button> buttons(uint16_t days, bool behind, bool lgPause, bool startOver, bool skipBreak) {
   if (!days) return {};
   std::vector<Button> out;
   if (behind) {
@@ -283,6 +298,7 @@ std::vector<Button> buttons(uint16_t days, bool behind, bool lgPause, bool start
   }
   out.push_back(Button::Rewind);
   if (startOver) out.push_back(Button::StartOver);
+  if (skipBreak) out.push_back(Button::SkipBreak);
   return out;
 }
 

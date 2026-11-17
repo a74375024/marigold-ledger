@@ -6,8 +6,9 @@
 //
 // The row: round icon buttons in three groups with a thin divider between
 // them. Watching (behind live: Live first, then Pause on LG, Rewind; live:
-// Pause, Rewind; then Start over where it can work (Build 170); nothing on
-// a channel without replay), this channel
+// Pause, Rewind; then Start over where it can work (Build 170), then Skip
+// break during a sports replay's break (Build 177); nothing on a channel
+// without replay), this channel
 // (Subtitles, Sources, East/West, Cameras), elsewhere (Back, Guide or Games,
 // Favorite, Settings). Only the focused button (or the one under the
 // pointer) opens into a pill with its label and state; the row always fits.
@@ -35,6 +36,7 @@ enum class Button : uint8_t {
   Pause,
   Rewind,
   StartOver,
+  SkipBreak,  // Build 177
   Subtitles,
   Sources,
   Swap,
@@ -53,6 +55,7 @@ struct RowIn {
   bool behind = false;        // a replay plays (or holds) behind live
   bool lgPause = false;       // LG's remote: Pause stays behind live, after Live
   bool startOver = false;     // Build 170: Start over after Rewind (startOver() gave a start)
+  bool skipBreak = false;     // Build 177: a sports replay's break to skip (breaks::moment)
   bool bothVersions = false;  // the channel has East and West
   bool cameras = false;       // the race on screen has onboard cameras
   bool back = false;          // Right has somewhere to go
@@ -76,8 +79,9 @@ struct StartOverIn {
 };
 std::optional<time::Seconds> startOver(const StartOverIn& in);
 
-// The button focused when OK opens the row: Live behind live, else
-// Subtitles (-1: neither, as on an empty row).
+// The button focused when OK opens the row: Skip break where the row has
+// it (Build 177: during a break of a sports replay), else Live behind
+// live, else Subtitles (-1: none of them, as on an empty row).
 int opening(const std::vector<Button>& row, bool behind);
 
 // What each button says when focused.
@@ -92,6 +96,7 @@ struct LabelIn {
   bool game = false;         // a game: Guide is "Games"
   bool favorite = false;     // the channel is a favourite
   std::string startOverFrom; // Build 170: Start over's clock ("7:30"; "" none)
+  std::string skipAbout;     // Build 177: what Skip break leaves out ("about 2 min")
 };
 struct Label {
   std::string title;   // "Subtitles", "Back to TNT"

@@ -274,6 +274,12 @@ struct EventsState {
   events_day::ReplaySources replaySources;
   bool replaySourcesDirty = false;
   uint32_t replaySourcesSavedMs = 0;
+
+  // Build 177, Skip break: the play-by-play fetches and the breaks read
+  // (store_breaks.cpp); the games whose breaks were said in the log (once
+  // each a session), and the leagues said to have none.
+  sports::plays::Fetch plays;
+  std::set<std::string> breaksSaid;
 };
 
 // The guide rows' fields that follow from the channel list, the lineup and
