@@ -145,6 +145,17 @@ struct EventTile {
   std::string replayLine;
   time::Seconds finalSeenAt = 0;
   bool hasReplay() const { return !replayChannelId.empty(); }
+  // Build 176, a past day's board (events_day::pastTile): drawn dimmed (no
+  // replay; `watchable` still says whether it is on your channels), and
+  // its footer: the start time ("5:15 PM"), or when its replay leaves the
+  // archive within kReplayEndsWithin ("replay ends in 2 h", amber:
+  // `footWarn`), at the left; the replay's channel with the mark
+  // (`footReplay`), "No replay" or "Not on your channels" at the right.
+  bool dimmed = false;
+  std::string footLeft, footRight;
+  bool footWarn = false, footReplay = false;
+  // A past day's game with replay: OK plays it from the start.
+  bool playsReplay = false;
 };
 
 // The tile's top line: a sport icon's name ("CRICKET"; empty for "other",
@@ -237,6 +248,16 @@ struct EventsBoard {
     uint32_t row = 0, group = 0, tile = 0;
   };
   std::unordered_map<std::string, Place> places;
+  // Build 176, Live Events by day: the day this board is of (its local
+  // start; 0 today's board), a past one, and its date at the top right
+  // ("Monday, Nov 16"). While its games come: `loading` with the line
+  // under the title ("Getting Monday's games…"); they couldn't be had:
+  // `failed` with its line ("Monday's games couldn't be loaded."), and
+  // Try again. `emptyLine`: no games that day in your sports.
+  time::Seconds day = 0;
+  bool past = false;
+  std::string dayTitle, loadingLine, failedLine, emptyLine, introLine;
+  bool failed = false;
 
   void index() {
     places.clear();
@@ -259,6 +280,22 @@ struct EventsBoard {
     if (it == places.end()) return nullptr;
     return &rows[it->second.row].groups[it->second.group].tiles[it->second.tile];
   }
+};
+
+// Build 176: a row of Live Events' day panel (GO TO, "A day of games"):
+// past days as far back as your channels keep replays, Today, then the
+// days ahead the schedule has games for (events_day::dayRows).
+struct DayRow {
+  time::Seconds day = 0;  // its local start
+  std::string word;       // "Yesterday", "Today", "Tomorrow", "Sunday"
+  std::string date;       // "Mon, Nov 16" (with a weekday word: "Nov 19")
+  // A past day: every part of it still in an archive ("Replay"), or only
+  // part ("Replay on some").
+  enum class Replay : uint8_t { None, All, Some };
+  Replay replay = Replay::None;
+  bool today = false;
+  bool past = false;
+  bool shown = false;  // the board shows it (the check)
 };
 
 // Where to Watch: every way to see one game.

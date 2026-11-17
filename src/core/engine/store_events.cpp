@@ -15,6 +15,7 @@
 
 #include "core/engine/store.hpp"
 #include "core/engine/events_build.hpp"
+#include "core/engine/events_day.hpp"
 #include "core/engine/store_impl.hpp"
 #include "core/catalog/catalog.hpp"
 #include "core/report/live_events_report.hpp"
@@ -113,6 +114,14 @@ constexpr const char* kRemindersFile = "reminders.json";
 constexpr const char* kMemoryFile = "game-sources.json";
 constexpr const char* kSeenFile = "sport-feeds.json";
 constexpr const char* kResultFile = "live-events.json";
+// Build 176: where the last week's games were on at their start (ids,
+// times and channel ids only; events_day::ReplaySources).
+constexpr const char* kReplaySourcesFile = "replay-sources.json";
+// Saved at most this often while it changes (and with the schedule).
+constexpr uint32_t kReplaySourcesSaveMs = 10 * 60000;
+// Another day's board made again at least this often while shown (its
+// "replay ends in" texts), and its past games' sources found again.
+constexpr uint32_t kDayBoardRefreshMs = 60000;
 constexpr uint32_t kCheckMs = 15000;       // rebuild / listings check while open
 constexpr uint32_t kBoardRefreshMs = 30000;  // clock texts ("in 25 m")
 // Boards asked for by scores, a rebuild or the clock: not sooner than this
@@ -140,6 +149,22 @@ using Clock = std::chrono::steady_clock;
 // and size (a reset empties it without a new revision).
 uint64_t lineupKeyOf(const Store::Impl& m) {
   return (static_cast<uint64_t>(static_cast<uint32_t>(m.lineupRevision)) << 32) ^ m.lineup.entries.size();
+}
+
+// What the rebuild (and, Build 176, a past day's sources) reads of the
+// lineup: copied once per lineup.
+void copyLineup(Store::Impl& m) {
+  EventsState& e = m.ev;
+  uint64_t lineupKey = lineupKeyOf(m);
+  if (e.lineupCopy && e.lineupCopyKey == lineupKey) return;
+  auto copy = std::make_shared<events_build::LineupCopy>();
+  copy->lineupIDs = m.lineup.lineupIDs;
+  copy->lineupEntries = m.lineup.lineupEntries;
+  copy->browseEntries = m.lineup.browseEntries;
+  copy->entries = m.lineup.entries;
+  for (const Channel& c : m.lineup.browseEntries) copy->browseIDs.push_back(c.id);
+  e.lineupCopy = std::move(copy);
+  e.lineupCopyKey = lineupKey;
 }
 
 // "4 min", "9 h", "2 days": how old the board is, for the log.
@@ -367,6 +392,8 @@ void Store::loadEvents() {
   if (auto text = st.read(kMemoryFile)) e.memory = ss::SourceMemory(ss::SourceMemory::fromJson(*text));
   if (auto text = st.read(kSeenFile))
     if (auto v = json::parse(*text)) e.seen = sports::sportFeedsSeenFromJson(*v);
+  // Build 176: where the last week's games were at their start.
+  if (auto text = st.read(kReplaySourcesFile)) e.replaySources = events_day::ReplaySources::fromJson(*text, now);
   loadRace();
 }
 
@@ -377,6 +404,7 @@ void Store::saveEvents() {
   st.write(kRemindersFile, e.reminders.toJson());
   st.write(kMemoryFile, e.memory.toJson());
   st.write(kSeenFile, json::write(sports::toJson(e.seen)));
+  saveReplaySources();
 }
 
 void Store::saveSchedule() {
@@ -428,6 +456,8 @@ void Store::eventsOpen(bool open, EventsScreen screen) {
   } else if (!open && eventsOpen_ == 0) {
     e.holding = e.freshNote = e.wholeFirst = false;
     if (e.scores.stop(sc::Holder::board)) stopped();
+    // Build 176: opened again, it shows today.
+    showEventsDay(0);
   }
   if (screen != EventsScreen::guide) return;
   // Build 145: the in-player event guide holds the scores at full pace
@@ -936,17 +966,7 @@ void Store::rebuildEvents() {
   e.lastFingerprint = key;
 
   // What the rebuild reads of the lineup: copied once per lineup.
-  uint64_t lineupKey = lineupKeyOf(m);
-  if (!e.lineupCopy || e.lineupCopyKey != lineupKey) {
-    auto copy = std::make_shared<events_build::LineupCopy>();
-    copy->lineupIDs = m.lineup.lineupIDs;
-    copy->lineupEntries = m.lineup.lineupEntries;
-    copy->browseEntries = m.lineup.browseEntries;
-    copy->entries = m.lineup.entries;
-    for (const Channel& c : m.lineup.browseEntries) copy->browseIDs.push_back(c.id);
-    e.lineupCopy = std::move(copy);
-    e.lineupCopyKey = lineupKey;
-  }
+  copyLineup(m);
   auto job = std::make_shared<events_build::RebuildJob>();
   ss::RebuildInput& in = job->in;
   in.games = std::move(pub.games);
@@ -1040,6 +1060,9 @@ void Store::rebuildEvents() {
                     ++ev.eventsSerial;
                     host_.pool.post([old]() mutable { old.reset(); }, nullptr, http::Priority::Background);
                     ev.schedule.noteWatchable(made->result->watchableLeagues, time::now());
+                    // Build 176: where the games under way and over were
+                    // at their start, kept for a past day's replay.
+                    if (ev.replaySources.note(*ev.events, time::now())) ev.replaySourcesDirty = true;
                     ev.boardStale = true;
                     ev.eventsBuiltAt = time::now();
                     ev.madeFrom = from;
@@ -1197,9 +1220,13 @@ BoardMade board(const BoardInput& in) {
   const std::set<std::string> viewer = sports::languages::ofViewer(in.lineupPrefs.countries);
   if (!replayChannels.empty()) {
     b.keepsReplay = [&](const sports::SportsEvent& ev) {
+      // A postponed game was never played (Build 176: a past day's board
+      // orders by this).
+      if (ev.live == sports::LivePhase::postponed) return false;
       return game_replay::pick(ev, sports::SportsEvent::State::finished, in.now, replayChannels, viewer).has_value();
     };
   }
+  b.day = in.day;
   made.board = sb::build(b);
   const sb::Board& board = made.board;
   for (const auto& [id, tile] : board.tiles) {
@@ -1243,7 +1270,23 @@ BoardMade board(const BoardInput& in) {
       for (const sb::Tile& t : g.tiles) {
         auto ev = board.events.find(t.id);
         EventTile tile = toTile(t, ev == board.events.end() ? nullptr : &ev->second, in.zone);
-        if (ev != board.events.end() && !replayChannels.empty()) {
+        // Build 176: a past day's game is a final (game_replay's (e)); its
+        // tile says whether it can be watched from the start, and why not.
+        if (ev != board.events.end() && in.day && in.day->past) {
+          sports::SportsEvent::State state = t.state == sports::SportsEvent::State::postponed
+                                                 ? t.state
+                                                 : sports::SportsEvent::State::finished;
+          std::optional<game_replay::Pick> pick;
+          if (!replayChannels.empty()) pick = game_replay::pick(ev->second, state, in.now, replayChannels, viewer);
+          if (pick) {
+            tile.replayChannelId = pick->channelId;
+            tile.replayChannelName = pick->channelName;
+            tile.replayFrom = pick->from;
+            tile.replayIsOtherChannel = pick->otherChannel;
+            tile.replayLine = game_replay::startedLine(*pick, in.zone, in.settings.twelveHour);
+          }
+          events_day::pastTile(tile, ev->second, pick, in.now, in.zone, in.settings.twelveHour);
+        } else if (ev != board.events.end() && !replayChannels.empty()) {
           const sports::SportsEvent& game = ev->second;
           if (auto pick = game_replay::pick(game, t.state, in.now, replayChannels, viewer)) {
             tile.replayChannelId = pick->channelId;
@@ -1680,6 +1723,10 @@ void Store::eventsTick(uint32_t ms) {
     it = e.retired.erase(it);
     host_.pool.post([old]() mutable { old.reset(); }, nullptr, http::Priority::Background);
   }
+  // Build 176: another day's board while one is shown; the replay sources
+  // saved now and then while they change.
+  if (eventsOpen_ > 0 && e.shownDay) dayTick(ms);
+  if (e.replaySourcesDirty && ms - e.replaySourcesSavedMs >= kReplaySourcesSaveMs) saveReplaySources();
   // Closed: the day's schedule (Build 125) and, Build 141, the scores and
   // the games in the background from launch, so opening finds them in.
   const bool closed = eventsOpen_ <= 0;
@@ -1909,16 +1956,25 @@ std::string Store::eventOfGame(const std::string& gameId) const {
   return {};
 }
 
-const EventTile* Store::eventTile(const std::string& id) const { return events_->tile(id); }
+const EventTile* Store::eventTile(const std::string& id) const {
+  // Build 176: another day's tile first while that day is shown.
+  const EventsState& e = impl_->ev;
+  if (e.shownDay && e.dayBoard)
+    if (const EventTile* t = e.dayBoard->tile(id)) return t;
+  return events_->tile(id);
+}
 
 WhereToWatch Store::whereToWatch(const std::string& eventId) const {
   const Impl& m = *impl_;
   WhereToWatch w;
-  auto ev = m.ev.board.events.find(eventId);
-  if (ev == m.ev.board.events.end()) return w;
+  // Build 176: another day's game from that day's board while it's shown.
+  const sb::Board* board = &m.ev.board;
+  if (m.ev.shownDay && m.ev.dayBoardGames.events.count(eventId)) board = &m.ev.dayBoardGames;
+  auto ev = board->events.find(eventId);
+  if (ev == board->events.end()) return w;
   // Build 160: a card's part on now first, as of now (not the board's time).
   sb::WherePanel p = sb::wherePanel(
-      m.ev.board, ev->second, makeChannelFor(m, channels_),
+      *board, ev->second, makeChannelFor(m, channels_),
       [this](const std::string& feed) {
         std::vector<Feed> f = feedsFor({feed});
         return f.empty() ? std::string() : f.front().label;
@@ -2275,6 +2331,382 @@ void Store::refreshSchedule() {
   impl_->ev.schedule.refreshNow(scheduleContext());
   ++eventsOpen_;
   impl_->ev.rostersHeld = true;  // released when the fetch finishes
+}
+
+// ------------------------------------------------------------ by day (Build 176)
+
+std::vector<DayRow> Store::eventsDays() const {
+  const EventsState& e = impl_->ev;
+  time::Seconds now = time::now();
+  // The longest archive among your channels (each row's usable depth).
+  uint16_t longest = 0;
+  for (const GuideChannel& g : channels_->all) longest = std::max(longest, g.replayDays);
+  // The days ahead with games: today's board's own (Your teams and the
+  // sports' rows, through the week), not More events or untimed ones.
+  std::vector<time::Seconds> starts;
+  for (const EventRow& row : events_->rows) {
+    if (row.id != "teams" && row.id.rfind("sport|", 0) != 0) continue;
+    for (const EventGroup& g : row.groups)
+      for (const EventTile& t : g.tiles)
+        if (t.start > now && !t.finished) starts.push_back(t.start);
+  }
+  return events_day::dayRows(now, host_.zone(), longest, starts, e.shownDay);
+}
+
+time::Seconds Store::eventsDay() const { return impl_->ev.shownDay; }
+
+std::shared_ptr<const EventsBoard> Store::dayBoard() const {
+  const EventsState& e = impl_->ev;
+  return e.shownDay ? e.dayBoard : nullptr;
+}
+
+void Store::showEventsDay(time::Seconds day, bool retry) {
+  Impl& m = *impl_;
+  EventsState& e = m.ev;
+  const time::Zone zone = host_.zone();
+  const time::Seconds now = time::now();
+  const time::Seconds today = events_day::dayOf(now, zone);
+  if (day) day = events_day::dayOf(day, zone);
+  if (!day || day == today) {
+    // Today's board: another day's fetch stops (an answer out is ignored)
+    // and what it was made from goes; the days fetched stay (DayCache).
+    e.shownDay = 0;
+    e.shownPast = false;
+    e.dayFetch.cancel();
+    e.dayPending.reset();
+    ++e.dayFetchSerial;
+    if (e.dayBoard) e.retired.push_back(std::move(e.dayBoard));
+    e.dayBoard.reset();
+    e.dayEvents.reset();
+    e.dayReplayChannels.reset();
+    e.dayEventsKey.clear();
+    e.dayBoardKey.clear();
+    e.dayBoardGames = sports::board::Board();
+    return;
+  }
+  if (day != e.shownDay) {
+    e.dayEvents.reset();
+    e.dayReplayChannels.reset();
+    e.dayEventsKey.clear();
+    e.dayBoardKey.clear();
+    e.dayBoardGames = sports::board::Board();
+    if (e.dayBoard) e.retired.push_back(std::move(e.dayBoard));
+    e.dayBoard.reset();
+  }
+  e.shownDay = day;
+  e.shownPast = day < today;
+  e.dayBoardDirty = true;
+  if (e.shownPast) {
+    bool fetching = e.dayFetch.busy() && e.dayFetch.day() == day;
+    const sports::days::Day* had = e.dayCache.find(day);
+    // Kept from this session and fresh: shown as it is. Otherwise asked for
+    // (a re-pick while failing waits out the backoff; Try again asks).
+    bool ask = !fetching && (retry || (!e.dayCache.fresh(day, now) && e.dayCache.mayFetch(now)));
+    if (!fetching && e.dayFetch.busy()) {
+      // Another day was coming: dropped.
+      e.dayFetch.cancel();
+      e.dayPending.reset();
+      ++e.dayFetchSerial;
+    }
+    if (ask) {
+      e.dayPending.reset();
+      ++e.dayFetchSerial;
+      std::vector<sports::League> active;
+      if (settings_.scheduleEnabled) active = sports::activeLeagues(e.mySports, e.seen, now, m.prefs.countries);
+      const sports::schedule::Saved& saved = e.schedule.saved();
+      e.dayFetch.begin(day, active, saved.refusedUntil, saved.leagueForm, now, zone);
+    } else if (!had && !fetching) {
+      // Failing and backing off with nothing kept: says so (Try again).
+      sports::days::Day failed;
+      failed.day = day;
+      failed.fetchedAt = now;
+      failed.leagues = 1;
+      e.dayCache.put(failed);
+    }
+  }
+  showDayStatus();
+}
+
+// While the day's board isn't made yet: its placeholders with the line
+// under the title, or the failure with Try again.
+void Store::showDayStatus() {
+  EventsState& e = impl_->ev;
+  if (!e.shownDay) return;
+  const time::Zone zone = host_.zone();
+  const sports::days::Day* had = e.shownPast ? e.dayCache.find(e.shownDay) : nullptr;
+  bool fetching = e.dayFetch.busy() && e.dayFetch.day() == e.shownDay;
+  bool failed = e.shownPast && !fetching && had && had->failedAll();
+  // A board of that day's games already shown stays until the next one,
+  // unless its games couldn't be had.
+  if (e.dayBoard && e.dayBoard->day == e.shownDay && !e.dayBoard->rows.empty() && !failed) return;
+  auto out = std::make_shared<EventsBoard>();
+  out->day = e.shownDay;
+  out->past = e.shownPast;
+  out->dayTitle = events_day::dayTitle(e.shownDay, zone);
+  out->introLine = events_day::introLine(e.shownDay, e.shownPast, zone);
+  out->emptyLine = events_day::emptyLine(e.shownDay, zone);
+  out->scoresOn = settings_.showScores;
+  if (failed) {
+    out->failed = true;
+    out->failedLine = events_day::failedLine(e.shownDay, zone);
+  } else {
+    out->loading = true;
+    out->loadingLine = e.shownPast ? events_day::loadingLine(e.shownDay, zone) : std::string();
+  }
+  // Already showing that: as it is (no new version, nothing redrawn).
+  if (e.dayBoard && e.dayBoard->rows.empty() && e.dayBoard->day == out->day && e.dayBoard->loading == out->loading &&
+      e.dayBoard->failed == out->failed)
+    return;
+  out->version = ++e.dayVersion;
+  if (e.dayBoard) e.retired.push_back(std::move(e.dayBoard));
+  e.dayBoard = std::move(out);
+}
+
+std::string Store::dayBoardKey() const {
+  const EventsState& e = impl_->ev;
+  return std::to_string(e.shownDay) + "|" + std::to_string(e.mySportsRevision) + "|" +
+         (settings_.showScores ? "s" : "") + (settings_.showUnwatchable ? "u" : "") + (settings_.clock24 ? "c" : "") +
+         "|" + e.dayEventsKey + "|" + std::to_string(e.shownPast ? 0 : e.eventsSerial);
+}
+
+void Store::dayTick(uint32_t ms) {
+  Impl& m = *impl_;
+  EventsState& e = m.ev;
+  pumpDay(ms);
+  if (auto done = e.dayFetch.takeFinished()) {
+    std::string note = sports::days::DayFetch::note(*done, host_.zone());
+    MLOG_I("events", "live events: %s", note.c_str());
+    e.logNotes.push_back(note);
+    // What it learned of the sources goes to the schedule's own record.
+    e.schedule.noteRefused(e.dayFetch.takeRefusals());
+    e.schedule.notePlainForm(e.dayFetch.takePlain());
+    saveSchedule();
+    // What can't be asked for by date (cricket's listing, the other
+    // calendars): the saved schedule's games of that day, as they are.
+    if (!done->failedAll()) {
+      std::set<std::string> have;
+      for (const sports::SportsGame& g : done->games) have.insert(g.id);
+      const time::Seconds to = events_day::nextDay(done->day, host_.zone());
+      for (sports::SportsGame& g : e.schedule.games(scheduleContext())) {
+        if (g.start < done->day || g.start >= to || have.count(g.id)) continue;
+        const sports::League* league = sports::leagueByShort(g.leagueShort);
+        if (league && sports::days::byDate(*league)) continue;
+        done->games.push_back(std::move(g));
+      }
+    }
+    e.dayCache.put(std::move(*done));
+    e.dayEventsKey.clear();
+    e.dayBoardDirty = true;
+    showDayStatus();
+  }
+  if (e.shownPast) {
+    const sports::days::Day* day = e.dayCache.find(e.shownDay);
+    if (!day || day->failedAll()) return;  // still coming, or the failure shown
+    // Its games' sources (a channel index made on a worker): found again
+    // only for new games, a new channel list or lineup.
+    std::string key = std::to_string(day->day) + "|" + std::to_string(day->fetchedAt) + "|" +
+                      std::to_string(m.catalogRevision) + "|" + std::to_string(lineupKeyOf(m));
+    if (!e.dayEventsBusy && (key != e.dayEventsKey || !e.dayEvents)) {
+      e.dayEventsKey = key;
+      startDayEvents();
+    }
+    if (!e.dayEvents) return;
+  }
+  // The board: once what it is made of changed, and every minute (its
+  // "replay ends in" lines, a game ahead that started).
+  std::string key = dayBoardKey();
+  bool due = e.dayBoardDirty || key != e.dayBoardKey || ms - e.dayBoardMs >= kDayBoardRefreshMs;
+  if (due && !e.dayBoardBusy && !e.dayEventsBusy) startDayBoard(ms);
+}
+
+void Store::pumpDay(uint32_t ms) {
+  Impl& m = *impl_;
+  EventsState& e = m.ev;
+  if (e.dayBusy || !e.dayFetch.busy()) return;
+  if (!e.dayPending) {
+    e.dayPending = e.dayFetch.nextRequest();
+    if (!e.dayPending) return;  // over: dayTick takes it
+    e.dayAt = ms + static_cast<uint32_t>(std::max(0, e.dayPending->waitMs));
+  }
+  if (ms < e.dayAt) return;
+  e.dayBusy = true;
+  auto pending = std::make_shared<sports::days::DayFetch::Pending>(std::move(*e.dayPending));
+  e.dayPending.reset();
+  auto answer = std::make_shared<sports::days::Answer>();
+  http::Request q = toHttp(pending->request, "events.day");
+  // Only when picked, behind anything on screen.
+  q.priority = http::Priority::Background;
+  q.afterTransfer = [pending, answer](http::Response& r) {
+    if (r.status == 200) *answer = sports::days::parse(pending->league, r.body, pending->from, pending->to);
+    r.body.clear();
+  };
+  uint64_t gen = m.generation, serial = e.dayFetchSerial;
+  host_.pool.submit(std::move(q), [this, gen, serial, answer](http::Response&& r) {
+    EventsState& ev = impl_->ev;
+    ev.dayBusy = false;
+    if (gen != impl_->generation || serial != ev.dayFetchSerial) return;  // dropped
+    ev.dayFetch.onAnswer(r.status, std::move(*answer), r.retryAfterS);
+  });
+}
+
+void Store::startDayEvents() {
+  Impl& m = *impl_;
+  EventsState& e = m.ev;
+  const sports::days::Day* day = e.dayCache.find(e.shownDay);
+  if (!day) return;
+  copyLineup(m);
+  // What the board matched while they were current (today's games, the
+  // Finals kept) and what was remembered of each at its start, for the
+  // day's games only.
+  auto games = std::make_shared<const std::vector<sports::SportsGame>>(day->games);
+  auto known = std::make_shared<std::map<std::string, std::vector<sports::EventSource>>>();
+  std::set<std::string> ids;
+  for (const sports::SportsGame& g : *games) ids.insert(g.id);
+  auto take = [&](const sports::SportsEvent& ev) {
+    if (!ev.game || !ids.count(ev.game->id) || ev.sources.empty()) return;
+    std::vector<sports::EventSource>& list = (*known)[ev.game->id];
+    if (list.empty()) list = ev.sources;
+  };
+  for (const sports::SportsEvent& ev : *e.events) take(ev);
+  for (const sports::SportsEvent& ev : e.keptFinals) take(ev);
+  for (const std::string& id : ids) {
+    const std::vector<sports::EventSource>* seen = e.replaySources.find(id);
+    if (!seen) continue;
+    std::vector<sports::EventSource>& list = (*known)[id];
+    for (const sports::EventSource& s : *seen) {
+      auto same = std::find_if(list.begin(), list.end(),
+                               [&](const sports::EventSource& x) { return x.channelID == s.channelID; });
+      if (same == list.end()) list.insert(list.begin(), s);
+      else if (!same->from) *same = s;  // the listing that had it
+    }
+  }
+  auto lineup = e.lineupCopy;
+  auto catalog = m.catalog;
+  sports::StationMarkets markets = sports::stationMarkets(m.prefs);
+  auto out = std::make_shared<std::vector<sports::SportsEvent>>();
+  e.dayEventsBusy = true;
+  uint64_t gen = m.generation;
+  time::Seconds shown = e.shownDay;
+  host_.pool.post(
+      [games, known, lineup, catalog, markets, out] {
+        // The channels airing each game's networks, as the rebuild finds them.
+        std::unordered_map<std::string, EntryInfo> infos;
+        infos.reserve(catalog->entries.size());
+        for (const EntryInfo& info : catalog->entries) infos.emplace(info.id, info);
+        sports::network_map::ChannelIndex index = sports::network_map::channelIndex(
+            lineup->lineupIDs, lineup->lineupEntries, lineup->browseEntries, lineup->entries, infos, {}, {}, markets,
+            &catalog->traits);
+        sports::network_map::NetworkSources network = sports::network_map::networkSources(*games, index);
+        *out = events_day::pastEvents(
+            *games,
+            [&known](const sports::SportsGame& g) {
+              auto it = known->find(g.id);
+              return it == known->end() ? std::vector<sports::EventSource>() : it->second;
+            },
+            network.sources);
+      },
+      [this, gen, shown, out] {
+        Impl& mm = *impl_;
+        EventsState& ev = mm.ev;
+        ev.dayEventsBusy = false;
+        if (gen != mm.generation || shown != ev.shownDay) return;
+        // A channel airing its network shows it at its start when the
+        // guide still holds that listing (Store::pastListing): the rule's
+        // listing, looked for only on a channel that keeps an archive.
+        std::map<std::string, std::vector<Listing>> pastOf;
+        for (sports::SportsEvent& game : *out) {
+          if (!game.start) continue;
+          const time::Seconds start = *game.start;
+          for (sports::EventSource& s : game.sources) {
+            if (s.from || (s.kind != sports::EventSource::Kind::lineup && s.kind != sports::EventSource::Kind::guide))
+              continue;
+            const GuideChannel* g = channels_->find(s.channelID);
+            if (!g || g->replayDays == 0) continue;
+            auto it = pastOf.find(s.channelID);
+            if (it == pastOf.end())
+              it = pastOf.emplace(s.channelID, pastListing(s.channelID, ev.shownDay - 6 * 3600)).first;
+            for (const Listing& l : it->second) {
+              if (l.start <= start + game_replay::kListingSlack && l.end > start) {
+                s.from = l.start;
+                s.until = l.end;
+                break;
+              }
+            }
+          }
+        }
+        ev.dayReplayChannels = replayChannelsFor(*out, {}, mm, *channels_, *this);
+        ev.dayEvents = out;
+        ev.dayBoardDirty = true;
+      },
+      http::Priority::Background);
+}
+
+void Store::startDayBoard(uint32_t ms) {
+  Impl& m = *impl_;
+  EventsState& e = m.ev;
+  const time::Zone zone = host_.zone();
+  std::shared_ptr<events_build::BoardInput> in = boardInput();
+  // Today's board's inputs, for that day's games alone: no hold, no Finals
+  // kept, the board jobs' own index and titles left to today's.
+  in->hold = events_build::Hold();
+  in->kept.clear();
+  in->cameras.reset();
+  in->titles.reset();
+  sports::board::Input::Day day;
+  day.from = e.shownDay;
+  day.to = events_day::nextDay(e.shownDay, zone);
+  day.past = e.shownPast;
+  in->day = day;
+  if (e.shownPast) {
+    in->events = e.dayEvents;
+    in->replayChannels = e.dayReplayChannels;
+    // That day's own answers, then any final the scores still hold.
+    in->statuses.clear();
+    if (const sports::days::Day* d = e.dayCache.find(e.shownDay)) in->statuses = d->statuses;
+    for (const auto& [id, st] : e.scores.statuses())
+      if (st.phase == sports::LivePhase::final) in->statuses.emplace(id, st);
+  }
+  e.dayBoardBusy = true;
+  e.dayBoardDirty = false;
+  e.dayBoardMs = ms;
+  e.dayBoardKey = dayBoardKey();
+  auto made = std::make_shared<events_build::BoardMade>();
+  uint64_t gen = m.generation;
+  time::Seconds shown = e.shownDay;
+  bool past = e.shownPast;
+  host_.pool.post([in, made] { *made = events_build::board(*in); },
+                  [this, gen, shown, past, made, zone] {
+                    Impl& mm = *impl_;
+                    EventsState& ev = mm.ev;
+                    ev.dayBoardBusy = false;
+                    if (gen != mm.generation || shown != ev.shownDay) return;
+                    std::shared_ptr<EventsBoard> out = std::move(made->events);
+                    out->day = shown;
+                    out->past = past;
+                    out->dayTitle = events_day::dayTitle(shown, zone);
+                    out->introLine = events_day::introLine(shown, past, zone);
+                    out->emptyLine = events_day::emptyLine(shown, zone);
+                    out->noteTitle.clear();
+                    out->noteLine.clear();
+                    out->version = ++ev.dayVersion;
+                    std::swap(ev.dayBoardGames, made->board);
+                    if (ev.dayBoard) ev.retired.push_back(std::move(ev.dayBoard));
+                    ev.dayBoard = std::move(out);
+                    host_.pool.post([made]() mutable { made.reset(); }, nullptr, http::Priority::Background);
+                  },
+                  http::Priority::Background);
+}
+
+void Store::saveReplaySources() {
+  EventsState& e = impl_->ev;
+  if (!e.replaySourcesDirty) return;
+  e.replaySourcesDirty = false;
+  e.replaySourcesSavedMs = host_.ms();
+  // Made into text and written on a worker.
+  auto copy = std::make_shared<const events_day::ReplaySources>(e.replaySources);
+  std::string path = host_.files.path(kReplaySourcesFile);
+  host_.pool.post([copy, path] { events_build::writeFile(path, copy->toJson()); }, nullptr,
+                  http::Priority::Background);
 }
 
 }  // namespace marigold::engine

@@ -182,6 +182,18 @@ struct Input {
   // (id "full", newest first), until its start leaves the archive. Unset:
   // no such row.
   std::function<bool(const SportsEvent&)> keepsReplay;
+  // Build 176, Live Events by day: one day's board, its games those
+  // starting in [from, to). Rows: Your teams (set up), then each sport's as
+  // today's board orders them; no Live now, Full games, More events, Time
+  // not listed, Games without a schedule or Event channels. Within a row no
+  // group headers: a past day's games with replay (keepsReplay) first, then
+  // the ones on your channels without, then the ones not on them; a day
+  // ahead's on your channels, then the rest; each by start.
+  struct Day {
+    Seconds from = 0, to = 0;
+    bool past = false;
+  };
+  std::optional<Day> day;
 };
 
 // MARK: View model

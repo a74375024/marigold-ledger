@@ -57,6 +57,9 @@ struct PanelItem {
   // provider).
   bool replay = false;
   std::string replayAbout;
+  // Build 176: with `replay`, the mark and these words at the row's right
+  // instead ("Replay", "Replay on some": the day panel), in replay blue.
+  std::string replayText;
   // A spinner at the right: something under way ("Updating…", Build 148).
   bool busy = false;
   // What OK does, for the key hints ("Remove…", "Stop sharing");

@@ -2313,3 +2313,32 @@ Opening Rewind used to hold the picture at once, before any time was picked. Now
 | In a replay | In a replay, open Rewind and wait 10 s | It plays on; the mark moves with it; OK without moving keeps playing from there (no jump back) |
 | Paused | Pause, then open Rewind, then OK | Plays on from where it paused |
 | Other platforms | Android / Fire TV, Apple TV | Same |
+
+## Build 176: 1.0.19, Live Events by day
+
+Live Events gets a day button, "Today ▼", beside Filter (Up from the first row; Left / Right between the two, as the guide's "Now ▼"). OK opens GO TO, "A day of games", on the left: the past days as far back as your channels keep replays, Today (checked while shown), then only the days ahead the schedule has games for. A past day says "Replay" when all of it is still in an archive, "Replay on some" when only part of it is. The note at the bottom: "Past days go back as far as your channels keep replays."
+
+- **A past day's board.** Its games are fetched when the day is picked (one request per league that can be asked for a date, a moment apart, never in the background), with their finals and scores from that day's own answers; they're kept for the rest of the session (picked again within the hour: no new request). While they come: "Getting Monday's games…" under the title. If they can't be had: "Monday's games couldn't be loaded." and Try again. The date is at the top right ("Monday, Nov 16"), no live picture, no scores line. Rows: Your teams, then each sport; no Live now, Starting soon or Later today. In each row the games you can watch from the start come first, the rest dimmed at the end. A tile's footer: the start time and the channel with the replay mark; "replay ends in 2 h" (amber) when its replay leaves the archive within three hours; dimmed ones say "No replay" or "Not on your channels". The focused game: the matchup, Final with the score (as your score settings show it) and the venue, "On ESPN, 5:15 – 8:31 PM · replay until tomorrow 4:15 PM", and Watch from the start. OK plays it from its start (as Watch replay on a Final's card); on a dimmed game OK opens its card.
+- **Which games have replay.** The same rule as today's Final: a guide channel whose listing had the game at its start and whose archive still holds it, the longest archive first. Where a game was at its start is kept for a week (replay-sources.json, ids, times and channel ids only), so a past day finds it after the guide has moved on; a game the app never saw while it was current (it wasn't running) can show "No replay" though a channel of yours aired it.
+- **A day ahead.** That day's games from the week already fetched, by sport, as upcoming tiles. Nothing is asked for.
+- **Back** on another day goes to Today first. Leaving Live Events and coming back shows Today.
+- The log, once per fetch: "live events: Monday's games, 14 leagues, fine" (or "fine, 2 failed", "failed"). Never a link.
+
+| Check | How | Pass |
+|---|---|---|
+| The button | Live Events, Up from the first row | "Today ▼" focused, left of the filter button; Right goes to the filter, Left back; Down returns to the games |
+| The panel | OK on it | GO TO, "A day of games"; past days oldest first with "Replay" / "Replay on some", Today checked, then only days with games ahead; the note at the bottom; no counts, no source names |
+| Archive depth | On a lineup whose longest archive is 2 days, in the evening | Two past days: the day before yesterday "Replay on some", Yesterday "Replay". No archive at all: only Today and days ahead |
+| Yesterday | Pick Yesterday | The button reads "Yesterday ▼", "Getting Monday's games…", then the board; top right "Monday, Nov 16"; no picture in the corner; finals with their scores; replayable games first in each row, dimmed ones last with "No replay" / "Not on your channels" |
+| Replay ends | A game on a one-day archive that started about 22 h ago | Its footer says "replay ends in 1 h" (or "in 40 min") in amber |
+| Watch | OK on a replayable game | It plays from a minute before its start on the channel named; the player shows REPLAY |
+| Dimmed | OK on a dimmed game | Its card opens (no Watch replay) |
+| Scores off | Settings › Live Events, scores off; Yesterday again | No scores on tiles or in the focused game's line |
+| Picked again | Back (Today), then Yesterday again within the hour | Shown at once; the log has no second "…'s games" line for it |
+| Can't be had | Unplug the network, pick a past day not picked yet | "…'s games couldn't be loaded." with Try again; plug it back, Try again: the board |
+| A day ahead | Pick Thursday | Thursday's games by sport, upcoming tiles; no request in the log |
+| Back | On another day, Back | Today's board; Back again opens the menu as before |
+| Close and reopen | On Yesterday, go to the guide and back to Live Events | "Today ▼" and today's board |
+| Log | Export the playback log | "live events: Monday's games, N leagues, fine"; no link, host or login |
+| LG | On the LG TV, pick a past day and scroll the rows | No pause in the UI while it loads; the board scrolls as today's |
+| Other platforms | Android / Fire TV, Apple TV, Mac | Same |

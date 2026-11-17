@@ -326,6 +326,11 @@ class Schedule {
   const Saved& saved() const { return saved_; }
   // The saved schedule changed since the last call: write toJson(saved()).
   bool takeDirty();
+  // Build 176: what a past day's fetch (day_fetch.hpp) learned: sources
+  // that refused it ("espn.com" -> until), left alone here too, and the
+  // leagues that answer only in the plain form.
+  void noteRefused(const std::map<std::string, Seconds>& until);
+  void notePlainForm(const std::set<std::string>& leagues);
 
  private:
   bool start(const Context& ctx, bool force, std::optional<std::set<std::string>> only, bool restOnly = false);

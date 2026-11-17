@@ -30,6 +30,15 @@
 //
 // Build 145: the row the focus is on goes to the store (Store::eventsFocus):
 // a sport's leagues get their scores first.
+//
+// Build 176, Live Events by day (core/engine/events_day.hpp): "Today ▼"
+// beside the filter button (as the guide's "Now ▼") opens GO TO, "A day of
+// games": past days as far back as your channels keep replays, Today, the
+// days ahead with games. Another day's board (Store::dayBoard) has its date
+// at the top right, no live picture in the corner and no scores line; a
+// past day's games with replay come first and OK plays them from the
+// start, the rest dimmed at the end of each row (OK opens their card).
+// Back goes to Today first; leaving Live Events and coming back shows Today.
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -42,6 +51,7 @@
 #include "app/screens/screens.hpp"
 #include "app/screens/top_bar.hpp"
 #include "app/store/store.hpp"
+#include "core/engine/events_day.hpp"
 #include "core/engine/views.hpp"
 #include "core/input/hints.hpp"
 #include "core/input/wake.hpp"
@@ -79,6 +89,8 @@ constexpr int kHitTile = 100000;  // + row * 1000 + tile
 constexpr int kHitFilter = 51;    // the rail's ids are left_rail::kHit*, 1-499
 constexpr int kHitShowHidden = 52;  // the empty board's "Show them in Settings"
 constexpr int kHitNote = 53;        // + 0 OK, + 1 Change: the one-time note's buttons
+constexpr int kHitDay = 55;         // Build 176: the day button ("Today ▼")
+constexpr int kHitRetry = 56;       // Build 176: a day whose games didn't come: Try again
 constexpr uint32_t kPulseStepMs = 250;       // placeholders drawn again this often (the pulse is 1.2 s)
 // Then the board as it is, not endless placeholders.
 constexpr uint32_t kLoadingAtMostMs = engine::kPlaceholdersAtMostMs;
@@ -120,7 +132,10 @@ class EventsBoardScreen : public Screen {
       promptAt_ = app_.ms() + 600;
     }
   }
-  ~EventsBoardScreen() override { app_.store().eventsOpen(false); }
+  ~EventsBoardScreen() override {
+    if (day_) app_.store().showEventsDay(0);
+    app_.store().eventsOpen(false);
+  }
 
   void shown() override {
     refresh();
@@ -143,7 +158,7 @@ class EventsBoardScreen : public Screen {
       app_.nav().push(makeMySports(app_));
       return true;
     }
-    if (app_.store().events()->version != version_ || (rowsHidden_ && !placeholders())) {
+    if (current()->version != version_ || (rowsHidden_ && !placeholders())) {
       // A new board, or the placeholders' time is up: the rows under them show.
       refresh();
       app_.invalidate();
@@ -200,7 +215,8 @@ class EventsBoardScreen : public Screen {
     if (k != Key::Ok) pointer_ = 0;
     rail::Mode mode = nav_.mode();
     if (e.longPress) {
-      if (mode == rail::Mode::Content && !filterFocus_ && !noteFocus_ && !inRange(pointer_, left_rail::kHitStrip)) {
+      if (mode == rail::Mode::Content && !filterFocus_ && !dayFocus_ && !noteFocus_ &&
+          !inRange(pointer_, left_rail::kHitStrip)) {
         if (const EventTile* t = focused()) openMenu(*t);
       }
       return true;
@@ -235,9 +251,28 @@ class EventsBoardScreen : public Screen {
       }
     }
     noteFocus_ = false;
+    // Build 176: the day button and the filter, side by side (as the
+    // guide's time button and filter).
+    if (dayFocus_) {
+      if (k == Key::Ok) {
+        openDayMenu();
+      } else if (k == Key::Right) {
+        dayFocus_ = false;
+        filterFocus_ = true;
+      } else if (k == Key::Down || k == Key::Back) {
+        dayFocus_ = false;
+      } else if (k == Key::Up && noteShown()) {
+        dayFocus_ = false;
+        noteFocus_ = true;
+      }
+      return true;
+    }
     if (filterFocus_) {
       if (k == Key::Ok) {
         openFilter();
+      } else if (k == Key::Left) {
+        filterFocus_ = false;
+        dayFocus_ = true;
       } else if (k == Key::Down || k == Key::Back) {
         filterFocus_ = false;
       } else if (k == Key::Up && noteShown()) {
@@ -248,7 +283,7 @@ class EventsBoardScreen : public Screen {
     }
     switch (k) {
       case Key::Up:
-        if (row_ == 0 || rows().empty()) filterFocus_ = true;
+        if (row_ == 0 || rows().empty()) dayFocus_ = true;
         else setRow(row_ - 1);
         return true;
       case Key::Down:
@@ -270,6 +305,7 @@ class EventsBoardScreen : public Screen {
       case Key::Ok:
         if (chooseFocused()) openChoose(*rows()[static_cast<size_t>(row_)].row);
         else if (const EventTile* t = focused()) select(*t);
+        else if (retryButton()) retryDay();
         else if (showHiddenButton()) showHidden();
         return true;
       case Key::Red:
@@ -277,8 +313,11 @@ class EventsBoardScreen : public Screen {
         if (const EventTile* t = focused()) app_.nav().push(makeWhereToWatch(app_, t->id));
         return true;
       case Key::Back:
-        // A filter first, as the × on its chip says; then the menu.
-        if (filtered()) {
+        // Build 176: another day's board goes back to Today first; then a
+        // filter, as the × on its chip says; then the menu.
+        if (day_) {
+          setDay(0);
+        } else if (filtered()) {
           setFilter(Show::All, "");
         } else {
           nav_.openMenu();
@@ -308,16 +347,24 @@ class EventsBoardScreen : public Screen {
         row_ = r;
         tile_ = t;
         filterFocus_ = false;
+        dayFocus_ = false;
         noteFocus_ = false;
       }
     } else if (id == kHitFilter) {
       filterFocus_ = true;
+      dayFocus_ = false;
       noteFocus_ = false;
-    } else if (id == kHitShowHidden) {
+    } else if (id == kHitDay) {
+      dayFocus_ = true;
       filterFocus_ = false;
+      noteFocus_ = false;
+    } else if (id == kHitShowHidden || id == kHitRetry) {
+      filterFocus_ = false;
+      dayFocus_ = false;
       noteFocus_ = false;
     } else if (id == kHitNote || id == kHitNote + 1) {
       filterFocus_ = false;
+      dayFocus_ = false;
       noteFocus_ = true;
       noteButton_ = id - kHitNote;
     }
@@ -329,7 +376,7 @@ class EventsBoardScreen : public Screen {
     // rows again, so the row appears behind the panel.
     // A new board while something is over this screen (the undo note
     // after Hide): its rows as they are now.
-    if (showsChanged() || app_.store().events()->version != version_) refresh();
+    if (showsChanged() || current()->version != version_) refresh();
     drawBoard(c);
     stats_.frameMax = std::max(stats_.frameMax, msSince(start));
     ++stats_.frames;
@@ -348,7 +395,7 @@ class EventsBoardScreen : public Screen {
     if (noteShown()) drawNote(c);
     else drawHero(c, f);
     drawClock(c);
-    if (!noteShown()) drawScoresLine(c, f);
+    if (!noteShown() && !board_->day) drawScoresLine(c, f);
     // No live mark on the picture, as in the guide: live is the status's red.
     if (corner) top_bar::preview(c, app_.playback(), f->channelLogo, f->channelName, kPreview, 18, false);
     drawTop(c);
@@ -391,7 +438,81 @@ class EventsBoardScreen : public Screen {
 
   // Still loading (for kLoadingAtMostMs at most): placeholders show.
   bool placeholders() const {
+    // Build 176: another day's while its games come, however long that takes.
+    if (board_->day) return board_->loading;
     return (board_->loading || board_->more) && loadingSince_ && app_.ms() - loadingSince_ < kLoadingAtMostMs;
+  }
+
+  // ---------------------------------------------------------------- by day (Build 176)
+
+  // The board shown: another day's while one is picked, else today's.
+  std::shared_ptr<const EventsBoard> current() const {
+    if (day_)
+      if (std::shared_ptr<const EventsBoard> b = app_.store().dayBoard()) return b;
+    return app_.store().events();
+  }
+
+  // Another day (0: today): its board, the focus on its first game.
+  void setDay(time::Seconds day) {
+    const time::Zone& z = app_.zone();
+    time::Seconds today = engine::events_day::dayOf(time::now(), z);
+    day_ = day == 0 || engine::events_day::dayOf(day, z) == today ? 0 : engine::events_day::dayOf(day, z);
+    app_.store().showEventsDay(day_);
+    stopPreview();
+    row_ = tile_ = 0;
+    focusId_.clear();
+    focusRow_.clear();
+    dayFocus_ = filterFocus_ = noteFocus_ = false;
+    loadingSince_ = 0;
+    refresh();
+    app_.invalidate();
+  }
+
+  // The day button's word: "Today", "Yesterday", "Sunday", "Tomorrow".
+  std::string dayWord() const {
+    if (!day_) return "Today";
+    return engine::events_day::dayWord(day_, time::now(), app_.zone());
+  }
+
+  // GO TO, "A day of games": a leading panel, as the guide's time menu.
+  void openDayMenu() {
+    App& app = app_;
+    EventsBoardScreen* self = this;
+    app_.nav().push(std::make_unique<PanelScreen>(app_, PanelScreen::Side::Leading, 600.0f,
+                                                  [&app, self](ui::ListPanel& p) {
+      p.subtitle = "GO TO";
+      p.title = "A day of games";
+      p.hint = "Past days go back as far as your channels keep replays.";
+      for (const DayRow& d : app.store().eventsDays()) {
+        ui::PanelItem it{ui::PanelItem::Kind::Check, d.word};
+        it.detail = d.date;
+        it.on = d.shown;
+        if (d.replay != DayRow::Replay::None) {
+          it.replay = true;
+          it.replayText = d.replay == DayRow::Replay::All ? "Replay" : "Replay on some";
+        }
+        time::Seconds day = d.today ? 0 : d.day;
+        it.select = [&app, self, day] {
+          app.nav().pop();
+          self->setDay(day);
+        };
+        p.items.push_back(it);
+      }
+    }));
+    // The focus on the day shown.
+    if (auto* panel = dynamic_cast<PanelScreen*>(app_.nav().top())) {
+      std::vector<DayRow> days = app_.store().eventsDays();
+      for (size_t i = 0; i < days.size(); ++i)
+        if (days[i].shown) panel->panel().focusIndex(static_cast<int>(i));
+    }
+  }
+
+  // A day whose games didn't come: Try again.
+  bool retryButton() const { return board_ && board_->failed && rows().empty(); }
+  void retryDay() {
+    app_.store().showEventsDay(day_, true);
+    refresh();
+    app_.invalidate();
   }
 
   // ---------------------------------------------------------------- left rail
@@ -510,7 +631,7 @@ class EventsBoardScreen : public Screen {
     Clock::time_point start = Clock::now();
     bool wasLoading = board_ && board_->loading;
     bool onChoose = board_ && chooseFocused();
-    board_ = app_.store().events();
+    board_ = current();
     version_ = board_->version;
     // A load's placeholders count from when they first showed, or showed
     // again in place of the rows (the TV woke on old games).
@@ -631,7 +752,7 @@ class EventsBoardScreen : public Screen {
   // The row the focus is on, to the store when it changes (its scores first).
   void reportFocus() {
     std::string row;
-    if (row_ >= 0 && row_ < static_cast<int>(rows().size())) row = rows()[static_cast<size_t>(row_)].row->id;
+    if (!day_ && row_ >= 0 && row_ < static_cast<int>(rows().size())) row = rows()[static_cast<size_t>(row_)].row->id;
     if (row == reportedRow_) return;
     reportedRow_ = std::move(row);
     app_.store().eventsFocus(Store::EventsScreen::board, reportedRow_);
@@ -683,6 +804,17 @@ class EventsBoardScreen : public Screen {
   }
 
   void select(const EventTile& t) {
+    // Build 176: a past day's game with replay plays from its start (Watch
+    // replay's way); one without opens its card.
+    if (board_->past) {
+      if (t.playsReplay && t.hasReplay()) {
+        stopPreview();
+        events_ui::watchReplay(app_, t);
+      } else {
+        app_.nav().push(makeEventDetail(app_, t.id));
+      }
+      return;
+    }
     // An event channel family: its first feed, Up/Down surfs the others.
     if (row_ < static_cast<int>(rows().size()) && rows()[static_cast<size_t>(row_)].row->families) {
       std::vector<std::string> feeds = app_.store().familyFeeds(t.id);
@@ -913,6 +1045,8 @@ class EventsBoardScreen : public Screen {
 
   // The guide's corner preview, for a game that is on now in your channels.
   bool previewable(const EventTile& t) const {
+    // Build 176: another day's board shows no live picture.
+    if (board_ && board_->day) return false;
     if (!app_.store().settings().previewChannels || !t.watchable || !isLive(t)) return false;
     return !(row_ < static_cast<int>(rows().size()) && rows()[static_cast<size_t>(row_)].row->families);
   }
@@ -922,7 +1056,8 @@ class EventsBoardScreen : public Screen {
   // the tabs or the sports column leaves it playing.
   void previewTick(uint32_t ms) {
     Playback& p = app_.playback();
-    if (app_.nav().top() != this || filterFocus_ || noteFocus_ || nav_.mode() != rail::Mode::Content) return;
+    if (app_.nav().top() != this || filterFocus_ || dayFocus_ || noteFocus_ || nav_.mode() != rail::Mode::Content)
+      return;
     const EventTile* t = focused();
     if (!t || !previewable(*t)) {
       if (p.active() && !p.full()) p.stop();
@@ -1013,7 +1148,8 @@ class EventsBoardScreen : public Screen {
 
   // The clock at the column's top right, beside the preview (as in the guide).
   void drawClock(ui::Ctx& c) {
-    std::string clock = ui::clock(c, c.now);
+    // Build 176: another day's date ("Monday, Nov 16") in its place.
+    std::string clock = board_->day ? board_->dayTitle : ui::clock(c, c.now);
     float w = ui::textWidth(c, clock, Weight::Medium, 26);
     ui::label(c, clock, kHeroRight - w, 44, Weight::Medium, 26, theme::white(0.7f));
   }
@@ -1040,18 +1176,21 @@ class EventsBoardScreen : public Screen {
       if (placeholders()) {
         // Still loading (Build 124): a spinner and what the load waits for
         // now, by the store; after a while, that the first load of the day
-        // is the slow one.
+        // is the slow one. Build 176: another day's, "Getting Monday's games…".
         skeletonShown_ = spinnerShown_ = true;
         ui::spinner(c, x + 16, 231, 14, theme::white(0.85f));
-        if (const char* line = stageLine(board_->stage))
+        if (!board_->loadingLine.empty())
+          ui::label(c, board_->loadingLine, x + 46, 214, Weight::Medium, 25, theme::white(0.85f), kHeroW - 46);
+        else if (const char* line = stageLine(board_->stage))
           ui::label(c, line, x + 46, 214, Weight::Medium, 25, theme::white(0.85f), kHeroW - 46);
-        if (c.ms - loadingSince_ >= kSlowLoadMs)
+        if (!board_->day && c.ms - loadingSince_ >= kSlowLoadMs)
           ui::label(c, "Almost there. The first load of the day takes longest.", x + 46, 258, Weight::Regular, 22,
                     theme::white(0.55f), kHeroW - 46);
         return;
       }
-      ui::label(c, "This week's games, and where you can watch them.", x, 214, Weight::Regular, 22, theme::white(0.72f),
-                kHeroW);
+      const std::string& intro = board_->introLine;
+      ui::label(c, intro.empty() ? std::string("This week's games, and where you can watch them.") : intro, x, 214,
+                Weight::Regular, 22, theme::white(0.72f), kHeroW);
       return;
     }
     // The competition, where the guide has the channel's section.
@@ -1086,7 +1225,7 @@ class EventsBoardScreen : public Screen {
     y = t->progress >= 0 ? 286 : 256;
     // Build 167: a game with replay, one quiet "Replay" chip after it (on
     // its own line when the line is full).
-    float chipW = t->hasReplay() ? events_ui::replayChipWidth(c) + 14 : 0;
+    float chipW = t->hasReplay() && !t->playsReplay ? events_ui::replayChipWidth(c) + 14 : 0;
     if (!t->whereLine.empty() && chipW > 0 && ui::textWidth(c, t->whereLine, Weight::Regular, 22) + chipW <= kHeroW) {
       float lw = ui::label(c, t->whereLine, x, y, Weight::Regular, 22, theme::white(0.72f), kHeroW - chipW);
       events_ui::replayChip(c, x + lw + 14, y + std::round((c.t.lineHeight(Weight::Regular, 22) - 30) * 0.5f));
@@ -1099,18 +1238,48 @@ class EventsBoardScreen : public Screen {
         y += 40;
       }
     }
+    // Build 176: a past day's game with replay: what OK does.
+    if (t->playsReplay) {
+      drawWatchFromStart(c, x, y);
+      return;
+    }
     std::string place = t->venue;
     if (!t->detail.empty() && t->detail != place) place = place.empty() ? t->detail : place + " \xc2\xb7 " + t->detail;
     if (!place.empty() && y < 380) ui::label(c, place, x, y, Weight::Regular, 20, theme::white(0.55f), kHeroW);
+  }
+
+  // "▶ Watch from the start" under a past day's game with replay: OK on its
+  // tile plays it (the button says so; the focus stays on the tile).
+  void drawWatchFromStart(ui::Ctx& c, float x, float y) {
+    static const std::string kText = "Watch from the start";
+    float h = 52, tw = ui::textWidth(c, kText, Weight::Bold, 22);
+    Rect b{x, y + 4, tw + 36 + 26, h};
+    c.g.fill(b, theme::white(), h * 0.5f);
+    // A play triangle in rows (the renderer has no paths).
+    float px = b.x + 22, py = b.y + h * 0.5f;
+    for (int i = 0; i < 14; ++i) {
+      float half = 7.0f * (1.0f - static_cast<float>(i) / 14.0f);
+      c.g.fill({px + static_cast<float>(i), py - half, 1.2f, half * 2}, theme::black());
+    }
+    ui::label(c, kText, b.x + 46, b.y + (h - c.t.lineHeight(Weight::Bold, 22)) * 0.5f, Weight::Bold, 22, theme::black());
   }
 
   // The filter button at the end of the first row's header line, and its
   // chip to its left (the tab row they sat in is gone).
   void drawTop(ui::Ctx& c) {
     Rect button{kRight - 40, kBoardTop - 6, 40, 40};
-    bool focusedButton = filterFocus_ && nav_.mode() == rail::Mode::Content;
+    bool content = nav_.mode() == rail::Mode::Content;
+    bool focusedButton = filterFocus_ && content;
     top_bar::filterButton(c, button, focusedButton, filtered(), kHitFilter);
-    float right = button.x - 16;
+    // Build 176: "Today ▼" before it, as the guide's "Now ▼".
+    std::string word = dayWord() + " \xe2\x96\xbc";
+    float w = std::max(104.0f, ui::chipWidth(c, word, 19) + 10);
+    Rect day{button.x - 10 - w, kBoardTop - 6, w, 40};
+    bool focusedDay = dayFocus_ && content;
+    c.hit(day, kHitDay);
+    c.g.fill(day, focusedDay ? theme::white() : theme::white(day_ ? 0.18f : 0.1f), 20);
+    ui::labelIn(c, word, day, Weight::Bold, 19, focusedDay ? theme::black() : theme::white(), Align::Center);
+    float right = day.x - 16;
     if (filtered()) {
       std::string text = "\xe2\x97\x8f " + filterTitle() + "  \xc3\x97";
       right -= ui::chipWidth(c, text, 19);
@@ -1125,7 +1294,12 @@ class EventsBoardScreen : public Screen {
       return;
     }
     if (rows().empty()) {
-      const char* empty = !filtered()           ? "No games this week in your sports."
+      // Build 176: another day's games that didn't come, with Try again.
+      if (retryButton()) {
+        drawRetry(c);
+        return;
+      }
+      std::string empty = !filtered()           ? (board_->day ? board_->emptyLine : "No games this week in your sports.")
                           : show_ == Show::Live ? "No games on right now. Back shows them all."
                                                 : "None this week. Back shows every game.";
       ui::label(c, empty, left_, kBoardTop + 30, Weight::Medium, 26, theme::white(0.6f));
@@ -1155,6 +1329,24 @@ class EventsBoardScreen : public Screen {
     c.g.popClip();
   }
 
+  // Build 176: "Monday's games couldn't be loaded." and Try again (focused
+  // unless the buttons at the top are).
+  void drawRetry(ui::Ctx& c) {
+    float y = kBoardTop + 30;
+    ui::label(c, board_->failedLine, left_, y, Weight::Medium, 26, theme::white(0.6f));
+    const char* text = "Try again";
+    Rect b{left_, y + 58, ui::textWidth(c, text, Weight::Bold, 24) + 60, 64};
+    c.hit(b, kHitRetry);
+    bool f = !filterFocus_ && !dayFocus_ && nav_.mode() == rail::Mode::Content;
+    if (f) {
+      c.g.fill(b, theme::white(), 32);
+    } else {
+      c.g.fill(b, theme::white(0.1f), 32);
+      c.g.stroke(b, theme::white(0.22f), 32, 1);
+    }
+    ui::labelIn(c, text, b, Weight::Bold, 24, f ? theme::black() : theme::white(), Align::Center);
+  }
+
   // Under the empty board's line: what is hidden, and the way to show it
   // (focused unless the filter button is).
   void drawShowHidden(ui::Ctx& c) {
@@ -1164,7 +1356,7 @@ class EventsBoardScreen : public Screen {
     const char* text = "Show them in Settings";
     Rect b{left_, y + 104, ui::textWidth(c, text, Weight::Bold, 24) + 60, 64};
     c.hit(b, kHitShowHidden);
-    bool f = !filterFocus_ && nav_.mode() == rail::Mode::Content;
+    bool f = !filterFocus_ && !dayFocus_ && nav_.mode() == rail::Mode::Content;
     if (f) {
       c.g.fill(b, theme::white(), 32);
     } else {
@@ -1216,7 +1408,8 @@ class EventsBoardScreen : public Screen {
         float tx = left_ + l.x[i] - scrollX;
         if (tx + events_ui::kTileW > 0 && tx < gfx::kLayoutWidth) {
           int index = static_cast<int>(i);
-          bool f = !filterFocus_ && !noteFocus_ && nav_.mode() == rail::Mode::Content && r == row_ && index == tile_;
+          bool f = !filterFocus_ && !dayFocus_ && !noteFocus_ && nav_.mode() == rail::Mode::Content && r == row_ &&
+                   index == tile_;
           Rect rect{tx, tileY, events_ui::kTileW, events_ui::kTileH};
           c.hit(rect, kHitTile + r * 1000 + std::min(index, 999));
           events_ui::tile(c, *row.tiles[i], rect, f, l.mixed);
@@ -1227,7 +1420,8 @@ class EventsBoardScreen : public Screen {
       float tx = left_ + l.end - scrollX;
       int index = static_cast<int>(row.tiles.size());
       if (tx + events_ui::kTileW > 0 && tx < gfx::kLayoutWidth) {
-        bool f = !filterFocus_ && !noteFocus_ && nav_.mode() == rail::Mode::Content && r == row_ && index == tile_;
+        bool f = !filterFocus_ && !dayFocus_ && !noteFocus_ && nav_.mode() == rail::Mode::Content && r == row_ &&
+                 index == tile_;
         Rect rect{tx, tileY, events_ui::kTileW, events_ui::kTileH};
         c.hit(rect, kHitTile + r * 1000 + std::min(index, 999));
         events_ui::chooseTile(c, l.chooseWhat, rect, f);
@@ -1309,6 +1503,10 @@ class EventsBoardScreen : public Screen {
   std::string focusId_, focusRow_;  // the focused game and its row (ids)
   std::string reportedRow_;  // reportFocus()
   bool filterFocus_ = false;  // on the filter button
+  // Build 176: on the day button, and the day shown (its local start; 0
+  // today: a new screen, as Live Events opens, shows today).
+  bool dayFocus_ = false;
+  time::Seconds day_ = 0;
   // The one-time note after the update (the board's noteTitle): shown in
   // place of the hero until OK or Change; it has the focus when it first
   // shows.

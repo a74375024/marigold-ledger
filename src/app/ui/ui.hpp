@@ -46,6 +46,11 @@ constexpr uint32_t kStar = 0xE0A100;
 constexpr uint32_t kEast = 0x3D7BFF, kWest = 0xF59E0B;  // East/West version tags
 // Build 167: replay's blue (the player's REPLAY tag), for the replay mark.
 constexpr uint32_t kReplay = 0x3D7BFF;
+// Build 176: replay's words on a dark row ("Replay on some" in the day
+// panel) and on a focused (white) one; a replay about to leave its archive
+// ("replay ends in 2 h" on a past day's tile).
+constexpr uint32_t kReplayText = 0x9DB7FF, kReplayTextOnLight = 0x2F5FD0;
+constexpr uint32_t kReplayEnds = 0xF2B35E;
 constexpr uint32_t kToggleOn = 0x34C759;
 constexpr uint32_t kWarning = 0xFF9F0A;
 constexpr uint32_t kWarningOnLight = 0x9A5B00;  // the amber line on a focused (white) row

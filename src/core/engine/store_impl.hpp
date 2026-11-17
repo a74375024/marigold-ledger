@@ -17,6 +17,7 @@
 #include "core/engine/archive_timing.hpp"
 #include "core/engine/store.hpp"
 #include "core/engine/events_build.hpp"
+#include "core/engine/events_day.hpp"
 #include "core/engine/quality.hpp"
 #include "core/engine/search_build.hpp"
 #include "core/catalog/catalog.hpp"
@@ -35,6 +36,7 @@
 #include "core/sources/m3u.hpp"
 #include "core/sports/board.hpp"
 #include "core/sports/cameras.hpp"
+#include "core/sports/day_fetch.hpp"
 #include "core/sports/player_photos.hpp"
 #include "core/sports/race_data.hpp"
 #include "core/sports/my_sports.hpp"
@@ -240,6 +242,38 @@ struct EventsState {
   std::map<std::string, time::Seconds> leagueTeamsAt;
   std::set<std::string> leagueTeamsBusy;
   int teamsRevision = 0;
+
+  // Build 176, Live Events by day (events_day.hpp). The day the board shows
+  // (its local start; 0 today) and whether it's past; a past day's fetch
+  // (one request out at a time; a dropped fetch's answer is ignored by its
+  // serial) and the days fetched this session.
+  time::Seconds shownDay = 0;
+  bool shownPast = false;
+  sports::days::DayFetch dayFetch;
+  sports::days::DayCache dayCache;
+  bool dayBusy = false;
+  uint32_t dayAt = 0;
+  std::optional<sports::days::DayFetch::Pending> dayPending;
+  uint64_t dayFetchSerial = 0;
+  // The past day's games as events with where they were on (made on a
+  // worker, a listing at the start found here), what they were made from,
+  // and the archives of their guide channels.
+  std::shared_ptr<const std::vector<sports::SportsEvent>> dayEvents;
+  std::shared_ptr<const game_replay::Channels> dayReplayChannels;
+  std::string dayEventsKey;
+  bool dayEventsBusy = false;
+  // The day's board (made on a worker like today's; one at a time), its
+  // games for Where to Watch, what it was made with, and when.
+  std::shared_ptr<const EventsBoard> dayBoard;
+  sports::board::Board dayBoardGames;
+  uint64_t dayVersion = 1000000;
+  bool dayBoardBusy = false, dayBoardDirty = false;
+  uint32_t dayBoardMs = 0;
+  std::string dayBoardKey;
+  // Where each game was at its start, kept for a week (saved small).
+  events_day::ReplaySources replaySources;
+  bool replaySourcesDirty = false;
+  uint32_t replaySourcesSavedMs = 0;
 };
 
 // The guide rows' fields that follow from the channel list, the lineup and

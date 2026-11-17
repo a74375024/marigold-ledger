@@ -390,9 +390,11 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool mixed) {
     r = {r.x - dw, r.y - dh, r.w + 2 * dw, r.h + 2 * dh};
     ui::calmFill(c, r, 16);
   } else {
-    c.g.fill(r, theme::white(t.watchable && !t.finished ? 0.09f : 0.06f), 16);
+    c.g.fill(r, theme::white(t.watchable && !t.finished && !t.dimmed ? 0.09f : 0.06f), 16);
   }
-  float alpha = t.watchable || focused ? 1.0f : 0.6f;
+  // Build 176: a past day's game without replay is dimmed like one you
+  // can't watch.
+  float alpha = (t.watchable && !t.dimmed) || focused ? 1.0f : 0.6f;
   // Not watchable: the badges lose their colour along with the text.
   Look look{focused ? theme::kFocusFill : t.watchable && !t.finished ? kTileSurface : kTileDimSurface, alpha < 1};
   Color ink = theme::white(alpha);
@@ -455,7 +457,9 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool mixed) {
   // Build 167: the small replay mark (the game can be watched from its
   // start), where the tile names where it plays; the tile has no footer
   // line, so at the top line's end, before the competition.
-  if (t.hasReplay()) {
+  // Build 176: on a past day's tile the mark is in its footer instead.
+  const bool footer = !t.footLeft.empty() || !t.footRight.empty();
+  if (t.hasReplay() && !footer) {
     replayMark(c, right - 16, ty + 2, 16, false, alpha);
     right -= 16 + 8;
   }
@@ -492,7 +496,7 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool mixed) {
     else if (!t.parts.empty()) items[n++] = {Part::Timeline, 32};
     else if (!t.subtitle.empty()) items[n++] = {Part::Subtitle, 24};
   }
-  bool hasDetail = !t.situation.empty() || !t.detail.empty() || t.bases.size() == 3;
+  bool hasDetail = !t.situation.empty() || !t.detail.empty() || t.bases.size() == 3 || footer;
   if (hasDetail && n < items.size()) items[n++] = {Part::Detail, 22};
   float total = 0;
   for (size_t i = 0; i < n; ++i) total += items[i].h + (i ? kLineGap : 0);
@@ -534,6 +538,26 @@ void tile(ui::Ctx& c, const EventTile& t, Rect r, bool focused, bool mixed) {
         timeline(c, t.parts, row, alpha, live);
         break;
       case Part::Detail: {
+        if (footer) {
+          // Build 176, a past day's footer: the start (or "replay ends in
+          // 2 h", amber) at the left; the channel with the replay mark, "No
+          // replay" or "Not on your channels" at the right.
+          float rw = 0;
+          if (!t.footRight.empty()) {
+            float mark = t.footReplay ? 15 + 6 : 0;
+            float tw = std::min(ui::textWidth(c, t.footRight, Weight::Medium, 15), w * 0.55f - mark);
+            float tx = x + w - tw - mark;
+            ui::label(c, t.footRight, tx, y + 2, Weight::Medium, 15, ink.withAlpha(ink.a * 0.75f), tw);
+            if (t.footReplay) replayMark(c, x + w - 15, y + 4, 15, false, alpha);
+            rw = tw + mark + 12;
+          }
+          if (!t.footLeft.empty()) {
+            Color left = t.footWarn ? theme::hex(theme::kReplayEnds, alpha) : ink.withAlpha(ink.a * 0.75f);
+            ui::label(c, t.footLeft, x, y + 2, t.footWarn ? Weight::Bold : Weight::Medium, 15, left,
+                      std::max(0.0f, w - rw));
+          }
+          break;
+        }
         // The game's own detail: runners, the chase, down and distance,
         // the court, "5 boards"; never where it plays.
         float fx = x;
