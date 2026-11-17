@@ -867,6 +867,11 @@ bool Session::tick(uint32_t now) {
     pictureAt_ = now;
     apply(rec_.firstFrame(now));
     if (hooks_.picture) hooks_.picture();
+    // Build 170: while its account has taught no archive clock, the copy a
+    // replay would play on has its own read now (one light request), so a
+    // first replay needn't wait for it.
+    if (std::optional<size_t> copy = catchupCopy(); copy && !store_.archiveClock(feeds_[*copy].channelId).settled)
+      store_.archiveTable(feeds_[*copy].channelId, nullptr);
   }
   if (s.buffering != sawBuffering_) {
     sawBuffering_ = s.buffering;
@@ -993,9 +998,21 @@ std::string Session::localTime(time::Seconds t) const {
 }
 
 void Session::logReplay(std::string detail, size_t copy, bool clock) {
-  if (clock)
-    detail += "; server clock " + (replayOffset_ ? sources::xtream::offsetText(*replayOffset_)
-                                                 : std::string("not known, asked as UTC"));
+  if (clock) {
+    const std::optional<ReplayClock>& c = replayClock_;
+    if (c && c->archive && c->offset) {
+      // Build 170: the copy's own archive clock (or its account's); once per
+      // copy, what the server said when it differs.
+      detail += "; archive clock " + sources::xtream::offsetText(*c->offset);
+      if (c->server != c->offset && copy < feeds_.size() && clockTold_.insert(feeds_[copy].channelId).second)
+        detail += " (server says " +
+                  (c->server ? sources::xtream::offsetText(*c->server) : std::string("nothing")) + ")";
+    } else {
+      std::optional<int> offset = c ? c->offset : std::nullopt;
+      detail += "; server clock " +
+                (offset ? sources::xtream::offsetText(*offset) : std::string("not known, asked as UTC"));
+    }
+  }
   std::string channel, feed, provider;
   if (const GuideChannel* g = store_.channels()->find(entry_)) channel = g->name;
   else if (const EventTile* e = store_.eventTile(entry_)) channel = e->heroTitle.empty() ? e->title : e->heroTitle;
@@ -1028,7 +1045,6 @@ void Session::standAside() {
 void Session::playReplay(size_t index, time::Seconds from, const std::string& what, bool next) {
   Replay& r = *replay_;
   index = std::min(index, feeds_.size() - 1);
-  time::Seconds now = time::now();
   r.phase = Replay::Phase::Opening;
   r.feed = index;
   r.days = store_.catchupDays(feeds_[index].channelId);
@@ -1044,17 +1060,42 @@ void Session::playReplay(size_t index, time::Seconds from, const std::string& wh
     std::vector<playback::FeedInfo> infos = feedInfos(entry_);
     r.video = index < infos.size() ? infos[index].expectVideo : true;
   }
+  r.clockWait.reset();
+  // Build 170: a copy whose archive clock isn't known yet (its own guide
+  // not read this run, its account taught none): the guide first, a few
+  // seconds at most, so the very first replay asks for the right moment.
+  const std::string channel = feeds_[index].channelId;
+  if (!store_.archiveClock(channel).settled) {
+    int serial = ++clockSerial_;
+    r.clockWait = Replay::ClockWait{what, ms(), serial};
+    if (hooks_.changed) hooks_.changed();
+    std::weak_ptr<int> alive = alive_;
+    store_.archiveTable(channel, [this, alive, serial](const Store::ArchiveTableAnswer&) {
+      if (alive.expired() || !replay_ || !replay_->clockWait || replay_->clockWait->serial != serial) return;
+      openReplay(replay_->clockWait->what);
+    });
+    return;
+  }
+  openReplay(what);
+}
+
+void Session::openReplay(const std::string& what) {
+  Replay& r = *replay_;
+  std::string line = what;  // `what` may be the wait's own
+  r.clockWait.reset();
+  r.startedAt = ms();
   // The link carries the login: to the player only, never the log.
-  std::optional<Store::CatchupFeed> f = store_.catchupFeed(feeds_[index], r.from, now);
-  replayOffset_ = f ? f->serverOffset : std::nullopt;
+  std::optional<Store::CatchupFeed> f = store_.catchupFeed(feeds_[r.feed], r.from, time::now());
+  replayClock_.reset();
+  if (f) replayClock_ = ReplayClock{f->clock.offset, f->clock.server, f->clock.from != Store::ClockFrom::Server};
   r.minutes = f ? f->minutes : 0;
   if (hooks_.changed) hooks_.changed();
   if (!f) {
-    logReplay(what, index);
+    logReplay(line, r.feed);
     replayFailed("no replay link could be made for this copy");
     return;
   }
-  logReplay(what, index, true);
+  logReplay(line, r.feed, true);
   player_->attempt();
   player_->play(f->feed, false);
 }
@@ -1179,6 +1220,7 @@ bool Session::pause(bool quiet) {
     if (r.phase == Replay::Phase::Paused) return true;
     bool showing = r.phase == Replay::Phase::Playing;
     r.phase = Replay::Phase::Paused;
+    r.clockWait.reset();
     r.pausedAt = ms();
     r.fromLive = false;
     r.next = false;
@@ -1260,7 +1302,7 @@ void Session::endReplay(bool live) {
   if (!replay_) return;
   replay_.reset();
   replayTried_.clear();
-  replayOffset_.reset();
+  replayClock_.reset();
   shortStretches_ = 0;
   if (hooks_.changed) hooks_.changed();
   if (!live || entry_.empty() || feeds_.empty()) return;
@@ -1322,6 +1364,11 @@ void Session::tickReplay(uint32_t now) {
       r.released = true;
       if (hooks_.changed) hooks_.changed();
     }
+    return;
+  }
+  if (r.clockWait) {
+    // Build 170: its archive clock didn't come in time: the clock known.
+    if (now - r.clockWait->since >= kClockWaitMs) openReplay(r.clockWait->what);
     return;
   }
   PlayerState s = player_->state();

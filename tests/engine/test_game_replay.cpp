@@ -590,6 +590,9 @@ TEST_CASE("game replay from the board: the channel's archive copy from a minute 
   CHECK(t->replayLine == "Started " + sb::clockText(r.start, time::Zone::utc(), true));
   r.session->setShowingFull(true);
   REQUIRE(r.session->tuneGameReplay(r.replayOf(*t, false), r.store->eventFlipList(r.game)));
+  // Build 170: its copy's archive clock first (its own guide; unanswered
+  // here, so the server's).
+  r.run(250);
   // The one feed handed over is the archive's, of a copy keeping one.
   REQUIRE(r.player->plays.size() == 1);
   const Feed& asked = r.player->plays.back();
@@ -620,6 +623,9 @@ TEST_CASE("game replay from the board: a copy that fails gives way to the next, 
   const EventTile* t = r.tile();
   REQUIRE(t);
   REQUIRE(r.session->tuneGameReplay(r.replayOf(*t, false)));
+  // Build 170: its copy's archive clock first (its own guide; unanswered
+  // here, so the server's).
+  r.run(250);
   std::string first = r.player->plays.back().channelId;
   r.fail();
   // The other copy keeping an archive, the same minute.
@@ -707,6 +713,9 @@ TEST_CASE("a Final's replay that fails on every copy goes back to its card, not 
   const EventTile* t = r.tile();
   REQUIRE(t);
   REQUIRE(r.session->tuneGameReplay(r.replayOf(*t, true, r.start + 3600)));
+  // Build 170: its copy's archive clock first (its own guide; unanswered
+  // here, so the server's).
+  r.run(250);
   r.fail();
   REQUIRE(r.session->replay());  // the other copy
   size_t plays = r.player->plays.size();

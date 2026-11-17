@@ -816,3 +816,103 @@ TEST_CASE("test all sources: the words on screen give percentages, never a count
   CHECK(st::pictureText(2160, 50) == "4K 50");
   CHECK(st::pictureText(1088, 0) == "1080p");
 }
+
+// ------------------------------------------- Build 170: archive clocks
+
+namespace {
+
+// A copy's own guide for the last six hours, its local start texts `offset`
+// seconds east of UTC.
+std::string clockTable(int offset) {
+  mtime::Seconds hour = mtime::now() - mtime::now() % 3600;
+  std::string body = R"({"epg_listings":[)";
+  for (int i = 6; i >= 0; --i) {
+    mtime::Seconds start = hour - i * 3600;
+    mtime::Civil c = mtime::civilFromSeconds(start + offset);
+    char local[32];
+    std::snprintf(local, sizeof local, "%04d-%02d-%02d %02d:%02d:%02d", c.year, c.month, c.day, c.hour, c.minute,
+                  c.second);
+    body += std::string(i == 6 ? "" : ",") + R"({"title":"U2hvdw==","start":")" + local +
+            R"(","start_timestamp":")" + std::to_string(start) + R"(","stop_timestamp":")" +
+            std::to_string(start + 3600) + R"(","has_archive":1})";
+  }
+  return body + "]}";
+}
+
+}  // namespace
+
+TEST_CASE("test all sources 1.0.13: each replay copy's archive clock read first; the archive probes ask in it") {
+  Rig r;  // both servers say UTC
+  auto dream = client(std::string(mock::kHost)), trex = client(kTrexHost);
+  std::string t601 = dream.simpleDataTableRequest("601").url, t701 = trex.simpleDataTableRequest("701").url,
+              t702 = trex.simpleDataTableRequest("702").url;
+  r.tv.pool.answer(t601, clockTable(3600));
+  r.tv.pool.answer(t701, clockTable(3600));
+  r.tv.pool.answer(t702, clockTable(0));
+  for (int id : {601, 604, 701, 702}) r.tv.pool.answer(r.liveUrl(id), ts(1920, 1080, 60));
+  // The archive two hours back in each copy's own clock (the wall clock
+  // stands still in this test).
+  mtime::Seconds now = mtime::now(), back = now - st::kArchiveBack;
+  int minutes = marigold::sources::xtream::timeshiftMinutes(back, now);
+  std::string a601 = *dream.timeshiftURL("601", back, minutes, 3600);
+  std::string a701 = *trex.timeshiftURL("701", back, minutes, 3600);
+  std::string a702 = *trex.timeshiftURL("702", back, minutes, 0);
+  std::string a601Server = r.archiveUrl(601, st::kArchiveBack);  // in the server's clock, as before
+  CHECK(a601Server != a601);
+  for (const std::string* u : {&a601, &a701, &a702}) r.tv.pool.answer(*u, ts(1920, 1080, 30));
+  CHECK(r.runner->estimateNow() == 6 * st::kItemMs / 1000);  // the same plan
+  r.runner->start();
+  r.run(200000);
+  CHECK_FALSE(r.runner->running());
+  // One table per replay copy, none for a copy without replay.
+  CHECK(r.tv.pool.asked[t601] == 1);
+  CHECK(r.tv.pool.asked[t701] == 1);
+  CHECK(r.tv.pool.asked[t702] == 1);
+  CHECK(r.tv.pool.asked[dream.simpleDataTableRequest("604").url] == 0);
+  // The archive probes in those clocks.
+  CHECK(r.tv.pool.asked[a601] == 1);
+  CHECK(r.tv.pool.asked[a701] == 1);
+  CHECK(r.tv.pool.asked[a702] == 1);
+  CHECK(r.tv.pool.asked[a601Server] == 0);
+  const scores::Record* d = r.store->feedScores().find(r.copy(601));
+  REQUIRE(d);
+  CHECK(d->archiveOk == 1);
+  // Kept for the copies (and replays) from now on.
+  auto c601 = r.store->archiveClock(r.copy(601));
+  CHECK(c601.from == Store::ClockFrom::Table);
+  CHECK(c601.offset == 3600);
+  CHECK(r.store->archiveClock(r.copy(702)).offset == 0);
+  CHECK(r.archiveUrl(601, st::kArchiveBack) == a601);
+  // One line per provider, in words.
+  CHECK(r.logged("Dream: archive clocks: UTC+1 on all replay channels; server says UTC"));
+  CHECK(r.logged("Trex: archive clocks: UTC (half), UTC+1 (half)"));
+  for (const std::string& l : r.lines)
+    if (l.find("archive clocks") != std::string::npos) noCounts(l);
+  r.noLinks();
+}
+
+TEST_CASE("test all sources 1.0.13: a refused table pauses the provider like a refused probe") {
+  Rig r(1, 0);  // Trex keeps a day, Dream nothing
+  auto trex = client(kTrexHost);
+  r.tv.pool.answer(trex.simpleDataTableRequest("701").url, "", 429);
+  r.tv.pool.answer(trex.simpleDataTableRequest("702").url, "", 429);
+  for (int id : {601, 604}) r.tv.pool.answer(r.liveUrl(id), ts(1920, 1080, 60));
+  r.runner->start();
+  r.run(1000);
+  const st::Runner::Provider* p = r.provider("Trex");
+  REQUIRE(p);
+  CHECK(p->state == State::Paused);
+  CHECK(r.logged("Trex: paused, it refused a connection (http 429); trying again in 15 min"));
+  // No archive probe went out for it.
+  for (const auto& [url, n] : r.tv.pool.asked) CHECK(url.find("/timeshift/") == std::string::npos);
+  r.noLinks();
+}
+
+TEST_CASE("test all sources 1.0.13: archive clocks in words, never a count") {
+  CHECK(st::clocksText({}, 0).empty());
+  CHECK(st::clocksText({3600, 3600}, 3600) == "UTC+1 on all replay channels");
+  CHECK(st::clocksText({3600}, 0) == "UTC+1 on all replay channels; server says UTC");
+  CHECK(st::clocksText({3600, 3600, 0}, 0) == "UTC+1 (most), UTC (some); server says UTC");
+  CHECK(st::clocksText({0, 0, 3600, -5 * 3600}, 0) == "UTC (half), UTC\xe2\x88\x92" "5 (some), UTC+1 (some)");
+  CHECK(st::clocksText({3600}, std::nullopt) == "UTC+1 on all replay channels; server says nothing");
+}

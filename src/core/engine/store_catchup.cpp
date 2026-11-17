@@ -6,7 +6,9 @@
 #include "core/engine/store.hpp"
 #include "core/engine/store_impl.hpp"
 #include "core/engine/replay.hpp"
+#include "core/engine/source_probe.hpp"
 #include "core/sources/xtream.hpp"
+#include "core/util/json.hpp"
 
 #include <algorithm>
 #include <memory>
@@ -16,6 +18,8 @@
 
 namespace marigold::engine {
 namespace {
+
+constexpr int kMostOffset = 14 * 3600;
 
 // The raw channel and the Xtream account it comes from; null for an M3U or
 // Emby channel, or one no longer listed.
@@ -62,6 +66,107 @@ time::Seconds coverage(const std::vector<Listing>& list, time::Seconds from, tim
 
 }  // namespace
 
+// ------------------------------------------------- archive clocks (Build 170)
+
+bool ArchiveClocks::note(const std::string& accountId, const std::string& streamId, int offset) {
+  if (accountId.empty() || streamId.empty() || offset < -kMostOffset || offset > kMostOffset) return false;
+  if (!accounts.count(accountId) && accounts.size() >= kAccountsKept) return false;
+  Account& a = accounts[accountId];
+  bool changed = a.last != offset;
+  a.last = offset;
+  auto it = a.streams.find(streamId);
+  if (it != a.streams.end()) {
+    changed = changed || it->second != offset;
+    it->second = offset;
+    return changed;
+  }
+  if (a.streams.size() >= kStreamsKept) a.streams.erase(a.streams.begin());
+  a.streams.emplace(streamId, offset);
+  return true;
+}
+
+std::optional<int> ArchiveClocks::stream(const std::string& accountId, const std::string& streamId) const {
+  auto a = accounts.find(accountId);
+  if (a == accounts.end()) return std::nullopt;
+  auto it = a->second.streams.find(streamId);
+  if (it == a->second.streams.end()) return std::nullopt;
+  return it->second;
+}
+
+std::optional<int> ArchiveClocks::learned(const std::string& accountId) const {
+  auto a = accounts.find(accountId);
+  if (a == accounts.end()) return std::nullopt;
+  std::map<int, size_t> counts;
+  for (const auto& [id, off] : a->second.streams) ++counts[off];
+  std::optional<int> best;
+  size_t top = 0;
+  for (const auto& [off, n] : counts)
+    if (n > top || (n == top && a->second.last == off)) {
+      best = off;
+      top = n;
+    }
+  return best ? best : a->second.last;
+}
+
+std::string ArchiveClocks::toJson() const {
+  json::Value root = json::Value::object();
+  root.set("v", 1);
+  json::Value list = json::Value::object();
+  for (const auto& [id, a] : accounts) {
+    json::Value x = json::Value::object();
+    if (a.last) x.set("last", *a.last);
+    json::Value streams = json::Value::object();
+    for (const auto& [stream, off] : a.streams) streams.set(stream, off);
+    x.set("streams", std::move(streams));
+    list.set(id, std::move(x));
+  }
+  root.set("accounts", std::move(list));
+  return json::write(root);
+}
+
+ArchiveClocks ArchiveClocks::fromJson(std::string_view text) {
+  ArchiveClocks out;
+  std::optional<json::Value> root = json::parse(text);
+  if (!root || !root->isObject()) return out;
+  auto sane = [](const json::Value& v) -> std::optional<int> {
+    if (!v.isNumber()) return std::nullopt;
+    int64_t n = v.asInt();
+    if (n < -kMostOffset || n > kMostOffset) return std::nullopt;
+    return static_cast<int>(n);
+  };
+  for (const auto& [id, x] : (*root)["accounts"].fields()) {
+    if (out.accounts.size() >= kAccountsKept || !sources::isSafeItemId(id)) continue;
+    Account a;
+    a.last = sane(x["last"]);
+    for (const auto& [stream, off] : x["streams"].fields()) {
+      if (a.streams.size() >= kStreamsKept) break;
+      if (std::optional<int> v = sane(off); v && sources::isSafeItemId(stream)) a.streams.emplace(stream, *v);
+    }
+    if (a.last || !a.streams.empty()) out.accounts.emplace(id, std::move(a));
+  }
+  return out;
+}
+
+Store::ArchiveClock Store::archiveClock(const std::string& channelId) const {
+  const Impl& m = *impl_;
+  ArchiveClock out;
+  const Channel* c = nullptr;
+  const sources::Account* account = xtreamAccount(m.accounts, *m.channels, m.indexByID, channelId, &c);
+  if (!account) return out;
+  out.server = account->serverOffset;
+  out.offset = account->serverOffset;
+  if (std::optional<int> own = m.archiveClocks.stream(account->id, c->itemId)) {
+    out.offset = own;
+    out.from = ClockFrom::Table;
+  } else if (std::optional<int> learned = m.archiveClocks.learned(account->id)) {
+    out.offset = learned;
+    out.from = ClockFrom::Learned;
+  } else {
+    out.settled = m.tablesRead.count(channelId) > 0;
+  }
+  return out;
+}
+
 uint16_t Store::catchupDays(const std::string& channelId) const {
   const Impl& m = *impl_;
   const Channel* c = nullptr;
@@ -97,10 +202,11 @@ std::optional<Store::CatchupFeed> Store::catchupFeed(const Feed& live, time::Sec
   auto client = sources::xtream::Client::make(*account);
   if (!client) return std::nullopt;
   CatchupFeed out;
-  out.serverOffset = account->serverOffset;
+  // Build 170: in the clock the copy's archive is indexed on.
+  out.clock = archiveClock(live.channelId);
   out.minutes = sources::xtream::timeshiftMinutes(from, now);
   std::optional<std::string> url =
-      client.value().timeshiftURL(c->itemId, from, out.minutes, account->serverOffset.value_or(0));
+      client.value().timeshiftURL(c->itemId, from, out.minutes, out.clock.offset.value_or(0));
   if (!url) return std::nullopt;
   out.feed = live;
   out.feed.url = std::move(*url);
@@ -158,13 +264,26 @@ std::vector<Listing> Store::pastListing(const std::string& entryId, time::Second
 
 void Store::archiveGuide(const std::string& channelId,
                          std::function<void(std::optional<std::vector<PastProgramme>>)> done) {
+  archiveTable(channelId, [done = std::move(done)](const ArchiveTableAnswer& a) {
+    if (done) done(a.programmes);
+  });
+}
+
+void Store::archiveTable(const std::string& channelId, std::function<void(const ArchiveTableAnswer&)> done) {
   Impl& m = *impl_;
   const Channel* c = nullptr;
   const sources::Account* account = xtreamAccount(m.accounts, *m.channels, m.indexByID, channelId, &c);
   if (!account) return;
   auto client = sources::xtream::Client::make(*account);
   if (!client) return;
-  auto list = std::make_shared<std::optional<std::vector<PastProgramme>>>();
+  // Build 170: one request per copy at a time; a second ask waits for it.
+  auto out = m.tablesOut.find(channelId);
+  if (out != m.tablesOut.end()) {
+    out->second.push_back(std::move(done));
+    return;
+  }
+  m.tablesOut[channelId].push_back(std::move(done));
+  auto answer = std::make_shared<ArchiveTableAnswer>();
   // Like the short guide: the same client and plain headers, at background
   // priority (it waits for nothing on screen).
   http::Request q;
@@ -177,27 +296,48 @@ void Store::archiveGuide(const std::string& channelId,
   }
   q.priority = http::Priority::Background;
   q.tag = "xtream.archive";
-  q.afterTransfer = [list](http::Response& r) {
+  q.afterTransfer = [answer](http::Response& r) {
     if (r.status >= 200 && r.status <= 299) {
-      std::vector<PastProgramme> out;
-      for (sources::xtream::ArchiveProgramme& p : sources::xtream::parseSimpleDataTable(r.status, r.body)) {
+      sources::xtream::ArchiveTable table = sources::xtream::parseArchiveTable(r.status, r.body);
+      std::vector<PastProgramme> list;
+      for (sources::xtream::ArchiveProgramme& p : table.programmes) {
         PastProgramme one;
         one.start = p.start;
         one.end = p.end;
         one.title = std::move(p.title);
         one.archived = p.archived;
-        out.push_back(std::move(one));
+        list.push_back(std::move(one));
       }
       // A body that isn't the table at all is a failure; an empty table
       // is an answer.
-      if (!out.empty() || r.body.find("epg_listings") != std::string::npos) *list = std::move(out);
+      if (!list.empty() || r.body.find("epg_listings") != std::string::npos) {
+        answer->programmes = std::move(list);
+        answer->clock = table.clock;
+      }
+    }
+    if (!answer->programmes) {
+      answer->refused = probe::refusal(r.status, r.error, r.body);
+      // Never the error text itself: it can carry the link.
+      answer->why = r.status ? "http " + std::to_string(r.status)
+                             : std::string(answer->refused ? "refused" : "no answer");
     }
     r.body.clear();
   };
   uint64_t gen = m.generation;
-  host_.pool.submit(std::move(q), [this, gen, list, done = std::move(done)](http::Response&&) {
-    if (gen != impl_->generation) return;
-    if (done) done(std::move(*list));
+  std::string accountId = account->id, streamId = c->itemId;
+  host_.pool.submit(std::move(q), [this, gen, answer, channelId, accountId, streamId](http::Response&&) {
+    Impl& n = *impl_;
+    std::vector<std::function<void(const ArchiveTableAnswer&)>> waiters;
+    if (auto waiting = n.tablesOut.find(channelId); waiting != n.tablesOut.end()) {
+      waiters = std::move(waiting->second);
+      n.tablesOut.erase(waiting);
+    }
+    if (gen != n.generation) return;
+    // A refusal isn't an answer: the table is asked again next time.
+    if (!answer->refused) n.tablesRead.insert(channelId);
+    if (answer->clock && n.archiveClocks.note(accountId, streamId, *answer->clock)) saveArchiveClocksLater();
+    for (auto& d : waiters)
+      if (d) d(*answer);
   });
 }
 

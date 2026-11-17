@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <utility>
 
 #include "core/net/lan_http.hpp"
@@ -85,6 +86,13 @@ std::optional<time::Seconds> wallClock(const json::Value& v) {
   return time::secondsFromCivil(c);
 }
 
+constexpr time::Seconds kQuarter = 15 * 60, kMostOffset = 14 * 3600;
+
+// To the nearest quarter hour (two readings can be a second apart).
+time::Seconds nearestQuarter(time::Seconds d) {
+  return (d >= 0 ? d + kQuarter / 2 : d - kQuarter / 2) / kQuarter * kQuarter;
+}
+
 }  // namespace
 
 std::optional<Error> checkStatus(int status) {
@@ -113,16 +121,37 @@ void applyAccountInfo(Account& account, const AccountInfo& info) {
 
 std::optional<int> serverOffset(std::optional<time::Seconds> timeNow, std::optional<time::Seconds> timestampNow,
                                 std::string_view timezone, time::Seconds at) {
-  constexpr time::Seconds kQuarter = 15 * 60, kMost = 14 * 3600;
   if (timeNow && timestampNow && *timestampNow > 0) {
-    time::Seconds d = *timeNow - *timestampNow;
-    // To the nearest quarter hour (the two readings can be a second apart).
-    time::Seconds q = (d >= 0 ? d + kQuarter / 2 : d - kQuarter / 2) / kQuarter * kQuarter;
-    if (q >= -kMost && q <= kMost) return static_cast<int>(q);
+    time::Seconds q = nearestQuarter(*timeNow - *timestampNow);
+    if (q >= -kMostOffset && q <= kMostOffset) return static_cast<int>(q);
   }
   if (std::optional<time::Zone> z = time::Zone::named(trimWhitespaceAndNewlines(timezone)))
     return z->offsetAt(timestampNow.value_or(at));
   return std::nullopt;
+}
+
+std::optional<int> archiveOffset(const std::vector<std::pair<time::Seconds, time::Seconds>>& localAndUnix) {
+  struct Seen {
+    int count = 0;
+    time::Seconds latest = 0;
+  };
+  std::map<time::Seconds, Seen> seen;
+  for (const auto& [local, utc] : localAndUnix) {
+    if (utc <= 0) continue;
+    time::Seconds q = nearestQuarter(local - utc);
+    if (q < -kMostOffset || q > kMostOffset) continue;
+    Seen& s = seen[q];
+    ++s.count;
+    s.latest = std::max(s.latest, utc);
+  }
+  std::optional<int> best;
+  Seen top;
+  for (const auto& [q, s] : seen)
+    if (!best || s.count > top.count || (s.count == top.count && s.latest > top.latest)) {
+      best = static_cast<int>(q);
+      top = s;
+    }
+  return best;
 }
 
 std::string offsetText(int seconds) {
@@ -266,14 +295,24 @@ Request Client::simpleDataTableRequest(std::string_view streamId) const {
 }
 
 std::vector<ArchiveProgramme> parseSimpleDataTable(int status, std::string_view body) {
-  std::vector<ArchiveProgramme> out;
-  if (checkStatus(status)) return out;
+  return parseArchiveTable(status, body).programmes;
+}
+
+ArchiveTable parseArchiveTable(int status, std::string_view body) {
+  ArchiveTable table;
+  std::vector<ArchiveProgramme>& out = table.programmes;
+  if (checkStatus(status)) return table;
   std::optional<json::Value> root = json::parse(body);
-  if (!root || !root->isObject() || !(*root)["epg_listings"].isArray()) return out;
+  if (!root || !root->isObject() || !(*root)["epg_listings"].isArray()) return table;
   constexpr time::Seconds kLongest = 24 * 3600;
+  // Build 170: each entry's local start against its Unix one (plain text,
+  // as the panel writes it; titles are the ones in base64).
+  std::vector<std::pair<time::Seconds, time::Seconds>> clocks;
   for (const json::Value& item : (*root)["epg_listings"].items()) {
     if (!item.isObject()) continue;
     std::optional<int64_t> start = lenientInt(item["start_timestamp"]);
+    if (std::optional<time::Seconds> local = wallClock(item["start"]); local && start && *start > 0)
+      clocks.emplace_back(*local, *start);
     std::optional<int64_t> end = lenientInt(item["stop_timestamp"]);
     if (!start || !end || *start <= 0 || *end <= *start || *end - *start > kLongest) continue;
     std::string title = decodeText(item["title"]).value_or("");
@@ -291,7 +330,8 @@ std::vector<ArchiveProgramme> parseSimpleDataTable(int status, std::string_view 
   out.erase(std::unique(out.begin(), out.end(),
                         [](const ArchiveProgramme& a, const ArchiveProgramme& b) { return a.start == b.start; }),
             out.end());
-  return out;
+  table.clock = archiveOffset(clocks);
+  return table;
 }
 
 std::string Client::guideURL() const { return base_ + std::string(kGuidePath) + "?" + loginQuery(); }

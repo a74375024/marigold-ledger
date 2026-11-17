@@ -347,10 +347,25 @@ class Store {
   // the same channel, label and load mode, the provider's timeshift link
   // (secret: for the player only) in its server's clock, marked as replay.
   // nullopt when the copy keeps no archive or no link can be made.
+  // Build 170: the clock a copy's timeshift links ask in, seconds east of
+  // UTC: the copy's own archive clock (read from its get_simple_data_table,
+  // kept in archive-clocks.json), else the one most seen on its account's
+  // channels, else its server's (server_info). `offset` nullopt: none
+  // known (asked as UTC). `settled` false: the copy's table hasn't been
+  // read this run and its account has taught none yet, so a first replay
+  // waits for it a moment (Session).
+  enum class ClockFrom : uint8_t { Server, Table, Learned };
+  struct ArchiveClock {
+    std::optional<int> offset;
+    std::optional<int> server;  // what server_info says
+    ClockFrom from = ClockFrom::Server;
+    bool settled = true;
+  };
+  ArchiveClock archiveClock(const std::string& channelId) const;
   struct CatchupFeed {
     Feed feed;
-    std::optional<int> serverOffset;  // seconds east of UTC; nullopt: not known (asked as UTC)
-    int minutes = 0;                  // how much of the archive is asked for
+    ArchiveClock clock;  // the clock the link asks in
+    int minutes = 0;     // how much of the archive is asked for
   };
   std::optional<CatchupFeed> catchupFeed(const Feed& live, time::Seconds from, time::Seconds now) const;
   // Build 165, replay's timeline: a guide entry's listings from `from` on
@@ -368,6 +383,18 @@ class Store {
   };
   void archiveGuide(const std::string& channelId,
                     std::function<void(std::optional<std::vector<PastProgramme>>)> done);
+  // Build 170: the same request with all it told: the programmes (nullopt:
+  // failed), the archive clock it showed, and whether the provider refused
+  // the connection (probe::refusal; Test all sources pauses on it). One
+  // request per copy at a time: a second ask waits for the one out. The
+  // clock is kept for the copy (and its account) before `done` runs.
+  struct ArchiveTableAnswer {
+    std::optional<std::vector<PastProgramme>> programmes;
+    std::optional<int> clock;
+    bool refused = false;
+    std::string why;  // "http 429" and the like, for the log (never a link)
+  };
+  void archiveTable(const std::string& channelId, std::function<void(const ArchiveTableAnswer&)> done);
   // Emby: asks the server to open a feed (needsOpen); `done` gets it with
   // its URL, or nothing. Closes the stream opened before.
   void open(const Feed& feed, std::function<void(std::optional<Feed>)> done);
@@ -777,6 +804,7 @@ class Store {
   std::string qualityText(const std::string& channelId) const;
   void savePicturesLater();
   void saveScoresLater();
+  void saveArchiveClocksLater();
   // Build 136: how likely a game's provider feed is to start (for bestFeeds):
   // 0 when it failed lately, else its group's starts this week, else
   // reliabilityOf.

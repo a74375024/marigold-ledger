@@ -65,14 +65,22 @@ constexpr const char* kFile = "source-test.json";
 // What one test asks of a copy: a stretch of its archive about two hours
 // back, one near the edge of the archive, or live. A copy's archive is
 // tested before its live picture, so the live probe's record carries both.
-enum class Kind : uint8_t { Archive, Depth, Live };
+//
+// Build 170: before a copy's archive is probed, its own guide
+// (get_simple_data_table, one light API request, in the same turn and under
+// the same refusal rules) is read for the clock its archive is indexed on
+// (Store::archiveTable keeps it); the archive probes ask in that clock. Its
+// outcome is saved under the Clock key ("o<seconds east>" or "f"); no plan
+// item has that kind.
+enum class Kind : uint8_t { Archive, Depth, Live, Clock };
 
 struct Item {
   size_t row = 0, copy = 0;  // in the rows the plan was made from
   Kind kind = Kind::Live;
   std::string channelId;  // the copy
 };
-// "<copy id>#A" / "#D" / "#L": an item's key in the saved progress.
+// "<copy id>#A" / "#D" / "#L" ("#C" its archive clock): an item's key in
+// the saved progress.
 std::string key(const std::string& channelId, Kind kind);
 
 struct Plan {
@@ -174,6 +182,12 @@ std::string pictureText(int height, int fps);
 std::string secondsText(uint32_t ms);
 // "54% · 1 day", "None".
 std::string replayCell(const scores::ProviderFigures& f);
+// Build 170: a provider's archive clocks in words, from each replay copy's
+// clock (seconds east of UTC) and its server's: "UTC+1 on all replay
+// channels", "UTC+1 (most), UTC (some)", with "; server says UTC" after
+// when the most common one differs from it. Shares in words, never a
+// count; "" for none.
+std::string clocksText(const std::vector<int>& clocks, std::optional<int> server);
 
 // ------------------------------------------------------------- the runner
 
@@ -235,6 +249,9 @@ class Runner {
   void save(bool now);
   bool ensurePlan();
   void next(Slot& s, uint32_t ms);
+  // Build 170: the copy's archive clock, then its archive probe.
+  void readClock(Slot& s, const Item& item, uint32_t ms);
+  void probeItem(Slot& s, const Item& item, uint32_t ms, uint32_t started);
   void finishItem(size_t provider, const Item& item, const probe::Outcome& o, uint32_t ms, uint32_t started);
   void endRun(bool stopped);
   void abortAll();

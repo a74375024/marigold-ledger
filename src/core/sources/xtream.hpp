@@ -55,6 +55,15 @@ struct ArchiveProgramme {
   bool archived = false;  // has_archive
 };
 
+// Build 170: a get_simple_data_table answer: its programmes, and the clock
+// the channel's archive is indexed on (archiveOffset of its entries' local
+// "start" against their start_timestamp), seconds east of UTC; nullopt when
+// no entry has both. Timeshift links for that channel ask in this clock.
+struct ArchiveTable {
+  std::vector<ArchiveProgramme> programmes;
+  std::optional<int> clock;
+};
+
 // category_id -> trimmed category_name.
 using CategoryNames = std::unordered_map<std::string, std::string>;
 
@@ -79,6 +88,12 @@ std::optional<int> serverOffset(std::optional<time::Seconds> timeNow, std::optio
                                 std::string_view timezone, time::Seconds at);
 // "UTC", "UTC−5", "UTC+5:30" (a minus sign, not a hyphen): for the log.
 std::string offsetText(int seconds);
+// Build 170: a channel's archive clock from its own guide: for each entry,
+// its local start ("YYYY-MM-DD HH:MM:SS" read as if UTC) minus its Unix
+// start, to the nearest 15 minutes; values beyond 14 h are dropped. The
+// most common value wins; a tie goes to the one seen on the latest
+// programme. nullopt for no usable entry.
+std::optional<int> archiveOffset(const std::vector<std::pair<time::Seconds, time::Seconds>>& localAndUnix);
 // The longest catch-up asked for, in minutes.
 constexpr int kTimeshiftMaxMinutes = 180;
 // How long to ask the archive for, from `start` until now plus 5 minutes,
@@ -156,6 +171,9 @@ class Client {
 // or true). Entries without a title or a sane span are skipped; sorted by
 // start, one per start. Empty on any failure.
 std::vector<ArchiveProgramme> parseSimpleDataTable(int status, std::string_view body);
+// Build 170: the same, with the archive's clock read from every entry that
+// has both a local "start" text and a start_timestamp (title or not).
+ArchiveTable parseArchiveTable(int status, std::string_view body);
 
 // get_live_categories. Failures give an empty map (the Swift ignores them:
 // channels then have no category tag).
