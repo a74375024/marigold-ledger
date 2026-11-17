@@ -983,9 +983,22 @@ class PlayerScreen : public Screen {
       changed = true;
     }
     const auto& r = p.replay();
-    if (timeline_ && (!r || p.entry() != timelineEntry_)) {
+    if (timeline_ && p.entry() != timelineEntry_) {
       timeline_ = false;  // the channel changed under it
       changed = true;
+    }
+    if (timeline_ && !headMoved_) {
+      // Build 175: it plays on under the timeline; until a time is picked,
+      // the timeline's mark follows what plays (a replay that caught up
+      // with live is live now).
+      From from = !r ? From::Live : r->phase == ReplayPhase::Paused ? From::Paused : From::Replay;
+      time::Seconds at = from == From::Live ? time::now() : p.replayAt();
+      if (from != timelineFrom_ || at != head_) {
+        timelineFrom_ = from;
+        head_ = at;
+        span_ = engine::replay::follow(span_, head_, earliest_, time::now());
+        changed = true;
+      }
     }
     if (!pausedPanel()) pausedButton_ = 0;
     // What the screen shows of the replay's clocks, once a second.
@@ -1043,9 +1056,9 @@ class PlayerScreen : public Screen {
     if (!days || !pendingFlip_.empty()) return;
     const auto& r = p.replay();
     timelineFrom_ = !r ? From::Live : r->phase == ReplayPhase::Paused ? From::Paused : From::Replay;
-    // The picture holds while the timeline is open (quietly: nothing is
-    // said in the log until a time is picked).
-    if (timelineFrom_ != From::Paused && !p.pause(true)) return;
+    // Build 175: what's playing keeps playing while the timeline is open
+    // (it used to hold the picture before a time was even picked); only a
+    // time picked changes what plays.
     p.wantPast();
     time::Seconds now = time::now();
     earliest_ = engine::replay::archiveStart(now, days);
@@ -1059,6 +1072,7 @@ class PlayerScreen : public Screen {
     span_ = engine::replay::follow(span_, head_, earliest_, now);
     timelineEntry_ = p.entry();
     timeline_ = true;
+    headMoved_ = false;
     repeats_ = 0;
     lastMove_ = Key::Unknown;
     barHover_ = -1;
@@ -1073,6 +1087,7 @@ class PlayerScreen : public Screen {
     bool again = e.key == lastMove_ && (e.repeat || (e.glide && e.glide == glide_));
     if (e.glide) glide_ = e.glide;
     auto moved = [&](time::Seconds to) {
+      headMoved_ = true;
       head_ = to;
       span_ = engine::replay::follow(span_, head_, earliest_, now);
     };
@@ -1124,19 +1139,19 @@ class PlayerScreen : public Screen {
   void playFromHead() {
     Playback& p = app_.playback();
     timeline_ = false;
+    // Build 175: no time picked: what plays goes on as it is (a paused
+    // replay plays on from where it paused, as before).
+    if (!headMoved_ && timelineFrom_ != From::Paused) {
+      showBanner();
+      return;
+    }
     if (time::now() - head_ < engine::Session::kLiveWithin) p.goLive(timelineFrom_ == From::Live);
     else p.replayFrom(head_, engine::Session::ReplayWhy::Rewind);
     showBanner();
   }
-  // Back: as it was before the timeline opened.
+  // Back: as it was. Build 175: nothing was held, so nothing to undo.
   void leaveTimeline() {
-    Playback& p = app_.playback();
     timeline_ = false;
-    switch (timelineFrom_) {
-      case From::Live: p.goLive(true); break;
-      case From::Replay: p.resumePaused(true); break;
-      case From::Paused: break;
-    }
     showBanner();
   }
 
@@ -2359,6 +2374,7 @@ class PlayerScreen : public Screen {
   time::Seconds pausedTitleFor_ = 0, pausedStart_ = 0;
   std::string pausedTitle_;
   bool timeline_ = false;
+  bool headMoved_ = false;  // Build 175: a time picked on the timeline
   From timelineFrom_ = From::Live;
   std::string timelineEntry_;
   time::Seconds head_ = 0, earliest_ = 0;

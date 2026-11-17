@@ -2300,3 +2300,16 @@ A test stopped part way (Stop, or the providers left turned it away) keeps its p
 | Start over | Stop it, then Start over | It starts from 0% |
 | Refused | A provider that turned the test away | The run ends "ended part way (providers turned it away)"; Carry on tries that provider again |
 | A week on | A test stopped more than a week ago | No Carry on; log: "a test stopped more than a week ago was dropped" |
+
+## Build 175: 1.0.18, Rewind doesn't pause before a time is picked
+
+Opening Rewind used to hold the picture at once, before any time was picked. Now what's playing (live or a replay) keeps playing, dimmed, under the timeline; the timeline's mark follows it until you move. Only picking a time changes what plays. Back, or OK without moving, closes the timeline and it plays on (a paused replay still plays on from where it paused).
+
+| Check | How | Pass |
+|---|---|---|
+| Live | Watching live, open Rewind | The picture keeps playing under the timeline; the mark stays at live |
+| Back | Then Back | The timeline closes; live plays on with no new start (no black, no reconnect) |
+| Pick a time | Open Rewind, move left, OK | The replay starts at the time picked |
+| In a replay | In a replay, open Rewind and wait 10 s | It plays on; the mark moves with it; OK without moving keeps playing from there (no jump back) |
+| Paused | Pause, then open Rewind, then OK | Plays on from where it paused |
+| Other platforms | Android / Fire TV, Apple TV | Same |
