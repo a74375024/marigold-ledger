@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "core/engine/controls.hpp"
 #include "core/engine/replay.hpp"
 #include "core/engine/session.hpp"
 #include "core/engine/store.hpp"
@@ -1211,5 +1212,52 @@ TEST_CASE("replay marks 1.0.11: the guide's Start over tunes straight into the a
   CHECK_FALSE(r.session->replay());
   CHECK(r.session->entry() == cnn);
   CHECK_FALSE(isReplay(r.player->plays.back()));
+  r.noLinks();
+}
+
+TEST_CASE("replay 1.0.13: the controls' Start over plays from the programme's start minute, live and behind live") {
+  namespace controls = marigold::engine::controls;
+  Rig r;
+  std::string espn = r.entry("ESPN");
+  r.watchLive(espn, 502);
+  REQUIRE(r.session->catchupDays() == 2);
+  // Live: the listing on now began 40 minutes ago, a few seconds past the
+  // minute. The row's Start over goes there; OK replays from its minute.
+  mtime::Seconds now = mtime::now();
+  mtime::Seconds start = minuteOf(now - 40 * 60) + 25;
+  controls::StartOverIn in;
+  in.replayDays = r.session->catchupDays();
+  in.showStart = start;
+  in.now = now;
+  std::optional<mtime::Seconds> at = controls::startOver(in);
+  REQUIRE(at);
+  CHECK(*at == start);
+  REQUIRE(r.session->replayFrom(*at, Why::StartOver));
+  REQUIRE(r.session->replay());
+  CHECK(r.session->replay()->from == minuteOf(start));
+  CHECK(r.player->plays.back().url.find("/" + serverMinute(minuteOf(start)) + "/501.ts") != std::string::npos);
+  r.picture();
+  r.run(60000);
+  // Behind live, ten minutes into an earlier programme (100 minutes ago):
+  // its start, from the listing at the replay's moment.
+  mtime::Seconds earlier = minuteOf(mtime::now() - 100 * 60);
+  REQUIRE(r.session->replayFrom(earlier + 10 * 60, Why::Rewind));
+  r.picture();
+  in.now = mtime::now();
+  in.replayAt = r.session->replayAt();
+  in.showStart = earlier;
+  at = controls::startOver(in);
+  REQUIRE(at);
+  CHECK(*at == earlier);
+  REQUIRE(r.session->replayFrom(*at, Why::StartOver));
+  REQUIRE(r.session->replay());
+  CHECK(r.session->replay()->from == earlier);
+  std::vector<std::string> lines = r.replayLines();
+  REQUIRE(lines.size() >= 3);
+  CHECK(lines.front().rfind("start over " + hm(minuteOf(start)), 0) == 0);
+  CHECK(lines.back().rfind("start over " + hm(earlier), 0) == 0);
+  // Two minutes into it: no Start over (the button is absent).
+  in.replayAt = earlier + 2 * 60;
+  CHECK_FALSE(controls::startOver(in));
   r.noLinks();
 }

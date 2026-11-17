@@ -2164,3 +2164,21 @@ After Test all sources, channels still started on a 720p copy ahead of a 1080p o
 | Never measured | A channel nobody played or tested since the update | Same order as 1.0.11 |
 | Server-opened 1080p | A channel with a direct 720p and an Emby 1080p that starts within 4 s | The Emby 1080p starts; with both at 720p, the direct one does |
 | Backup | Three providers, two of them the same service underneath | BACKUP still on a copy from the separate one |
+
+## Build 170: 1.0.13, Start over back in the controls
+
+Start over is back in the OK controls as a round icon (a bar and a left triangle, |◀) in the watching group, right after Rewind: live, Pause, Rewind, Start over; behind live, Live (Pause after it on LG), Rewind, Start over. Focused, it reads "Start over · from 7:30" (the programme's start), or for a game "Start over · from 7:10" (its scheduled start); OK plays the replay from that minute, as the guide's hold-OK Start over does.
+
+It's there only when it can work: the channel has replay, the start of what's on screen is known (live: the guide's programme on now; behind live: the programme at the moment you're watching; a game: its scheduled start once it began), that start is more than 3 minutes before the moment shown, and the usable archive still holds it (with its hour in hand). Otherwise the button isn't in the row at all. The tune banner stays as Build 169 left it (no Start over), and nothing else in the row changes.
+
+| Area | How to check | Pass |
+|---|---|---|
+| Live | OK on ESPN (replay) 40 min into a programme from 7:30 | Pause, Rewind, Start over, line, Subtitles (focused)…; Start over focused reads "Start over · from 7:30" |
+| OK | OK on Start over | The replay from 7:30; banner as after the guide's Start over; the tag for 5 s once it's down |
+| Behind live | Rewind to 7:45 during the 7:30 programme, OK | Live, Rewind, Start over ("from 7:30"); LG: Live, Pause, Rewind, Start over |
+| Just begun | OK within 3 min of a programme's start (live, or a replay 2 min into one) | No Start over; Rewind is last in its group |
+| No listing | OK on a replay channel with no guide data for now | No Start over |
+| No replay | OK on CNN (no archive) | No Pause, Rewind or Start over |
+| Outside archive | Replay on a one-day channel from 23 h back, into a programme that began earlier | No Start over |
+| Game | OK on a game from Live Events that began at 7:10 (its channel has replay) | "Start over · from 7:10"; OK plays from tip-off |
+| Banner | Tune ESPN 40 min into a programme | No Start over on the banner; "Hides in" as in 1.0.12 |

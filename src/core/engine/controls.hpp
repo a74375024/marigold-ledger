@@ -6,7 +6,8 @@
 //
 // The row: round icon buttons in three groups with a thin divider between
 // them. Watching (behind live: Live first, then Pause on LG, Rewind; live:
-// Pause, Rewind; nothing on a channel without replay), this channel
+// Pause, Rewind; then Start over where it can work (Build 170); nothing on
+// a channel without replay), this channel
 // (Subtitles, Sources, East/West, Cameras), elsewhere (Back, Guide or Games,
 // Favorite, Settings). Only the focused button (or the one under the
 // pointer) opens into a pill with its label and state; the row always fits.
@@ -29,7 +30,20 @@
 
 namespace marigold::engine::controls {
 
-enum class Button : uint8_t { Live, Pause, Rewind, Subtitles, Sources, Swap, Cameras, Back, Guide, Favorite, Settings };
+enum class Button : uint8_t {
+  Live,
+  Pause,
+  Rewind,
+  StartOver,
+  Subtitles,
+  Sources,
+  Swap,
+  Cameras,
+  Back,
+  Guide,
+  Favorite,
+  Settings
+};
 enum class Group : uint8_t { Watching, Channel, Elsewhere };
 Group groupOf(Button b);
 
@@ -38,12 +52,30 @@ struct RowIn {
   uint16_t replayDays = 0;    // the channel's archive (0: no replay buttons)
   bool behind = false;        // a replay plays (or holds) behind live
   bool lgPause = false;       // LG's remote: Pause stays behind live, after Live
+  bool startOver = false;     // Build 170: Start over after Rewind (startOver() gave a start)
   bool bothVersions = false;  // the channel has East and West
   bool cameras = false;       // the race on screen has onboard cameras
   bool back = false;          // Right has somewhere to go
   bool favorite = false;      // a guide channel (a game has no Favorite)
 };
 std::vector<Button> row(const RowIn& in);
+// Build 170: where the row's Start over goes, or none (the button is
+// absent then, not disabled). The start of what's on screen: a game's
+// scheduled start when it began by the moment shown, else the programme on
+// at that moment (live: the guide's listing on now; behind live: the
+// listing at the replay's moment). Only on a channel with replay, when that
+// start is known, began more than replay::kStartOverAfter (3 min) before
+// the moment shown and the usable archive still holds it (replay::covers,
+// an hour in hand).
+struct StartOverIn {
+  uint16_t replayDays = 0;                   // the channel's usable archive
+  std::optional<time::Seconds> replayAt;     // behind live: the moment shown (none: live, now)
+  std::optional<time::Seconds> gameStart;    // a game: its scheduled start
+  std::optional<time::Seconds> showStart;    // the programme on at the moment shown
+  time::Seconds now = 0;
+};
+std::optional<time::Seconds> startOver(const StartOverIn& in);
+
 // The button focused when OK opens the row: Live behind live, else
 // Subtitles (-1: neither, as on an empty row).
 int opening(const std::vector<Button>& row, bool behind);
@@ -59,6 +91,7 @@ struct LabelIn {
   std::string backTo;        // where Back goes ("TNT")
   bool game = false;         // a game: Guide is "Games"
   bool favorite = false;     // the channel is a favourite
+  std::string startOverFrom; // Build 170: Start over's clock ("7:30"; "" none)
 };
 struct Label {
   std::string title;   // "Subtitles", "Back to TNT"

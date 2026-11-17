@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "core/engine/controls.hpp"
+#include "core/engine/replay.hpp"
 
 using namespace marigold;
 using namespace marigold::engine::controls;
@@ -154,8 +155,8 @@ TEST_CASE("controls 1.0.12: the focused button's label and state") {
   CHECK(text(label(B::Settings, in)) == "Settings");
   CHECK(text(label(B::Cameras, in)) == "Cameras");
   // Only Subtitles ever has the dot.
-  for (Button b : {B::Live, B::Pause, B::Rewind, B::Sources, B::Swap, B::Cameras, B::Back, B::Guide, B::Favorite,
-                   B::Settings})
+  for (Button b : {B::Live, B::Pause, B::Rewind, B::StartOver, B::Sources, B::Swap, B::Cameras, B::Back, B::Guide,
+                   B::Favorite, B::Settings})
     CHECK_FALSE(label(b, in).dot);
 }
 
@@ -190,8 +191,9 @@ TEST_CASE("controls 1.0.12: the row's layout: round buttons, dividers between gr
   all.behind = true;
   all.lgPause = true;
   all.bothVersions = all.cameras = all.back = all.favorite = true;
+  all.startOver = true;
   std::vector<Button> longest = row(all);
-  CHECK(longest.size() == 11);
+  CHECK(longest.size() == 12);
   CHECK(layout(longest, 0, 600, 1728).width <= 1728);
 }
 
@@ -311,4 +313,148 @@ TEST_CASE("controls 1.0.12: a name fits whole, cut on a letter with an ellipsis,
   CHECK(fit("The Lead", 50, tenEach) == "The\xe2\x80\xa6");
   CHECK(fit("Fútbol Mexicano", 60, tenEach) == "Fútbo\xe2\x80\xa6");
   CHECK(fit("", 100, tenEach).empty());
+}
+
+// Build 170 (1.0.13): Start over back in the row, after Rewind, only where
+// it can work; "Start over · from 7:30" when focused.
+
+TEST_CASE("controls 1.0.13: Start over sits in the watching group right after Rewind") {
+  RowIn in;
+  in.replayDays = 2;
+  in.back = true;
+  in.favorite = true;
+  in.startOver = true;
+  // Live: Pause, Rewind, Start over.
+  std::vector<Button> r = row(in);
+  CHECK(r == std::vector<Button>{B::Pause, B::Rewind, B::StartOver, B::Subtitles, B::Sources, B::Back, B::Guide,
+                                 B::Favorite, B::Settings});
+  CHECK(groupOf(B::StartOver) == Group::Watching);
+  CHECK(groups(r)[2] == Group::Watching);
+  CHECK(groups(r)[3] == Group::Channel);
+  // Subtitles still focused when the row opens live.
+  CHECK(opening(r, false) == 3);
+  // Two dividers still: Start over is no group of its own.
+  CHECK(layout(r, -1, 0, 1728).dividers.size() == 2);
+  // Behind live: Live, Rewind, Start over; LG: Live, Pause, Rewind, Start over.
+  in.behind = true;
+  CHECK(row(in) == std::vector<Button>{B::Live, B::Rewind, B::StartOver, B::Subtitles, B::Sources, B::Back, B::Guide,
+                                       B::Favorite, B::Settings});
+  CHECK(opening(row(in), true) == 0);
+  in.lgPause = true;
+  CHECK(row(in) == std::vector<Button>{B::Live, B::Pause, B::Rewind, B::StartOver, B::Subtitles, B::Sources, B::Back,
+                                       B::Guide, B::Favorite, B::Settings});
+  // Where it can't work, absent (not disabled): the row as Build 169 had it.
+  in.startOver = false;
+  CHECK(row(in) == std::vector<Button>{B::Live, B::Pause, B::Rewind, B::Subtitles, B::Sources, B::Back, B::Guide,
+                                       B::Favorite, B::Settings});
+  // A channel without replay: no watching buttons, Start over or not.
+  RowIn plain;
+  plain.startOver = true;
+  CHECK(row(plain) == std::vector<Button>{B::Subtitles, B::Sources, B::Guide, B::Settings});
+}
+
+TEST_CASE("controls 1.0.13: Start over live: the listing on now, begun over 3 minutes ago, in the archive") {
+  StartOverIn in;
+  in.replayDays = 2;
+  in.now = kNow;         // 8:20
+  in.showStart = kHour;  // AC360 from 8:00
+  CHECK(startOver(in) == kHour);
+  // No replay on the channel.
+  in.replayDays = 0;
+  CHECK_FALSE(startOver(in));
+  in.replayDays = 2;
+  // The programme's start not known.
+  StartOverIn unknown = in;
+  unknown.showStart.reset();
+  CHECK_FALSE(startOver(unknown));
+  // Three minutes in or less: not yet; a second more, there.
+  StartOverIn early = in;
+  early.showStart = kNow - 3 * kMin;
+  CHECK_FALSE(startOver(early));
+  early.showStart = kNow - 3 * kMin - 1;
+  CHECK(startOver(early) == kNow - 3 * kMin - 1);
+  // A start after the moment (a listing not on yet): none.
+  early.showStart = kNow + 5 * kMin;
+  CHECK_FALSE(startOver(early));
+  // Outside the usable archive (an hour in hand): a one-day archive no
+  // longer holds a start 23 h 30 min ago; a two-day one does.
+  StartOverIn old = in;
+  old.showStart = kNow - 23 * 3600 - 30 * kMin;
+  old.replayDays = 1;
+  CHECK_FALSE(startOver(old));
+  old.replayDays = 2;
+  CHECK(startOver(old) == kNow - 23 * 3600 - 30 * kMin);
+  // Right at the archive's edge on one day: held.
+  old.replayDays = 1;
+  old.showStart = engine::replay::archiveStart(kNow, 1);
+  CHECK(startOver(old) == engine::replay::archiveStart(kNow, 1));
+}
+
+TEST_CASE("controls 1.0.13: Start over behind live: the listing at the replay's moment") {
+  StartOverIn in;
+  in.replayDays = 2;
+  in.now = kNow;                     // live 8:20
+  in.replayAt = kHour - 15 * kMin;   // watching 7:45
+  in.showStart = kHour - 30 * kMin;  // the 7:30 programme
+  CHECK(startOver(in) == kHour - 30 * kMin);
+  // Three minutes before the moment shown, not before now: at 7:32 too soon.
+  in.replayAt = kHour - 28 * kMin;
+  CHECK_FALSE(startOver(in));
+  in.replayAt = kHour - 26 * kMin;
+  CHECK(startOver(in) == kHour - 30 * kMin);
+  // Nothing known at the moment: none.
+  in.showStart.reset();
+  CHECK_FALSE(startOver(in));
+  // Paused a moment ago (the moment shown is about now).
+  in.replayAt = kNow - 10;
+  in.showStart = kHour;
+  CHECK(startOver(in) == kHour);
+}
+
+TEST_CASE("controls 1.0.13: Start over on a game: its scheduled start") {
+  StartOverIn in;
+  in.replayDays = 3;
+  in.now = kNow;                     // 8:20
+  in.gameStart = kHour - 50 * kMin;  // tip-off 7:10
+  in.showStart = kHour;              // the channel's listing from 8:00
+  CHECK(startOver(in) == kHour - 50 * kMin);
+  // Its start known, the channel's listing not.
+  in.showStart.reset();
+  CHECK(startOver(in) == kHour - 50 * kMin);
+  // Behind live, before the game began (the pre-game show from 7:00): the
+  // programme on then.
+  in.replayAt = kHour - 55 * kMin;
+  in.showStart = kHour - 60 * kMin;
+  CHECK(startOver(in) == kHour - 60 * kMin);
+  // Behind live in the game: from its start.
+  in.replayAt = kHour - 20 * kMin;
+  CHECK(startOver(in) == kHour - 50 * kMin);
+  // Under 3 minutes in at the moment shown.
+  in.replayAt = kHour - 48 * kMin;
+  CHECK_FALSE(startOver(in));
+  // Outside a one-day archive: a game a day ago.
+  in.replayAt.reset();
+  in.gameStart = kNow - 23 * 3600 - 10 * kMin;
+  in.replayDays = 1;
+  CHECK_FALSE(startOver(in));
+  // No archive on its copies.
+  in.gameStart = kHour - 50 * kMin;
+  in.replayDays = 0;
+  CHECK_FALSE(startOver(in));
+}
+
+TEST_CASE("controls 1.0.13: Start over's label: the start's clock") {
+  LabelIn in;
+  in.startOverFrom = "7:30";
+  Label l = label(B::StartOver, in);
+  CHECK(l.title == "Start over");
+  CHECK(l.state == "from 7:30");
+  CHECK(text(l) == "Start over \xc2\xb7 from 7:30");
+  CHECK_FALSE(l.dot);
+  in.startOverFrom = "7:10";
+  in.game = true;
+  CHECK(text(label(B::StartOver, in)) == "Start over \xc2\xb7 from 7:10");
+  // No clock: the title alone.
+  in.startOverFrom.clear();
+  CHECK(text(label(B::StartOver, in)) == "Start over");
 }

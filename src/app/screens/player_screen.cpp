@@ -26,7 +26,9 @@
 // tag at the top right (Build 169: for a few seconds after each jump, never
 // over the banner or the controls). Build 169: no Start over in the row or
 // on the banner; Rewind and the guide's and Live Events' hold-OK menus
-// start a programme or a game over. Behind live the bar runs from the
+// start a programme or a game over. Build 170: Start over back in the row,
+// after Rewind, where it can work (engine::controls::startOver); still not
+// on the banner. Behind live the bar runs from the
 // programme watched to live, always its right end. Channels without
 // catch-up have no replay buttons and no bar.
 #include <algorithm>
@@ -530,6 +532,8 @@ class PlayerScreen : public Screen {
       showBanner();
       return;
     }
+    // Build 170: where Start over goes, worked out once as the row opens.
+    startOverFor_.clear();
     buildPills();
     zone_ = Zone::Row;
     // Subtitles first; behind live, Live.
@@ -595,13 +599,21 @@ class PlayerScreen : public Screen {
   // Build 169: the row's buttons (engine::controls::row): replay's at the
   // front where a copy keeps an archive (engine::replay::buttons: behind
   // live, Live first and, on LG, Pause after it), then this channel's,
-  // then elsewhere.
+  // then elsewhere. Build 170: Start over after Rewind where it can work.
   void buildPills() {
     Playback& p = app_.playback();
+    // Start over's start: again when the row opens, or what it's for
+    // changes (another channel, live or behind) while it's open.
+    std::string key = p.entry() + (p.replay() ? " behind" : " live");
+    if (key != startOverFor_) {
+      startOverFor_ = key;
+      startOverAt_ = startOverAt();
+    }
     engine::controls::RowIn in;
     in.replayDays = p.catchupDays();
     in.behind = p.replay().has_value();
     in.lgPause = app_.window().remoteKeys() == RemoteKeys::lg();
+    in.startOver = startOverAt_.has_value();
     in.bothVersions = !otherCoast().empty();
     in.cameras = cameras_;
     in.back = !backName().empty();
@@ -702,6 +714,12 @@ class PlayerScreen : public Screen {
         closeControls();
         openTimeline();
         break;
+      case Ctl::StartOver:
+        // Build 170: the replay from the programme's (or the game's) start,
+        // as the guide's hold-OK Start over plays it.
+        closeControls();
+        if (startOverAt_) startOver(*startOverAt_);
+        break;
       case Ctl::Cameras: panel(makeCameraPanel(app_)); break;
       // Build 169: one Subtitles button: its panel has the languages and
       // their look (Green still turns them on or off from anywhere).
@@ -737,6 +755,37 @@ class PlayerScreen : public Screen {
       }
       case Ctl::Settings: panel(makeQuickSettings(app_, QuickPlace::Player)); break;
     }
+  }
+  void startOver(time::Seconds at) {
+    Playback& p = app_.playback();
+    if (!p.replayFrom(at, engine::Session::ReplayWhy::StartOver)) return;
+    zone_ = Zone::None;
+    showBanner();
+  }
+  // Build 170: where the row's Start over goes (engine::controls::
+  // startOver), or none: the start of the game on screen, else of the
+  // programme on at the moment shown (live: the guide's listing on now, a
+  // game's on its channel; behind live: the replay banner's listing at the
+  // replay's moment).
+  std::optional<time::Seconds> startOverAt() {
+    Playback& p = app_.playback();
+    engine::controls::StartOverIn in;
+    in.replayDays = p.catchupDays();
+    if (!in.replayDays) return std::nullopt;
+    in.now = time::now();
+    if (p.replay()) in.replayAt = p.replayAt();
+    if (app_.store().isEvent(p.entry())) {
+      if (std::optional<GameBanner> b = app_.store().gameBanner(p.entry(), in.now)) in.gameStart = b->start;
+    }
+    auto ch = app_.store().channels();
+    const GuideChannel* g = ch->find(p.entry());
+    if (!g && !p.feeds().empty())
+      g = ch->find(app_.store().entryOfChannel(p.feeds()[std::min(p.feedIndex(), p.feeds().size() - 1)].channelId));
+    if (g) {
+      const Listing* on = in.replayAt ? replayBanner(*g, *in.replayAt, in.now).show : current(g->id, in.now, nullptr);
+      if (on) in.showStart = on->start;
+    }
+    return engine::controls::startOver(in);
   }
   // The other version of the channel playing, when it has both.
   std::string otherCoast() const {
@@ -2137,6 +2186,7 @@ class PlayerScreen : public Screen {
     switch (b) {
       case Ctl::Pause: name = "ctl-pause"; break;
       case Ctl::Rewind: name = "ui-replay"; break;
+      case Ctl::StartOver: name = "ctl-start"; break;
       case Ctl::Subtitles: name = "ctl-subtitles"; break;
       case Ctl::Sources: name = "ctl-sources"; break;
       case Ctl::Swap: name = "ctl-swap"; break;
@@ -2169,6 +2219,7 @@ class PlayerScreen : public Screen {
     constexpr int kTitlePx = 28, kStatePx = 24;
     const float y = kRowY - 6, room = gfx::kLayoutWidth - 2 * kLeft;
     ctl::LabelIn in = labelIn(g);
+    if (startOverAt_) in.startOverFrom = ui::clock(c, *startOverAt_, false);
     std::vector<ctl::Label> labels;
     for (Ctl b : pills_) labels.push_back(ctl::label(b, in));
     bool focused = pill_ >= 0 && static_cast<size_t>(pill_) < pills_.size();
@@ -2271,7 +2322,8 @@ class PlayerScreen : public Screen {
   // timeline: open, what played before it, the channel it's for, the
   // playhead, the archive's start, the bar, the programmes on it, the key
   // last moved with and its repeats, the pointer on the bar or Play. The
-  // clocks shown.
+  // clocks shown. Build 170: where the row's Start over goes (none: no
+  // button) and what it was worked out for (channel, live or behind).
   int pausedButton_ = 0;
   time::Seconds pausedTitleFor_ = 0, pausedStart_ = 0;
   std::string pausedTitle_;
@@ -2287,6 +2339,8 @@ class PlayerScreen : public Screen {
   int barHover_ = -1;
   bool playHover_ = false;
   std::string replayLook_;
+  std::optional<time::Seconds> startOverAt_;
+  std::string startOverFor_;
   // Build 169: the behind-live tag's few seconds after a jump; the replay
   // they're for (its channel and stretch start, "" none); how much shows.
   engine::replay::BehindTag behindTag_;

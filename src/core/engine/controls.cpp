@@ -38,7 +38,8 @@ Group groupOf(Button b) {
   switch (b) {
     case Button::Live:
     case Button::Pause:
-    case Button::Rewind: return Group::Watching;
+    case Button::Rewind:
+    case Button::StartOver: return Group::Watching;
     case Button::Subtitles:
     case Button::Sources:
     case Button::Swap:
@@ -50,11 +51,15 @@ Group groupOf(Button b) {
 std::vector<Button> row(const RowIn& in) {
   std::vector<Button> out;
   // Build 169: replay's buttons as engine::replay::buttons has them (LG's
-  // Pause after Live behind live).
-  for (replay::Button b : replay::buttons(in.replayDays, in.behind, in.lgPause))
-    out.push_back(b == replay::Button::GoLive ? Button::Live
-                  : b == replay::Button::Pause ? Button::Pause
-                                               : Button::Rewind);
+  // Pause after Live behind live); Build 170: Start over after Rewind.
+  for (replay::Button b : replay::buttons(in.replayDays, in.behind, in.lgPause, in.startOver)) {
+    switch (b) {
+      case replay::Button::GoLive: out.push_back(Button::Live); break;
+      case replay::Button::Pause: out.push_back(Button::Pause); break;
+      case replay::Button::Rewind: out.push_back(Button::Rewind); break;
+      case replay::Button::StartOver: out.push_back(Button::StartOver); break;
+    }
+  }
   out.push_back(Button::Subtitles);
   out.push_back(Button::Sources);
   if (in.bothVersions) out.push_back(Button::Swap);
@@ -64,6 +69,16 @@ std::vector<Button> row(const RowIn& in) {
   if (in.favorite) out.push_back(Button::Favorite);
   out.push_back(Button::Settings);
   return out;
+}
+
+std::optional<time::Seconds> startOver(const StartOverIn& in) {
+  if (!in.replayDays) return std::nullopt;
+  time::Seconds shown = in.replayAt ? std::min(*in.replayAt, in.now) : in.now;
+  // A game from its scheduled start once it began; else the programme on.
+  std::optional<time::Seconds> start = in.gameStart && *in.gameStart <= shown ? in.gameStart : in.showStart;
+  if (!start || *start > shown || shown - *start <= replay::kStartOverAfter) return std::nullopt;
+  if (!replay::covers(in.replayDays, *start, in.now)) return std::nullopt;
+  return start;
 }
 
 int opening(const std::vector<Button>& row, bool behind) {
@@ -85,6 +100,11 @@ Label label(Button b, const LabelIn& in) {
       break;
     case Button::Pause: l.title = "Pause"; break;
     case Button::Rewind: l.title = "Rewind"; break;
+    case Button::StartOver:
+      // Build 170: "Start over · from 7:30".
+      l.title = "Start over";
+      if (!in.startOverFrom.empty()) l.state = "from " + in.startOverFrom;
+      break;
     case Button::Subtitles:
       l.title = "Subtitles";
       l.dot = in.subtitlesOn;

@@ -94,11 +94,11 @@ std::string behindMinutes(time::Seconds behind);
 // The controls' replay buttons, at the front of the row on a channel
 // whose copies keep an archive (`days` > 0; none otherwise): behind live,
 // Go live (then Pause where `lgPause`: LG's remote), else Pause; then
-// Rewind. Build 169: no Start over in the row any more (nor on the banner
-// after a tune): Rewind's timeline, and the guide's and Live Events'
-// hold-OK menus, start a programme or a game over.
-enum class Button { GoLive, Pause, Rewind };
-std::vector<Button> buttons(uint16_t days, bool behind, bool lgPause);
+// Rewind. Build 169 took Start over out of the row (and off the banner
+// after a tune); Build 170 puts it back after Rewind where `startOver`
+// (engine::controls::startOver: it can work). Never on the banner.
+enum class Button { GoLive, Pause, Rewind, StartOver };
+std::vector<Button> buttons(uint16_t days, bool behind, bool lgPause, bool startOver = false);
 
 // Build 169: the "−17:05 behind live" tag at the top right. It shows for
 // kShowMs once a replay starts or plays from another moment (a jump),

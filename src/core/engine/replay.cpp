@@ -176,7 +176,7 @@ std::string behindMinutes(time::Seconds behind) {
   return buf;
 }
 
-std::vector<Button> buttons(uint16_t days, bool behind, bool lgPause) {
+std::vector<Button> buttons(uint16_t days, bool behind, bool lgPause, bool startOver) {
   if (!days) return {};
   std::vector<Button> out;
   if (behind) {
@@ -186,6 +186,7 @@ std::vector<Button> buttons(uint16_t days, bool behind, bool lgPause) {
     out.push_back(Button::Pause);
   }
   out.push_back(Button::Rewind);
+  if (startOver) out.push_back(Button::StartOver);
   return out;
 }
 

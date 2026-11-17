@@ -75,7 +75,7 @@ TEST_CASE("replay 1.0.12: a replay's stretch still opening waits for its picture
   CHECK(t.opacity(8000 + Tag::kFadeMs, false) == 0);
 }
 
-TEST_CASE("replay 1.0.12: the controls' replay buttons have no Start over") {
+TEST_CASE("replay 1.0.13: the controls' replay buttons: Start over after Rewind only where it can work") {
   // No archive: no replay buttons at all.
   CHECK(replay::buttons(0, false, false).empty());
   CHECK(replay::buttons(0, true, true).empty());
@@ -91,7 +91,16 @@ TEST_CASE("replay 1.0.12: the controls' replay buttons have no Start over") {
       std::vector<Button> b = replay::buttons(3, behind, lg);
       CHECK(std::count(b.begin(), b.end(), Button::Rewind) == 1);
       CHECK(b.size() <= 3);
+      // Build 170: not unless asked (engine::controls::startOver said it
+      // can work); then right after Rewind, last.
+      CHECK(std::count(b.begin(), b.end(), Button::StartOver) == 0);
+      std::vector<Button> with = replay::buttons(3, behind, lg, true);
+      REQUIRE(with.size() == b.size() + 1);
+      CHECK(with.back() == Button::StartOver);
+      CHECK(with[with.size() - 2] == Button::Rewind);
     }
+  // No archive: never, asked or not.
+  CHECK(replay::buttons(0, false, false, true).empty());
 }
 
 TEST_CASE("replay 1.0.12: the guide's chip shows the replay window") {
