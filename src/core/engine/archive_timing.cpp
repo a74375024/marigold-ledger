@@ -171,7 +171,8 @@ Timing classify(const Readings& r, std::vector<int>* ambiguous) {
     starts.push_back(start);
   }
   // Exact: the same lag behind every moment asked.
-  time::Seconds low = reads[0].asked - starts[0], high = low, sum = 0;
+  if (reads.empty() || starts.size() != reads.size()) return t;
+  time::Seconds low = reads.front().asked - starts.front(), high = low, sum = 0;
   for (size_t i = 0; i < reads.size(); ++i) {
     time::Seconds lag = reads[i].asked - starts[i];
     low = std::min(low, lag);
