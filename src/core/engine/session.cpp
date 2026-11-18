@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <utility>
 
@@ -855,7 +856,8 @@ bool Session::tick(uint32_t now) {
   if (replay_) {
     // A replay's own path: the recovery stands aside.
     tickReplay(now);
-    return replay_ && replay_->phase == Replay::Phase::Opening;
+    // Build 180: and while it stalls ("Buffering…").
+    return replay_ && (replay_->phase == Replay::Phase::Opening || !replayNote_.empty());
   }
   PlayerState s = player_->state();
   // A picture is a frame drawn. Radio (or a channel kept as sound only)
@@ -967,12 +969,12 @@ int Session::clockRank(size_t i) const {
 }
 
 std::optional<size_t> Session::archiveCopyFor(time::Seconds at, size_t live, size_t playing,
-                                              const std::set<size_t>* skip, bool trusted) const {
+                                              const std::set<size_t>* skip, bool trusted, bool records) const {
   time::Seconds now = time::now();
   std::optional<size_t> best;
   uint16_t bestDays = 0;
   int bestRank = 0;
-  std::optional<double> bestScore;
+  std::optional<double> bestScore, bestBad;
   for (size_t i = 0; i < feeds_.size(); ++i) {
     if (!keepsArchive(i, live) || (skip && skip->count(i))) continue;
     uint16_t days = store_.catchupDays(feeds_[i].channelId);
@@ -982,12 +984,19 @@ std::optional<size_t> Session::archiveCopyFor(time::Seconds at, size_t live, siz
     // Build 174: the copies whose archive clock the video showed first,
     // then those whose account's checks never failed, then the rest.
     int rank = trusted ? clockRank(i) : 0;
+    // Build 180: how its replays went (null: too few to tell).
+    std::optional<double> bad = records ? store_.replayBadness(feeds_[i].channelId) : std::nullopt;
     bool better = !best;
     if (best) {
       // The longest archive; then the copy playing; then a clearly better
       // measured one; else live order (the first found).
+      // Build 180: between the longest archive and the copy playing, a
+      // copy whose replays clearly go better (start failures and stalls,
+      // both copies with kEnoughReplays); never across the clock groups,
+      // never a shorter archive.
       if (rank != bestRank) better = rank < bestRank;
       else if (days != bestDays) better = days > bestDays;
+      else if (bad && bestBad && std::fabs(*bad - *bestBad) > scores::kReplayClearlyWorse) better = *bad < *bestBad;
       else if ((i == playing) != (*best == playing)) better = i == playing;
       else if (score && bestScore) better = *score > *bestScore + scores::kClearlyBetter;
     }
@@ -996,6 +1005,7 @@ std::optional<size_t> Session::archiveCopyFor(time::Seconds at, size_t live, siz
       bestDays = days;
       bestRank = rank;
       bestScore = score;
+      bestBad = bad;
     }
   }
   return best;
@@ -1004,6 +1014,39 @@ std::optional<size_t> Session::archiveCopyFor(time::Seconds at, size_t live, siz
 void Session::noteReplayChoice(std::optional<size_t> chosen, time::Seconds at, size_t live, size_t playing,
                                const std::set<size_t>* skip) {
   if (!chosen || *chosen >= feeds_.size()) return;
+  // Build 180: the copies' replay figures changed the choice (once per
+  // pair): their start failures and stalls.
+  if (std::optional<size_t> plain = archiveCopyFor(at, live, playing, skip, true, false);
+      plain && *plain != *chosen && *plain < feeds_.size()) {
+    const std::string& mine = feeds_[*chosen].channelId;
+    const std::string& other = feeds_[*plain].channelId;
+    if (choiceTold_.insert(mine + "\n" + other + "\nreplays").second) {
+      std::string name = store_.providerName(mine), otherName = store_.providerName(other);
+      if (name.empty() || name == otherName) {
+        name = feeds_[*chosen].label;
+        otherName = feeds_[*plain].label;
+      }
+      // "start failures 0% vs 40%, stalls 0.5/h vs 3.0/h" (stalls where
+      // both watched long enough to tell).
+      time::Seconds now = time::now();
+      auto record = [this, now](const std::string& id) {
+        const scores::Record* r = store_.feedScores().find(id);
+        return r ? r->at(now) : scores::Record{};
+      };
+      scores::Record a = record(mine), b = record(other);
+      auto rate = [](const scores::Record& r) {
+        return std::to_string(std::lround(r.replayFailureRate().value_or(0) * 100.0)) + "%";
+      };
+      std::string figures = "start failures " + rate(a) + " vs " + rate(b);
+      if (std::optional<double> sa = a.replayStallsPerHour(), sb = b.replayStallsPerHour(); sa && sb) {
+        char stalls[64];
+        std::snprintf(stalls, sizeof stalls, ", stalls %.1f/h vs %.1f/h", *sa, *sb);
+        figures += stalls;
+      }
+      logReplay("replay from " + name + ": its replays go better than " + otherName + "'s (" + figures + ")",
+                *chosen);
+    }
+  }
   std::optional<size_t> plain = archiveCopyFor(at, live, playing, skip, false);
   if (!plain || *plain == *chosen || *plain >= feeds_.size()) return;
   const std::string& mine = feeds_[*chosen].channelId;
@@ -1106,9 +1149,19 @@ void Session::standAside() {
   quietReturn_ = false;
 }
 
-void Session::playReplay(size_t index, time::Seconds from, const std::string& what, bool next) {
+void Session::playReplay(size_t index, time::Seconds from, const std::string& what, bool next, bool reopen) {
   Replay& r = *replay_;
   index = std::min(index, feeds_.size() - 1);
+  // Build 180: the time watched so far into its copy's record; the
+  // replay's figures begin with its first stretch.
+  flushReplayPlayed();
+  if (!replayStats_.begun) {
+    replayStats_ = ReplayStats{};
+    replayStats_.begun = true;
+    replayStats_.askedAt = ms();
+  }
+  r.reopen = reopen;
+  stall_.havePosition = stall_.moved = false;
   r.phase = Replay::Phase::Opening;
   r.feed = index;
   r.days = store_.catchupDays(feeds_[index].channelId);
@@ -1151,7 +1204,9 @@ void Session::playReplay(size_t index, time::Seconds from, const std::string& wh
                                   : !timingTried_.count(channel) && !store_.archiveTiming(channel) &&
                                         !store_.presumedExact(channel)) &&
                  store_.timingRequest(channel).has_value();
-  if (table || measure) {
+  // Build 180: a stall's reopen never waits (nor reads the archive on the
+  // account's connection): the clock it played in.
+  if (!reopen && (table || measure)) {
     int serial = ++clockSerial_;
     r.clockWait = Replay::ClockWait{what, ms(), serial, measure};
     r.clockWait->clock = measure && clockUnmeasured;
@@ -1279,6 +1334,8 @@ void Session::openReplay(const std::string& what) {
   std::string how = archive::planText(plan, timing, [this](time::Seconds t) { return localTime(t); });
   if (!how.empty()) line += " " + how;
   if (hooks_.changed) hooks_.changed();
+  // Build 180: the copies it played on, in order (its summary).
+  if (replayStats_.copies.empty() || replayStats_.copies.back() != r.feed) replayStats_.copies.push_back(r.feed);
   if (!f) {
     logReplay(line, r.feed);
     replayFailed("no replay link could be made for this copy");
@@ -1538,6 +1595,8 @@ bool Session::replayFrom(time::Seconds from, ReplayWhy why) {
   }
   // Build 177: a replay replaced says its ad markers first.
   replayMarkers(replay_.has_value());
+  // Build 180: ... and its summary.
+  if (replay_) replaySummary();
   if (!replay_) {
     replayLive_ = rec_.feedIndex();
     replayLiveReady_ = rec_.sawFirstFrame();
@@ -1647,6 +1706,9 @@ bool Session::pause(bool quiet) {
   if (replay_) {
     Replay& r = *replay_;
     if (r.phase == Replay::Phase::Paused) return true;
+    // Build 180: a stall going on ends with the pause (the pause isn't one).
+    stallOver(ms(), true);
+    r.reopen = false;
     bool showing = r.phase == Replay::Phase::Playing;
     r.phase = Replay::Phase::Paused;
     r.clockWait.reset();
@@ -1738,6 +1800,8 @@ void Session::replayMarkers(bool log) {
 void Session::endReplay(bool live) {
   if (!replay_) return;
   replayMarkers(true);
+  // Build 180: the replay's figures in one line.
+  replaySummary();
   dropMeasure();
   replay_.reset();
   replayTried_.clear();
@@ -1770,6 +1834,10 @@ void Session::replayFailed(const std::string& why) {
   if (!replay_) return;
   Replay& r = *replay_;
   player_->stop();
+  // Build 180: a stretch that showed no picture counts against its copy's
+  // replays (a next stretch is the one before's).
+  if (r.phase == Replay::Phase::Opening && !r.next && r.feed < feeds_.size())
+    store_.noteReplayStartFailed(feeds_[r.feed].channelId);
   // Another copy whose archive holds the same moment (in the same order).
   time::Seconds at = replay::minuteOf(r.at());
   std::set<size_t> tried = replayTried_;
@@ -1822,6 +1890,12 @@ void Session::tickReplay(uint32_t now) {
   bool picture = s.picture || (s.playing && (!r.video || (s.streamChecked && s.stream == media::Verdict::Picture)));
   if (r.phase == Replay::Phase::Opening) {
     if (picture) {
+      // Build 180: a start for its copy's replays (a next stretch is the
+      // one before's), the replay's first picture, a stall over.
+      if (!r.next && r.feed < feeds_.size()) store_.noteReplayStart(feeds_[r.feed].channelId, now - r.startedAt);
+      if (!replayStats_.firstPictureMs) replayStats_.firstPictureMs = now - replayStats_.askedAt;
+      r.reopen = false;
+      stallOver(now);
       r.phase = Replay::Phase::Playing;
       r.pictureAt = std::max<uint32_t>(1, now);
       r.next = false;
@@ -1843,15 +1917,47 @@ void Session::tickReplay(uint32_t now) {
     }
     if (s.failed || s.ended) {
       std::string error = s.failed ? playback::safeMessage(s.error) : std::string("the stream ended at once");
-      replayFailed(error.empty() ? std::string("the player reported an error") : error);
+      error = error.empty() ? std::string("the player reported an error") : error;
+      // Build 180: a stall's reopen that didn't work: the watchdog's next step.
+      if (r.reopen) reopenFailed(error);
+      else replayFailed(error);
       return;
     }
     uint32_t allowed = kReplayTimeoutMs + (r.inside ? kInsideExtraMs : 0);
-    if (now - r.startedAt >= allowed) replayFailed("no picture after " + std::to_string(allowed / 1000) + " s");
+    if (now - r.startedAt >= allowed) {
+      std::string why = "no picture after " + std::to_string(allowed / 1000) + " s";
+      if (r.reopen) reopenFailed(why);
+      else replayFailed(why);
+    }
     return;
   }
+  // Build 180: the player's position, where it reports one (watched once
+  // it has moved: a stretch's first sample is the reference).
+  if (!stall_.havePosition) {
+    stall_.havePosition = true;
+    stall_.position = s.position;
+    stall_.movedAt = now;
+  } else if (s.position > stall_.position + playback::kPositionStepS) {
+    stall_.position = s.position;
+    stall_.movedAt = now;
+    stall_.moved = true;
+  } else if (s.position < stall_.position - playback::kPositionStepS) {
+    stall_.position = s.position;  // started over: not motion
+    stall_.movedAt = now;
+  }
+  bool stuck = stall_.moved && now - stall_.movedAt >= kReplayStallNoteMs;
   // Playing: the moment showing moves on while the picture does.
-  if (!s.buffering && (s.playing || picture)) r.atMs += dt;
+  // Build 180: not while its position stands still; the time watched too.
+  if (!s.buffering && (s.playing || picture) && !stuck) {
+    r.atMs += dt;
+    replayStats_.watchedMs += dt;
+    if (replayStats_.unsavedFeed != r.feed) {
+      flushReplayPlayed();
+      replayStats_.unsavedFeed = r.feed;
+    }
+    replayStats_.unsavedMs += dt;
+    if (replayStats_.unsavedMs >= kPlayedFlushMs) flushReplayPlayed();
+  }
   // Build 167: a Final's replay past the moment the app saw its final (never
   // when it didn't see it): the player's "End of the game", once.
   if (gameReplay_ && gameReplay_->finished && gameReplay_->finalAt > 0 && !endOfGameSaid_ &&
@@ -1878,7 +1984,211 @@ void Session::tickReplay(uint32_t now) {
     time::Seconds at = replay::minuteOf(r.at());
     replayTried_.clear();
     playReplay(r.feed, at, "next stretch from " + localTime(at), true);
+    return;
   }
+  // Build 180: the stall watchdog.
+  watchReplay(now, s, picture);
+}
+
+// ------------------------------------------- replay stalls (Build 180)
+
+namespace {
+
+const char* const kBuffering = "Buffering\xe2\x80\xa6";
+
+std::string secondsText(uint64_t ms) { return std::to_string((ms + 500) / 1000) + " s"; }
+
+}  // namespace
+
+void Session::replayNote(bool on) {
+  const char* text = on ? kBuffering : "";
+  if (replayNote_ == text) return;
+  replayNote_ = text;
+  if (hooks_.changed) hooks_.changed();
+}
+
+void Session::watchReplay(uint32_t now, const PlayerState& s, bool picture) {
+  Replay& r = *replay_;
+  // What's wrong now, if anything: buffering; frames frozen while the
+  // sound plays (the player's frame counter, or the relay's picture
+  // check, as live's pictureCheck reads them); the player neither playing
+  // nor showing a picture, or its position standing still (counted from
+  // its last move, as live's frozen picture).
+  StallCause cause = StallCause::None;
+  uint32_t from = now;
+  if (s.buffering) {
+    cause = StallCause::Buffering;
+  } else if (r.video && s.playing &&
+             (s.framesStalled || (s.streamChecked && s.stream == media::Verdict::Frozen))) {
+    cause = StallCause::Frozen;
+  } else if (!s.playing && !picture) {
+    cause = StallCause::Stopped;
+  } else if (stall_.moved && now - stall_.movedAt >= kReplayStallNoteMs) {
+    cause = StallCause::Stopped;
+    from = stall_.movedAt;
+  }
+  if (cause == StallCause::None) {
+    if (stall_.since) stallOver(now);
+    return;
+  }
+  if (!stall_.since) {
+    stall_.since = std::max<uint32_t>(1, from);
+    stall_.feed = r.feed;
+    stall_.noted = stall_.acted = false;
+  }
+  stall_.cause = cause;
+  uint32_t lasted = now - stall_.since;
+  // "Buffering…", as live shows it.
+  if (!stall_.noted && lasted >= kReplayStallNoteMs) {
+    stall_.noted = true;
+    replayNote(true);
+  }
+  uint32_t limit = cause == StallCause::Frozen      ? kReplayFrozenMs
+                   : cause == StallCause::Buffering ? kReplayStallMs
+                                                    : kReplayStoppedMs;
+  if (lasted < limit) return;
+  // Never while the archive's reads hold the account's only connection
+  // (the replay's clock check, or the background one on its account): it
+  // acts once they let go.
+  const std::string& copy = feeds_[std::min(r.feed, feeds_.size() - 1)].channelId;
+  if (measureAbort_ && !measureSpare_) return;
+  if (bgCheck_ && bgAbort_ && accountPart(bgCheck_->channel) == accountPart(copy) &&
+      !store_.spareConnection(copy))
+    return;
+  bool again = stall_.reopenAt && now - stall_.reopenAt < kReplayStallWindowMs;
+  const char* what = cause == StallCause::Buffering ? "buffering"
+                     : cause == StallCause::Frozen  ? "picture frozen"
+                                                    : "playback stopped";
+  replayStalled(now, again,
+                again ? std::string("stalled again") : "stalled " + secondsText(lasted) + " (" + what + ")");
+}
+
+void Session::replayStalled(uint32_t now, bool again, const std::string& head) {
+  Replay& r = *replay_;
+  stall_.acted = true;
+  replayNote(true);
+  time::Seconds at = replay::minuteOf(r.at());
+  std::string when = localTime(at);
+  if (!again) {
+    // The same copy from the moment showing (the stream stopped first: one
+    // connection on many accounts).
+    stall_.step = StallStep::Reopened;
+    stall_.reopenAt = std::max<uint32_t>(1, now);
+    ++replayStats_.reopens;
+    player_->stop();
+    playReplay(r.feed, at, head + "; reopened from " + when, false, true);
+    return;
+  }
+  if (stall_.step == StallStep::LastTry) {
+    replayFailed("the archive keeps stalling");
+    return;
+  }
+  // Another copy whose archive holds the moment (in the usual order).
+  std::set<size_t> tried = replayTried_;
+  tried.insert(r.feed);
+  if (std::optional<size_t> other = archiveCopyFor(at, replayLive_, r.feed, &tried)) {
+    player_->stop();
+    noteReplayChoice(other, at, replayLive_, r.feed, &tried);
+    stall_.step = StallStep::Switched;
+    stall_.reopenAt = 0;
+    playReplay(*other, at, head + "; another copy from " + when, false, true);
+    return;
+  }
+  // None: this one once more.
+  stall_.step = StallStep::LastTry;
+  stall_.reopenAt = std::max<uint32_t>(1, now);
+  ++replayStats_.reopens;
+  player_->stop();
+  playReplay(r.feed, at, head + "; no other copy; reopened from " + when, false, true);
+}
+
+void Session::reopenFailed(const std::string& why) {
+  Replay& r = *replay_;
+  switch (stall_.step) {
+    case StallStep::Reopened:
+      // A reopen with no picture is a second stall.
+      if (r.feed < feeds_.size()) store_.noteReplayStartFailed(feeds_[r.feed].channelId);
+      replayStalled(ms(), true, "the reopen showed no picture (" + why + ")");
+      return;
+    case StallStep::LastTry:
+      replayFailed("the archive keeps stalling");
+      return;
+    case StallStep::Switched:
+    case StallStep::None:
+      break;
+  }
+  // The other copy didn't start: as any copy that doesn't.
+  replayFailed(why);
+}
+
+void Session::stallOver(uint32_t now, bool ending) {
+  if (!stall_.since) return;
+  uint32_t lasted = now - stall_.since;
+  // A stall the watchdog acted on, or one long enough to show "Buffering…".
+  if (stall_.acted || lasted >= kReplayStallNoteMs) {
+    ++replayStats_.stalls;
+    replayStats_.stallMs += lasted;
+    if (stall_.feed < feeds_.size()) store_.noteReplayStall(feeds_[stall_.feed].channelId, lasted);
+    if (!stall_.acted && !ending && (!stall_.selfLogAt || now - stall_.selfLogAt >= kReplaySelfLogMs)) {
+      stall_.selfLogAt = std::max<uint32_t>(1, now);
+      const char* what = stall_.cause == StallCause::Buffering ? "buffered "
+                         : stall_.cause == StallCause::Frozen  ? "picture froze "
+                                                               : "stopped ";
+      logReplay(what + secondsText(lasted) + ", went on by itself", stall_.feed);
+    }
+  }
+  stall_.since = 0;
+  stall_.cause = StallCause::None;
+  stall_.noted = stall_.acted = false;
+  replayNote(false);
+}
+
+void Session::flushReplayPlayed() {
+  ReplayStats& st = replayStats_;
+  if (st.unsavedMs >= 1000 && st.unsavedFeed < feeds_.size())
+    store_.noteReplayPlayed(feeds_[st.unsavedFeed].channelId, st.unsavedMs);
+  st.unsavedMs = 0;
+}
+
+void Session::replaySummary() {
+  if (replay_) {
+    stallOver(ms(), true);
+    flushReplayPlayed();
+    const ReplayStats& st = replayStats_;
+    if (st.begun) {
+      // "Dream → Trex, 34 min watched, started in 2.1 s, 2 stalls (17 s),
+      // 1 reopen, 0 other copies": providers may be named, never a link.
+      auto nameOf = [this](size_t i) {
+        if (i >= feeds_.size()) return std::string("a copy");
+        std::string name = store_.providerName(feeds_[i].channelId);
+        return name.empty() ? feeds_[i].label : name;
+      };
+      std::string copies;
+      for (size_t i : st.copies) copies += (copies.empty() ? "" : " \xe2\x86\x92 ") + nameOf(i);
+      if (copies.empty()) copies = nameOf(replay_->feed);
+      std::string line = "summary: " + copies + ", ";
+      line += st.watchedMs < 60000 ? secondsText(st.watchedMs) + " watched"
+                                   : std::to_string((st.watchedMs + 30000) / 60000) + " min watched";
+      if (st.firstPictureMs) {
+        char started[32];
+        std::snprintf(started, sizeof started, ", started in %.1f s", *st.firstPictureMs / 1000.0);
+        line += started;
+      } else {
+        line += ", no picture";
+      }
+      line += ", " + std::to_string(st.stalls) + (st.stalls == 1 ? " stall" : " stalls");
+      if (st.stalls) line += " (" + secondsText(st.stallMs) + ")";
+      line += ", " + std::to_string(st.reopens) + (st.reopens == 1 ? " reopen" : " reopens");
+      size_t others = st.copies.empty() ? 0 : st.copies.size() - 1;
+      line += ", " + std::to_string(others) + (others == 1 ? " other copy" : " other copies");
+      logReplay(line, replay_->feed);
+    }
+  }
+  replayStats_ = ReplayStats{};
+  uint32_t selfLogAt = stall_.selfLogAt;
+  stall_ = ReplayStall{};
+  stall_.selfLogAt = selfLogAt;
+  replayNote_.clear();
 }
 
 void Session::wantPast() {

@@ -555,7 +555,7 @@ struct TvRig {
   std::vector<std::string> replayLines() const {
     std::vector<std::string> out;
     for (const auto& e : session->log().entries())
-      if (e.event == "replay") out.push_back(e.detail);
+      if (e.event == "replay" && e.detail.rfind("summary: ", 0) != 0) out.push_back(e.detail);  // Build 180
     return out;
   }
   void noLinks() const {

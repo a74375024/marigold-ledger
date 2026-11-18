@@ -14,6 +14,12 @@
 // 169: the best working picture first); the provider roll-up (rollup) for
 // the playback log, so the providers can be compared; the channel report's
 // measured_* columns.
+//
+// Build 180 (1.0.23): replays have figures of their own in the same record
+// (a replay is never charged to the live ones): the stretches opened and
+// those that showed no picture, their time to picture, the stalls (and
+// their seconds) and the time watched. The roll-up's "replay:" part and a
+// replay's choice of copy (Book::replayBadness) use them.
 #pragma once
 
 #include <cstddef>
@@ -53,6 +59,13 @@ constexpr double kClearlyBetter = 0.12;
 // is enough (0.93) while one failure in four starts isn't (0.78).
 constexpr double kWorksAt = 0.8;
 constexpr uint32_t kWorkingStartMs = 4000;
+// Build 180: replays (weighted, starts and start failures) before a copy's
+// replay figures choose between copies; a stall an hour weighs as this
+// much of the start-failure rate; and how much worse a copy's replays must
+// be (failure rate + weighted stalls) before another is preferred.
+constexpr double kEnoughReplays = 3.0;
+constexpr double kReplayStallWeight = 0.1;
+constexpr double kReplayClearlyWorse = 0.1;
 
 struct Record {
   time::Seconds seen = 0;  // the newest result; the weights are as of then
@@ -70,6 +83,12 @@ struct Record {
   uint16_t archiveDays = 0;  // the depth a probe found (0 not known)
   time::Seconds archiveAt = 0;
   time::Seconds probedAt = 0;  // the newest probe (0 never)
+  // Build 180, replays: stretches opened that showed a picture (a next
+  // stretch following one that ended isn't a start), those that showed
+  // none, their time to picture (oldest first, kSamples), the stalls of 3 s
+  // or more and their seconds, and the seconds watched.
+  double replayStarts = 0, replayFailures = 0, replayStalls = 0, replayStallS = 0, replayPlayedS = 0;
+  std::vector<uint32_t> replayStartMs;
 
   // The weights as they stand at `now`.
   Record at(time::Seconds now) const;
@@ -84,6 +103,16 @@ struct Record {
   std::optional<uint32_t> medianStartMs() const;
   // Stalls per hour played (null: under a minute played).
   std::optional<double> stallsPerHour() const;
+  // Build 180: the replay figures (null: none yet): the median time to
+  // picture, the share of starts that showed none, stalls and stall
+  // seconds per hour watched (under a minute watched: null; under half an
+  // hour, as half an hour, like stallsPerHour), minutes watched.
+  bool replayed() const { return replayStarts + replayFailures > 0 || replayPlayedS > 0; }
+  std::optional<uint32_t> replayMedianStartMs() const;
+  std::optional<double> replayFailureRate() const;
+  std::optional<double> replayStallsPerHour() const;
+  std::optional<double> replayStallSecondsPerHour() const;
+  double replayMinutes() const { return replayPlayedS / 60.0; }
 };
 
 // Build 169: what the order knows of one copy (Book::standing; the store
@@ -125,6 +154,17 @@ class Book {
   void picture(const std::string& feedId, int width, int height, int fps, time::Seconds now);
   // Test all sources: one probe's result, into the same record.
   void recordProbe(const std::string& feedId, const Probe& probe, time::Seconds now);
+  // Build 180, replays: a stretch's picture `ms` after it was handed to the
+  // player; a stretch that showed none; a stall of `ms`; `ms` watched.
+  void replayStarted(const std::string& feedId, uint32_t ms, time::Seconds now);
+  void replayFailed(const std::string& feedId, time::Seconds now);
+  void replayStalled(const std::string& feedId, uint32_t ms, time::Seconds now);
+  void replayPlayed(const std::string& feedId, uint32_t ms, time::Seconds now);
+  // Build 180: how badly a copy's replays go, for choosing between copies:
+  // its start-failure rate plus kReplayStallWeight per stall an hour; null
+  // under kEnoughReplays replays. No copy of the record (cheap enough for
+  // every frame).
+  std::optional<double> replayBadness(const std::string& feedId, time::Seconds now) const;
 
   const Record* find(const std::string& feedId) const;
   size_t size() const { return byId_.size(); }
@@ -142,6 +182,10 @@ class Book {
   // {"v":1,"rolledUp":t,"feeds":[[id,seen,plays,failures,stalls,playedS,
   // [ms...],width,height,fps,probes,probeFailures,archiveOk,archiveDays,
   // archiveAt,probedAt],...]}, oldest first; weights in hundredths.
+  // Build 180: a copy with replay figures has six more at the end:
+  // replayStarts, replayFailures, [replay ms...], replayStalls,
+  // replayStallS, replayPlayedS. Still "v":1: a row without them reads as
+  // no replays, and older builds read the first sixteen.
   std::string toJson() const;
   // A saved book (the newest kCap of it); empty when it doesn't read.
   static Book fromJson(std::string_view text);
@@ -229,6 +273,13 @@ struct ProviderFigures {
   std::optional<double> failureRate;  // of starts, 0..1
   std::optional<double> stallsPerHour;
   std::optional<double> fullHd;  // share of plays at 1080 lines or more (measured)
+  // Build 180, replays (real ones only): starts weighted (starts and start
+  // failures), the median time to picture, the share of starts that showed
+  // none, stalls per hour watched.
+  double replays = 0;
+  std::optional<uint32_t> replayMedianStartMs;
+  std::optional<double> replayFailureRate;
+  std::optional<double> replayStallsPerHour;
   // Shares of the lineup's rows (0..1): with a copy from it, with a copy
   // from it alone, with replay from it.
   double lineup = 0, only = 0, replay = 0;

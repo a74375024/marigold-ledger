@@ -239,17 +239,28 @@ struct Rig {
       if (e.event == event) out.push_back(e);
     return out;
   }
-  // The replay's own lines (Build 174: the clock checks' apart, clockLines).
+  // The replay's own lines (Build 174: the clock checks' apart, clockLines;
+  // Build 180: and the summaries, summaryLines).
+  static bool ownLine(const std::string& detail) {
+    return detail.rfind("clock check", 0) != 0 && detail.rfind("summary: ", 0) != 0;
+  }
   std::vector<std::string> replayLines() const {
     std::vector<std::string> out;
     for (const auto& e : logged("replay"))
-      if (e.detail.rfind("clock check", 0) != 0) out.push_back(e.detail);
+      if (ownLine(e.detail)) out.push_back(e.detail);
     return out;
   }
   std::vector<marigold::report::PlaybackLog::Entry> replayEntries() const {
     std::vector<marigold::report::PlaybackLog::Entry> out;
     for (const auto& e : logged("replay"))
-      if (e.detail.rfind("clock check", 0) != 0) out.push_back(e);
+      if (ownLine(e.detail)) out.push_back(e);
+    return out;
+  }
+  // Build 180: the replays' summary lines.
+  std::vector<std::string> summaryLines() const {
+    std::vector<std::string> out;
+    for (const auto& e : logged("replay"))
+      if (e.detail.rfind("summary: ", 0) == 0) out.push_back(e.detail);
     return out;
   }
   // Build 174: the clock checks' lines, with the provider each names.
@@ -1012,8 +1023,12 @@ TEST_CASE("feed scores in play: a start's time, stalls, failures and time played
   r.run(250);
   r.picture();
   r.run(5000);
-  CHECK(counted(501) == doctest::Approx(c501));
-  CHECK(counted(503) == doctest::Approx(c503));
+  // (Build 180: the replay's own figures go into the record, which weighs
+  // the live ones as of then: the same, a few seconds' fading apart.)
+  CHECK(counted(501) == doctest::Approx(c501).epsilon(0.001));
+  CHECK(counted(503) == doctest::Approx(c503).epsilon(0.001));
+  CHECK(r.record(501)->replayStarts == doctest::Approx(1).epsilon(0.001));
+  CHECK(r.record(501)->replayPlayedS >= 29);
 
   // Leaving: the time its picture played goes in.
   REQUIRE(r.session->tune(cnn));
@@ -1967,7 +1982,7 @@ TEST_CASE("replay 1.0.17: Dream says UTC, its archive runs on UTC+1, its reads f
   std::vector<std::string> lines = r.replayLines();
   CHECK(std::count(lines.begin(), lines.end(), "replay from Trex: Dream's clock check failed") == 1);
   CHECK(lines.back() == "rewind to " + hm(picked) + "; server clock UTC+1");
-  CHECK(r.logged("replay").back().provider == "Trex");
+  CHECK(r.replayEntries().back().provider == "Trex");
   CHECK(r.store->clockTrust(r.channelOf(601)) == Store::ClockTrust::Failed);
   CHECK(r.store->clockTrust(r.channelOf(701)) == Store::ClockTrust::Unchecked);
   r.picture();
@@ -2259,4 +2274,401 @@ TEST_CASE("replay 1.0.21: a background check reads a copy whose replay played, n
     CHECK_FALSE(r.store->clockCheckDue(ms, ""));
     CHECK_FALSE(r.store->clockCheckDue(ms + 59 * 60000, ""));
   }
+}
+
+// ------------------------------------------------- Build 180 (1.0.23)
+
+namespace {
+
+const std::string kBufferingNote = "Buffering\xe2\x80\xa6";
+
+// A replay of ESPN an hour back on 501 (live on 502), playing two minutes.
+mtime::Seconds playingReplay(Rig& r) {
+  std::string espn = r.entry("ESPN");
+  r.watchLive(espn, 502);
+  mtime::Seconds from = minuteOf(mtime::now() - 3600);
+  REQUIRE(r.session->replayFrom(from, Why::Rewind));
+  r.tv.pool.drain();
+  REQUIRE(r.session->replay());
+  REQUIRE(r.session->replay()->feed == r.feedOf(501));
+  r.picture();
+  REQUIRE(r.session->replay()->phase == Phase::Playing);
+  r.run(120000);
+  return from;
+}
+
+bool startsWith(const std::string& s, const std::string& head) { return s.rfind(head, 0) == 0; }
+
+}  // namespace
+
+TEST_CASE("replay 1.0.23: buffering 10 s reopens the same copy at the moment showing, Buffering… meanwhile") {
+  Rig r;
+  playingReplay(r);
+  size_t copy = r.feedOf(501);
+  mtime::Seconds at = r.session->replayAt();
+  size_t plays = r.player->plays.size();
+  int stops = r.player->stops;
+  CHECK(r.session->note().empty());
+
+  r.player->state.buffering = true;
+  r.run(2750);
+  // Not yet: live's note delay first.
+  CHECK(r.session->note().empty());
+  r.run(500);
+  CHECK(r.session->note() == kBufferingNote);
+  CHECK(r.session->look().note == kBufferingNote);
+  CHECK(r.session->ready());
+  CHECK(r.session->tick(r.tv.ms));  // something on screen moves (the spinner)
+  // The moment showing doesn't move while it buffers.
+  CHECK(r.session->replayAt() == at);
+  r.run(6500);
+  CHECK(r.player->plays.size() == plays);
+  r.run(500);
+  // Ten seconds: the same copy again, from the minute showing; the stream
+  // stopped first (one connection on the account).
+  REQUIRE(r.player->plays.size() == plays + 1);
+  CHECK(r.player->stops == stops + 1);
+  CHECK(isReplay(r.player->plays.back()));
+  CHECK(r.player->plays.back().channelId == r.session->feeds()[copy].channelId);
+  CHECK(r.player->plays.back().url.find("/" + serverMinute(minuteOf(at)) + "/501.ts") != std::string::npos);
+  REQUIRE(r.session->replay());
+  CHECK(r.session->replay()->phase == Phase::Opening);
+  CHECK(r.session->replay()->reopen);
+  // The picture's place kept, "Buffering…" still on: no new UI.
+  CHECK(r.session->ready());
+  CHECK_FALSE(r.session->opening());
+  CHECK(r.session->note() == kBufferingNote);
+  std::vector<std::string> lines = r.replayLines();
+  CHECK(startsWith(lines.back(), "stalled 10 s (buffering); reopened from " + hm(minuteOf(at)) + "; "));
+
+  // Its picture back: the note goes; nothing more happens.
+  r.picture();
+  CHECK(r.session->replay()->phase == Phase::Playing);
+  CHECK_FALSE(r.session->replay()->reopen);
+  CHECK(r.session->note().empty());
+  r.run(60000);
+  CHECK(r.player->plays.size() == plays + 1);
+
+  // The copy's record: the stall, and two starts of its replays.
+  const auto* rec = r.record(501);
+  REQUIRE(rec);
+  CHECK(rec->replayStarts == doctest::Approx(2).epsilon(0.001));
+  CHECK(rec->replayStalls == doctest::Approx(1).epsilon(0.001));
+  CHECK(rec->replayStallS >= 10);
+  CHECK(rec->replayFailures == 0);
+
+  // Back to live: one summary line for the replay.
+  r.session->goLive();
+  auto summaries = r.summaryLines();
+  REQUIRE(summaries.size() == 1);
+  CHECK(startsWith(summaries[0], "summary: Mock IPTV, 3 min watched, started in 0.5 s, 1 stall (1"));
+  CHECK(summaries[0].find(" s), 1 reopen, 0 other copies") != std::string::npos);
+  CHECK(r.logged("replay").back().detail == summaries[0]);
+  r.noLinks();
+}
+
+TEST_CASE("replay 1.0.23: a second stall soon after a reopen moves to another copy that holds the moment") {
+  Rig r;
+  playingReplay(r);
+  size_t other = r.feedOf(503);
+  r.player->state.buffering = true;
+  r.run(10250);
+  REQUIRE(r.session->replay()->reopen);
+  r.picture();
+  r.run(30000);
+  // Frames frozen while the sound plays: six seconds is a stall too, and
+  // within three minutes of the reopen it's the copy's second.
+  mtime::Seconds at = r.session->replayAt();
+  size_t plays = r.player->plays.size();
+  r.player->state.framesStalled = true;
+  r.run(5500);
+  CHECK(r.player->plays.size() == plays);
+  CHECK(r.session->note() == kBufferingNote);
+  r.run(750);
+  REQUIRE(r.player->plays.size() == plays + 1);
+  REQUIRE(r.session->replay());
+  CHECK(r.session->replay()->feed == other);
+  CHECK(r.player->plays.back().channelId == r.session->feeds()[other].channelId);
+  CHECK(r.player->plays.back().url.find("/503.ts") != std::string::npos);
+  CHECK(r.player->plays.back().url.find("/" + serverMinute(minuteOf(at)) + "/") != std::string::npos);
+  CHECK(r.session->ready());
+  CHECK(startsWith(r.replayLines().back(), "stalled again; another copy from " + hm(minuteOf(at)) + "; "));
+  r.picture();
+  CHECK(r.session->note().empty());
+  r.run(30000);
+  r.session->goLive();
+  auto summaries = r.summaryLines();
+  REQUIRE(summaries.size() == 1);
+  CHECK(startsWith(summaries[0],
+                   "summary: Mock IPTV \xe2\x86\x92 Mock IPTV, 3 min watched, started in 0.5 s, 2 stalls ("));
+  CHECK(summaries[0].find("), 1 reopen, 1 other copy") != std::string::npos);
+  r.noLinks();
+}
+
+TEST_CASE("replay 1.0.23: a stall after a reopen's window is a first stall again; a reopen with no picture moves on") {
+  Rig r;
+  playingReplay(r);
+  r.player->state.buffering = true;
+  r.run(10250);
+  r.picture();
+  // Four minutes on: past the window, the same copy again.
+  r.run(4 * 60000);
+  r.player->state.buffering = true;
+  r.run(10250);
+  REQUIRE(r.session->replay()->reopen);
+  CHECK(r.session->replay()->feed == r.feedOf(501));
+  CHECK(startsWith(r.replayLines().back(), "stalled 10 s (buffering); reopened from "));
+  // That reopen shows nothing in 10 s: another copy.
+  r.run(10000);
+  REQUIRE(r.session->replay());
+  CHECK(r.session->replay()->feed == r.feedOf(503));
+  CHECK(r.session->replay()->reopen);
+  CHECK(startsWith(r.replayLines().back(), "the reopen showed no picture (no picture after 10 s); another copy from "));
+  CHECK(r.record(501)->replayFailures == doctest::Approx(1));
+  r.picture();
+  CHECK(r.session->note().empty());
+  r.noLinks();
+}
+
+TEST_CASE("replay 1.0.23: with no other copy, one more reopen; still stalling, back to live with the notice") {
+  Rig r(Rig::Two{}, false);
+  std::string tnt = r.entry("TNT");
+  REQUIRE(!tnt.empty());
+  r.watchLive(tnt, 702);  // TNT: one copy, on Trex
+  size_t copy = r.feedOf(702);
+  mtime::Seconds from = minuteOf(mtime::now() - 3600);
+  REQUIRE(r.session->replayFrom(from, Why::Rewind));
+  r.tv.pool.drain();
+  // Its clock check, if any, out of time.
+  for (int i = 0; i < 30 && !isReplay(r.player->plays.back()); ++i) r.run(250);
+  r.picture();
+  REQUIRE(r.session->replay()->phase == Phase::Playing);
+  r.run(60000);
+  // The player's clock stops: neither playing nor a picture, 8 s.
+  r.player->state.playing = r.player->state.picture = false;
+  r.run(7750);
+  CHECK_FALSE(r.session->replay()->reopen);
+  r.run(500);
+  REQUIRE(r.session->replay()->reopen);
+  CHECK(startsWith(r.replayLines().back(), "stalled 8 s (playback stopped); reopened from "));
+  r.picture();
+  r.run(20000);
+  r.player->state.buffering = true;
+  r.run(10250);
+  REQUIRE(r.session->replay());
+  CHECK(r.session->replay()->feed == copy);
+  CHECK(r.session->replay()->reopen);
+  mtime::Seconds at = r.session->replayAt();
+  CHECK(startsWith(r.replayLines().back(), "stalled again; no other copy; reopened from " + hm(minuteOf(at))));
+  r.picture();
+  r.run(20000);
+  r.player->state.buffering = true;
+  r.run(10250);
+  // Still stalling: live, as a replay that can't play says.
+  CHECK_FALSE(r.session->replay());
+  CHECK(r.session->takeReplayNotice() == "Replay isn\xe2\x80\x99t available right now on this channel");
+  CHECK(r.session->note().empty());
+  std::vector<std::string> lines = r.replayLines();
+  CHECK(lines.back() == "failed: the archive keeps stalling; back to live");
+  r.run(250);
+  CHECK_FALSE(r.player->plays.back().replay);
+  auto summaries = r.summaryLines();
+  REQUIRE(summaries.size() == 1);
+  CHECK(startsWith(summaries[0], "summary: Trex, "));
+  CHECK(summaries[0].find(", 3 stalls (") != std::string::npos);
+  CHECK(summaries[0].find("), 2 reopens, 0 other copies") != std::string::npos);
+  r.noLinks();
+}
+
+TEST_CASE("replay 1.0.23: short buffering that goes on by itself is counted, not reopened; said once a minute") {
+  Rig r;
+  playingReplay(r);
+  size_t plays = r.player->plays.size();
+  // Two seconds: nothing at all.
+  r.player->state.buffering = true;
+  r.run(2000);
+  r.player->state.buffering = false;
+  r.run(1000);
+  CHECK(r.session->note().empty());
+  CHECK(r.record(501)->replayStalls == 0);
+  size_t lines = r.replayLines().size();
+  // Four seconds: "Buffering…", then counted and said.
+  r.player->state.buffering = true;
+  r.run(4000);
+  CHECK(r.session->note() == kBufferingNote);
+  r.player->state.buffering = false;
+  r.run(250);
+  CHECK(r.session->note().empty());
+  CHECK(r.player->plays.size() == plays);
+  CHECK(r.record(501)->replayStalls == doctest::Approx(1));
+  REQUIRE(r.replayLines().size() == lines + 1);
+  CHECK(r.replayLines().back() == "buffered 4 s, went on by itself");
+  // Again within the minute: counted, not said.
+  r.run(10000);
+  r.player->state.buffering = true;
+  r.run(5000);
+  r.player->state.buffering = false;
+  r.run(250);
+  CHECK(r.record(501)->replayStalls == doctest::Approx(2));
+  CHECK(r.replayLines().size() == lines + 1);
+  // A minute on: said again.
+  r.run(60000);
+  r.player->state.buffering = true;
+  r.run(3500);
+  r.player->state.buffering = false;
+  r.run(250);
+  CHECK(r.replayLines().size() == lines + 2);
+  CHECK(r.player->plays.size() == plays);
+  r.session->goLive();
+  auto summaries = r.summaryLines();
+  REQUIRE(summaries.size() == 1);
+  CHECK(summaries[0].find(", 3 stalls (13 s), 0 reopens, 0 other copies") != std::string::npos);
+}
+
+TEST_CASE("replay 1.0.23: the position standing still is a stall; a paused replay isn't watched") {
+  Rig r;
+  playingReplay(r);
+  size_t plays = r.player->plays.size();
+  // A player that reports its position: moving, then standing still.
+  for (int i = 0; i < 20; ++i) {
+    r.player->state.position += 0.25;
+    r.run(250);
+  }
+  mtime::Seconds at = r.session->replayAt();
+  r.run(2750);
+  CHECK(r.session->note().empty());
+  r.run(500);
+  CHECK(r.session->note() == kBufferingNote);
+  // (The moment showing waits with it, from its third second.)
+  CHECK(r.session->replayAt() <= at + 4);
+  r.run(5000);
+  REQUIRE(r.player->plays.size() == plays + 1);
+  CHECK(startsWith(r.replayLines().back(), "stalled 8 s (playback stopped); reopened from "));
+  r.picture();
+
+  // Paused: whatever the player says, nothing is watched.
+  REQUIRE(r.session->pause());
+  r.player->state = {};
+  r.player->state.buffering = true;
+  plays = r.player->plays.size();
+  r.run(120000);
+  CHECK(r.player->plays.size() == plays);
+  CHECK(r.session->note().empty());
+  REQUIRE(r.session->replay());
+  CHECK(r.session->replay()->phase == Phase::Paused);
+  // Played on: a new stretch, watched again from its picture.
+  r.player->state = {};
+  REQUIRE(r.session->resumePaused());
+  r.picture();
+  r.run(5000);
+  CHECK(r.session->note().empty());
+  r.session->goLive();
+  auto summaries = r.summaryLines();
+  REQUIRE(summaries.size() == 1);
+  CHECK(summaries[0].find(", 1 stall (") != std::string::npos);
+  CHECK(summaries[0].find("1 reopen, 0 other copies") != std::string::npos);
+}
+
+TEST_CASE("replay 1.0.23: every replay ends with one summary: replaced, tuned away, or never a picture") {
+  Rig r;
+  std::string espn = r.entry("ESPN"), cnn = r.entry("CNN");
+  playingReplay(r);
+  // Rewound during it: the first replay's summary, a new one begins.
+  REQUIRE(r.session->replayFrom(minuteOf(mtime::now() - 1800), Why::Rewind));
+  REQUIRE(r.summaryLines().size() == 1);
+  CHECK(startsWith(r.summaryLines()[0], "summary: Mock IPTV, 2 min watched, started in 0.5 s, 0 stalls, 0 reopens"));
+  r.picture();
+  r.run(30000);
+  // Tuned away: its summary.
+  REQUIRE(r.session->tune(cnn));
+  REQUIRE(r.summaryLines().size() == 2);
+  CHECK(startsWith(r.summaryLines()[1], "summary: Mock IPTV, 30 s watched, started in 0.5 s, 0 stalls"));
+  // A pause on live that goes back to live: nothing played, no summary.
+  r.run(250);
+  r.watchLive(espn, 502);
+  REQUIRE(r.session->pause());
+  r.session->goLive();
+  CHECK(r.summaryLines().size() == 2);
+  // Neither copy shows a picture.
+  r.run(250);
+  r.picture();
+  REQUIRE(r.session->replayFrom(minuteOf(mtime::now() - 3600), Why::Rewind));
+  r.player->state = {};
+  r.run(20500);
+  CHECK_FALSE(r.session->replay());
+  REQUIRE(r.summaryLines().size() == 3);
+  CHECK(r.summaryLines()[2] ==
+        "summary: Mock IPTV \xe2\x86\x92 Mock IPTV, 0 s watched, no picture, 0 stalls, 0 reopens, 1 other copy");
+  CHECK(r.record(501)->replayFailures == doctest::Approx(1));
+  CHECK(r.record(503)->replayFailures == doctest::Approx(1));
+  r.noLinks();
+}
+
+TEST_CASE("replay 1.0.23: a copy whose replays go clearly worse gives way to another of the same archive") {
+  // Without enough replays: the usual order (501 first).
+  {
+    Rig r;
+    std::string espn = r.entry("ESPN");
+    r.watchLive(espn, 502);
+    r.store->noteReplayStartFailed(r.channelOf(501));
+    r.store->noteReplayStartFailed(r.channelOf(501));
+    REQUIRE(r.session->catchupCopy());
+    CHECK(*r.session->catchupCopy() == r.feedOf(501));
+  }
+  // Three replays of 501, two of them failed; 503 three good ones: 503.
+  {
+    Rig r;
+    std::string espn = r.entry("ESPN");
+    r.watchLive(espn, 502);
+    std::string a = r.channelOf(501), b = r.channelOf(503);
+    r.store->noteReplayStart(a, 2000);
+    r.store->noteReplayStartFailed(a);
+    r.store->noteReplayStartFailed(a);
+    REQUIRE(r.session->catchupCopy());
+    // 503 has too few: still the usual order.
+    CHECK(*r.session->catchupCopy() == r.feedOf(501));
+    for (int i = 0; i < 3; ++i) r.store->noteReplayStart(b, 2500);
+    CHECK(*r.session->catchupCopy() == r.feedOf(503));
+    // Close figures: no change (a gentle tie-break).
+    for (int i = 0; i < 30; ++i) r.store->noteReplayStart(a, 2000);
+    CHECK(*r.session->catchupCopy() == r.feedOf(501));  // 2 failed of 33: within the margin
+    for (int i = 0; i < 4; ++i) r.store->noteReplayStartFailed(a);  // 6 of 37
+    REQUIRE(r.session->replayFrom(minuteOf(mtime::now() - 3600), Why::Rewind));
+    CHECK(r.session->replay()->feed == r.feedOf(503));
+    // Said once, naming the copies (one provider: by their names).
+    std::vector<std::string> lines = r.replayLines();
+    REQUIRE(!lines.empty());
+    std::string sd = r.session->feeds()[r.feedOf(503)].label, fhd = r.session->feeds()[r.feedOf(501)].label;
+    CHECK(lines[0] == "replay from " + sd + ": its replays go better than " + fhd + "'s (start failures 0% vs 16%)");
+    r.noLinks();
+  }
+  // Never across the clock groups: Trex measured, Dream's record perfect.
+  // (And never a shorter archive: Dream keeps two days, Trex one.)
+  {
+    Rig r(Rig::Two{}, false);
+    std::string espn = r.entry("ESPN");
+    r.watchLive(espn, 601);
+    std::string dream = r.channelOf(601), trex = r.channelOf(701);
+    for (int i = 0; i < 5; ++i) r.store->noteReplayStartFailed(dream);
+    for (int i = 0; i < 5; ++i) r.store->noteReplayStart(trex, 2000);
+    REQUIRE(r.session->catchupCopy());
+    CHECK(*r.session->catchupCopy() == r.feedOf(601));  // the longer archive stays first
+  }
+}
+
+TEST_CASE("replay 1.0.23: the relay's picture check saying frozen while the sound plays is a stall too") {
+  Rig r;
+  playingReplay(r);
+  size_t plays = r.player->plays.size();
+  r.player->state.streamChecked = true;
+  r.player->state.stream = marigold::media::Verdict::Frozen;
+  r.run(5750);
+  CHECK(r.player->plays.size() == plays);
+  CHECK(r.session->note() == kBufferingNote);
+  r.run(500);
+  REQUIRE(r.player->plays.size() == plays + 1);
+  CHECK(startsWith(r.replayLines().back(), "stalled 6 s (picture frozen); reopened from "));
+  r.picture();
+  CHECK(r.session->note().empty());
+  r.noLinks();
 }

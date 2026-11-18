@@ -6,6 +6,7 @@
 
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -569,4 +570,125 @@ TEST_CASE("feed scores: the channel report's cells") {
   CHECK(c.plays == "2.0");
   // A week on, the weights halve.
   CHECK(scores::cellsOf(b.find("xt:a|1"), kNow + 7 * kDay).plays == "1.0");
+}
+
+TEST_CASE("feed scores 1.0.23: a copy's replay figures, saved and read back; an older file still reads") {
+  Book b;
+  b.started("xt:a|1", 1500, kNow);
+  b.replayStarted("xt:a|1", 2000, kNow);
+  b.replayStarted("xt:a|1", 3000, kNow);
+  b.replayStarted("xt:a|1", 2400, kNow);
+  b.replayFailed("xt:a|1", kNow);
+  b.replayStalled("xt:a|1", 9000, kNow);
+  b.replayStalled("xt:a|1", 8000, kNow);
+  b.replayPlayed("xt:a|1", 3600 * 1000, kNow);
+  const scores::Record* r = b.find("xt:a|1");
+  REQUIRE(r);
+  // Never the live figures.
+  CHECK(r->plays == doctest::Approx(1));
+  CHECK(r->stalls == 0);
+  CHECK(r->playedS == 0);
+  CHECK(r->replayStarts == doctest::Approx(3));
+  CHECK(r->replayFailures == doctest::Approx(1));
+  CHECK(*r->replayMedianStartMs() == 2400);
+  CHECK(*r->replayFailureRate() == doctest::Approx(0.25));
+  CHECK(*r->replayStallsPerHour() == doctest::Approx(2.0));
+  CHECK(*r->replayStallSecondsPerHour() == doctest::Approx(17.0));
+  CHECK(r->replayMinutes() == doctest::Approx(60));
+  // Half an hour at least, as the live stalls.
+  Book shortPlay;
+  shortPlay.replayStalled("xt:b|1", 4000, kNow);
+  shortPlay.replayPlayed("xt:b|1", 120 * 1000, kNow);
+  CHECK(*shortPlay.find("xt:b|1")->replayStallsPerHour() == doctest::Approx(2.0));
+  shortPlay.replayPlayed("xt:c|1", 30 * 1000, kNow);
+  CHECK_FALSE(shortPlay.find("xt:c|1")->replayStallsPerHour());
+
+  std::string text = b.toJson();
+  Book back = Book::fromJson(text);
+  const scores::Record* q = back.find("xt:a|1");
+  REQUIRE(q);
+  CHECK(q->plays == doctest::Approx(1));
+  CHECK(q->replayStarts == doctest::Approx(3));
+  CHECK(q->replayFailures == doctest::Approx(1));
+  CHECK(q->replayStartMs == std::vector<uint32_t>{2000, 3000, 2400});
+  CHECK(q->replayStalls == doctest::Approx(2));
+  CHECK(q->replayStallS == doctest::Approx(17));
+  CHECK(q->replayPlayedS == doctest::Approx(3600));
+  CHECK(back.toJson() == text);
+  // A copy with no replays is saved as before (sixteen fields).
+  Book plain;
+  plain.started("xt:a|2", 1500, kNow);
+  std::optional<marigold::json::Value> saved = marigold::json::parse(plain.toJson());
+  REQUIRE(saved);
+  CHECK((*saved)["v"].asInt() == 1);
+  CHECK((*saved)["feeds"][size_t(0)].items().size() == 16);
+  // A file from before (no replay fields) reads, with none.
+  Book old = Book::fromJson(
+      R"({"v":1,"rolledUp":5,"feeds":[["xt:a|3",1800000000,200,100,0,90,[1500,1700],1920,1080,50,0,0,-1,0,0,0]]})");
+  const scores::Record* o = old.find("xt:a|3");
+  REQUIRE(o);
+  CHECK(o->plays == doctest::Approx(2));
+  CHECK(o->failures == doctest::Approx(1));
+  CHECK(o->height == 1080);
+  CHECK(o->replayStarts == 0);
+  CHECK(o->replayStartMs.empty());
+  CHECK_FALSE(o->replayed());
+  CHECK_FALSE(o->replayFailureRate());
+  // The weights halve each week, as the others.
+  scores::Record later = r->at(kNow + 7 * kDay);
+  CHECK(later.replayStarts == doctest::Approx(1.5));
+  CHECK(later.replayPlayedS == doctest::Approx(1800));
+}
+
+TEST_CASE("feed scores 1.0.23: how badly a copy's replays go, once it has had three") {
+  Book b;
+  b.replayStarted("xt:a|1", 2000, kNow);
+  b.replayFailed("xt:a|1", kNow);
+  CHECK_FALSE(b.replayBadness("xt:a|1", kNow));  // two: too few
+  b.replayFailed("xt:a|1", kNow);
+  REQUIRE(b.replayBadness("xt:a|1", kNow));
+  CHECK(*b.replayBadness("xt:a|1", kNow) == doctest::Approx(2.0 / 3.0));
+  // Stalls weigh in once a minute was watched: a stall an hour, a tenth.
+  b.replayPlayed("xt:a|1", 3600 * 1000, kNow);
+  b.replayStalled("xt:a|1", 5000, kNow);
+  b.replayStalled("xt:a|1", 5000, kNow);
+  CHECK(*b.replayBadness("xt:a|1", kNow) == doctest::Approx(2.0 / 3.0 + 0.2));
+  // Old evidence fades below the three replays.
+  CHECK_FALSE(b.replayBadness("xt:a|1", kNow + 7 * kDay));
+  CHECK_FALSE(b.replayBadness("xt:none|1", kNow));
+}
+
+TEST_CASE("feed scores 1.0.23: the providers line says how their replays went") {
+  Book b;
+  // Dream: live plays and three replays (one failed), a stall in half an hour.
+  b.started("dream|1", 2000, kNow);
+  b.played("dream|1", 3600 * 1000, kNow);
+  b.replayStarted("dream|1", 2000, kNow);
+  b.replayStarted("dream|2", 2800, kNow);
+  b.replayFailed("dream|2", kNow);
+  b.replayStalled("dream|1", 6000, kNow);
+  b.replayPlayed("dream|1", 1800 * 1000, kNow);
+  // Trex: live only.
+  b.started("trex|1", 1000, kNow);
+  scores::Rollup r = scores::rollup(b, {"dream", "trex"}, {}, kNow);
+  const scores::ProviderFigures& dream = r.providers[0];
+  CHECK(dream.replays == doctest::Approx(3));
+  CHECK(*dream.replayMedianStartMs == 2400);
+  CHECK(*dream.replayFailureRate == doctest::Approx(1.0 / 3.0));
+  CHECK(*dream.replayStallsPerHour == doctest::Approx(2.0));
+  CHECK_FALSE(r.providers[1].replayFailureRate);
+  auto lines = scores::rollupLines(
+      r, [](const std::string& id) { return id == "dream" ? std::string("Dream") : std::string("Trex"); });
+  CHECK(lines[0].second ==
+        "plays 1.0, picture 2.0 s median, start failures 0%, stalls 0.0/h; lineup 0%, only here 0%, replay 0%; "
+        "replay: starts in 2.4 s median, start failures 33%, stalls 2.0/h");
+  // No replays: nothing more said.
+  CHECK(lines[1].second.find("replay:") == std::string::npos);
+  // Replays alone (no live play yet) are said too.
+  Book only;
+  only.replayStarted("dream|1", 1500, kNow);
+  auto alone = scores::rollupLines(scores::rollup(only, {"dream"}, {}, kNow),
+                                   [](const std::string&) { return std::string("Dream"); });
+  CHECK(alone[0].second ==
+        "no plays yet; lineup 0%, only here 0%, replay 0%; replay: starts in 1.5 s median, start failures 0%");
 }

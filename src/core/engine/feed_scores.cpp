@@ -48,6 +48,12 @@ Record Record::at(time::Seconds now) const {
     r.playedS *= f;
     r.probes *= f;
     r.probeFailures *= f;
+    // Build 180: the replay figures halve the same way.
+    r.replayStarts *= f;
+    r.replayFailures *= f;
+    r.replayStalls *= f;
+    r.replayStallS *= f;
+    r.replayPlayedS *= f;
   }
   return r;
 }
@@ -80,6 +86,27 @@ std::optional<double> Record::stallsPerHour() const {
   // Under half an hour played, as half an hour: one stall in a short play
   // isn't twelve an hour.
   return stalls / (std::max(playedS, 1800.0) / 3600.0);
+}
+
+std::optional<uint32_t> Record::replayMedianStartMs() const {
+  if (replayStartMs.empty()) return std::nullopt;
+  return median(replayStartMs);
+}
+
+std::optional<double> Record::replayFailureRate() const {
+  double n = replayStarts + replayFailures;
+  if (n <= 0) return std::nullopt;
+  return replayFailures / n;
+}
+
+std::optional<double> Record::replayStallsPerHour() const {
+  if (replayPlayedS < 60) return std::nullopt;
+  return replayStalls / (std::max(replayPlayedS, 1800.0) / 3600.0);
+}
+
+std::optional<double> Record::replayStallSecondsPerHour() const {
+  if (replayPlayedS < 60) return std::nullopt;
+  return replayStallS / (std::max(replayPlayedS, 1800.0) / 3600.0);
 }
 
 Record& Book::touch(const std::string& feedId, time::Seconds now) {
@@ -154,6 +181,46 @@ void Book::recordProbe(const std::string& feedId, const Probe& p, time::Seconds 
     r.archiveDays = p.archiveDays;
     r.archiveAt = now;
   }
+}
+
+void Book::replayStarted(const std::string& feedId, uint32_t ms, time::Seconds now) {
+  if (feedId.empty()) return;
+  Record& r = touch(feedId, now);
+  r.replayStarts += 1;
+  r.replayStartMs.push_back(ms);
+  if (r.replayStartMs.size() > kSamples)
+    r.replayStartMs.erase(r.replayStartMs.begin(), r.replayStartMs.end() - kSamples);
+}
+
+void Book::replayFailed(const std::string& feedId, time::Seconds now) {
+  if (feedId.empty()) return;
+  touch(feedId, now).replayFailures += 1;
+}
+
+void Book::replayStalled(const std::string& feedId, uint32_t ms, time::Seconds now) {
+  if (feedId.empty()) return;
+  Record& r = touch(feedId, now);
+  r.replayStalls += 1;
+  r.replayStallS += static_cast<double>(ms) / 1000.0;
+}
+
+void Book::replayPlayed(const std::string& feedId, uint32_t ms, time::Seconds now) {
+  if (feedId.empty() || ms < 1000) return;
+  touch(feedId, now).replayPlayedS += static_cast<double>(ms) / 1000.0;
+}
+
+std::optional<double> Book::replayBadness(const std::string& feedId, time::Seconds now) const {
+  const Record* r = find(feedId);
+  if (!r) return std::nullopt;
+  // One factor for every figure: the rates don't move with it, the
+  // evidence does.
+  double f = decayFactor(r->seen, now);
+  double starts = r->replayStarts * f, failures = r->replayFailures * f;
+  if (starts + failures < kEnoughReplays) return std::nullopt;
+  double bad = failures / (starts + failures);
+  double played = r->replayPlayedS * f;
+  if (played >= 60) bad += kReplayStallWeight * (r->replayStalls * f) / (std::max(played, 1800.0) / 3600.0);
+  return bad;
 }
 
 void Book::each(const std::function<void(const std::string&, const Record&)>& fn) const {
@@ -261,6 +328,17 @@ std::string Book::toJson() const {
     row.push(static_cast<int>(r.archiveDays));
     row.push(static_cast<int64_t>(r.archiveAt));
     row.push(static_cast<int64_t>(r.probedAt));
+    // Build 180: the replay figures, only where there are any.
+    if (r.replayed() || !r.replayStartMs.empty()) {
+      row.push(hundredths(r.replayStarts));
+      row.push(hundredths(r.replayFailures));
+      json::Value rms = json::Value::array();
+      for (uint32_t m : r.replayStartMs) rms.push(static_cast<int64_t>(m));
+      row.push(std::move(rms));
+      row.push(hundredths(r.replayStalls));
+      row.push(static_cast<int64_t>(std::llround(r.replayStallS)));
+      row.push(static_cast<int64_t>(std::llround(r.replayPlayedS)));
+    }
     list.push(std::move(row));
   }
   json::Value v = json::Value::object();
@@ -298,6 +376,15 @@ Book Book::fromJson(std::string_view text) {
     r.archiveDays = static_cast<uint16_t>(std::clamp<int64_t>(row[size_t(13)].asInt(), 0, 3650));
     r.archiveAt = row[size_t(14)].asInt();
     r.probedAt = row[size_t(15)].asInt();
+    // Build 180: the replay figures (a row from before has none).
+    r.replayStarts = std::max(0.0, fromHundredths(row[size_t(16)]));
+    r.replayFailures = std::max(0.0, fromHundredths(row[size_t(17)]));
+    for (const json::Value& m : row[size_t(18)].items())
+      if (r.replayStartMs.size() < kSamples)
+        r.replayStartMs.push_back(static_cast<uint32_t>(std::max<int64_t>(0, m.asInt())));
+    r.replayStalls = std::max(0.0, fromHundredths(row[size_t(19)]));
+    r.replayStallS = static_cast<double>(std::max<int64_t>(0, row[size_t(20)].asInt()));
+    r.replayPlayedS = static_cast<double>(std::max<int64_t>(0, row[size_t(21)].asInt()));
     std::string id = row[size_t(0)].asString();
     auto old = b.byId_.find(id);
     if (old != b.byId_.end()) b.bySeq_.erase(old->second.seq);
@@ -366,6 +453,9 @@ Rollup rollupOf(const Book& book, const std::vector<std::string>& providers, con
   struct Sums {
     double plays = 0, failures = 0, stalls = 0, playedS = 0, hdPlays = 0, measuredPlays = 0;
     std::vector<uint32_t> startMs;
+    // Build 180: replays.
+    double replayStarts = 0, replayFailures = 0, replayStalls = 0, replayPlayedS = 0;
+    std::vector<uint32_t> replayStartMs;
     // Test all sources: probes too, and the measured copies.
     double tested = 0, testedBad = 0;
     int measuredCopies = 0, hdCopies = 0;
@@ -385,6 +475,11 @@ Rollup rollupOf(const Book& book, const std::vector<std::string>& providers, con
       if (d.height >= 1070) s->second.hdPlays += d.plays;
     }
     s->second.startMs.insert(s->second.startMs.end(), d.startMs.begin(), d.startMs.end());
+    s->second.replayStarts += d.replayStarts;
+    s->second.replayFailures += d.replayFailures;
+    s->second.replayStalls += d.replayStalls;
+    s->second.replayPlayedS += d.replayPlayedS;
+    s->second.replayStartMs.insert(s->second.replayStartMs.end(), d.replayStartMs.begin(), d.replayStartMs.end());
     s->second.tested += d.starts();
     s->second.testedBad += d.failures + kProbeWeight * d.probeFailures;
     if (d.height > 0) {
@@ -410,6 +505,11 @@ Rollup rollupOf(const Book& book, const std::vector<std::string>& providers, con
     if (s.plays + s.failures > 0) f.failureRate = s.failures / (s.plays + s.failures);
     if (s.playedS >= 60) f.stallsPerHour = s.stalls / (std::max(s.playedS, 1800.0) / 3600.0);
     if (s.measuredPlays > 0) f.fullHd = s.hdPlays / s.measuredPlays;
+    // Build 180: replays, as the live figures.
+    f.replays = s.replayStarts + s.replayFailures;
+    if (!s.replayStartMs.empty()) f.replayMedianStartMs = median(s.replayStartMs);
+    if (f.replays > 0) f.replayFailureRate = s.replayFailures / f.replays;
+    if (s.replayPlayedS >= 60) f.replayStallsPerHour = s.replayStalls / (std::max(s.replayPlayedS, 1800.0) / 3600.0);
     size_t covered = 0, alone = 0, replay = 0;
     for (size_t i = 0; i < rows.size(); ++i) {
       if (has[i].count(p)) {
@@ -505,6 +605,16 @@ std::vector<std::pair<std::string, std::string>> rollupLines(
     std::string detail;
     for (size_t i = 0; i < parts.size(); ++i) detail += (i ? ", " : "") + parts[i];
     detail += "; lineup " + percent(f.lineup) + ", only here " + percent(f.only) + ", replay " + percent(f.replay);
+    // Build 180: how its replays went, when there were any.
+    std::vector<std::string> replay;
+    if (f.replayMedianStartMs)
+      replay.push_back("starts in " + oneDecimal(*f.replayMedianStartMs / 1000.0) + " s median");
+    if (f.replayFailureRate) replay.push_back("start failures " + percent(*f.replayFailureRate));
+    if (f.replayStallsPerHour) replay.push_back("stalls " + oneDecimal(*f.replayStallsPerHour) + "/h");
+    if (!replay.empty()) {
+      detail += "; replay: ";
+      for (size_t i = 0; i < replay.size(); ++i) detail += (i ? ", " : "") + replay[i];
+    }
     out.emplace_back(nameOf(f.provider), std::move(detail));
   }
   for (const PairFigures& p : r.pairs)

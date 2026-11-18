@@ -500,6 +500,16 @@ class Store {
   void noteStartFailed(const std::string& channelId);
   void noteStall(const std::string& channelId);
   void notePlayed(const std::string& channelId, uint32_t ms);
+  // Build 180: a replay's figures, in the same record (never the live
+  // ones): a stretch's picture `ms` after it was handed to the player, a
+  // stretch that showed none, a stall of `ms`, and `ms` watched.
+  void noteReplayStart(const std::string& channelId, uint32_t ms);
+  void noteReplayStartFailed(const std::string& channelId);
+  void noteReplayStall(const std::string& channelId, uint32_t ms);
+  void noteReplayPlayed(const std::string& channelId, uint32_t ms);
+  // How badly the copy's replays go (scores::Book::replayBadness); null
+  // while it has had too few.
+  std::optional<double> replayBadness(const std::string& channelId) const;
   // For Test all sources (Build 166) (one probe of every copy of every
   // lineup channel): a probe's result goes into the same record.
   void recordProbe(const std::string& channelId, const scores::Probe& probe);

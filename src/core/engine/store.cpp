@@ -3605,6 +3605,31 @@ void Store::notePlayed(const std::string& channelId, uint32_t ms) {
   impl_->scoresDirty = true;
 }
 
+void Store::noteReplayStart(const std::string& channelId, uint32_t ms) {
+  impl_->scores.replayStarted(channelId, ms, time::now());
+  impl_->scoresDirty = true;
+}
+
+void Store::noteReplayStartFailed(const std::string& channelId) {
+  impl_->scores.replayFailed(channelId, time::now());
+  impl_->scoresDirty = true;
+}
+
+void Store::noteReplayStall(const std::string& channelId, uint32_t ms) {
+  impl_->scores.replayStalled(channelId, ms, time::now());
+  impl_->scoresDirty = true;
+}
+
+void Store::noteReplayPlayed(const std::string& channelId, uint32_t ms) {
+  if (ms < 1000) return;
+  impl_->scores.replayPlayed(channelId, ms, time::now());
+  impl_->scoresDirty = true;
+}
+
+std::optional<double> Store::replayBadness(const std::string& channelId) const {
+  return impl_->scores.replayBadness(channelId, time::now());
+}
+
 void Store::recordProbe(const std::string& channelId, const scores::Probe& probe) {
   Impl& m = *impl_;
   uint16_t claimed = probe.archiveOk ? catchupDays(channelId) : 0;
