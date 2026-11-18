@@ -101,11 +101,20 @@ Label label(Button b, const LabelIn& in) {
   switch (b) {
     case Button::Live:
       // Build 167: a Final's replay: the game has no live left, the
-      // channel has ("NBA TV live").
-      l.title = in.finalChannel.empty() ? std::string("Live") : in.finalChannel + " live";
+      // channel has (Build 183: "Watch NBA TV live"). Build 183: in a
+      // replay, "Go live · 12 min behind".
+      if (!in.finalChannel.empty()) {
+        l.title = "Watch " + in.finalChannel + " live";
+      } else if (in.replay) {
+        l.title = "Go live";
+        l.state = in.behind;
+      } else {
+        l.title = "Live";
+      }
       break;
     case Button::Pause: l.title = "Pause"; break;
-    case Button::Rewind: l.title = "Rewind"; break;
+    // Build 183: in a replay the timeline goes either way: "Jump to".
+    case Button::Rewind: l.title = in.replay ? "Jump to" : "Rewind"; break;
     case Button::StartOver:
       // Build 170: "Start over · from 7:30".
       l.title = "Start over";

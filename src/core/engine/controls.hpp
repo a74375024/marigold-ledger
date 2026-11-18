@@ -86,7 +86,11 @@ int opening(const std::vector<Button>& row, bool behind);
 
 // What each button says when focused.
 struct LabelIn {
-  std::string finalChannel;  // a Final's replay: Live is "<channel> live"
+  std::string finalChannel;  // a Final's replay: Live is "Watch <channel> live"
+  // Build 183: a replay on (behind live): Live is "Go live" with how far
+  // behind ("12 min behind", replay::behindWords), Rewind is "Jump to".
+  bool replay = false;
+  std::string behind;
   bool subtitlesOn = false;
   std::string subtitles;     // the language on ("English"; "" or "On": none named)
   std::string source;        // the playing copy's provider ("Dream")

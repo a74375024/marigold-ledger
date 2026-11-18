@@ -143,6 +143,9 @@ std::string titleKey(std::string_view t);
 std::string behindText(time::Seconds behind);
 // "−17 min", "−1 h 02 min" for the playhead's bubble.
 std::string behindMinutes(time::Seconds behind);
+// Build 183: Go live's state: "12 min behind", "1 h 5 min behind",
+// "2 h behind" (to the nearest minute; under one: "1 min behind").
+std::string behindWords(time::Seconds behind);
 
 // The controls' replay buttons, at the front of the row on a channel
 // whose copies keep an archive (`days` > 0; none otherwise): behind live,

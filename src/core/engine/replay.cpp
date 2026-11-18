@@ -310,6 +310,14 @@ std::string behindText(time::Seconds behind) {
   return buf;
 }
 
+std::string behindWords(time::Seconds behind) {
+  long long m = std::max<long long>(1, (std::max<long long>(0, behind) + 30) / 60);
+  if (m < 60) return std::to_string(m) + " min behind";
+  std::string out = std::to_string(m / 60) + " h";
+  if (m % 60) out += " " + std::to_string(m % 60) + " min";
+  return out + " behind";
+}
+
 std::string behindMinutes(time::Seconds behind) {
   long long m = std::max<long long>(0, (static_cast<long long>(behind) + 30) / 60);
   char buf[32];

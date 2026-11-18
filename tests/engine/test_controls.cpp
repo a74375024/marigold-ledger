@@ -114,7 +114,7 @@ TEST_CASE("controls 1.0.12: the focused button's label and state") {
   LabelIn in;
   CHECK(text(label(B::Live, in)) == "Live");
   in.finalChannel = "NBA TV";
-  CHECK(text(label(B::Live, in)) == "NBA TV live");
+  CHECK(text(label(B::Live, in)) == "Watch NBA TV live");
   CHECK(text(label(B::Pause, in)) == "Pause");
   CHECK(text(label(B::Rewind, in)) == "Rewind");
   // Subtitles: off, on with a language, on with none named.
@@ -457,4 +457,39 @@ TEST_CASE("controls 1.0.13: Start over's label: the start's clock") {
   // No clock: the title alone.
   in.startOverFrom.clear();
   CHECK(text(label(B::StartOver, in)) == "Start over");
+}
+
+TEST_CASE("controls 1.0.26: in a replay, Go live with how far behind, and Jump to") {
+  LabelIn in;
+  // Live TV: as before.
+  CHECK(text(label(B::Live, in)) == "Live");
+  CHECK(text(label(B::Rewind, in)) == "Rewind");
+  // A replay on.
+  in.replay = true;
+  in.behind = engine::replay::behindWords(12 * kMin + 10);
+  Label live = label(B::Live, in);
+  CHECK(live.title == "Go live");
+  CHECK(live.state == "12 min behind");
+  CHECK(text(live) == "Go live \xc2\xb7 12 min behind");
+  Label jump = label(B::Rewind, in);
+  CHECK(jump.title == "Jump to");
+  CHECK(jump.state.empty());
+  // A finished game's replay: the channel, no minutes.
+  in.finalChannel = "NBA TV";
+  Label fin = label(B::Live, in);
+  CHECK(fin.title == "Watch NBA TV live");
+  CHECK(fin.state.empty());
+  CHECK(label(B::Rewind, in).title == "Jump to");
+}
+
+TEST_CASE("replay 1.0.26: how far behind live, in words") {
+  CHECK(engine::replay::behindWords(0) == "1 min behind");
+  CHECK(engine::replay::behindWords(20) == "1 min behind");
+  CHECK(engine::replay::behindWords(89) == "1 min behind");
+  CHECK(engine::replay::behindWords(90) == "2 min behind");
+  CHECK(engine::replay::behindWords(12 * 60 + 29) == "12 min behind");
+  CHECK(engine::replay::behindWords(59 * 60 + 40) == "1 h behind");
+  CHECK(engine::replay::behindWords(65 * 60) == "1 h 5 min behind");
+  CHECK(engine::replay::behindWords(2 * 3600) == "2 h behind");
+  CHECK(engine::replay::behindWords(-30) == "1 min behind");
 }

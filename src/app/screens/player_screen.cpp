@@ -1321,12 +1321,15 @@ class PlayerScreen : public Screen {
     ui::floatingCard(c, {48, top, gfx::kLayoutWidth - 96, gfx::kLayoutHeight - 28 - top});
     const float x0 = kLeft + 8, w = gfx::kLayoutWidth - 2 * (kLeft + 8);
     // Title: Rewind, the channel; at the right, live's time and Play.
+    // Build 183: opened from a replay, "Jump to" with its icon, as the
+    // button says.
+    const bool fromReplay = timelineFrom_ != From::Live;
     float tx = kLeft;
-    if (unsigned icon = c.icons ? c.icons->get("ui-replay") : 0) {
+    if (unsigned icon = c.icons ? c.icons->get(fromReplay ? "ctl-jump" : "ui-replay") : 0) {
       c.g.textureAlpha(icon, {tx, top + 30, 36, 36}, theme::white());
       tx += 48;
     }
-    tx += shadowed(c, "Rewind", tx, top + 28, Weight::Bold, 34, theme::white());
+    tx += shadowed(c, fromReplay ? "Jump to" : "Rewind", tx, top + 28, Weight::Bold, 34, theme::white());
     std::string name = g ? g->name : std::string();
     if (!name.empty()) shadowed(c, "\xc2\xb7 " + name, tx + 14, top + 34, Weight::Medium, 26, theme::white(0.8f), 520);
     std::string play = "\xe2\x96\xb6  Play from " + timeText(c, head_);
@@ -2430,6 +2433,9 @@ class PlayerScreen : public Screen {
     Playback& p = app_.playback();
     engine::controls::LabelIn in;
     if (const engine::Session::GameReplay* f = finalReplay()) in.finalChannel = f->channelName;
+    // Build 183: "Go live · 12 min behind" and "Jump to" in a replay.
+    in.replay = p.replay().has_value();
+    if (in.replay) in.behind = engine::replay::behindWords(p.behindLive());
     Playback::SubtitleStatus st = p.subtitleStatus();
     in.subtitlesOn = st.on;
     in.subtitles = st.label;
@@ -2455,7 +2461,8 @@ class PlayerScreen : public Screen {
     const char* name = "";
     switch (b) {
       case Ctl::Pause: name = "ctl-pause"; break;
-      case Ctl::Rewind: name = "ui-replay"; break;
+      // Build 183: in a replay, Jump to's own icon (both ways).
+      case Ctl::Rewind: name = app_.playback().replay() ? "ctl-jump" : "ui-replay"; break;
       case Ctl::StartOver: name = "ctl-start"; break;
       case Ctl::SkipBreak: name = "ctl-skip"; break;
       case Ctl::Subtitles: name = "ctl-subtitles"; break;

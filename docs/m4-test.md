@@ -2534,3 +2534,21 @@ The playback log (never a link, a host or a login):
 | Log | Export the playback log | The lines above; no link, host or login anywhere |
 | Report | Channel report | set_aside_scope "replay" (or "replay-listings") on the feed's row; older ones "whole" or "listings" |
 | Other platforms | Android / Fire TV, Apple TV, Mac | The same panel, notices and log lines |
+
+## Build 183: 1.0.26, Go live and Jump to in a replay
+
+In a replay (behind live), the controls' first two replay buttons say what they do:
+
+- **Go live** (was "Live"), focused: "Go live · 12 min behind", how far the replay is from live, to the nearest minute ("1 h 5 min behind" past an hour); it grows while paused. A finished game's replay: "Watch NBA TV live" (was "NBA TV live"), no minutes. Unfocused it is the red dot, as before.
+- **Jump to** (was "Rewind"), with its own icon: a vertical line with arrows both ways. OK opens the same timeline, whose title is "Jump to · KNTV" with that icon.
+- On live TV nothing changes: Pause, then Rewind with the circular arrow; the timeline opened from live says "Rewind".
+
+| Check | How | Pass |
+|---|---|---|
+| Go live | In a replay, OK | The controls open on Go live: "Go live · 12 min behind" (the real distance); OK goes live as before |
+| Behind grows | Pause a replay a couple of minutes, OK | The minutes have grown |
+| Over an hour | Rewind past an hour, OK | "Go live · 1 h 5 min behind" (or "1 h behind" on the hour) |
+| Final | A finished game's replay from Live Events, OK | "Watch NBA TV live" (the game's channel), no minutes |
+| Jump to | In a replay, Right to the next replay button | "Jump to" with the both-ways icon; OK opens the timeline titled "Jump to · KNTV" with the same icon; Left / Right move earlier / later as before |
+| Live TV | On live TV, OK, Right | Pause, then "Rewind" with the circular arrow; the timeline says "Rewind" |
+| Other platforms | Android / Fire TV, Apple TV, Mac | The same labels and icon |
