@@ -243,6 +243,18 @@ class Session {
   // Paused (from live or a replay): the player holds the picture where it
   // can, and the stream is closed a few seconds later, so the provider's
   // connection is free; play resumes the archive from the paused minute.
+  //
+  // Build 180: a replay playing is watched as live is. Buffering for
+  // kReplayStallMs, frames frozen while the sound plays for kReplayFrozenMs,
+  // or the player neither playing nor showing a picture (its clock stopped)
+  // for kReplayStoppedMs is a stall ("Buffering…" from the third second, as
+  // live): the same copy is reopened at the moment showing; a second stall
+  // within kReplayStallWindowMs of that (or a reopen with no picture) moves
+  // to another copy that holds the moment; with none, one more reopen, and
+  // then "the archive keeps stalling" goes live with the usual notice. A
+  // stall of 3 s or more that clears by itself is only counted. Every
+  // replay ends with a "summary" line, and its figures go into its copies'
+  // records (feed_scores.hpp).
   struct Replay {
     enum class Phase { Opening, Playing, Paused };
     Phase phase = Phase::Opening;
@@ -259,6 +271,9 @@ class Session {
     bool fromLive = false;    // paused while live played
     bool quiet = false;       // ... by the Rewind timeline: still live, as far as Right goes
     bool next = false;        // the stretch opening follows one that ended
+    // Build 180: the stretch opening is a stall's reopen (or its move to
+    // another copy): the picture's place is kept, "Buffering…" shows.
+    bool reopen = false;
     bool video = true;        // the channel shows a picture (not radio)
     // Build 170: the copy's archive clock isn't known yet: its own guide is
     // asked for first (Store::archiveTable), at most kClockWaitMs, then the
@@ -308,6 +323,20 @@ class Session {
   static constexpr uint32_t kBackgroundCheckMs = 60000;
   // Paused: the stream is closed this long after the picture was held.
   static constexpr uint32_t kReleaseMs = 3000;
+  // Build 180, the replay's stall watchdog: live's constants where it has
+  // them (playback/recovery.hpp): buffering for its stall timeout; the
+  // player neither playing nor showing a picture, or its position not
+  // moving (from its last move), for its no-frame time; frames frozen while
+  // the sound plays, six seconds.
+  // "Buffering…" from live's note delay; a stall that short or shorter that
+  // goes on by itself isn't counted. A second stall this soon after a
+  // reopen moves to another copy. "went on by itself" at most once a minute.
+  static constexpr uint32_t kReplayStallMs = static_cast<uint32_t>(playback::kStallTimeoutMs);
+  static constexpr uint32_t kReplayStoppedMs = static_cast<uint32_t>(playback::kNoFrameMs);
+  static constexpr uint32_t kReplayFrozenMs = 6000;
+  static constexpr uint32_t kReplayStallNoteMs = static_cast<uint32_t>(playback::kStallNoteDelayMs);
+  static constexpr uint32_t kReplayStallWindowMs = static_cast<uint32_t>(playback::kRecoveryWindowMs);
+  static constexpr uint32_t kReplaySelfLogMs = 60000;
   // A replay this close to live is live.
   static constexpr time::Seconds kLiveWithin = 60;
   // The copy a replay plays on (during one: that copy). Build 166: of the
@@ -414,7 +443,7 @@ class Session {
   // picture, held while paused, and kept while the next stretch opens.)
   bool ready() const {
     if (pausedAt_) return pausedAt_->ready;
-    if (replay_) return replay_->phase != Replay::Phase::Opening || replay_->next;
+    if (replay_) return replay_->phase != Replay::Phase::Opening || replay_->next || replay_->reopen;
     return rec_.sawFirstFrame();
   }
   bool failed() const { return rec_.phase() == playback::Recovery::Phase::Failed; }
@@ -448,7 +477,8 @@ class Session {
   void keepListening();
   void dismissNoPicture() { noPicture_ = false; }
   // The small note at the top right ("Reconnecting…"); empty = none.
-  const std::string& note() const { return rec_.note(); }
+  // Build 180: a replay's own ("Buffering…" while it stalls).
+  const std::string& note() const { return replay_ ? replayNote_ : rec_.note(); }
   uint32_t tunedAt() const { return tunedAt_; }
   // Why a feed last failed this session ("no picture after 10 s", "stopped
   // after 4 s", "this TV can't play it"), with when; nothing when it worked
@@ -525,8 +555,11 @@ class Session {
   // The copy to replay `at` on (catchupCopy's order), `playing` preferred
   // over others of the same archive, none in `skip`; nullopt: none covers it.
   // Build 174: `trusted` false: without the clocks' trust (what 1.0.16 chose).
+  // Build 180: `records` false: without the copies' replay figures (their
+  // gentle tie-break inside each clock group, after the longest archive).
   std::optional<size_t> archiveCopyFor(time::Seconds at, size_t live, size_t playing,
-                                       const std::set<size_t>* skip = nullptr, bool trusted = true) const;
+                                       const std::set<size_t>* skip = nullptr, bool trusted = true,
+                                       bool records = true) const;
   // Build 174: says once when the clocks' trust changed the copy chosen
   // ("replay from Trex: its clock is confirmed; Dream's isn't yet").
   void noteReplayChoice(std::optional<size_t> chosen, time::Seconds at, size_t live, size_t playing,
@@ -536,12 +569,27 @@ class Session {
   // the time its picture played so far goes into its record.
   void flushPlayed();
   void standAside();
-  void playReplay(size_t feed, time::Seconds from, const std::string& what, bool next = false);
+  // Build 180: `reopen`: a stall's reopen (or move to another copy): no
+  // clock wait, the picture's place kept.
+  void playReplay(size_t feed, time::Seconds from, const std::string& what, bool next = false, bool reopen = false);
   // The stretch set up by playReplay, handed to the player now (its clock
   // known, or the wait for it over).
   void openReplay(const std::string& what);
   void tickReplay(uint32_t now);
   void replayFailed(const std::string& why);
+  // Build 180, the stall watchdog: watches a stretch playing (every tick,
+  // nothing allocated); a stall long enough: reopen, another copy, or give
+  // up; a reopen that showed no picture; a stall over (`now`), counted
+  // where it lasted long enough; the replay's figures said ("summary") and
+  // its watched time into its copy's record.
+  enum class StallCause { None, Buffering, Frozen, Stopped };
+  void watchReplay(uint32_t now, const PlayerState& s, bool picture);
+  void replayStalled(uint32_t now, bool again, const std::string& head);
+  void reopenFailed(const std::string& why);
+  void stallOver(uint32_t now, bool ending = false);
+  void replayNote(bool on);
+  void flushReplayPlayed();
+  void replaySummary();
   void endReplay(bool live);
   // Starts a replay at `at` in place of a live start (Right, the app's
   // return); false when the archive no longer holds it.
@@ -687,6 +735,43 @@ class Session {
   int shortStretches_ = 0;
   uint32_t replayTick_ = 0;
   std::string replayNotice_;
+  // Build 180: the stall watchdog's state. The stall going on (since 0:
+  // none; it lasts through its reopen until the picture is back), its
+  // cause, whether "Buffering…" shows, the copy it's charged to; the last
+  // reopen for a stall (0 none), how far the steps went since; the last
+  // "went on by itself" line; the player's position and when it last moved
+  // (it is watched once it has moved).
+  enum class StallStep { None, Reopened, Switched, LastTry };
+  struct ReplayStall {
+    uint32_t since = 0;
+    StallCause cause = StallCause::None;
+    bool noted = false, acted = false;
+    size_t feed = 0;
+    uint32_t reopenAt = 0;
+    StallStep step = StallStep::None;
+    uint32_t selfLogAt = 0;
+    double position = 0;
+    uint32_t movedAt = 0;
+    bool havePosition = false, moved = false;
+  };
+  ReplayStall stall_;
+  std::string replayNote_;
+  // Build 180: the replay's figures, for its "summary" line: when it was
+  // asked for, its first picture (ms after), time watched, stalls and their
+  // time, reopens, the copies it played on in order; the watched time not
+  // yet in the copy's record and the copy it belongs to.
+  struct ReplayStats {
+    bool begun = false;
+    uint32_t askedAt = 0;
+    std::optional<uint32_t> firstPictureMs;
+    uint64_t watchedMs = 0;
+    int stalls = 0, reopens = 0;
+    uint64_t stallMs = 0;
+    std::vector<size_t> copies;
+    uint32_t unsavedMs = 0;
+    size_t unsavedFeed = 0;
+  };
+  ReplayStats replayStats_;
   // Right or the app's return replays this moment instead of a live start.
   std::optional<std::pair<time::Seconds, ReplayWhy>> replayInstead_;
   // Build 167: the game replay of this tune (begin() takes the pending one);

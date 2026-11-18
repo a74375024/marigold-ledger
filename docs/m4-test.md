@@ -2418,3 +2418,39 @@ On KNTV the guide showed Jazz at Clippers while the Rewind bar named "49ers Now"
 | Its log | Playback log after opening Rewind | "past listings: … ; they name other shows than the guide, so the guide's are used" when the copy's own list disagrees |
 | The picture | Play from a moment on KNTV's bar | It's KNTV's programme (if it's NBC Sports Bay Area's, that copy's archive is another channel: say so) |
 | Others | NBC Sports Bay Area, a few locals and news channels | Their bars match their guides |
+
+## Build 180: 1.0.23, a replay that stalls is reconnected, and every replay is measured
+
+Before, once a replay showed its picture nothing watched it: a player that buffered forever or a picture that froze stayed that way, with no message and nothing in the log. Now a replay playing is watched as live is (every platform: it's the engine's):
+
+- **A stall.** Buffering for 10 s (live's stall time), the picture frozen while the sound plays for 6 s (the player's frame counter, or the LG relay's picture check), or the player neither playing nor showing a picture (its position standing still) for 8 s. From the third second the banner comes up with "Buffering…" and its spinner where "Hides in" shows, exactly as live does; the picture stays where it is.
+- **Reconnect.** The first stall reopens the same copy at the moment showing (the stream is closed first, so a one-connection account isn't refused). "Buffering…" stays until the picture is back.
+- **Another copy.** A second stall within 3 min of a reopen, or a reopen that shows no picture in 10 s, moves to another copy of the channel whose archive holds the moment (the usual order). With none, the same copy once more; if it still stalls, live with "Replay isn't available right now on this channel".
+- **Goes on by itself.** A stall that clears before that isn't acted on; one of 3 s or more is counted.
+- **Never** while paused, while the replay waits for its archive clock, or while a clock check holds the account's connection.
+- **Figures.** Every replay ends (Go live, caught up, Rewind again, another channel, the app leaving, a failure) with one summary line. Each copy's record (feed-scores.json) keeps its replays apart from live: starts, start failures, time to picture, stalls and their seconds, minutes watched. The daily "providers" lines add how a provider's replays went. When two copies of the same archive length and clock standing both have three replays or more, one whose replays clearly go better (start failures plus stalls an hour) is picked first.
+
+The playback log ("replay" lines; never a link, a host or a login):
+
+- `stalled 10 s (buffering); reopened from 20:42; server clock UTC−5` (or `(picture frozen)`, `(playback stopped)`)
+- `stalled again; another copy from 20:42; ...` / `the reopen showed no picture (no picture after 10 s); another copy from 20:42; ...`
+- `stalled again; no other copy; reopened from 20:42; ...`, then `failed: the archive keeps stalling; back to live`
+- `buffered 4 s, went on by itself` (at most one a minute; `picture froze 4 s, ...`, `stopped 4 s, ...`)
+- `summary: Dream → Trex, 34 min watched, started in 2.1 s, 2 stalls (17 s), 1 reopen, 1 other copy` (`no picture` when none came)
+- `replay from Trex: its replays go better than Dream's (start failures 0% vs 40%, stalls 0.5/h vs 3.0/h)`, once per pair, when the figures chose the copy
+- providers: `...; replay: starts in 2.4 s median, start failures 12%, stalls 1.3/h`
+
+| Check | How | Pass |
+|---|---|---|
+| A stall | During a replay, unplug the TV's network for about 15 s, then plug it back | The banner comes up with "Buffering…" and its spinner (where "Hides in" shows) after about 3 s; the replay reconnects by itself at the same minute; log `stalled 10 s (buffering); reopened from HH:MM` |
+| Frozen picture | A replay whose picture freezes while the sound goes on (if one does) | After about 6 s, the same reconnect; log `stalled 6 s (picture frozen); ...` |
+| Second stall | Unplug again within 3 min of the reconnect | Another copy of the channel takes over at the same minute (on a channel with two providers' archives); log `stalled again; another copy from HH:MM` |
+| No other copy | The same on a channel only one provider keeps | `stalled again; no other copy; reopened from ...`; a third stall goes live with "Replay isn't available right now on this channel" and `failed: the archive keeps stalling; back to live` |
+| Short blip | A network blip of 3-5 s | "Buffering…" for a moment, no reconnect; log `buffered 4 s, went on by itself` (not more than once a minute) |
+| Paused | Pause a replay for a few minutes | No "Buffering…", no reconnect; play resumes as before |
+| Summary | Watch a replay a few minutes, then Go live (also: Rewind again, change channel) | One `summary: ...` line per replay, after "back to live" (before the new "rewind to ..."), with the provider, minutes watched, time to picture, stalls, reopens, other copies |
+| Providers | Export the log the next day (or export now: the export writes them) | Providers with replays have `; replay: starts in N s median, start failures N%, stalls N/h` |
+| Choice | After several failed replays on one provider's copy (Dream), Rewind on a channel both providers keep for as long | The other copy is used; `replay from Trex: its replays go better than Dream's (...)` once |
+| No links | Export the playback log | No link, host, path or login in any of these lines |
+| Live as before | Watch live, unplug briefly | Live's own "Buffering…", "stall", "recovered by itself" as in 1.0.22 |
+| Other platforms | Android / Fire TV, Apple TV, Mac | The same lines and the same "Buffering…" |
