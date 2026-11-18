@@ -2407,3 +2407,14 @@ On the LG with 1.0.20, Dream's clock never got confirmed: its background checks 
 | A new one each try | If a check fails | The next names another channel |
 | No replays | cf.hrshsauras (no working replays) | No background check lines for it |
 | Dream-only channel | Rewind on a channel only Dream has | The on-screen clock matches the time picked |
+
+## Build 179: 1.0.22, Rewind names what the guide does
+
+On KNTV the guide showed Jazz at Clippers while the Rewind bar named "49ers Now" and "Dubs Talk" (NBC Sports Bay Area's shows). The guide picks a channel's listings by its identity (the schedule most of its copies agree on, Build 154); Rewind took the copy whose guide reached furthest back, whole, and one of KNTV's copies has NBC Sports Bay Area's guide filed under it. The replay copy's own list (its provider's archive table) was mixed in the same way. Now the Rewind bar starts from what the guide shows for the channel; another copy's schedule only fills what it lacks, and only when it is the same schedule where both have listings (the same titles at the same times, within 10 min); the replay copy's own list likewise. When the copy's own list names other shows, the log says so on its "past listings" line.
+
+| Check | How | Pass |
+|---|---|---|
+| KNTV | Watch KNTV, open Rewind | The bar names what the guide shows (tonight's game, the news before it), not 49ers Now / Dubs Talk |
+| Its log | Playback log after opening Rewind | "past listings: … ; they name other shows than the guide, so the guide's are used" when the copy's own list disagrees |
+| The picture | Play from a moment on KNTV's bar | It's KNTV's programme (if it's NBC Sports Bay Area's, that copy's archive is another channel: say so) |
+| Others | NBC Sports Bay Area, a few locals and news channels | Their bars match their guides |

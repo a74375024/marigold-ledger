@@ -1911,9 +1911,21 @@ void Session::wantPast() {
                           q.archived = p.archived;
                           own.push_back(std::move(q));
                         }
+                        // Build 179: said when the copy's own list names
+                        // other shows than the guide (left off the bar).
+                        std::vector<replay::Programme> shown;
+                        for (Listing& l : store_.pastListing(entry, earliest)) {
+                          replay::Programme q;
+                          q.start = l.start;
+                          q.end = l.end;
+                          q.title = std::move(l.title);
+                          shown.push_back(std::move(q));
+                        }
+                        bool same = replay::agrees(shown, own);
                         log_.add(wallMs(), "replay", session_, {}, {}, {},
                                  "past listings: " + std::to_string((now - earliest + 1800) / 3600) + " h, " +
-                                     std::to_string(archived) + " in archive");
+                                     std::to_string(archived) + " in archive" +
+                                     (same ? std::string() : std::string("; they name other shows than the guide, so the guide's are used")));
                         past_ = std::move(own);
                         if (hooks_.changed) hooks_.changed();
                       });
@@ -1933,6 +1945,11 @@ std::vector<replay::Programme> Session::timeline(time::Seconds from) const {
     guide.push_back(std::move(p));
   }
   if (!past_ || pastFor_ != entry_) return guide;
+  // Build 179: the copy's own list (its provider's archive table) fills in
+  // only when it's the same schedule as the guide's where both have
+  // listings; a provider that files another channel's guide under the
+  // copy would name its shows on the bar.
+  if (!replay::agrees(guide, *past_)) return guide;
   return replay::merged(std::move(guide), *past_);
 }
 

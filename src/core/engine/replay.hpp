@@ -126,6 +126,14 @@ std::vector<time::Seconds> boundaries(const Reach& r, Span shown, size_t limit =
 // Sorted by start.
 std::vector<Programme> merged(std::vector<Programme> guide, const std::vector<Programme>& own);
 
+// Build 179: whether `other` is the same channel's schedule as `ref` where
+// both have listings: of ref's programmes 10 min or longer that `other`
+// spans, at least half have one in `other` under the same title starting
+// within 10 min. Fewer than two to weigh: it can't tell, so it agrees. (A
+// copy whose provider files another channel's guide under it, NBC Sports
+// Bay Area's shows on KNTV, doesn't.)
+bool agrees(const std::vector<Programme>& ref, const std::vector<Programme>& other);
+
 // "−17:05", "−1:02:05": how far behind live (never below zero).
 std::string behindText(time::Seconds behind);
 // "−17 min", "−1 h 02 min" for the playhead's bubble.

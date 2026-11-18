@@ -2260,3 +2260,70 @@ TEST_CASE("replay 1.0.21: a background check reads a copy whose replay played, n
     CHECK_FALSE(r.store->clockCheckDue(ms + 59 * 60000, ""));
   }
 }
+
+// ---------------- Build 179: Rewind names what the guide does
+
+TEST_CASE("replay 1.0.22: another channel's schedule filed under a copy doesn't reach the Rewind bar") {
+  using P = replay::Programme;
+  const mtime::Seconds h = 1'800'000'000 - 1'800'000'000 % 3600;
+  // The guide: KNTV's evening; the copy's own list: NBC Sports Bay Area's.
+  std::vector<P> guide = {{h - 3 * 3600, h - 2 * 3600, "NBC Bay Area News at 5", true},
+                          {h - 2 * 3600, h - 3600, "NBC Nightly News", true},
+                          {h - 3600, h + 3600, "Jazz at Clippers", true}};
+  std::vector<P> other = {{h - 3 * 3600, h - 2 * 3600, "49ers Now", true},
+                          {h - 2 * 3600, h - 3600, "Dubs Talk", true},
+                          {h - 3600, h, "49ers Now", true},
+                          {h, h + 3600, "Dubs Talk", true}};
+  CHECK_FALSE(replay::agrees(guide, other));
+  // The same schedule (casing, punctuation, starts a few minutes apart): agrees.
+  std::vector<P> same = {{h - 3 * 3600 + 120, h - 2 * 3600, "NBC BAY AREA NEWS AT 5!", true},
+                         {h - 2 * 3600, h - 3600, "nbc nightly news", true},
+                         {h - 3600, h + 3600, "Jazz at Clippers", true}};
+  CHECK(replay::agrees(guide, same));
+  // Nothing to weigh (no overlap, or one programme): can't tell, so it agrees.
+  CHECK(replay::agrees(guide, {{h - 30 * 3600, h - 29 * 3600, "Overnight", true}}));
+  CHECK(replay::agrees({{h - 3600, h + 3600, "Jazz at Clippers", true}}, other));
+  CHECK(replay::agrees(guide, {}));
+}
+
+TEST_CASE("replay 1.0.22: the copy's own list naming other shows is left off the bar, and said") {
+  auto stamp = [](mtime::Seconds t) {
+    mtime::Civil c = mtime::civilFromSeconds(t);
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%04d%02d%02d%02d%02d00 +0000", c.year, c.month, c.day, c.hour, c.minute);
+    return std::string(buf);
+  };
+  mtime::Seconds hour = mtime::now() - mtime::now() % 3600;
+  std::string xml = "<?xml version=\"1.0\"?><tv><channel id=\"espn.us\"><display-name>ESPN</display-name></channel>";
+  for (int h = -5; h <= 3; ++h)
+    xml += std::string("<programme start=\"") + stamp(hour + h * 3600) + "\" stop=\"" + stamp(hour + (h + 1) * 3600) +
+           "\" channel=\"espn.us\"><title>Game " + std::to_string(h) + "</title><desc>About it.</desc></programme>";
+  xml += "</tv>";
+  Rig r(xml);
+  auto c = mockClient();
+  std::string espn = r.entry("ESPN");
+  auto b64 = [](const std::string& s) { return marigold::base64::encode(s); };
+  std::string table = R"({"epg_listings":[)";
+  for (int h = -5; h <= 0; ++h) {
+    if (h > -5) table += ",";
+    table += R"({"title":")" + b64(h % 2 ? "49ers Now" : "Dubs Talk") + R"(","start_timestamp":")" +
+             std::to_string(hour + h * 3600) + R"(","stop_timestamp":")" + std::to_string(hour + (h + 1) * 3600) +
+             R"(","has_archive":1})";
+  }
+  table += "]}";
+  r.tv.pool.answer(c.simpleDataTableRequest("501").url, table);
+  r.watchLive(espn, 501);
+  r.session->wantPast();
+  r.tv.pool.drain();
+  std::vector<replay::Programme> t = r.session->timeline(hour - 6 * 3600);
+  REQUIRE(!t.empty());
+  for (const replay::Programme& p : t) {
+    CHECK(p.title != "49ers Now");
+    CHECK(p.title != "Dubs Talk");
+  }
+  CHECK(std::any_of(t.begin(), t.end(), [](const replay::Programme& p) { return p.title == "Game 0"; }));
+  std::vector<std::string> lines = r.replayLines();
+  REQUIRE(!lines.empty());
+  CHECK(lines.back().find("; they name other shows than the guide, so the guide's are used") != std::string::npos);
+  r.noLinks();
+}

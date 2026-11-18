@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <optional>
+#include <string>
 
 namespace marigold::engine::replay {
 namespace {
@@ -264,6 +266,39 @@ std::vector<Programme> merged(std::vector<Programme> guide, const std::vector<Pr
   }
   std::stable_sort(out.begin(), out.end(), [](const Programme& a, const Programme& b) { return a.start < b.start; });
   return out;
+}
+
+namespace {
+// Letters and digits, lower case: "Dubs Talk" and "DUBS TALK!" alike.
+std::string titleKey(const std::string& t) {
+  std::string out;
+  for (unsigned char ch : t) {
+    if (ch >= 'A' && ch <= 'Z') out += static_cast<char>(ch - 'A' + 'a');
+    else if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch >= 0x80) out += static_cast<char>(ch);
+  }
+  return out;
+}
+}  // namespace
+
+bool agrees(const std::vector<Programme>& ref, const std::vector<Programme>& other) {
+  if (other.empty()) return true;
+  time::Seconds lo = other.front().start, hi = other.front().end;
+  for (const Programme& o : other) {
+    lo = std::min(lo, o.start);
+    hi = std::max(hi, o.end);
+  }
+  int weighed = 0, same = 0;
+  for (const Programme& r : ref) {
+    if (r.end - r.start < 10 * 60 || r.start < lo || r.end > hi) continue;
+    ++weighed;
+    std::string key = titleKey(r.title);
+    for (const Programme& o : other)
+      if (std::abs(o.start - r.start) <= 10 * 60 && titleKey(o.title) == key) {
+        ++same;
+        break;
+      }
+  }
+  return weighed < 2 || same * 2 >= weighed;
 }
 
 std::string behindText(time::Seconds behind) {

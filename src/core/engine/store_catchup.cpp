@@ -382,8 +382,36 @@ std::vector<Listing> Store::pastListing(const std::string& entryId, time::Second
     members = m.catalog->entries[info->second].members;
   else
     members.push_back(entryId);
-  // The copy whose kept guide covers the most of the past asked for: its
-  // provider's full guide, else the outside listings, else the short guide.
+  // Build 179: what the guide shows for the row (the schedule it chose by
+  // the channel's identity, Build 154) leads, so Rewind names what the
+  // guide does. Before, the copy whose kept guide reached furthest back
+  // was taken whole, and a copy whose provider files another channel's
+  // guide under it (NBC Sports Bay Area's "49ers Now" on KNTV) could win.
+  std::vector<Listing> shown;
+  auto pr = m.programs.find(entryId);
+  if (pr != m.programs.end() && pr->second)
+    for (const Program& p : *pr->second) {
+      if (p.end <= from || p.start >= to) continue;
+      Listing l;
+      l.title = p.title;
+      l.episode = p.episodeTitle.value_or("");
+      l.overview = p.overview;
+      l.start = p.start;
+      l.end = p.end;
+      l.outside = p.fromOutsideGuide;
+      shown.push_back(std::move(l));
+    }
+  auto asProgrammes = [](const std::vector<Listing>& list) {
+    std::vector<replay::Programme> out;
+    out.reserve(list.size());
+    for (const Listing& l : list) out.push_back(replay::Programme{l.start, l.end, l.title, true});
+    return out;
+  };
+  const std::vector<replay::Programme> shownP = asProgrammes(shown);
+  // Then the copy whose kept guide covers the most of the past asked for
+  // (its provider's full guide, else the outside listings, else the short
+  // guide), among those that are the same schedule where both have
+  // listings: it fills only what the guide's list lacks.
   std::vector<Listing> best;
   time::Seconds bestCover = -1;
   for (const std::string& id : members) {
@@ -395,24 +423,43 @@ std::vector<Listing> Store::pastListing(const std::string& entryId, time::Second
       if (o != m.outsideMatches.end() && o->second) addRaw(*o->second, from, to, list);
     }
     if (list.empty()) {
-      auto s = m.serverPrograms.find(id);
-      if (s != m.serverPrograms.end())
-        for (const Program& pr : s->second) {
-          if (pr.end <= from || pr.start >= to) continue;
+      auto sp = m.serverPrograms.find(id);
+      if (sp != m.serverPrograms.end())
+        for (const Program& prg : sp->second) {
+          if (prg.end <= from || prg.start >= to) continue;
           Listing l;
-          l.title = pr.title;
-          l.episode = pr.episodeTitle.value_or("");
-          l.overview = pr.overview;
-          l.start = pr.start;
-          l.end = pr.end;
+          l.title = prg.title;
+          l.episode = prg.episodeTitle.value_or("");
+          l.overview = prg.overview;
+          l.start = prg.start;
+          l.end = prg.end;
           list.push_back(std::move(l));
         }
     }
+    if (!shown.empty() && !replay::agrees(shownP, asProgrammes(list))) continue;
     time::Seconds cover = coverage(list, from, now);
     if (cover > bestCover) {
       bestCover = cover;
       best = std::move(list);
     }
+  }
+  if (!shown.empty()) {
+    // The guide's own, and from the other only what none of them covers
+    // more than half of.
+    std::vector<Listing> out = shown;
+    for (Listing& l : best) {
+      time::Seconds len = std::max<time::Seconds>(1, l.end - l.start);
+      bool covered = false;
+      for (const Listing& g : shown) {
+        time::Seconds overlap = std::min(l.end, g.end) - std::max(l.start, g.start);
+        if (overlap * 2 > len) {
+          covered = true;
+          break;
+        }
+      }
+      if (!covered) out.push_back(std::move(l));
+    }
+    best = std::move(out);
   }
   std::stable_sort(best.begin(), best.end(), [](const Listing& a, const Listing& b) { return a.start < b.start; });
   return best;
