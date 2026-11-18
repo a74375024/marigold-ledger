@@ -2739,3 +2739,429 @@ TEST_CASE("replay 1.0.23: the relay's picture check saying frozen while the soun
   CHECK(r.session->note().empty());
   r.noLinks();
 }
+
+// ------------------------------------------------- Build 182 (1.0.25)
+
+namespace {
+
+using Source = Session::ReplaySource;
+const std::string kDot = " \xc2\xb7 ";
+
+std::vector<size_t> indexes(const std::vector<Source>& rows) {
+  std::vector<size_t> out;
+  for (const Source& s : rows) out.push_back(s.index);
+  return out;
+}
+
+marigold::engine::setaside::Record replayRecord(const Rig& r, int id, marigold::engine::setaside::Reason why,
+                                                int feed) {
+  marigold::engine::setaside::Record rec;
+  rec.entryId = r.entry("ESPN");
+  rec.copyId = r.channelOf(id);
+  rec.reason = why;
+  rec.feed = feed;
+  rec.scope = marigold::engine::setaside::Scope::Replay;
+  return rec;
+}
+
+}  // namespace
+
+TEST_CASE("replay 1.0.25: Sources in a replay: the copies that reach the moment, in the replay's order; the others and why") {
+  {
+    Rig r;
+    CHECK(r.session->replaySources().reaching.empty());  // nothing plays
+    playingReplay(r);
+    size_t fhd = r.feedOf(501), hd = r.feedOf(502), sd = r.feedOf(503);
+    Session::ReplaySources s = r.session->replaySources();
+    CHECK(s.at == r.session->replayAt());
+    // The copy replaying first (the same archive, the one playing), then the
+    // other that holds the moment; the copy without an archive can't.
+    CHECK(indexes(s.reaching) == std::vector<size_t>{fhd, sd});
+    REQUIRE(s.cannot.size() == 1);
+    CHECK(s.cannot[0].index == hd);
+    CHECK(s.cannot[0].why == Source::Why::LiveOnly);
+    CHECK_FALSE(s.cannot[0].reaches);
+    CHECK(s.reaching[0].playing);
+    CHECK_FALSE(s.reaching[1].playing);
+    CHECK_FALSE(s.cannot[0].playing);
+    // Numbered as the live panel numbers them (feeds() order).
+    for (const Source& row : s.reaching) {
+      CHECK(row.number == r.session->feedNumber(row.index));
+      CHECK(row.label == "Feed " + std::to_string(row.number));
+    }
+    CHECK(r.session->feedNumber(fhd) == static_cast<int>(fhd) + 1);
+    // One replay of 501 so far: too few for a note.
+    CHECK(s.reaching[0].note == Source::Note::None);
+    CHECK(Session::replaySourceLine(s.reaching[0], "7:42 PM") ==
+          "Playing now" + kDot + "replay 2 days" + kDot + "Mock IPTV");
+    CHECK(Session::replaySourceLine(s.reaching[1], "7:42 PM") == "replay 2 days" + kDot + "Mock IPTV");
+    CHECK(Session::replaySourceLine(s.cannot[0], "7:42 PM") == "Live only" + kDot + "Mock IPTV");
+
+    // The replay notes: 501's replays failing clearly more than 503's (the
+    // margin of archiveCopyFor's tie-break): 503 first now, 501 amber; the
+    // check mark stays on the copy replaying.
+    for (int i = 0; i < 3; ++i) r.store->noteReplayStartFailed(r.channelOf(501));
+    for (int i = 0; i < 3; ++i) r.store->noteReplayStart(r.channelOf(503), 2000);
+    s = r.session->replaySources();
+    CHECK(indexes(s.reaching) == std::vector<size_t>{sd, fhd});
+    CHECK(s.reaching[0].note == Source::Note::HeldUp);
+    CHECK(s.reaching[1].note == Source::Note::Stalled);
+    CHECK(s.reaching[1].playing);
+    CHECK(Session::replaySourceLine(s.reaching[0], "7:42 PM") ==
+          "replay 2 days" + kDot + "replays held up well" + kDot + "Mock IPTV");
+    CHECK(Session::replaySourceLine(s.reaching[1], "7:42 PM") ==
+          "Playing now" + kDot + "replay 2 days" + kDot + "stalled in a replay lately" + kDot + "Mock IPTV");
+    // Close figures: no amber (within the margin), both held up.
+    for (int i = 0; i < 40; ++i) r.store->noteReplayStart(r.channelOf(501), 2000);
+    s = r.session->replaySources();
+    for (const Source& row : s.reaching) CHECK(row.note == Source::Note::HeldUp);
+    // Back live: no replay rows.
+    r.session->goLive();
+    CHECK(r.session->replaySources().reaching.empty());
+    CHECK(r.session->replaySources().cannot.empty());
+  }
+  {
+    // Dream keeps two days, Trex one: thirty hours back only Dream reaches.
+    Rig r(Rig::Two{}, false);
+    std::string espn = r.entry("ESPN");
+    r.watchLive(espn, 601);
+    REQUIRE(r.session->replayFrom(minuteOf(mtime::now() - 30 * 3600), Why::Rewind));
+    r.tv.pool.drain();
+    REQUIRE(r.session->replay());
+    Session::ReplaySources s = r.session->replaySources();
+    CHECK(indexes(s.reaching) == std::vector<size_t>{r.feedOf(601)});
+    REQUIRE(s.cannot.size() == 1);
+    CHECK(s.cannot[0].index == r.feedOf(701));
+    CHECK(s.cannot[0].why == Source::Why::TooShort);
+    CHECK(Session::replaySourceLine(s.cannot[0], "2:12 PM") == "Its replay doesn't reach 2:12 PM" + kDot + "Trex");
+    // Not one it can replay on.
+    size_t plays = r.player->plays.size();
+    CHECK_FALSE(r.session->replayOn(r.feedOf(701)));
+    CHECK(r.player->plays.size() == plays);
+  }
+}
+
+TEST_CASE("replay 1.0.25: picking a copy carries the replay on at the same minute; the copy playing does nothing") {
+  Rig r;
+  playingReplay(r);
+  size_t fhd = r.feedOf(501), sd = r.feedOf(503);
+  mtime::Seconds at = minuteOf(r.session->replayAt());
+  size_t plays = r.player->plays.size();
+  int stops = r.player->stops;
+  // The copy already replaying, or one with no archive: nothing.
+  CHECK_FALSE(r.session->replayOn(fhd));
+  CHECK_FALSE(r.session->replayOn(r.feedOf(502)));
+  CHECK(r.player->plays.size() == plays);
+  CHECK(r.player->stops == stops);
+  CHECK_FALSE(r.session->takeReplaySwitch());
+
+  REQUIRE(r.session->replayOn(sd));
+  r.tv.pool.drain();
+  CHECK(r.player->stops > stops);  // the stream stopped first: one connection
+  REQUIRE(r.session->replay());
+  CHECK(r.session->replay()->feed == sd);
+  CHECK(r.session->replay()->from == at);
+  REQUIRE(r.player->plays.size() == plays + 1);
+  CHECK(isReplay(r.player->plays.back()));
+  CHECK(r.player->plays.back().url.find("/" + serverMinute(at) + "/503.ts") != std::string::npos);
+  CHECK(startsWith(r.replayLines().back(), "switched by you to Mock IPTV from " + hm(at)));
+  // Live stays as it was.
+  CHECK(r.session->feedIndex() == r.feedOf(502));
+  CHECK_FALSE(r.session->takeReplaySwitch());  // not until its picture
+  r.picture();
+  std::optional<Session::ReplaySwitch> sw = r.session->takeReplaySwitch();
+  REQUIRE(sw);
+  CHECK(sw->ok);
+  CHECK(sw->feed == sd);
+  CHECK(sw->back == fhd);
+  CHECK(sw->number == 3);
+  CHECK(sw->backNumber == 1);
+  CHECK(sw->at == at);
+  CHECK_FALSE(r.session->takeReplaySwitch());  // once
+  // The check mark moves with it.
+  Session::ReplaySources s = r.session->replaySources();
+  REQUIRE(!s.reaching.empty());
+  for (const Source& row : s.reaching) CHECK(row.playing == (row.index == sd));
+  r.run(60000);
+  r.session->goLive();
+  auto summaries = r.summaryLines();
+  REQUIRE(summaries.size() == 1);
+  CHECK(startsWith(summaries[0], "summary: Mock IPTV \xe2\x86\x92 Mock IPTV, "));
+  CHECK(summaries[0].find(", 1 other copy") != std::string::npos);
+  r.noLinks();
+}
+
+TEST_CASE("replay 1.0.25: the copy picked doesn't open: back to the copy before at the same moment, said") {
+  for (bool atOnce : {false, true}) {
+    CAPTURE(atOnce);
+    Rig r;
+    playingReplay(r);
+    size_t fhd = r.feedOf(501), sd = r.feedOf(503);
+    mtime::Seconds at = minuteOf(r.session->replayAt());
+    REQUIRE(r.session->replayOn(sd));
+    r.tv.pool.drain();
+    size_t plays = r.player->plays.size();
+    if (atOnce) {
+      r.player->state.failed = true;
+      r.run(500);
+    } else {
+      r.run(10250);
+    }
+    REQUIRE(r.session->replay());
+    // Not another copy, not live: the one before, from the same minute.
+    CHECK(r.session->replay()->feed == fhd);
+    CHECK(r.session->replay()->from == at);
+    REQUIRE(r.player->plays.size() == plays + 1);
+    CHECK(r.player->plays.back().url.find("/" + serverMinute(at) + "/501.ts") != std::string::npos);
+    std::string why = atOnce ? "the player reported an error" : "no picture after 10 s";
+    CHECK(startsWith(r.replayLines().back(),
+                     "the copy you picked didn't open (" + why + "); back to Mock IPTV from " + hm(at)));
+    CHECK(r.record(503)->replayFailures == doctest::Approx(1));
+    std::optional<Session::ReplaySwitch> sw = r.session->takeReplaySwitch();
+    REQUIRE(sw);
+    CHECK_FALSE(sw->ok);
+    CHECK(sw->feed == sd);
+    CHECK(sw->back == fhd);
+    CHECK(sw->at == at);
+    r.player->state = {};
+    r.picture();
+    CHECK(r.session->replay()->phase == Phase::Playing);
+    CHECK_FALSE(r.session->takeReplaySwitch());
+    r.session->goLive();
+    auto summaries = r.summaryLines();
+    REQUIRE(summaries.size() == 1);
+    CHECK(summaries[0].find(", 2 other copies") != std::string::npos);
+    r.noLinks();
+  }
+}
+
+TEST_CASE("replay 1.0.25: copies set aside for the channel aren't in the replay's rows; the numbers stay theirs") {
+  Rig r;
+  std::string espn = r.entry("ESPN");
+  r.watchLive(espn, 502);
+  marigold::engine::setaside::Record rec;
+  rec.entryId = espn;
+  rec.copyId = r.channelOf(503);
+  rec.reason = marigold::engine::setaside::Reason::DoesntWork;
+  rec.feed = 3;
+  r.session->setAside(rec);  // a backup: what plays opens again without it
+  r.run(500);
+  r.picture();
+  REQUIRE(r.session->replayFrom(minuteOf(mtime::now() - 3600), Why::Rewind));
+  r.tv.pool.drain();
+  REQUIRE(r.session->replay());
+  Session::ReplaySources s = r.session->replaySources();
+  std::vector<size_t> all = indexes(s.reaching);
+  for (size_t i : indexes(s.cannot)) all.push_back(i);
+  for (size_t i : all) CHECK(r.session->feeds()[i].channelId != r.channelOf(503));
+  REQUIRE(s.reaching.size() == 1);
+  CHECK(r.session->feeds()[s.reaching[0].index].channelId == r.channelOf(501));
+  REQUIRE(s.cannot.size() == 1);
+  // Feed 3 set aside keeps its number: the other two are Feed 1 and Feed 2
+  // in the live list's order, as the live panel has them.
+  CHECK(s.reaching[0].number == r.session->feedNumber(s.reaching[0].index));
+  CHECK(s.cannot[0].number == r.session->feedNumber(s.cannot[0].index));
+  CHECK(s.reaching[0].number + s.cannot[0].number == 3);
+  CHECK(r.store->feedNumbers(espn, r.session->feeds()) ==
+        std::vector<int>{r.session->feedNumber(0), r.session->feedNumber(1)});
+
+  // Set aside during a replay on another copy: the replay goes on, the copy
+  // is still among this tune's feeds, but never in the rows nor picked.
+  Rig q;
+  playingReplay(q);
+  rec.copyId = q.channelOf(503);
+  rec.entryId = q.entry("ESPN");
+  q.session->setAside(rec);
+  REQUIRE(q.session->replay());
+  REQUIRE(q.feedOf(503) < q.session->feeds().size());
+  s = q.session->replaySources();
+  CHECK(indexes(s.reaching) == std::vector<size_t>{q.feedOf(501)});
+  CHECK(indexes(s.cannot) == std::vector<size_t>{q.feedOf(502)});
+  CHECK(s.reaching[0].number == 1);
+  CHECK(s.cannot[0].number == 2);
+  CHECK(q.session->feedNumber(q.feedOf(503)) == 0);
+  CHECK_FALSE(q.session->replayOn(q.feedOf(503)));
+}
+
+TEST_CASE("replay 1.0.25: a copy's replay set aside: live keeps it, the replay moves on at the same minute; undo") {
+  Rig r;
+  playingReplay(r);
+  std::string espn = r.entry("ESPN");
+  std::string fhd = r.channelOf(501), sd = r.channelOf(503);
+  mtime::Seconds at = minuteOf(r.session->replayAt());
+  size_t plays = r.player->plays.size();
+  Session::SetAsideOutcome out =
+      r.session->setAside(replayRecord(r, 501, marigold::engine::setaside::Reason::PlaysBadly, 1));
+  r.tv.pool.drain();
+  CHECK(out.switched);
+  CHECK_FALSE(out.alone);
+  CHECK(out.playing == sd);
+  CHECK(out.record.scope == marigold::engine::setaside::Scope::Replay);
+  REQUIRE(r.session->replay());
+  CHECK(r.session->replay()->feed == r.feedOf(503));
+  CHECK(r.session->replay()->from == at);
+  REQUIRE(r.player->plays.size() == plays + 1);
+  CHECK(r.player->plays.back().url.find("/" + serverMinute(at) + "/503.ts") != std::string::npos);
+  CHECK(startsWith(r.replayLines().back(), "its replay set aside; on to Mock IPTV from " + hm(at)));
+  CHECK_FALSE(r.session->takeReplaySwitch());  // Sources says it
+  // The log: "replay: " first, the moment, the clock; never a link.
+  auto lines = r.logged("set aside");
+  REQUIRE(lines.size() == 1);
+  CHECK(lines[0].detail == "replay: it doesn't play well" + kDot + "its name \"US: ESPN FHD\" in \"US| SPORTS\"" + kDot +
+                               "at " + hm(at) + kDot + "server clock " +
+                               marigold::sources::xtream::offsetText(-5 * 3600) + " (not measured)");
+  CHECK(lines[0].feed == "Feed 1");
+  CHECK(lines[0].provider == "Mock IPTV");
+  // Replay only: still played live on the channel, never replayed there.
+  CHECK_FALSE(r.store->notPlayedOn(espn, fhd));
+  CHECK(r.store->notReplayedOn(espn, fhd));
+  CHECK(r.store->setAsideOf(espn, fhd, true));
+  CHECK_FALSE(r.store->setAsideOf(espn, fhd));
+  bool listed = false;
+  for (const Feed& f : r.store->feeds(espn)) listed = listed || f.channelId == fhd;
+  CHECK(listed);
+  Session::ReplaySources s = r.session->replaySources();
+  CHECK(indexes(s.reaching) == std::vector<size_t>{r.feedOf(503)});
+  REQUIRE(s.cannot.size() == 2);
+  CHECK(s.cannot[0].index == r.feedOf(501));
+  CHECK(s.cannot[0].why == Source::Why::SetAside);
+  CHECK(Session::replaySourceLine(s.cannot[0], "7:42 PM") == "You set its replay aside" + kDot + "Mock IPTV");
+  CHECK(s.cannot[0].number == 1);  // numbered as before
+  // Kept across a restart, as a replay record.
+  r.tv.pool.drain();
+  r.run(1000);
+  {
+    Store again(r.tv.host());
+    fake::settle(again, r.tv);
+    std::optional<marigold::engine::setaside::Record> kept = again.setAsideOf(espn, fhd, true);
+    REQUIRE(kept);
+    CHECK(kept->scope == marigold::engine::setaside::Scope::Replay);
+    CHECK(kept->reason == marigold::engine::setaside::Reason::PlaysBadly);
+    CHECK_FALSE(again.notPlayedOn(espn, fhd));
+    CHECK(again.notReplayedOn(espn, fhd));
+  }
+  // OK again: its replay back, and the replay on it from the moment showing.
+  mtime::Seconds now = minuteOf(r.session->replayAt());
+  REQUIRE(r.session->useAgain(espn, fhd, true));
+  r.tv.pool.drain();
+  CHECK_FALSE(r.store->notReplayedOn(espn, fhd));
+  REQUIRE(r.session->replay());
+  CHECK(r.session->replay()->feed == r.feedOf(501));
+  CHECK(r.session->replay()->from == now);
+  CHECK(startsWith(r.replayLines().back(), "used again; back to Mock IPTV from " + hm(now)));
+  auto again = r.logged("used again");
+  REQUIRE(again.size() == 1);
+  CHECK(startsWith(again[0].detail, "replay: it doesn't play well, set aside "));
+  // Back live: the live copy, as it was.
+  r.picture();
+  r.player->state = {};
+  r.session->goLive();
+  r.run(250);
+  CHECK(r.player->plays.back().channelId == r.channelOf(502));
+  r.noLinks();
+}
+
+TEST_CASE("replay 1.0.25: a replay set aside keeps live; the only replay plays on; another copy's leaves it") {
+  Rig r;
+  std::string espn = r.entry("ESPN");
+  r.watchLive(espn, 502);
+  // 503's replay set aside while live: the channel's replay is 501's.
+  Session::SetAsideOutcome out =
+      r.session->setAside(replayRecord(r, 503, marigold::engine::setaside::Reason::OtherChannel, 3));
+  CHECK_FALSE(out.switched);
+  CHECK_FALSE(out.alone);
+  CHECK(out.record.named.empty());
+  CHECK(r.session->feedIndex() == r.feedOf(502));  // live untouched
+  REQUIRE(r.session->replayFrom(minuteOf(mtime::now() - 3600), Why::Rewind));
+  r.tv.pool.drain();
+  r.picture();
+  CHECK(r.session->replay()->feed == r.feedOf(501));
+  // 501 now: no other copy reaches the moment, so it plays on.
+  size_t plays = r.player->plays.size();
+  out = r.session->setAside(replayRecord(r, 501, marigold::engine::setaside::Reason::Other, 1));
+  CHECK(out.alone);
+  CHECK_FALSE(out.switched);
+  CHECK(r.player->plays.size() == plays);
+  CHECK(r.session->replay()->feed == r.feedOf(501));
+  CHECK(r.session->replay()->phase == Phase::Playing);
+  // Live still has all three.
+  CHECK(r.store->feeds(espn).size() == 3);
+  r.session->goLive();
+  r.run(250);
+  r.picture();
+  // No copy left to replay on.
+  CHECK_FALSE(r.session->catchupCopy());
+  r.noLinks();
+}
+
+TEST_CASE("replay 1.0.25: 'it's at the wrong time' counts as a failed clock check of the account") {
+  Rig r;
+  std::string espn = r.entry("ESPN");
+  r.watchLive(espn, 502);
+  CHECK(r.store->clockTrust(r.channelOf(501)) == Store::ClockTrust::Unchecked);
+  CHECK(r.store->clockCheckReady(r.channelOf(503), r.tv.ms));
+  r.session->setAside(replayRecord(r, 501, marigold::engine::setaside::Reason::WrongTime, 1));
+  // The account's clock is doubted now (the copies of the account alike),
+  // and the background check measures it again after its backoff.
+  CHECK(r.store->clockTrust(r.channelOf(503)) == Store::ClockTrust::Failed);
+  CHECK_FALSE(r.store->clockCheckReady(r.channelOf(503), r.tv.ms));
+  CHECK(r.store->clockCheckReady(r.channelOf(503), r.tv.ms + Store::clockCheckBackoff(1)));
+  auto lines = r.logged("set aside");
+  REQUIRE(lines.size() == 1);
+  CHECK(startsWith(lines[0].detail, "replay: it's at the wrong time" + kDot + "its name \"US: ESPN FHD\""));
+  // Not replaying: no moment; the clock its replay would ask in.
+  CHECK(lines[0].detail.find(kDot + "at ") == std::string::npos);
+  CHECK(lines[0].detail.find("server clock ") != std::string::npos);
+  r.noLinks();
+}
+
+TEST_CASE("replay 1.0.25: its programme names wrong: it still replays; its own table leaves the Rewind bar") {
+  Rig r;
+  auto c = mockClient();
+  std::string espn = r.entry("ESPN");
+  mtime::Seconds hour = mtime::now() - mtime::now() % 3600;
+  auto b64 = [](const std::string& s) { return marigold::base64::encode(s); };
+  std::string table = R"({"epg_listings":[)";
+  for (int h = -5; h <= 0; ++h) {
+    if (h > -5) table += ",";
+    table += R"({"title":")" + b64("Old Show " + std::to_string(-h)) + R"(","start_timestamp":")" +
+             std::to_string(hour + h * 3600) + R"(","stop_timestamp":")" + std::to_string(hour + (h + 1) * 3600) +
+             R"(","has_archive":1})";
+  }
+  table += "]}";
+  r.tv.pool.answer(c.simpleDataTableRequest("501").url, table);
+  r.watchLive(espn, 501);
+  auto named = [&r, hour] {
+    std::vector<replay::Programme> t = r.session->timeline(hour - 6 * 3600);
+    return std::any_of(t.begin(), t.end(), [](const replay::Programme& p) { return p.title == "Old Show 3"; });
+  };
+  r.session->wantPast();
+  r.tv.pool.drain();
+  REQUIRE(named());
+  int serial = r.session->pastSerial();
+  Session::SetAsideOutcome out =
+      r.session->setAside(replayRecord(r, 501, marigold::engine::setaside::Reason::ReplayNames, 1));
+  CHECK(out.record.scope == marigold::engine::setaside::Scope::ReplayListings);
+  CHECK(r.session->pastSerial() != serial);  // the bar reads its programmes again
+  CHECK_FALSE(named());
+  r.session->wantPast();  // not asked of it again
+  r.tv.pool.drain();
+  CHECK_FALSE(named());
+  // It still replays (first, as before), and plays live.
+  CHECK_FALSE(r.store->notReplayedOn(espn, r.channelOf(501)));
+  REQUIRE(r.session->catchupCopy());
+  CHECK(*r.session->catchupCopy() == r.feedOf(501));
+  REQUIRE(r.session->replayFrom(minuteOf(mtime::now() - 3600), Why::Rewind));
+  r.tv.pool.drain();
+  CHECK(r.session->replay()->feed == r.feedOf(501));
+  r.picture();
+  r.session->goLive();
+  r.run(250);
+  r.picture();
+  // Used again: its own table is asked for and shown again.
+  REQUIRE(r.session->useAgain(espn, r.channelOf(501), true));
+  r.session->wantPast();
+  r.tv.pool.drain();
+  CHECK(named());
+  r.noLinks();
+}

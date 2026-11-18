@@ -11,6 +11,20 @@
 // "It's a different channel" may name the channel it is: the copy is then
 // a source of that channel (Store's copy moves, catalog::moveCopies).
 //
+// Build 182: a copy's replay can be set aside on its own (Sources during a
+// replay, "This feed's replay is wrong…"); it still plays live there:
+//
+//   Replay          not replayed on the channel (its replay choice, Live
+//                   Events' game replays through it), nor its own archive
+//                   table used on the Rewind bar
+//   ReplayListings  ("Its programme names are wrong") still replayed; only
+//                   its own archive table is left off the Rewind bar
+//
+// A record's scope: Whole (every live reason but Listings), Listings, and
+// those two. A copy can have one live record and one replay record for a
+// channel. Records saved before Build 182 have no scope: Whole or
+// Listings, by their reason.
+//
 // Kept with the lists (lists.json "setAside"), with the provider's own
 // identity of the copy (its account, stream id, name and group) so a list
 // reload that renumbers it finds it again (rematch). Pure: no store, no
@@ -29,10 +43,29 @@
 
 namespace marigold::engine::setaside {
 
-enum class Reason : uint8_t { OtherChannel, ReplayOther, WrongCity, WrongLanguage, Listings, DoesntWork, Other };
+enum class Reason : uint8_t {
+  OtherChannel,
+  ReplayOther,
+  WrongCity,
+  WrongLanguage,
+  Listings,
+  DoesntWork,
+  Other,
+  // Build 182: a replay's own reasons (with OtherChannel and Other).
+  WrongTime,
+  PlaysBadly,
+  ReplayNames,
+};
 
 // In the order the reason panel lists them.
 const std::vector<Reason>& reasons();
+// Build 182: "What's wrong with its replay?", in its order: It's a different
+// channel, It's at the wrong time, It doesn't play well, Its programme names
+// are wrong, Something else.
+const std::vector<Reason>& replayReasons();
+// Their second lines there ("The replay shows another channel's
+// programmes"; "" for Something else).
+std::string replayDetail(Reason r);
 // "It's a different channel" (the panel's row), its second line ("Shows
 // another channel's programmes"; "" for Something else), and in plain
 // words for the log ("it's a different channel").
@@ -46,6 +79,17 @@ std::optional<Reason> fromKey(std::string_view k);
 // Still played (and replayed) on its channel: only Listings.
 inline bool playable(Reason r) { return r == Reason::Listings; }
 
+// Build 182: what a record sets aside (see above). Saved as "whole",
+// "listings", "replay", "replay-listings".
+enum class Scope : uint8_t { Whole, Listings, Replay, ReplayListings };
+std::string scopeKey(Scope s);
+std::optional<Scope> scopeFromKey(std::string_view k);
+// A replay record (Replay or ReplayListings).
+inline bool isReplay(Scope s) { return s == Scope::Replay || s == Scope::ReplayListings; }
+// The scope a reason sets aside with: live (Whole, or Listings for
+// Listings), or a replay's (ReplayListings for ReplayNames, else Replay).
+Scope scopeOf(Reason r, bool replay);
+
 struct Record {
   std::string entryId;  // the channel it is set aside for
   std::string copyId;   // the raw channel ("<server>|<item>")
@@ -55,6 +99,9 @@ struct Record {
   std::string entryName;  // the channel's name when set aside
   int feed = 0;           // its number in Sources when set aside ("Feed 3")
   time::Seconds at = 0;
+  // Build 182: what it sets aside (Store::setAside makes it agree with the
+  // reason; a replay record stays one).
+  Scope scope = Scope::Whole;
   // The provider's own identity of the copy: its account ("xt:1"), its
   // stream id, its name and group in the provider's list.
   std::string server, item, name, group;
@@ -87,6 +134,21 @@ std::string logDetail(const Record& r, std::string_view onNow, std::string_view 
 // "used again": what it had been set aside as ("it's a different channel:
 // NBC Sports Bay Area, set aside Nov 16").
 std::string usedAgainDetail(const Record& r, std::string_view day);
+// Build 182: a replay record's "set aside" detail, "replay: " first: the
+// reason, the provider's name and group of the copy, the moment it showed
+// ("at 20:42"), the clock its replay asked in ("archive clock UTC (server
+// says UTC; not measured)"), what the guide and the copy's own list had
+// then; parts not known are left out:
+//   replay: it's at the wrong time · its name "US: NBC BAY AREA (KNTV)" in
+//   "|US| ✪ NFL TEAMS" · at 20:42 · archive clock UTC (server says UTC; not
+//   measured) · guide then: "Jazz at Clippers" · its own list then: "49ers
+//   Now"
+std::string replayLogDetail(const Record& r, std::string_view at, std::string_view clock,
+                            std::string_view guideThen, std::string_view ownThen);
+// "Feed 2 · replay" for a replay record (Sources' SET ASIDE row, Settings'
+// list after the channel), "Feed 2" otherwise; `number` the feed's number
+// now (0: as it was set aside).
+std::string asideName(const Record& r, int number = 0);
 
 // Finds the copy again after a list reload: its id when it is still there,
 // else a copy of the same account with the same name and group (the

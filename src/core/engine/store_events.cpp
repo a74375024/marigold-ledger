@@ -273,7 +273,7 @@ std::shared_ptr<const game_replay::Channels> replayChannelsFor(const std::vector
       if (info == m.entryInfo.end() || info->second >= m.catalog->entries.size()) continue;
       uint16_t days = 0;
       for (const std::string& copy : m.catalog->entries[info->second].members) {
-        if (store.notPlayedOn(src.channelID, copy)) continue;  // Build 181: set aside for it
+        if (store.notReplayedOn(src.channelID, copy)) continue;  // Build 181/182: set aside (or its replay) for it
         uint16_t d = store.catchupDays(copy);
         if (d <= days) continue;
         const scores::Record* r = m.scores.find(copy);

@@ -590,11 +590,13 @@ std::shared_ptr<Channels> patchRows(const ChannelRows& r, const RowFlags& f) {
   out->byId = r.byId;
   out->all = r.all;
   std::map<catalog::LineupCategory, int> blockNext;
-  // Build 181: the copies not played on a channel, by channel.
+  // Build 181: the copies not replayed on a channel, by channel (Build 182:
+  // a copy whose replay alone was set aside too).
   std::unordered_map<std::string, std::vector<std::string>> aside;
   if (f.setAside)
     for (const setaside::Record& s : *f.setAside)
-      if (!setaside::playable(s.reason)) aside[s.entryId].push_back(s.copyId);
+      if (s.scope == setaside::Scope::Whole || s.scope == setaside::Scope::Replay)
+        aside[s.entryId].push_back(s.copyId);
   for (size_t i = 0; i < out->all.size(); ++i) {
     GuideChannel& g = out->all[i];
     const ChannelRows::Row& row = r.rows[i];
@@ -609,7 +611,7 @@ std::shared_ptr<Channels> patchRows(const ChannelRows& r, const RowFlags& f) {
       // (A copy named as another channel isn't one of this row's any more.)
       int still = 0;
       for (const setaside::Record& s : *f.setAside)
-        if (s.entryId == g.id && !setaside::playable(s.reason) && s.named.empty()) ++still;
+        if (s.entryId == g.id && s.scope == setaside::Scope::Whole && s.named.empty()) ++still;
       g.feeds = std::max(0, g.feeds - still);
     }
     // Locals by their broadcast number; the rest by cable-style blocks.
@@ -4336,6 +4338,8 @@ std::shared_ptr<const Channels> Store::channelsNow() const {
           ++aside;  // Build 181: set aside for this channel
           continue;
         }
+        // Build 182: its replay set aside for this channel.
+        if (!m.setAside.empty() && notReplayedOn(e.id, member)) continue;
         if (uint16_t days = catchupDays(member)) archive.emplace_back(member, days);
       }
       g.feeds -= aside;

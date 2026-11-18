@@ -242,9 +242,9 @@ Fixture sample() {
 
 TEST_CASE("channel report: header") {
   const auto& columns = channelReportColumns();
-  CHECK(columns.size() == 65);
+  CHECK(columns.size() == 66);
   CHECK(columns.front() == "number");
-  CHECK(columns.back() == "set_aside_since");
+  CHECK(columns.back() == "set_aside_scope");
   std::string csv = channelReportCSV(ChannelReportInput());
   CHECK(csv ==
         "number,name,group,tags,hidden_group,favorite,callsign_in_name,station_lookup,match_key,"
@@ -257,7 +257,7 @@ TEST_CASE("channel report: header") {
         "provider_guide_described_next_3h,logo_sources,logo_status,directory_id,directory_match,"
         "row_id,next_titles,guide_choice,guide_rejected,row_category,row_closed,catchup_days,adult,more_categories,added,direct_source,"
         "measured_start_ms,measured_failures,measured_stalls_per_h,measured_picture,measured_plays,"
-        "set_aside,set_aside_reason,set_aside_is,set_aside_since\n");
+        "set_aside,set_aside_reason,set_aside_is,set_aside_since,set_aside_scope\n");
 }
 
 TEST_CASE("channel report: one row per channel with the Swift rules") {
@@ -266,7 +266,7 @@ TEST_CASE("channel report: one row per channel with the Swift rules") {
   std::string csv = channelReportCSV(f.input());
   auto rows = parseCsv(csv);
   REQUIRE(rows.size() == 6);
-  for (const auto& r : rows) CHECK(r.size() == 65);
+  for (const auto& r : rows) CHECK(r.size() == 66);
   CHECK(csv.back() == '\n');
 
   auto nbc = rowFor(rows, "US: NBC 4 WNBC");
@@ -400,7 +400,7 @@ TEST_CASE("channel report: what each copy's own plays showed (Build 166)") {
   ChannelReportInput in = f.input();
   in.measured = &measured;
   auto rows = parseCsv(channelReportCSV(in));
-  for (const auto& r : rows) CHECK(r.size() == 65);
+  for (const auto& r : rows) CHECK(r.size() == 66);
   auto nbc = rowFor(rows, "US: NBC 4 WNBC");
   CHECK(nbc["measured_start_ms"] == "1850");
   CHECK(nbc["measured_failures"] == "1.5");
@@ -419,22 +419,30 @@ TEST_CASE("channel report: what each copy's own plays showed (Build 166)") {
 TEST_CASE("channel report: a feed set aside for its channel (Build 181)") {
   Fixture f = sample();
   std::unordered_map<std::string, marigold::report::SetAsideCells> aside;
-  aside["xt:a|1"] = {"yes", "It's a different channel", "NBC Sports Bay Area", "2026-11-18"};
+  aside["xt:a|1"] = {"yes", "It's a different channel", "NBC Sports Bay Area", "2026-11-18", "whole"};
+  // Build 182: a copy whose replay alone was set aside, with its scope.
+  aside["xt:a|3"] = {"yes", "It's at the wrong time", "", "2026-11-18", "replay"};
   ChannelReportInput in = f.input();
   in.setAside = &aside;
   auto rows = parseCsv(channelReportCSV(in));
-  for (const auto& r : rows) CHECK(r.size() == 65);
+  for (const auto& r : rows) CHECK(r.size() == 66);
   auto nbc = rowFor(rows, "US: NBC 4 WNBC");
   CHECK(nbc["set_aside"] == "yes");
   CHECK(nbc["set_aside_reason"] == "It's a different channel");
   CHECK(nbc["set_aside_is"] == "NBC Sports Bay Area");
   CHECK(nbc["set_aside_since"] == "2026-11-18");
+  CHECK(nbc["set_aside_scope"] == "whole");
+  auto ppv = rowFor(rows, "US (ESPN+ 07) | Team A vs Team B 7:30 PM ET");
+  CHECK(ppv["set_aside_scope"] == "replay");
+  CHECK(ppv["set_aside_reason"] == "It's at the wrong time");
+  CHECK(ppv["set_aside_is"] == "");
   // The others: blank.
   auto fox = rowFor(rows, "FOX 2 Capital City");
   CHECK(fox["set_aside"] == "");
   CHECK(fox["set_aside_reason"] == "");
   CHECK(fox["set_aside_is"] == "");
   CHECK(fox["set_aside_since"] == "");
+  CHECK(fox["set_aside_scope"] == "");
 }
 
 TEST_CASE("channel report: provider guide notes") {

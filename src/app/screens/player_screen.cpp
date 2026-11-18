@@ -1041,6 +1041,24 @@ class PlayerScreen : public Screen {
       notice(said, "", 3000);
       changed = true;
     }
+    // Build 182: the copy picked in Sources carried the replay on (the
+    // REPLAY tag's few seconds again), or didn't open and the copy before
+    // plays again from the same moment.
+    if (std::optional<engine::Session::ReplaySwitch> sw = p.takeReplaySwitch()) {
+      const time::Zone& z = app_.zone();
+      ui::Ctx tmp{app_.renderer(), app_.textRenderer(), nullptr, nullptr, time::now(), 0, &z};
+      tmp.clock24 = app_.store().settings().clock24;
+      std::string when = ui::clock(tmp, sw->at);
+      namespace sa = engine::setaside;
+      if (sw->ok) {
+        notice("Replay on " + sa::feedName(sw->number), "From " + when + ", where you were", kNoticeMs);
+        behindTag_.jumped();
+      } else {
+        notice(sa::feedName(sw->number) + "'s replay didn't open",
+               "Back on " + sa::feedName(sw->backNumber) + " from " + when, kNoticeMs);
+      }
+      changed = true;
+    }
     const auto& r = p.replay();
     if (timeline_ && p.entry() != timelineEntry_) {
       timeline_ = false;  // the channel changed under it
