@@ -15,8 +15,9 @@
 namespace marigold::engine {
 namespace {
 
-bool sameFeed(const setaside::Record& r, const std::string& entryId, const std::string& copyId) {
-  return r.entryId == entryId && r.copyId == copyId;
+// Build 182: a copy's live record and its replay record are apart.
+bool sameFeed(const setaside::Record& r, const std::string& entryId, const std::string& copyId, bool replay) {
+  return r.entryId == entryId && r.copyId == copyId && setaside::isReplay(r.scope) == replay;
 }
 
 }  // namespace
@@ -24,13 +25,16 @@ bool sameFeed(const setaside::Record& r, const std::string& entryId, const std::
 setaside::Record Store::setAside(setaside::Record r) {
   Impl& m = *impl_;
   if (r.at == 0) r.at = time::now();
+  // Build 182: the scope agrees with the reason (a replay record stays one).
+  bool replay = setaside::isReplay(r.scope);
+  r.scope = setaside::scopeOf(r.reason, replay);
   auto nameOf = [&](const std::string& id) {
     if (const GuideChannel* g = channels_->find(id)) return g->name;
     auto info = m.entryInfo.find(id);
     return info == m.entryInfo.end() ? std::string() : m.catalog->entries[info->second].name;
   };
   r.entryName = nameOf(r.entryId);
-  if (r.reason != setaside::Reason::OtherChannel || r.named == r.entryId) r.named.clear();
+  if (r.reason != setaside::Reason::OtherChannel || r.named == r.entryId || replay) r.named.clear();
   r.namedName = r.named.empty() ? std::string() : nameOf(r.named);
   // The provider's own identity of the copy, to find it again.
   auto ci = m.indexByID.find(r.copyId);
@@ -42,21 +46,22 @@ setaside::Record Store::setAside(setaside::Record r) {
     r.group = c.group.value_or("");
   }
   m.setAside.erase(std::remove_if(m.setAside.begin(), m.setAside.end(),
-                                  [&](const setaside::Record& x) { return sameFeed(x, r.entryId, r.copyId); }),
+                                  [&](const setaside::Record& x) { return sameFeed(x, r.entryId, r.copyId, replay); }),
                    m.setAside.end());
   m.setAside.push_back(r);
   if (!r.named.empty()) m.movesBack.erase(r.copyId);
   saveListsLater();
   applyCopyMoves();
   m.channelsDirty = true;
-  listingsAgain({r.entryId, r.named});
+  // (A replay record leaves the guide's listings as they are.)
+  if (!replay) listingsAgain({r.entryId, r.named});
   return r;
 }
 
-bool Store::useAgain(const std::string& entryId, const std::string& copyId) {
+bool Store::useAgain(const std::string& entryId, const std::string& copyId, bool replay) {
   Impl& m = *impl_;
   auto it = std::find_if(m.setAside.begin(), m.setAside.end(),
-                         [&](const setaside::Record& x) { return sameFeed(x, entryId, copyId); });
+                         [&](const setaside::Record& x) { return sameFeed(x, entryId, copyId, replay); });
   if (it == m.setAside.end()) return false;
   setaside::Record r = *it;
   m.setAside.erase(it);
@@ -68,7 +73,7 @@ bool Store::useAgain(const std::string& entryId, const std::string& copyId) {
   saveListsLater();
   applyCopyMoves();
   m.channelsDirty = true;
-  listingsAgain({r.entryId, r.named});
+  if (!replay) listingsAgain({r.entryId, r.named});
   return true;
 }
 
@@ -86,22 +91,54 @@ std::vector<setaside::Record> Store::setAsidesFor(const std::string& entryId) co
   return out;
 }
 
-std::optional<setaside::Record> Store::setAsideOf(const std::string& entryId, const std::string& copyId) const {
+std::optional<setaside::Record> Store::setAsideOf(const std::string& entryId, const std::string& copyId,
+                                                  bool replay) const {
   for (const setaside::Record& r : impl_->setAside)
-    if (sameFeed(r, entryId, copyId)) return r;
+    if (sameFeed(r, entryId, copyId, replay)) return r;
   return std::nullopt;
 }
 
-bool Store::notPlayedOn(const std::string& entryId, const std::string& copyId) const {
-  for (const setaside::Record& r : impl_->setAside)
-    if (sameFeed(r, entryId, copyId) && !setaside::playable(r.reason)) return true;
+namespace {
+
+// Any record of the copy for the channel, live or replay, in these scopes.
+template <class... S>
+bool anyIn(const std::vector<setaside::Record>& all, const std::string& entryId, const std::string& copyId,
+           S... scopes) {
+  for (const setaside::Record& r : all)
+    if (r.entryId == entryId && r.copyId == copyId && ((r.scope == scopes) || ...)) return true;
   return false;
 }
 
+}  // namespace
+
+bool Store::notPlayedOn(const std::string& entryId, const std::string& copyId) const {
+  return anyIn(impl_->setAside, entryId, copyId, setaside::Scope::Whole);
+}
+
+bool Store::notReplayedOn(const std::string& entryId, const std::string& copyId) const {
+  return anyIn(impl_->setAside, entryId, copyId, setaside::Scope::Whole, setaside::Scope::Replay);
+}
+
 bool Store::listingsSetAside(const std::string& entryId, const std::string& copyId) const {
+  return anyIn(impl_->setAside, entryId, copyId, setaside::Scope::Whole, setaside::Scope::Listings);
+}
+
+bool Store::ownTableSetAside(const std::string& entryId, const std::string& copyId) const {
+  return anyIn(impl_->setAside, entryId, copyId, setaside::Scope::Whole, setaside::Scope::Listings,
+               setaside::Scope::Replay, setaside::Scope::ReplayListings);
+}
+
+std::vector<int> Store::feedNumbers(const std::string& entryId, const std::vector<Feed>& feeds) const {
+  std::vector<int> taken;
   for (const setaside::Record& r : impl_->setAside)
-    if (sameFeed(r, entryId, copyId)) return true;
-  return false;
+    if (r.entryId == entryId && r.scope == setaside::Scope::Whole && r.feed > 0) taken.push_back(r.feed);
+  std::vector<size_t> shown;
+  for (size_t i = 0; i < feeds.size(); ++i)
+    if (!notPlayedOn(entryId, feeds[i].channelId)) shown.push_back(i);
+  std::vector<int> numbers = setaside::feedNumbers(shown.size(), taken);
+  std::vector<int> out(feeds.size(), 0);
+  for (size_t k = 0; k < shown.size(); ++k) out[shown[k]] = numbers[k];
+  return out;
 }
 
 std::string Store::copyOnNow(const std::string& copyId, time::Seconds now) const {

@@ -2481,3 +2481,56 @@ Set aside, a feed isn't played, replayed or used for listings on that channel (t
 | Log | Playback log after setting one aside | `set aside · KNTV · Feed 3 · Dream · it's a different channel: NBC Sports Bay Area · its name "…" in "…" · on now: "49ers Now" · guide: "Jazz at Clippers"`; "used again" on undo. No link, host or login anywhere |
 | Report | Channel report | The feed's row: set_aside "yes", set_aside_reason, set_aside_is (the channel named), set_aside_since (the date) |
 | Counts | Every new screen | No number of channels anywhere |
+
+## Build 182: 1.0.25, Sources in a replay: the copies that reach this moment
+
+Before, Sources (Red key) during a replay showed the live feeds with the check mark on the live feed (on KNTV: the cf.hrshsauras feed, which keeps no replay at all, while the replay played from a Dream or Trex copy), and picking a feed left the replay for live. Now, while a replay is on (playing, opening or paused), Sources is the replay's:
+
+- **Corner and title.** "REPLAY · 8:42 PM" (the moment showing, moving on as it plays) and the channel's name.
+- **REPLAY FROM 8:42 PM WITH.** The channel's copies whose archive reaches that moment, in the order the replay picks them (clock trust, archive length, how its replays went, the copy playing, ...). Each is "Feed N" with its picture, its replay depth and the provider: "Playing now · 1080p 30 · replay 2 days · Dream" on the copy the replay plays (the check mark is there, never on the live one). A note where three replays or more tell: "replays held up well", or in amber "stalled in a replay lately" (start failures and stalls an hour clearly above the others, the same margin the replay's choice uses).
+- **CAN'T REPLAY 8:42 PM.** The others, dimmed: "Live only · cf.hrshsauras" (no archive), "Its replay doesn't reach 8:42 PM · Dream" (archive too short), "You set its replay aside · Dream". OK does nothing on them; hold OK gives the live menu (Play this feed goes live on it).
+- **Feed numbers** as the live panel has them (Feed 3 set aside: Feed 1, 2, 4); feeds set aside (Build 181) aren't in either section; SET ASIDE, ALWAYS START WITH and GUIDE are as before.
+- **Picking a copy** carries the replay on there from the same minute; Sources closes, the player says "Replay on Feed 4" / "From 8:42 PM, where you were", and the REPLAY tag shows again. The copy already playing: nothing. If it shows no picture within the replay's start time (10 s, or 25 s started inside), or fails at once, the replay goes back to the copy before at the same moment (not another copy, not live): "Feed 4's replay didn't open" / "Back on Feed 2 from 8:42 PM".
+- **Live** stays on the controls' Live button ("For live, press Live in the controls."). Outside a replay, Sources is as in 1.0.24.
+
+**This feed's replay is wrong…** Hold OK on a row under REPLAY FROM … WITH: "FEED 2 · DREAM", Replay from this feed (as OK), This feed's replay is wrong…. Then "KNTV · FEED 2 · DREAM", What's wrong with its replay?: It's a different channel ("The replay shows another channel's programmes"), It's at the wrong time ("Off from the time picked, e.g. an hour early"), It doesn't play well ("Stalls, freezes or won't open"), Its programme names are wrong ("The Rewind bar names other shows"), Something else. Replay only, for that channel only: the feed still plays live there.
+
+- Different channel, doesn't play well, something else: not replayed on that channel (the replay's choice, Live Events' game replays through it, its own archive table on the Rewind bar).
+- Wrong time: the same, and it counts as a failed clock check of its account: the background check measures that account's clock again (2 min later, then the usual backoff).
+- Programme names: it still replays; only its own archive table is left off the Rewind bar for that channel.
+- The copy replaying: the replay carries on at once on the next copy that reaches the moment ("Feed 2's replay set aside for KNTV" / "Replay on Feed 4 from 8:42 PM · OK again to undo"); none: it plays on ("It's the only replay, so it plays on · OK again to undo"). Programme names: "Its programme names won't be used · OK again to undo".
+- OK again (its row under SET ASIDE, "Feed 2 · replay", "OK to use its replay again") puts it back, and the replay moved off it plays on it again from the moment showing.
+- In the live panel the feed's row says "replay set aside" in amber; Settings › Help › Feeds you set aside lists "KNTV · Feed 2 · replay".
+
+The playback log (never a link, a host or a login):
+
+- `replay: switched by you to Trex from 20:42; ...` (the clock and plan as every stretch's line)
+- `replay: the copy you picked didn't open (no picture after 10 s); back to Dream from 20:42; ...`
+- `summary: Dream → Trex, ...` (the copies in order, as in 1.0.23)
+- `set aside · KNTV · Feed 2 · Dream · replay: it's at the wrong time · its name "US: NBC BAY AREA (KNTV)" in "|US| ✪ NFL TEAMS" · at 20:42 · archive clock UTC (server says UTC; not measured) · guide then: "Jazz at Clippers" · its own list then: "49ers Now"` (parts not known left out)
+- `replay: its replay set aside; on to Trex from 20:42; ...` when the copy replaying was set aside; `replay: used again; back to Dream from 20:42; ...` on undo; `used again · ... · replay: it's at the wrong time, set aside today`
+- The channel report: `set_aside_scope` (whole, listings, replay, replay-listings) after set_aside_since.
+
+| Check | How | Pass |
+|---|---|---|
+| The KNTV case | KNTV live on the cf.hrshsauras feed, Rewind an hour, then Red | "REPLAY · 8:42 PM"; REPLAY FROM 8:42 PM WITH lists the Dream / Trex copies with the check on the one replaying ("Playing now · … · Dream"); cf.hrshsauras is under CAN'T REPLAY as "Live only · cf.hrshsauras", dimmed |
+| Order | The same with two copies of the same archive length | The copy replaying first unless another's replays clearly went better; the order matches the replay's own choice (Rewind again picks the first) |
+| Too short | Rewind past a day on a channel Trex keeps one day and Dream two | Trex's copy: "Its replay doesn't reach …" under CAN'T REPLAY |
+| Notes | A copy with three or more replays | "replays held up well", or "stalled in a replay lately" in amber when it stalled or failed to start clearly more; nothing with fewer |
+| Pick | OK on another copy | Sources closes; "Replay on Feed 4" / "From 8:42 PM, where you were"; the REPLAY tag shows; the picture is the same moment; log `switched by you to …` |
+| Same copy | OK on the copy playing | Nothing happens |
+| Doesn't open | Pick a copy whose replay won't start (or unplug the network right after picking) | After about 10 s: "Feed 4's replay didn't open" / "Back on Feed 2 from 8:42 PM"; the replay plays on the copy before, same minute; log `the copy you picked didn't open (…); back to …` |
+| Paused | Pause a replay, Red, pick another copy | The replay plays on the picked copy from the paused minute |
+| Live | Live in the controls during a replay | Live on the live feed as before; Sources is the live one again |
+| Numbers | A channel with Feed 3 set aside (Build 181), in a replay | Feed numbers as in the live panel; Feed 3 in neither section, still under SET ASIDE |
+| Hold menu | Hold OK on a replay row; on a CAN'T REPLAY row | "FEED 2 · DREAM": Replay from this feed, This feed's replay is wrong…; the CAN'T REPLAY row: the 1.0.24 menu (Play this feed goes live) |
+| Replay set aside | This feed's replay is wrong… › It doesn't play well, on the copy replaying | "Feed 2's replay set aside for KNTV" / "Replay on Feed 4 from 8:42 PM · OK again to undo"; the replay goes on at the same minute on Feed 4; Feed 2 under CAN'T REPLAY "You set its replay aside" |
+| Undo | OK again right away | "Feed 2's replay is back on KNTV"; the replay goes back to Feed 2 at the moment showing |
+| Live keeps it | Live after setting its replay aside | Feed 2 still plays live; its row says "replay set aside" in amber; SET ASIDE "Feed 2 · replay", "OK to use its replay again" |
+| Only replay | The same on a channel with one replay copy | "It's the only replay, so it plays on · OK again to undo"; the replay goes on |
+| Wrong time | It's at the wrong time | As above, and a background clock check of that account runs again within a few minutes (log `clock check (background): …`) |
+| Names | Its programme names are wrong | "Its programme names won't be used · OK again to undo"; it keeps replaying; the Rewind bar shows the guide's names only |
+| Restart | Quit and reopen | Still set aside, as replay; Settings › Help › Feeds you set aside: "KNTV · Feed 2 · replay" |
+| Log | Export the playback log | The lines above; no link, host or login anywhere |
+| Report | Channel report | set_aside_scope "replay" (or "replay-listings") on the feed's row; older ones "whole" or "listings" |
+| Other platforms | Android / Fire TV, Apple TV, Mac | The same panel, notices and log lines |

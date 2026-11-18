@@ -537,9 +537,76 @@ class Session {
     bool alone = false;       // it was playing and no other feed can
     std::string playing;      // the raw channel playing after it ("" none)
   };
+  //
+  // Build 182: a replay record (setaside::Scope::Replay, ReplayListings),
+  // from Sources during a replay: its "set aside" line starts "replay: "
+  // (the moment, the clock its replay asked in, what the guide and the
+  // copy's own list had then). "It's at the wrong time" also counts as a
+  // failed clock check on its account (the background check measures it
+  // again). The copy replaying set aside (not for its programme names):
+  // the replay carries on at once on the next copy that reaches the moment
+  // (`switched`); with none it plays on (`alone`). Live is left as it is.
   SetAsideOutcome setAside(setaside::Record r);
   // OK on a feed set aside: the store uses it again; a "used again" line.
-  bool useAgain(const std::string& entryId, const std::string& copyId);
+  // Build 182: `replay`, its replay record: the replay moved off it plays
+  // on it again, from the moment showing.
+  bool useAgain(const std::string& entryId, const std::string& copyId, bool replay = false);
+
+  // Build 182, Sources during a replay (session_sources.cpp): the
+  // channel's copies as they stand for the moment the replay shows. Those
+  // set aside for the channel (Build 181) aren't among them.
+  struct ReplaySource {
+    size_t index = 0;       // in feeds()
+    int number = 0;         // Sources' number for it ("Feed 4"; feedNumber)
+    std::string label;      // "Feed 4"
+    std::string provider;   // the provider account's name ("" none)
+    std::string picture;    // what its plays measured ("1080p 30"; "" not known)
+    uint16_t days = 0;      // the archive its provider says it keeps
+    bool reaches = false;   // its archive holds the moment: it can carry on the replay
+    // Why it can't: no archive (or not this channel's), an archive too
+    // short for the moment, its replay set aside here.
+    enum class Why : uint8_t { None, LiveOnly, TooShort, SetAside } why = Why::None;
+    // How its replays went (feed_scores: kEnoughReplays, and the margin of
+    // archiveCopyFor's tie-break): held up well, or stalled / failed to
+    // start clearly more than the others (or than a copy without trouble).
+    enum class Note : uint8_t { None, HeldUp, Stalled } note = Note::None;
+    bool playing = false;   // the copy the replay plays on (its check mark)
+  };
+  struct ReplaySources {
+    time::Seconds at = 0;                // the moment showing
+    std::vector<ReplaySource> reaching;  // in the order the replay would pick them
+    std::vector<ReplaySource> cannot;    // the rest, in feeds() order
+  };
+  // Nothing while no replay is on (paused or not), or on a race camera.
+  ReplaySources replaySources() const;
+  // A row's second line, `when` being the moment as the screen says it:
+  // "Playing now · 1080p 30 · replay 2 days · Dream", "1080p 60 · replay 1
+  // day · replays held up well · Trex"; "Live only · Dream", "Its replay
+  // doesn't reach 8:42 PM · Dream", "You set its replay aside · Dream".
+  static std::string replaySourceLine(const ReplaySource& s, const std::string& when);
+  // "replays held up well", "stalled in a replay lately" ("" none).
+  static std::string replayNoteText(ReplaySource::Note n);
+  // Carries the replay on on copy `index` (one that reaches the moment)
+  // from the moment showing: "switched by you to Trex from 20:42" in the
+  // log. Its replay not opening (no picture in time, or an error) goes
+  // back to the copy before, at the same moment (never another copy, nor
+  // live): "the copy you picked didn't open (…); back to Dream from 20:42".
+  // False (nothing done): no replay, the copy already replaying, one that
+  // can't replay the moment.
+  bool replayOn(size_t index);
+  // Once, for the player's notice: the copy picked opened ("Replay on Feed
+  // 4" / "From 8:42 PM, where you were"), or didn't and the one before
+  // plays again ("Feed 4's replay didn't open" / "Back on Feed 2 from
+  // 8:42 PM").
+  struct ReplaySwitch {
+    bool ok = false;
+    size_t feed = 0, back = 0;         // the copy picked, the one before (feeds())
+    int number = 0, backNumber = 0;    // their numbers in Sources
+    time::Seconds at = 0;              // the moment it carried on from
+  };
+  std::optional<ReplaySwitch> takeReplaySwitch();
+  // Sources' number for feed `index` (Store::feedNumbers; 0 none).
+  int feedNumber(size_t index) const;
 
  private:
   // `start`: the feed to start with (Build 181: the one after a feed set aside).
@@ -570,7 +637,21 @@ class Session {
   std::optional<size_t> archiveCopy(size_t live) const;
   // Build 166: copy `i` can serve the replay of a channel playing live on
   // `live` (its own copy, or the live one, keeping an archive).
+  // Build 182: not one whose replay is set aside for the channel
+  // (replayAside).
   bool keepsArchive(size_t i, size_t live) const;
+  bool ownArchive(size_t i, size_t live) const;
+  bool replayAside(size_t i) const;
+  // Build 182: the channel copy `i` replays for (a game's: its channel).
+  std::string replayChannel(size_t i) const;
+  // Build 182: a switch of the replay's copy: the viewer's pick (with the
+  // way back), a set-aside's move off the copy, its undo.
+  enum class SwitchWhy { Picked, SetAside, UsedAgain };
+  bool switchReplay(size_t index, SwitchWhy why);
+  SetAsideOutcome setAsideReplay(setaside::Record r);
+  // "archive clock UTC (server says UTC; not measured)": the clock the
+  // copy's replay asks in ("" not known).
+  std::string clockWords(size_t copy) const;
   // The longest archive among them (days).
   uint16_t longestArchive(size_t live) const;
   // The copy to replay `at` on (catchupCopy's order), `playing` preferred
@@ -808,6 +889,20 @@ class Session {
   std::string pastFor_;
   std::optional<std::vector<replay::Programme>> past_;
   int pastSerial_ = 0;
+  // Build 182: the copy whose own table past_ is (its records may leave it
+  // off the bar).
+  std::string pastCopy_;
+  // Build 182: the viewer's pick of a copy for the replay, until its
+  // picture (or not): the copy before, the one picked, the moment.
+  struct ReplayPick {
+    size_t from = 0, to = 0;
+    time::Seconds at = 0;
+  };
+  std::optional<ReplayPick> replayPick_;
+  std::optional<ReplaySwitch> replaySwitch_;
+  // Build 182: the copy a replay set-aside moved the replay off ("" none):
+  // used again, the replay goes back to it.
+  std::string replayAsideFrom_;
   std::shared_ptr<int> alive_ = std::make_shared<int>(0);
   // Back to live after a replay: that copy's picture coming up again is
   // not a new success for it (the first feed outcome after the return).

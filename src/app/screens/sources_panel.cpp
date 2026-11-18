@@ -9,6 +9,16 @@
 // feed is wrong…); the reasons, and for "It's a different channel" which
 // one it is (optional); then back here with a notice at the top and the
 // feed's row under SET ASIDE focused, so OK again uses it again.
+//
+// Build 182: during a replay (paused or not) the panel is the replay's:
+// "REPLAY · 8:42 PM" in the corner, the copies whose archive reaches that
+// moment ("REPLAY FROM 8:42 PM WITH", in the order the replay would pick
+// them, the check mark on the copy replaying) and the others, dimmed, with
+// why ("CAN'T REPLAY 8:42 PM"). OK on one carries the replay on there from
+// the same moment (the panel closes; the player says how it went). Hold OK
+// on a replay row: Replay from this feed, This feed's replay is wrong… (its
+// replay set aside for the channel; live keeps it). Going live stays on
+// the controls' Live button.
 #include <algorithm>
 #include <memory>
 #include <string>
@@ -19,6 +29,7 @@
 #include "app/screens/panel_screen.hpp"
 #include "app/screens/screens.hpp"
 #include "app/store/store.hpp"
+#include "app/ui/ui.hpp"
 #include "core/catalog/lineup.hpp"
 #include "core/engine/source_test.hpp"
 #include "core/util/strings.hpp"
@@ -40,6 +51,14 @@ std::string catalogName(const GuideChannel* g) {
     if (str::endsWith(g->name, tail)) return g->name.substr(0, g->name.size() - std::string(tail).size());
   }
   return g->name;
+}
+
+// "8:42 PM" (or "20:42"), as the screens say a time.
+std::string clockAt(App& app, time::Seconds t) {
+  const time::Zone& z = app.zone();
+  ui::Ctx tmp{app.renderer(), app.textRenderer(), nullptr, nullptr, time::now(), 0, &z};
+  tmp.clock24 = app.store().settings().clock24;
+  return ui::clock(tmp, t);
 }
 
 // What a channel shows now ("" without listings).
@@ -124,6 +143,7 @@ void versionRows(App& app, ui::ListPanel& p, std::shared_ptr<std::string> curren
 struct SourcesState {
   PanelScreen* screen = nullptr;
   std::string focusCopy;
+  bool focusReplay = false;  // Build 182: its replay record's row
   int focusRow = -1;  // its row, as the last build placed it
 };
 
@@ -140,14 +160,11 @@ struct Shown {
 std::vector<Shown> shownFeeds(App& app, const std::string& id) {
   Playback& pb = app.playback();
   std::vector<Feed> feeds = pb.entry() == id ? pb.feeds() : app.store().feeds(id);
-  std::vector<int> taken;
-  for (const setaside::Record& r : app.store().setAsidesFor(id))
-    if (!setaside::playable(r.reason) && r.feed > 0) taken.push_back(r.feed);
+  // Build 182: the store's numbering, which the replay's rows share.
+  std::vector<int> numbers = app.store().feedNumbers(id, feeds);
   std::vector<Shown> out;
   for (size_t i = 0; i < feeds.size(); ++i)
-    if (!app.store().notPlayedOn(id, feeds[i].channelId)) out.push_back({i, feeds[i], 0});
-  std::vector<int> numbers = setaside::feedNumbers(out.size(), taken);
-  for (size_t k = 0; k < out.size(); ++k) out[k].number = numbers[k];
+    if (numbers[i] > 0) out.push_back({i, feeds[i], numbers[i]});
   return out;
 }
 
@@ -178,6 +195,25 @@ void playFeed(App& app, const std::string& id, size_t index) {
   play.useFeed(index);
 }
 
+// Build 182: Sources is the replay's while one of this channel is on.
+bool replayMode(App& app, const std::string& id) {
+  Playback& pb = app.playback();
+  return pb.entry() == id && pb.replay().has_value();
+}
+
+// The replay carries on on copy `index` from the moment showing; Sources
+// closes so the player's notice and tag show (the copy already replaying:
+// nothing).
+void replayFrom(App& app, const std::shared_ptr<SourcesState>& state, size_t index) {
+  Playback& pb = app.playback();
+  if (!pb.replay() || pb.replay()->feed == index) return;
+  if (!pb.replayOn(index)) return;
+  if (state->screen) {
+    app.nav().popTo(state->screen);
+    if (app.nav().top() == state->screen) app.nav().pop();
+  }
+}
+
 // The set-aside is done: back to Sources, its notice at the top ("Feed 3
 // set aside for KNTV" over what plays now and "OK again to undo"), the
 // focus on the feed's row under SET ASIDE, where OK uses it again.
@@ -204,10 +240,93 @@ void setAsideNow(App& app, const std::shared_ptr<SourcesState>& state, setaside:
   if (!state->screen) return;
   app.nav().popTo(state->screen);
   state->focusCopy = copy;
+  state->focusReplay = false;
   state->screen->rebuild();
   if (state->focusRow >= 0) state->screen->panel().focusIndex(state->focusRow);
   state->focusCopy.clear();
   state->screen->notice(title, detail, 5000);
+}
+
+// Build 182: a copy's replay set aside: back to Sources, its notice ("Feed
+// 2's replay set aside for KNTV" over "Replay on Feed 4 from 8:42 PM · OK
+// again to undo"), the focus on its row under SET ASIDE.
+void setAsideReplayNow(App& app, const std::shared_ptr<SourcesState>& state, setaside::Record r) {
+  std::string id = r.entryId;
+  std::string copy = r.copyId;
+  r.scope = setaside::Scope::Replay;  // the store makes it agree with the reason
+  engine::Session::SetAsideOutcome out = app.playback().setAside(std::move(r));
+  const setaside::Record& s = out.record;
+  std::string title = setaside::feedName(s.feed) + "'s replay set aside for " + channelName(app, id);
+  std::string detail;
+  if (out.switched) {
+    int now = numberOf(app, id, out.playing);
+    detail = "Replay on " + (now > 0 ? setaside::feedName(now) : std::string("another feed")) + " from " +
+             clockAt(app, app.playback().replayAt()) + " Â· OK again to undo";
+  } else if (s.scope == setaside::Scope::ReplayListings) {
+    detail = "Its programme names won't be used Â· OK again to undo";
+  } else if (out.alone) {
+    detail = "It's the only replay, so it plays on Â· OK again to undo";
+  } else {
+    detail = "It still plays live; its replay won't be used Â· OK again to undo";
+  }
+  if (!state->screen) return;
+  app.nav().popTo(state->screen);
+  state->focusCopy = copy;
+  state->focusReplay = true;
+  state->screen->rebuild();
+  if (state->focusRow >= 0) state->screen->panel().focusIndex(state->focusRow);
+  state->focusCopy.clear();
+  state->focusReplay = false;
+  state->screen->notice(title, detail, 5000);
+}
+
+// "What's wrong with its replay?": a replay's reasons, each with what it
+// means.
+std::unique_ptr<Screen> makeReplayReason(App& app, std::shared_ptr<SourcesState> state, setaside::Record base) {
+  std::string heading = feedHeading(app, base.entryId, base.copyId, base.feed, true);
+  return std::make_unique<PanelScreen>(app, PanelScreen::Side::Trailing, 760.0f,
+                                       [&app, state, base, heading](ui::ListPanel& p) {
+    p.subtitle = heading;
+    p.title = "What's wrong with its replay?";
+    for (setaside::Reason why : setaside::replayReasons()) {
+      ui::PanelItem it{ui::PanelItem::Kind::Action, setaside::title(why)};
+      it.detail = setaside::replayDetail(why);
+      setaside::Record r = base;
+      r.reason = why;
+      it.select = [&app, state, r] { setAsideReplayNow(app, state, r); };
+      p.items.push_back(it);
+    }
+  });
+}
+
+// Build 182: hold OK on a replay row: the small menu beside Sources.
+void replayMenu(App& app, const std::shared_ptr<SourcesState>& state, const std::string& id,
+                const engine::Session::ReplaySource& s) {
+  std::string copy = app.playback().feeds()[s.index].channelId;
+  size_t index = s.index;
+  int number = s.number;
+  std::string heading = feedHeading(app, id, copy, number, false);
+  app.nav().push(std::make_unique<PanelScreen>(app, PanelScreen::Side::Beside, 520.0f,
+                                               [&app, state, id, copy, index, number, heading](ui::ListPanel& p) {
+    p.subtitle = heading;
+    ui::PanelItem play{ui::PanelItem::Kind::Action, "Replay from this feed"};
+    play.select = [&app, state, index] {
+      if (state->screen) app.nav().popTo(state->screen);
+      replayFrom(app, state, index);
+    };
+    p.items.push_back(play);
+    ui::PanelItem wrong{ui::PanelItem::Kind::Action, "This feed's replay is wrongâ¦"};
+    wrong.select = [&app, state, id, copy, number] {
+      if (state->screen) app.nav().popTo(state->screen);
+      setaside::Record r;
+      r.entryId = id;
+      r.copyId = copy;
+      r.feed = number;
+      r.scope = setaside::Scope::Replay;
+      app.nav().push(makeReplayReason(app, state, r));
+    };
+    p.items.push_back(wrong);
+  }));
 }
 
 // "Which channel is it?" (optional): channels whose guide shows now what
@@ -325,32 +444,72 @@ void setAsideRows(App& app, ui::ListPanel& p, const std::shared_ptr<SourcesState
   std::string name = channelName(app, id);
   std::vector<std::string> elsewhere;
   bool notPlayed = false, listings = false;
+  bool replays = false;
   for (const setaside::Record& r : aside) {
-    int number = setaside::playable(r.reason) ? numberOf(app, id, r.copyId) : 0;
-    ui::PanelItem it{ui::PanelItem::Kind::Action, setaside::feedName(number > 0 ? number : r.feed)};
+    bool replay = setaside::isReplay(r.scope);
+    // Still shown above (listings or replay set aside): the number it has there.
+    int number = r.scope != setaside::Scope::Whole ? numberOf(app, id, r.copyId) : 0;
+    ui::PanelItem it{ui::PanelItem::Kind::Action, setaside::asideName(r, number)};
     it.detail = setaside::rowLine(r, app.store().providerName(r.copyId),
                                   engine::sourcetest::testedDay(r.at, now, app.zone()));
     it.warn = true;
-    it.third = "OK to use it again";
+    it.third = replay ? "OK to use its replay again" : "OK to use it again";
     it.okLabel = "Use again";
     std::string copy = r.copyId;
-    std::string line = setaside::feedName(r.feed) + " is back on " + name;
-    it.select = [&app, state, id, copy, line] {
-      app.playback().useAgain(id, copy);
+    std::string line = setaside::feedName(number > 0 ? number : r.feed) + (replay ? "'s replay" : "") +
+                       " is back on " + name;
+    it.select = [&app, state, id, copy, line, replay] {
+      app.playback().useAgain(id, copy, replay);
       if (state->screen) state->screen->notice(line, "", 3500);
     };
-    if (copy == state->focusCopy) state->focusRow = static_cast<int>(p.items.size());
+    if (copy == state->focusCopy && replay == state->focusReplay) state->focusRow = static_cast<int>(p.items.size());
     p.items.push_back(it);
-    (setaside::playable(r.reason) ? listings : notPlayed) = true;
+    if (replay) replays = true;
+    else (setaside::playable(r.reason) ? listings : notPlayed) = true;
     if (!r.namedName.empty()) elsewhere.push_back(r.namedName);
   }
   std::string about;
   if (notPlayed) about = "Set aside: not played, replayed or used for listings on " + name + ".";
   if (listings) about += std::string(about.empty() ? "" : " ") + "Listings set aside: still played, but its listings "
                          "aren't used on " + name + ".";
+  if (replays) about += std::string(about.empty() ? "" : " ") + "Replay set aside: still played live, but not "
+                        "replayed on " + name + " (or, for programme names, its own names aren't used on Rewind).";
   if (elsewhere.size() == 1) about += " It's offered on " + elsewhere[0] + " instead.";
   else if (elsewhere.size() > 1) about += " Those named as another channel are offered there instead.";
   p.items.push_back(ui::PanelItem::note(about));
+}
+
+// Build 182, a replay's Sources: "REPLAY · 8:42 PM" in the corner; the
+// copies that reach the moment, then those that can't (dimmed, with why;
+// hold OK on one: the live menu).
+void replayRows(App& app, ui::ListPanel& p, const std::shared_ptr<SourcesState>& state, const std::string& id,
+                const std::vector<Shown>& shown, bool channel) {
+  Playback& pb = app.playback();
+  engine::Session::ReplaySources rows = pb.replaySources();
+  std::string when = clockAt(app, rows.at);
+  p.corner = "REPLAY \xc2\xb7 " + when;
+  if (!rows.reaching.empty()) p.items.push_back(ui::PanelItem::header("REPLAY FROM " + when + " WITH"));
+  for (const engine::Session::ReplaySource& s : rows.reaching) {
+    ui::PanelItem it{ui::PanelItem::Kind::Check, s.label};
+    it.detail = engine::Session::replaySourceLine(s, when);
+    it.warn = s.note == engine::Session::ReplaySource::Note::Stalled;
+    it.on = s.playing;
+    size_t index = s.index;
+    it.select = [&app, state, index] { replayFrom(app, state, index); };
+    if (channel) it.hold = [&app, state, id, s] { replayMenu(app, state, id, s); };
+    p.items.push_back(it);
+  }
+  if (!rows.cannot.empty()) p.items.push_back(ui::PanelItem::header("CAN'T REPLAY " + when));
+  for (const engine::Session::ReplaySource& s : rows.cannot) {
+    ui::PanelItem it{ui::PanelItem::Kind::Check, s.label};
+    it.detail = engine::Session::replaySourceLine(s, when);
+    it.on = s.playing;  // its replay set aside while it was the only one: it plays on
+    it.dim = true;      // can't carry the replay on: OK does nothing here
+    if (channel)
+      for (const Shown& f : shown)
+        if (f.index == s.index) it.hold = [&app, state, id, f] { feedMenu(app, state, id, f); };
+    p.items.push_back(it);
+  }
 }
 
 }  // namespace
@@ -375,8 +534,14 @@ std::unique_ptr<Screen> makeSources(App& app, const std::string& entryId) {
       return;
     }
     std::string pinned = app.store().pinnedFeed(id);
-    p.items.push_back(ui::PanelItem::header(g && !g->partner.empty() ? (g->west ? "WATCH WITH (WEST)" : "WATCH WITH (EAST)")
-                                                                     : "WATCH WITH"));
+    bool channel = g != nullptr && !app.store().isEvent(id);
+    bool replaying = replayMode(app, id);
+    if (replaying) {
+      replayRows(app, p, state, id, feeds, channel);
+    } else {
+      p.items.push_back(ui::PanelItem::header(
+          g && !g->partner.empty() ? (g->west ? "WATCH WITH (WEST)" : "WATCH WITH (EAST)") : "WATCH WITH"));
+    }
     bool watching = pb.entry() == id;
     time::Seconds now = time::now();
     // Build 166: what Test all sources (and real plays) measured on
@@ -385,10 +550,9 @@ std::unique_ptr<Screen> makeSources(App& app, const std::string& entryId) {
     time::Seconds tested = 0;
     for (const Shown& f : feeds)
       if (const engine::scores::Record* rec = book.find(f.feed.channelId)) tested = std::max(tested, rec->probedAt);
-    if (tested > 0) p.corner = "tested " + engine::sourcetest::testedDay(tested, now, app.zone());
+    if (tested > 0 && !replaying) p.corner = "tested " + engine::sourcetest::testedDay(tested, now, app.zone());
     // Build 181: a guide channel's feeds can be set aside for it (hold OK).
-    bool channel = g != nullptr && !app.store().isEvent(id);
-    for (size_t k = 0; k < feeds.size(); ++k) {
+    for (size_t k = 0; k < feeds.size() && !replaying; ++k) {
       const Shown& f = feeds[k];
       size_t i = f.index;
       ui::PanelItem it{ui::PanelItem::Kind::Check, setaside::feedName(f.number)};
@@ -420,6 +584,11 @@ std::unique_ptr<Screen> makeSources(App& app, const std::string& entryId) {
         it.detail = status + " \xc2\xb7 " + f.feed.label;
       }
       if (f.feed.channelId == pinned) it.detail += " \xc2\xb7 Always first";
+      // Build 182: its replay set aside here (it still plays live).
+      if (app.store().notReplayedOn(id, f.feed.channelId)) {
+        it.detail += " \xc2\xb7 replay set aside";
+        it.warn = true;
+      }
       it.on = playing;
       it.select = [&app, id, i] { playFeed(app, id, i); };
       Shown held = f;
@@ -459,6 +628,10 @@ std::unique_ptr<Screen> makeSources(App& app, const std::string& entryId) {
       p.items.push_back(listings);
     }
     setAsideRows(app, p, state, id);
+    if (replaying) {
+      p.hint = "Picking one carries on the replay from the same moment. For live, press Live in the controls.";
+      return;
+    }
     p.hint = channel ? "OK switches at once; the others stay as automatic backups. Hold OK on a feed for more."
                      : "OK switches at once; the others stay as automatic backups. Back closes.";
   });

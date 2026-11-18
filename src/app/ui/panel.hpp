@@ -44,6 +44,9 @@ struct PanelItem {
   // A row that can't be used is dimmed (never hidden, so rows stay put)
   // with why on its second line ("Turn on All Channels tab").
   std::string why;
+  // Build 182: drawn dimmed but still focusable (its hold menu works; OK
+  // does what `select` says, if anything): Sources' CAN'T REPLAY rows.
+  bool dim = false;
   // All settings' right column: what the row does (paragraphs split by
   // '\n'), and a picture over it ("captions": a caption in the chosen style).
   std::string about;

@@ -8,7 +8,8 @@
 // Build 153: which schedule the row shows and why ("guide_choice") and the
 // schedules set aside with their reasons ("guide_rejected"). Build 181: a
 // copy the viewer set aside for its channel (set_aside, set_aside_reason,
-// set_aside_is, set_aside_since).
+// set_aside_is, set_aside_since). Build 182: set_aside_scope (whole,
+// listings, replay, replay-listings).
 //
 // No stream links, logins, tokens or server addresses: the inputs carry none
 // (channel ids and guide ids never hold a login), and every cell still goes
@@ -88,6 +89,9 @@ struct MeasuredCells {
 // "2026-11-18"); "" when it isn't set aside.
 struct SetAsideCells {
   std::string setAside, reason, is, since;
+  // Build 182: what it sets aside: "whole", "listings", "replay",
+  // "replay-listings" (setaside::scopeKey).
+  std::string scope;
 };
 
 // guideState of a channel's server / short guide.

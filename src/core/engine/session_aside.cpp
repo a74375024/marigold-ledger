@@ -4,6 +4,9 @@
 // channel playing moves off the copy at once.
 #include <chrono>
 
+#include <algorithm>
+
+#include "core/engine/replay.hpp"
 #include "core/engine/session.hpp"
 #include "core/engine/source_test.hpp"
 #include "core/engine/store.hpp"
@@ -18,7 +21,55 @@ int64_t wallNowMs() {
 
 }  // namespace
 
+Session::SetAsideOutcome Session::setAsideReplay(setaside::Record r) {
+  SetAsideOutcome out;
+  bool here = entry_ == r.entryId && !camera_ && !feeds_.empty();
+  size_t copy = feeds_.size();
+  for (size_t i = 0; here && i < feeds_.size(); ++i)
+    if (feeds_[i].channelId == r.copyId) copy = i;
+  // The moment showing (a replay of this channel), the clock its replay
+  // asks in, what the guide and the copy's own list had then.
+  bool replaying = here && replay_.has_value();
+  time::Seconds at = replaying ? replay_->at() : time::now();
+  std::string when = replaying ? localTime(at) : std::string();
+  std::string clock = clockWords(copy);
+  std::string guide = store_.guideOnNow(r.entryId, at);
+  std::string own = store_.copyOnNow(r.copyId, at);
+  out.record = store_.setAside(std::move(r));
+  const setaside::Record& s = out.record;
+  log_.add(wallNowMs(), "set aside", here ? session_ : 0, s.entryName, setaside::feedName(s.feed),
+           store_.providerName(s.copyId), setaside::replayLogDetail(s, when, clock, guide, own));
+  // "It's at the wrong time": as a failed clock check of its account (the
+  // background check measures its clock again).
+  if (s.reason == setaside::Reason::WrongTime) store_.noteClockCheck(s.copyId, Store::CheckEnd::Failed, ms());
+  // Its own table on the Rewind bar goes (asked again of the copy then
+  // replaying, when it can be).
+  if (pastCopy_ == s.copyId) {
+    pastFor_.clear();
+    past_.reset();
+    ++pastSerial_;
+    if (hooks_.changed) hooks_.changed();
+  }
+  if (!replaying) return out;
+  out.playing = feeds_[std::min(replay_->feed, feeds_.size() - 1)].channelId;
+  // Its programme names only, or another copy than the one replaying: the
+  // replay goes on as it is.
+  if (s.scope != setaside::Scope::Replay || copy != replay_->feed) return out;
+  // The copy replaying: on at once on the next copy that reaches the moment.
+  std::optional<size_t> next = archiveCopyFor(replay::minuteOf(replay_->at()), replayLive_, replay_->feed);
+  if (!next || *next == replay_->feed || !switchReplay(*next, SwitchWhy::SetAside)) {
+    out.alone = true;
+    return out;
+  }
+  replayAsideFrom_ = s.copyId;
+  out.switched = true;
+  out.playing = feeds_[*next].channelId;
+  return out;
+}
+
 Session::SetAsideOutcome Session::setAside(setaside::Record r) {
+  // Build 182: a copy's replay alone.
+  if (setaside::isReplay(r.scope)) return setAsideReplay(std::move(r));
   SetAsideOutcome out;
   time::Seconds now = time::now();
   // What the copy's own listing and the channel's guide have on now,
@@ -71,17 +122,36 @@ Session::SetAsideOutcome Session::setAside(setaside::Record r) {
   return out;
 }
 
-bool Session::useAgain(const std::string& entryId, const std::string& copyId) {
-  std::optional<setaside::Record> r = store_.setAsideOf(entryId, copyId);
-  if (!r || !store_.useAgain(entryId, copyId)) return false;
+bool Session::useAgain(const std::string& entryId, const std::string& copyId, bool replay) {
+  std::optional<setaside::Record> r = store_.setAsideOf(entryId, copyId, replay);
+  if (!r || !store_.useAgain(entryId, copyId, replay)) return false;
   bool here = entry_ == entryId && !camera_ && !feeds_.empty();
   std::string day = sourcetest::testedDay(r->at, time::now(), host_.zone());
   log_.add(wallNowMs(), "used again", here ? session_ : 0, r->entryName, setaside::feedName(r->feed),
            store_.providerName(copyId), setaside::usedAgainDetail(*r, day));
+  if (replay) {
+    // Build 182: its own table may be asked for again; the replay moved
+    // off it goes back to it, from the moment showing.
+    if (pastCopy_ == copyId) {
+      pastFor_.clear();
+      past_.reset();
+      ++pastSerial_;
+      if (hooks_.changed) hooks_.changed();
+    }
+    if (here && replay_ && replayAsideFrom_ == copyId) {
+      for (size_t i = 0; i < feeds_.size(); ++i)
+        if (feeds_[i].channelId == copyId) {
+          switchReplay(i, SwitchWhy::UsedAgain);
+          break;
+        }
+    }
+    replayAsideFrom_.clear();
+    return true;
+  }
   // Playing that channel live: its feeds are read again, so the copy is
   // one of them. The undo of a move off it plays it again; otherwise what
   // plays stays first. (A replay goes on as it is; the next tune has it.)
-  if (here && !replay_ && !setaside::playable(r->reason)) {
+  if (here && !replay_ && r->scope == setaside::Scope::Whole) {
     std::string first = asideFrom_ == copyId ? copyId : playingChannel();
     std::vector<Feed> fresh = store_.feeds(entry_);
     size_t start = fresh.size();

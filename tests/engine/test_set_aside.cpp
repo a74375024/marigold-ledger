@@ -218,6 +218,68 @@ TEST_CASE("set aside: reasons, rows and saved records") {
   CHECK(setaside::feedNumbers(2, {}) == std::vector<int>{1, 2});
 }
 
+TEST_CASE("set aside 1.0.25: a replay's reasons, its scope saved; records from before load as whole or listings") {
+  using setaside::Reason;
+  using setaside::Scope;
+  REQUIRE(setaside::replayReasons().size() == 5);
+  std::vector<std::string> titles;
+  for (Reason r : setaside::replayReasons()) {
+    titles.push_back(setaside::title(r));
+    CHECK(setaside::fromKey(setaside::key(r)) == r);
+  }
+  CHECK(titles == std::vector<std::string>{"It's a different channel", "It's at the wrong time",
+                                           "It doesn't play well", "Its programme names are wrong", "Something else"});
+  CHECK(setaside::replayDetail(Reason::OtherChannel) == "The replay shows another channel's programmes");
+  CHECK(setaside::replayDetail(Reason::WrongTime) == "Off from the time picked, e.g. an hour early");
+  CHECK(setaside::replayDetail(Reason::PlaysBadly) == "Stalls, freezes or won't open");
+  CHECK(setaside::replayDetail(Reason::ReplayNames) == "The Rewind bar names other shows");
+  CHECK(setaside::replayDetail(Reason::Other).empty());
+  CHECK(setaside::scopeOf(Reason::ReplayNames, true) == Scope::ReplayListings);
+  CHECK(setaside::scopeOf(Reason::WrongTime, true) == Scope::Replay);
+  CHECK(setaside::scopeOf(Reason::Listings, false) == Scope::Listings);
+  CHECK(setaside::scopeOf(Reason::WrongCity, false) == Scope::Whole);
+  for (Scope s : {Scope::Whole, Scope::Listings, Scope::Replay, Scope::ReplayListings})
+    CHECK(setaside::scopeFromKey(setaside::scopeKey(s)) == s);
+  CHECK(setaside::scopeKey(Scope::ReplayListings) == "replay-listings");
+
+  setaside::Record r = record("e|r:kntv", "xt:1|31", Reason::WrongTime, 2);
+  r.scope = Scope::Replay;
+  CHECK(setaside::asideName(r) == "Feed 2 \xc2\xb7 replay");
+  CHECK(setaside::asideName(r, 4) == "Feed 4 \xc2\xb7 replay");
+  json::Value saved = setaside::toJson(r);
+  CHECK(saved["scope"].asString() == "replay");
+  std::optional<setaside::Record> back = setaside::fromJson(json::parse(json::write(saved)).value());
+  REQUIRE(back);
+  CHECK(back->scope == Scope::Replay);
+  CHECK(back->reason == Reason::WrongTime);
+  // Saved by Build 181 (no scope): as its reason says.
+  auto old = [](const char* reason) {
+    json::Value v = json::Value::object();
+    v.set("entry", "e|r:kntv");
+    v.set("copy", "xt:1|31");
+    v.set("reason", reason);
+    v.set("feed", 3);
+    return setaside::fromJson(v);
+  };
+  REQUIRE(old("listings"));
+  CHECK(old("listings")->scope == Scope::Listings);
+  REQUIRE(old("broken"));
+  CHECK(old("broken")->scope == Scope::Whole);
+  CHECK(setaside::asideName(*old("broken")) == "Feed 3");
+
+  // The log line: "replay: " first; what isn't known is left out.
+  r.name = "US: NBC BAY AREA (KNTV)";
+  r.group = "|US| \xe2\x9c\xaa NFL TEAMS";
+  CHECK(setaside::replayLogDetail(r, "20:42", "archive clock UTC (server says UTC; not measured)",
+                                  "Jazz at Clippers", "49ers Now") ==
+        "replay: it's at the wrong time \xc2\xb7 its name \"US: NBC BAY AREA (KNTV)\" in \"|US| \xe2\x9c\xaa NFL TEAMS\" "
+        "\xc2\xb7 at 20:42 \xc2\xb7 archive clock UTC (server says UTC; not measured) \xc2\xb7 guide then: "
+        "\"Jazz at Clippers\" \xc2\xb7 its own list then: \"49ers Now\"");
+  r.group.clear();
+  CHECK(setaside::replayLogDetail(r, "", "", "", "") == "replay: it's at the wrong time \xc2\xb7 its name \"US: NBC BAY AREA (KNTV)\"");
+  CHECK(setaside::usedAgainDetail(r, "today") == "replay: it's at the wrong time, set aside today");
+}
+
 TEST_CASE("set aside: the log line names why, the provider's name and group, and what's on") {
   setaside::Record r = record("e|r:kntv", "xt:1|31", setaside::Reason::OtherChannel, 3);
   r.namedName = "NBC Sports Bay Area";

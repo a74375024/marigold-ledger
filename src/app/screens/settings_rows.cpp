@@ -921,20 +921,25 @@ SettingsPage setAsidePage(App& app) {
     for (const setaside::Record& r : aside) {
       const GuideChannel* g = app.store().channels()->find(r.entryId);
       std::string channel = g ? g->name : r.entryName;
-      ui::PanelItem it{ui::PanelItem::Kind::Action, channel + " \xc2\xb7 " + setaside::feedName(r.feed)};
+      // Build 182: "KNTV · Feed 2 · replay" for its replay alone.
+      ui::PanelItem it{ui::PanelItem::Kind::Action, channel + " \xc2\xb7 " + setaside::asideName(r)};
       it.detail = setaside::rowLine(r, app.store().providerName(r.copyId),
                                     engine::sourcetest::testedDay(r.at, now, app.zone()));
       it.value = "Use again";
       it.okLabel = "Use again";
-      it.about = setaside::playable(r.reason)
+      bool replay = setaside::isReplay(r.scope);
+      it.about = r.scope == setaside::Scope::ReplayListings
+                     ? "Still played and replayed on " + channel + ", but its own programme names aren't used on Rewind."
+                 : replay ? "Still played live on " + channel + ", but not replayed there."
+                 : setaside::playable(r.reason)
                      ? "Still played on " + channel + ", but its listings aren't used there."
                      : "Not played, replayed or used for listings on " + channel + ".";
       if (!r.namedName.empty()) it.about += " It's offered on " + r.namedName + " instead.";
       it.about += "\nOK uses it again on " + channel + ".";
       std::string entry = r.entryId, copy = r.copyId;
-      std::string line = setaside::feedName(r.feed) + " is back on " + channel;
-      it.select = [&app, entry, copy, line] {
-        app.playback().useAgain(entry, copy);
+      std::string line = setaside::feedName(r.feed) + (replay ? "'s replay" : "") + " is back on " + channel;
+      it.select = [&app, entry, copy, line, replay] {
+        app.playback().useAgain(entry, copy, replay);
         app.toast(line);
       };
       p.items.push_back(it);

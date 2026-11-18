@@ -48,6 +48,7 @@ std::string ListPanel::look() const {
     out += static_cast<char>('0' + static_cast<int>(it.kind));
     out += it.on ? '1' : '0';
     out += it.enabled ? '1' : '0';
+    out += it.dim ? '1' : '0';
     out += it.dot ? '1' : '0';
     out += it.stepper ? '1' : '0';
     out += it.warn ? '1' : '0';
@@ -261,7 +262,7 @@ void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
       label(c, it.ask->line, row.x + 24, row.y + 46, Weight::Medium, 19, theme::white(0.85f), tw);
       continue;
     }
-    float alpha = it.enabled ? 1.0f : 0.4f;
+    float alpha = !it.enabled ? 0.4f : it.dim ? 0.5f : 1.0f;
     Color fg = focused ? theme::black(alpha) : theme::white(alpha);
     Color sub = focused ? theme::black(0.6f * alpha) : theme::white(0.6f * alpha);
     c.g.fill(row, focused ? theme::white() : theme::white(0.07f), theme::kRowRadius);

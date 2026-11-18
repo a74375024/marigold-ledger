@@ -227,7 +227,7 @@ const std::vector<std::string>& channelReportColumns() {
       "directory_id", "directory_match", "row_id", "next_titles", "guide_choice", "guide_rejected",
       "row_category", "row_closed", "catchup_days", "adult", "more_categories", "added", "direct_source",
       "measured_start_ms", "measured_failures", "measured_stalls_per_h", "measured_picture", "measured_plays",
-      "set_aside", "set_aside_reason", "set_aside_is", "set_aside_since"};
+      "set_aside", "set_aside_reason", "set_aside_is", "set_aside_since", "set_aside_scope"};
   return kColumns;
 }
 
@@ -459,6 +459,7 @@ std::string channelReportCSV(const ChannelReportInput& in,
         cell(aside ? aside->reason : empty),
         cell(aside ? aside->is : empty),
         cell(aside ? aside->since : empty),
+        cell(aside ? aside->scope : empty),
     };
     out += str::join(row, ",");
     out += '\n';

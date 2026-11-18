@@ -27,6 +27,12 @@ const Words kWords[] = {
      "its listings don't match what's on"},
     {Reason::DoesntWork, "broken", "It doesn't work", "Black, frozen, no sound, or never starts", "it doesn't work"},
     {Reason::Other, "other", "Something else", "", "something else"},
+    // Build 182: a replay's.
+    {Reason::WrongTime, "time", "It's at the wrong time", "Off from the time picked, e.g. an hour early",
+     "it's at the wrong time"},
+    {Reason::PlaysBadly, "plays", "It doesn't play well", "Stalls, freezes or won't open", "it doesn't play well"},
+    {Reason::ReplayNames, "names", "Its programme names are wrong", "The Rewind bar names other shows",
+     "its programme names are wrong"},
 };
 
 const Words& words(Reason r) {
@@ -34,6 +40,14 @@ const Words& words(Reason r) {
     if (w.reason == r) return w;
   return kWords[6];
 }
+
+struct ScopeWord {
+  Scope scope;
+  const char* key;
+};
+const ScopeWord kScopes[] = {
+    {Scope::Whole, "whole"}, {Scope::Listings, "listings"}, {Scope::Replay, "replay"},
+    {Scope::ReplayListings, "replay-listings"}};
 
 std::string quoted(std::string_view s) { return "\"" + std::string(s) + "\""; }
 
@@ -44,6 +58,34 @@ const std::vector<Reason>& reasons() {
                                            Reason::WrongLanguage, Reason::Listings,    Reason::DoesntWork,
                                            Reason::Other};
   return kAll;
+}
+
+const std::vector<Reason>& replayReasons() {
+  static const std::vector<Reason> kAll = {Reason::OtherChannel, Reason::WrongTime, Reason::PlaysBadly,
+                                           Reason::ReplayNames, Reason::Other};
+  return kAll;
+}
+
+std::string replayDetail(Reason r) {
+  if (r == Reason::OtherChannel) return "The replay shows another channel's programmes";
+  return words(r).detail;
+}
+
+std::string scopeKey(Scope s) {
+  for (const ScopeWord& w : kScopes)
+    if (w.scope == s) return w.key;
+  return "whole";
+}
+
+std::optional<Scope> scopeFromKey(std::string_view k) {
+  for (const ScopeWord& w : kScopes)
+    if (k == w.key) return w.scope;
+  return std::nullopt;
+}
+
+Scope scopeOf(Reason r, bool replay) {
+  if (replay) return r == Reason::ReplayNames ? Scope::ReplayListings : Scope::Replay;
+  return r == Reason::Listings ? Scope::Listings : Scope::Whole;
 }
 
 std::string title(Reason r) { return words(r).title; }
@@ -62,6 +104,7 @@ json::Value toJson(const Record& r) {
   v.set("entry", r.entryId);
   v.set("copy", r.copyId);
   v.set("reason", key(r.reason));
+  v.set("scope", scopeKey(r.scope));
   if (!r.named.empty()) v.set("named", r.named);
   if (!r.namedName.empty()) v.set("namedName", r.namedName);
   if (!r.entryName.empty()) v.set("entryName", r.entryName);
@@ -81,6 +124,9 @@ std::optional<Record> fromJson(const json::Value& v) {
   std::optional<Reason> reason = fromKey(v["reason"].asString());
   if (r.entryId.empty() || r.copyId.empty() || !reason) return std::nullopt;
   r.reason = *reason;
+  // Build 182: saved before it had a scope: as its reason says (live).
+  std::optional<Scope> scope = scopeFromKey(v["scope"].asString());
+  r.scope = scope ? *scope : scopeOf(*reason, false);
   r.named = v["named"].asString();
   r.namedName = v["namedName"].asString();
   r.entryName = v["entryName"].asString();
@@ -128,10 +174,29 @@ std::string logDetail(const Record& r, std::string_view onNow, std::string_view 
 }
 
 std::string usedAgainDetail(const Record& r, std::string_view day) {
-  std::string out = plain(r.reason);
+  std::string out = (isReplay(r.scope) ? "replay: " : "") + plain(r.reason);
   if (r.reason == Reason::OtherChannel && !r.namedName.empty()) out += ": " + r.namedName;
   if (!day.empty()) out += ", set aside " + std::string(day);
   return out;
+}
+
+std::string replayLogDetail(const Record& r, std::string_view at, std::string_view clock,
+                            std::string_view guideThen, std::string_view ownThen) {
+  std::string out = "replay: " + plain(r.reason);
+  if (!r.name.empty()) {
+    out += kDot + std::string("its name ") + quoted(r.name);
+    if (!r.group.empty()) out += " in " + quoted(r.group);
+  }
+  if (!at.empty()) out += kDot + std::string("at ") + std::string(at);
+  if (!clock.empty()) out += kDot + std::string(clock);
+  if (!guideThen.empty()) out += kDot + std::string("guide then: ") + quoted(guideThen);
+  if (!ownThen.empty()) out += kDot + std::string("its own list then: ") + quoted(ownThen);
+  return out;
+}
+
+std::string asideName(const Record& r, int number) {
+  std::string out = feedName(number > 0 ? number : r.feed);
+  return isReplay(r.scope) ? out + kDot + "replay" : out;
 }
 
 }  // namespace marigold::engine::setaside

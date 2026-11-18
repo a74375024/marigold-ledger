@@ -494,6 +494,7 @@ void Store::buildChannelReport(std::function<void(std::shared_ptr<std::string>)>
     add(c.reason, setaside::title(r.reason));
     if (!r.namedName.empty()) add(c.is, r.namedName);
     add(c.since, date);
+    add(c.scope, setaside::scopeKey(r.scope));  // Build 182
   }
   job->now = now;
   job->windowStart = windowStart();

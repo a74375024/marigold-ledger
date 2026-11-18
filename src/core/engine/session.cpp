@@ -942,7 +942,19 @@ bool Session::tick(uint32_t now) {
 
 // ---------------------------------------------------------------- replay
 
-bool Session::keepsArchive(size_t i, size_t live) const {
+bool Session::keepsArchive(size_t i, size_t live) const { return ownArchive(i, live) && !replayAside(i); }
+
+std::string Session::replayChannel(size_t i) const {
+  if (gameReplay_) return gameReplay_->channelId;
+  if (game_ && i < feeds_.size()) return store_.entryOfChannel(feeds_[i].channelId);
+  return entry_;
+}
+
+bool Session::replayAside(size_t i) const {
+  return i < feeds_.size() && store_.notReplayedOn(replayChannel(i), feeds_[i].channelId);
+}
+
+bool Session::ownArchive(size_t i, size_t live) const {
   if (i >= feeds_.size()) return false;
   const std::string& id = feeds_[i].channelId;
   if (store_.catchupDays(id) == 0) return false;
@@ -1283,7 +1295,8 @@ void Session::openReplay(const std::string& what) {
   // Not in time: the reads stop, the provider's connection is the replay's.
   bool rechoose = dropMeasure(true) || rechoose_;
   rechoose_ = false;
-  if (rechoose && !r.next) {
+  // (Build 182: never away from the copy the viewer picked.)
+  if (rechoose && !r.next && !replayPick_) {
     // Build 174: its clock check failed: the copy ranked first now (its
     // clock trusted more), without another wait.
     std::set<size_t> skip = replayTried_;
@@ -1605,6 +1618,7 @@ bool Session::replayFrom(time::Seconds from, ReplayWhy why) {
     standAside();
   }
   replay_ = Replay{};
+  replayPick_.reset();
   replayTried_.clear();
   shortStretches_ = 0;
   std::string at = localTime(from);
@@ -1648,6 +1662,7 @@ bool Session::startReplayInstead(time::Seconds at, ReplayWhy why, size_t live) {
   replayLiveReady_ = false;
   replayMarkers(false);
   replay_ = Replay{};
+  replayPick_.reset();
   replayTried_.clear();
   shortStretches_ = 0;
   std::string when = localTime(at);
@@ -1711,6 +1726,7 @@ bool Session::pause(bool quiet) {
     // Build 180: a stall going on ends with the pause (the pause isn't one).
     stallOver(ms(), true);
     r.reopen = false;
+    replayPick_.reset();  // Build 182: paused before the copy picked showed
     bool showing = r.phase == Replay::Phase::Playing;
     r.phase = Replay::Phase::Paused;
     r.clockWait.reset();
@@ -1780,6 +1796,7 @@ bool Session::resumePaused(bool quiet) {
   }
   if (!r.released) player_->stop();
   noteReplayChoice(copy, from, replayLive_, r.feed);
+  replayPick_.reset();
   replayTried_.clear();
   shortStretches_ = 0;
   playReplay(*copy, from, "resumed " + localTime(from));
@@ -1806,6 +1823,9 @@ void Session::endReplay(bool live) {
   replaySummary();
   dropMeasure();
   replay_.reset();
+  replayPick_.reset();
+  replaySwitch_.reset();
+  replayAsideFrom_.clear();
   replayTried_.clear();
   replayClock_.reset();
   shortStretches_ = 0;
@@ -1840,8 +1860,23 @@ void Session::replayFailed(const std::string& why) {
   // replays (a next stretch is the one before's).
   if (r.phase == Replay::Phase::Opening && !r.next && r.feed < feeds_.size())
     store_.noteReplayStartFailed(feeds_[r.feed].channelId);
-  // Another copy whose archive holds the same moment (in the same order).
   time::Seconds at = replay::minuteOf(r.at());
+  // Build 182: the copy the viewer picked didn't open: back to the one
+  // before, at the same moment (not another copy, not live).
+  if (replayPick_ && replayPick_->to == r.feed && r.phase == Replay::Phase::Opening) {
+    ReplayPick pick = *replayPick_;
+    replayPick_.reset();
+    if (keepsArchive(pick.from, replayLive_)) {
+      replaySwitch_ = ReplaySwitch{false, pick.to, pick.from, feedNumber(pick.to), feedNumber(pick.from), pick.at};
+      shortStretches_ = 0;
+      std::string name = store_.providerName(feeds_[pick.from].channelId);
+      playReplay(pick.from, pick.at,
+                 "the copy you picked didn't open (" + why + "); back to " +
+                     (name.empty() ? feeds_[pick.from].label : name) + " from " + localTime(pick.at));
+      return;
+    }
+  }
+  // Another copy whose archive holds the same moment (in the same order).
   std::set<size_t> tried = replayTried_;
   tried.insert(r.feed);
   std::optional<size_t> other = archiveCopyFor(at, replayLive_, r.feed, &tried);
@@ -1896,6 +1931,12 @@ void Session::tickReplay(uint32_t now) {
       // one before's), the replay's first picture, a stall over.
       if (!r.next && r.feed < feeds_.size()) store_.noteReplayStart(feeds_[r.feed].channelId, now - r.startedAt);
       if (!replayStats_.firstPictureMs) replayStats_.firstPictureMs = now - replayStats_.askedAt;
+      // Build 182: the copy the viewer picked opened.
+      if (replayPick_ && replayPick_->to == r.feed) {
+        replaySwitch_ = ReplaySwitch{true, r.feed, replayPick_->from, feedNumber(r.feed),
+                                     feedNumber(replayPick_->from), replayPick_->at};
+        replayPick_.reset();
+      }
       r.reopen = false;
       stallOver(now);
       r.phase = Replay::Phase::Playing;
@@ -2196,7 +2237,10 @@ void Session::replaySummary() {
 void Session::wantPast() {
   std::optional<size_t> copy = catchupCopy();
   if (!copy || pastFor_ == entry_) return;
+  // Build 182: a copy whose own table is set aside here isn't asked.
+  if (store_.ownTableSetAside(replayChannel(*copy), feeds_[*copy].channelId)) return;
   pastFor_ = entry_;
+  pastCopy_ = feeds_[*copy].channelId;
   past_.reset();
   std::string entry = entry_;
   std::weak_ptr<int> alive = alive_;
@@ -2257,6 +2301,9 @@ std::vector<replay::Programme> Session::timeline(time::Seconds from) const {
     guide.push_back(std::move(p));
   }
   if (!past_ || pastFor_ != entry_) return guide;
+  // Build 182: its own table set aside for the channel since (its replay,
+  // or its programme names).
+  if (store_.ownTableSetAside(entry, pastCopy_)) return guide;
   // Build 179: the copy's own list (its provider's archive table) fills in
   // only when it's the same schedule as the guide's where both have
   // listings; a provider that files another channel's guide under the

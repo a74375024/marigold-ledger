@@ -572,19 +572,35 @@ class Store {
   // number; the rest (names, the provider's identity of the copy, when) is
   // filled here. A copy named as another channel becomes a source of it
   // (catalog::moveCopies). Session::setAside is the app's way in (it logs).
+  // Build 182: a record whose scope is a replay one (setaside::Scope) sets
+  // the copy's replay aside (its scope follows its reason); a copy keeps
+  // one live record and one replay record per channel.
   setaside::Record setAside(setaside::Record r);
   // Uses it again (a channel named: it goes back to the channel it was
-  // set aside for). False when it wasn't set aside.
-  bool useAgain(const std::string& entryId, const std::string& copyId);
+  // set aside for). False when it wasn't set aside. `replay`: its replay
+  // record (Build 182).
+  bool useAgain(const std::string& entryId, const std::string& copyId, bool replay = false);
   // Every feed set aside, newest first; those of one channel; one.
   std::vector<setaside::Record> setAsides() const;
   std::vector<setaside::Record> setAsidesFor(const std::string& entryId) const;
-  std::optional<setaside::Record> setAsideOf(const std::string& entryId, const std::string& copyId) const;
+  std::optional<setaside::Record> setAsideOf(const std::string& entryId, const std::string& copyId,
+                                             bool replay = false) const;
   // Not played (nor replayed) on that channel: set aside for any reason but
-  // its listings.
+  // its listings (scope Whole).
   bool notPlayedOn(const std::string& entryId, const std::string& copyId) const;
-  // Its listings never used for that channel: set aside for any reason.
+  // Build 182: not replayed on that channel: that, or its replay set aside
+  // (scope Replay). Its replay choice, game replays through the channel.
+  bool notReplayedOn(const std::string& entryId, const std::string& copyId) const;
+  // Its listings never used for that channel: set aside live, for any
+  // reason (a replay record leaves its listings alone).
   bool listingsSetAside(const std::string& entryId, const std::string& copyId) const;
+  // Build 182: its own archive table never on that channel's Rewind bar:
+  // any record of it there.
+  bool ownTableSetAside(const std::string& entryId, const std::string& copyId) const;
+  // Build 182: the numbers Sources gives a channel's `feeds` ("Feed 1",
+  // "Feed 2", "Feed 4": setaside::feedNumbers past those set aside), 0 for
+  // one not played there. Sources and the session's replay rows share it.
+  std::vector<int> feedNumbers(const std::string& entryId, const std::vector<Feed>& feeds) const;
   // What a copy's own listing (its provider's guide, else its short guide)
   // has on at `now` ("" not known).
   std::string copyOnNow(const std::string& copyId, time::Seconds now) const;
