@@ -415,6 +415,8 @@ std::vector<Listing> Store::pastListing(const std::string& entryId, time::Second
   std::vector<Listing> best;
   time::Seconds bestCover = -1;
   for (const std::string& id : members) {
+    // Build 181: a copy whose listings were set aside for this channel.
+    if (!m.setAside.empty() && listingsSetAside(entryId, id)) continue;
     std::vector<Listing> list;
     auto p = m.providerMatches.find(id);
     if (p != m.providerMatches.end() && p->second) addRaw(*p->second, from, to, list);

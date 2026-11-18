@@ -32,6 +32,7 @@
 #include "core/engine/model.hpp"
 #include "core/engine/quality.hpp"
 #include "core/engine/replay.hpp"
+#include "core/engine/set_aside.hpp"
 #include "core/engine/views.hpp"
 #include "core/media/picture.hpp"
 #include "core/playback/recovery.hpp"
@@ -492,8 +493,28 @@ class Session {
   // app's parts of playback.
   void logNote(std::string_view event, std::string_view detail = {}) { logEvent(event, detail); }
 
+  // Build 181, "This feed is wrong…" (set_aside.hpp; session_aside.cpp):
+  // the store sets the copy aside for the channel, the log has a "set
+  // aside" line (channel, "Feed 3", provider; why, the provider's own name
+  // and group, what the copy's listing and the channel's guide have on
+  // now; never a link), and when it is the copy playing (live, or
+  // replaying) and the reason keeps it from playing, the channel moves on
+  // at once to the next feed (the one after it in feeds(), wrapping).
+  // With no other feed it plays on (`alone`).
+  struct SetAsideOutcome {
+    setaside::Record record;  // as the store keeps it
+    bool switched = false;    // the channel moved on to `playing`
+    bool alone = false;       // it was playing and no other feed can
+    std::string playing;      // the raw channel playing after it ("" none)
+  };
+  SetAsideOutcome setAside(setaside::Record r);
+  // OK on a feed set aside: the store uses it again; a "used again" line.
+  bool useAgain(const std::string& entryId, const std::string& copyId);
+
  private:
-  bool begin(const std::string& entryId, std::vector<Feed> feeds, const std::vector<std::string>& flip);
+  // `start`: the feed to start with (Build 181: the one after a feed set aside).
+  bool begin(const std::string& entryId, std::vector<Feed> feeds, const std::vector<std::string>& flip,
+             size_t start = 0);
   void apply(const playback::Actions& actions);
   void playFeed(size_t feed, uint64_t token);
   std::vector<playback::FeedInfo> feedInfos(const std::string& entryId) const;
@@ -593,6 +614,9 @@ class Session {
   playback::Recovery rec_;
   std::string entry_, lastWatched_;
   std::string picked_;  // pickedSource()
+  // Build 181: the copy setAside() moved this channel off ("" none): used
+  // again, it plays again.
+  std::string asideFrom_;
   bool bouncing_ = false;   // this tune is previous()
   // What was viewed (Right's targets), newest first, one per entry; Right
   // goes to the newest that isn't playing.

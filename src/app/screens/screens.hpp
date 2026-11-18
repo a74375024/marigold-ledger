@@ -130,8 +130,17 @@ std::unique_ptr<Screen> makeLineupSetup(App& app, bool onboarding = false);
 // Lineup › Your area, Countries & languages, Kinds of channels).
 enum class LineupStep { Area, Countries, Kinds };
 std::unique_ptr<Screen> makeLineupStep(App& app, LineupStep step);
-// Sources for a channel (red key).
+// Sources for a channel (red key). Build 181: hold OK on a feed for Play
+// this feed, Always start with this feed and "This feed is wrong…"; the
+// feeds set aside for the channel at the end, OK to use one again.
 std::unique_ptr<Screen> makeSources(App& app, const std::string& entryId);
+// Build 181, "Which channel is it?" › Find the channel… (channel_find.cpp):
+// the Search keyboard on the left, the channels whose names hold what is
+// typed on the right (My Lineup first; never a count). OK on one calls
+// `picked` with its entry id; Back leaves without one. `heading` is the
+// small line over the title ("KNTV · FEED 3 · DREAM").
+std::unique_ptr<Screen> makeChannelFind(App& app, std::string heading, std::string exclude,
+                                        std::function<void(const std::string&)> picked);
 // Build 166, Test all sources (source_test_screens.cpp): the start
 // panel (over Settings), the testing screen (Back leaves the test running in
 // the app), the providers ranked, and "If you kept one or two". The Settings

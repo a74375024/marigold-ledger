@@ -158,7 +158,8 @@ void Session::rememberGame() {
   if (i < feeds_.size()) store_.noteEventFeed(entry_, feeds_[i].channelId, replay_ ? true : ready());
 }
 
-bool Session::begin(const std::string& entryId, std::vector<Feed> feeds, const std::vector<std::string>& flip) {
+bool Session::begin(const std::string& entryId, std::vector<Feed> feeds, const std::vector<std::string>& flip,
+                    size_t start) {
   if (feeds.empty()) {
     MLOG_W("play", "no feeds for this channel");
     return false;
@@ -232,6 +233,7 @@ bool Session::begin(const std::string& entryId, std::vector<Feed> feeds, const s
   playback::TuneOptions options;
   options.settle = 0;
   options.game = store_.isEvent(entryId);
+  options.start = std::min(start, feeds_.size() - 1);
   apply(rec_.tune(ms(), std::move(infos), options));
   return true;
 }

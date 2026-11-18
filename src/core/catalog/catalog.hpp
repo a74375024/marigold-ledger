@@ -4,6 +4,7 @@
 #pragma once
 
 #include <atomic>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -91,6 +92,18 @@ CatalogResult build(const std::vector<Channel>& channels, time::Seconds now,
                     const std::vector<guide::Station>& stations = {},
                     const directory::Index* directory = nullptr, BuildProgress* progress = nullptr,
                     const reference::Index* reference = nullptr);
+
+// Build 181: the viewer's corrections of which row a copy belongs to (a
+// feed set aside as "It's a different channel" with the channel it is
+// named): each raw channel id in `moves` goes to the entry given, out of
+// the one it was in (added after the entry's own members, entryOf
+// updated). A move to an entry that isn't there, or of a copy the list
+// doesn't have, is left out. True when something moved. The store applies
+// them to every build, and they stay applied in the saved list.
+bool moveCopies(CatalogResult& result, const std::map<std::string, std::string>& moves);
+// Whether moveCopies would move anything (so a shared result is copied
+// only when it must be).
+bool copiesToMove(const CatalogResult& result, const std::map<std::string, std::string>& moves);
 
 struct EventsResult {
   std::vector<EventFamily> families;

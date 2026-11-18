@@ -6,7 +6,9 @@
 // on now. Build 143: a sports channel's next three programmes (start time
 // and title, "next_titles"), so a report shows what its guide calls games.
 // Build 153: which schedule the row shows and why ("guide_choice") and the
-// schedules set aside with their reasons ("guide_rejected").
+// schedules set aside with their reasons ("guide_rejected"). Build 181: a
+// copy the viewer set aside for its channel (set_aside, set_aside_reason,
+// set_aside_is, set_aside_since).
 //
 // No stream links, logins, tokens or server addresses: the inputs carry none
 // (channel ids and guide ids never hold a login), and every cell still goes
@@ -80,6 +82,14 @@ struct MeasuredCells {
   std::string startMs, failures, stallsPerHour, picture, plays;
 };
 
+// Build 181: a copy set aside for its channel ("This feed is wrong…"), as
+// the report's set_aside cells: "yes", the reason ("Wrong city or feed"),
+// the channel it is when one was named, and since when (the local date,
+// "2026-11-18"); "" when it isn't set aside.
+struct SetAsideCells {
+  std::string setAside, reason, is, since;
+};
+
 // guideState of a channel's server / short guide.
 enum class ServerGuideState : uint8_t { NotChecked, Loading, Loaded, Failed };
 
@@ -123,6 +133,8 @@ struct ChannelReportInput {
   const guide::StationsByNetwork* stations = nullptr;
   // Build 166: the measured_* cells by raw channel id.
   const std::unordered_map<std::string, MeasuredCells>* measured = nullptr;
+  // Build 181: the set_aside cells by raw channel id.
+  const std::unordered_map<std::string, SetAsideCells>* setAside = nullptr;
 
   time::Seconds now = 0;
   // The guide grid's start (catalog::windowStart(now)).

@@ -2418,3 +2418,30 @@ On KNTV the guide showed Jazz at Clippers while the Rewind bar named "49ers Now"
 | Its log | Playback log after opening Rewind | "past listings: … ; they name other shows than the guide, so the guide's are used" when the copy's own list disagrees |
 | The picture | Play from a moment on KNTV's bar | It's KNTV's programme (if it's NBC Sports Bay Area's, that copy's archive is another channel: say so) |
 | Others | NBC Sports Bay Area, a few locals and news channels | Their bars match their guides |
+
+## Build 181: 1.0.24, This feed is wrong…
+
+A feed (a copy of a channel) that is wrong can be set aside for that channel, with why. Hold OK on a feed in Sources (Red key) for a small menu: Play this feed, Always start with this feed, This feed is wrong…. The reasons: It's a different channel, Its replay is a different channel, Wrong city or feed, Wrong language, Its listings don't match what's on, It doesn't work, Something else. "It's a different channel" asks which one (optional): the channels whose guide shows now what this feed's own listing has on, Find the channel…, or Not sure. A channel named takes the feed as one of its own.
+
+Set aside, a feed isn't played, replayed or used for listings on that channel (the guide's choice, Rewind, Live Events' replays); "Its listings don't match what's on" keeps it playing and only leaves its listings out. Only that channel: the same feed plays wherever else it belongs. It's kept across restarts and list reloads (found again by its provider name and group if the provider renumbers it). Each one is in the playback log ("set aside", "used again") and the channel report (set_aside, set_aside_reason, set_aside_is, set_aside_since).
+
+| Check | How | Pass |
+|---|---|---|
+| The menu | Sources on KNTV, hold OK on a feed | A small card beside the panel: "FEED 3 · DREAM", Play this feed, Always start with this feed, This feed is wrong… |
+| Play / pin | Play this feed; then Always start with this feed on another | The same as OK on its row; "Will start with this feed", and the row says "Always first" |
+| Reasons | This feed is wrong… | "KNTV · FEED 3 · DREAM", What's wrong with it?, the seven reasons with their second lines |
+| Which one | It's a different channel, on the copy showing 49ers Now | ON NOW, IT LOOKS LIKE: NBC Sports Bay Area, "On now: 49ers Now, as on this feed" (at most three); OR: Find the channel…, Not sure |
+| Find | Find the channel…, type "bay" | The keyboard on the left, channels with "bay" in their name on the right, My Lineup first; OK picks one |
+| Playing it | Set aside the feed playing | Back in Sources: "Feed 3 set aside for KNTV" / "Playing Feed 4 · OK again to undo"; the picture moves to Feed 4 at once; the feeds read Feed 1, Feed 2, Feed 4 |
+| Undo | OK again right away | Feed 3 plays again and is back under WATCH WITH; "Feed 3 is back on KNTV" |
+| The only feed | Set aside a channel's only feed | "It's the only feed, so it plays on · OK again to undo"; it keeps playing |
+| A backup | Set aside a feed not playing | The picture re-opens on the same feed (a second); the feed is under SET ASIDE |
+| SET ASIDE | Sources after setting one aside | At the end: "Feed 3", "It's NBC Sports Bay Area · Dream · today" in amber, "OK to use it again"; OK puts it back |
+| Moved | Watch NBC Sports Bay Area after naming it | Its Sources list the feed; KNTV's don't |
+| Listings only | Its listings don't match what's on, on a feed | It still plays; the guide and Rewind don't use its listings (Listings look wrong? no longer offers them) |
+| Rewind | Rewind on KNTV after setting aside the copy with Bay Area's archive | The replay never plays on that copy |
+| Restart | Quit and open the app again; reload the providers | Still set aside, still under SET ASIDE and in Settings |
+| Settings | Settings › Help › Feeds you set aside | "KNTV · Feed 3", the reason · provider · date, "Use again"; OK uses it again. None: "None set aside. Hold OK on a feed in Sources to set one aside." |
+| Log | Playback log after setting one aside | `set aside · KNTV · Feed 3 · Dream · it's a different channel: NBC Sports Bay Area · its name "…" in "…" · on now: "49ers Now" · guide: "Jazz at Clippers"`; "used again" on undo. No link, host or login anywhere |
+| Report | Channel report | The feed's row: set_aside "yes", set_aside_reason, set_aside_is (the channel named), set_aside_since (the date) |
+| Counts | Every new screen | No number of channels anywhere |

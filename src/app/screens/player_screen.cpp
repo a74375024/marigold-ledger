@@ -2523,17 +2523,7 @@ class PlayerScreen : public Screen {
   // A change that sticks, or "Press Back again to leave": large, at the top.
   void drawNotice(ui::Ctx& c) {
     if (notice_.empty() || app_.ms() >= noticeUntil_) return;
-    float tw = ui::textWidth(c, notice_, Weight::Bold, 40);
-    float dw = noticeDetail_.empty() ? 0 : ui::textWidth(c, noticeDetail_, Weight::Medium, 26);
-    float w = std::min(1500.0f, std::max(tw, dw) + 88);
-    float h = noticeDetail_.empty() ? 96 : 140;
-    Rect r{(gfx::kLayoutWidth - w) * 0.5f, 64, w, h};
-    c.g.fill(r, theme::hex(0x0C0E12, 0.94f), 26);
-    c.g.stroke(r, theme::white(0.18f), 26, 2);
-    ui::labelIn(c, notice_, {r.x + 44, r.y + 18, r.w - 88, 56}, Weight::Bold, 40, theme::white(), Align::Center);
-    if (!noticeDetail_.empty())
-      ui::labelIn(c, noticeDetail_, {r.x + 44, r.y + 78, r.w - 88, 40}, Weight::Medium, 26, theme::white(0.88f),
-                  Align::Center);
+    ui::noticeCard(c, notice_, noticeDetail_);
   }
 
   // 3D: Guide on the left edge, the last channel on the right.

@@ -190,6 +190,9 @@ void floatingCard(Ctx& c, Rect r);
 constexpr float kCardInset = 24;
 // Full screen scrim.
 void scrim(Ctx& c, float alpha);
+// A change that sticks, said large at the top of the screen (the player's
+// notice; Build 181 also over Sources): `title` over `detail` ("" none).
+void noticeCard(Ctx& c, const std::string& title, const std::string& detail);
 
 // Time formatting in the TV's zone: "8:42 PM", "8:00 – 9:00", "Tonight".
 std::string clock(const Ctx& c, time::Seconds t, bool withPeriod = true);

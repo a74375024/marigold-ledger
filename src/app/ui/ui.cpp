@@ -225,6 +225,19 @@ void sidePanel(Ctx& c, Rect r, bool leading) {
   floatingCard(c, card);
 }
 
+void noticeCard(Ctx& c, const std::string& title, const std::string& detail) {
+  float tw = textWidth(c, title, Weight::Bold, 40);
+  float dw = detail.empty() ? 0 : textWidth(c, detail, Weight::Medium, 26);
+  float w = std::min(1500.0f, std::max(tw, dw) + 88);
+  float h = detail.empty() ? 96 : 140;
+  Rect r{(gfx::kLayoutWidth - w) * 0.5f, 64, w, h};
+  c.g.fill(r, theme::hex(0x0C0E12, 0.94f), 26);
+  c.g.stroke(r, theme::white(0.18f), 26, 2);
+  labelIn(c, title, {r.x + 44, r.y + 18, r.w - 88, 56}, Weight::Bold, 40, theme::white(), Align::Center);
+  if (!detail.empty())
+    labelIn(c, detail, {r.x + 44, r.y + 78, r.w - 88, 40}, Weight::Medium, 26, theme::white(0.88f), Align::Center);
+}
+
 void scrim(Ctx& c, float alpha) {
   c.g.fill({0, 0, gfx::kLayoutWidth, gfx::kLayoutHeight}, theme::black(alpha));
 }

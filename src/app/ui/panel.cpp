@@ -25,8 +25,16 @@ float ListPanel::rowHeight(Ctx& c, const PanelItem& it, float width) const {
       if (!it.detail.empty()) lines += c.t.wrap(it.detail, Weight::Regular, kNotePx, width - 16, kNoteLines).size();
       return std::max(44.0f, static_cast<float>(lines) * kNoteLineH + 20);
     }
-    default: return secondLine(it).empty() && !it.replay ? theme::kPanelRowHeight : 84;
+    default:
+      if (!it.third.empty()) return 112;
+      return secondLine(it).empty() && !it.replay ? theme::kPanelRowHeight : 84;
   }
+}
+
+float ListPanel::contentHeight(Ctx& c, float width) const {
+  float h = (subtitle.empty() ? 0.0f : 30.0f) + (title.empty() ? 0.0f : 66.0f) + (hint.empty() ? 0.0f : 50.0f);
+  for (const PanelItem& it : items) h += rowHeight(c, it, width) + 6;
+  return h;
 }
 
 std::string ListPanel::look() const {
@@ -50,6 +58,7 @@ std::string ListPanel::look() const {
     add(std::to_string(it.choice) + ',' + std::to_string(it.coast));
     add(it.title);
     add(it.detail);
+    add(it.third);
     add(it.value);
     add(it.tag);
     add(std::to_string(it.tagStyle));
@@ -380,6 +389,7 @@ void ListPanel::draw(Ctx& c, Rect r, int hitBase, bool showFocus) {
       lx += mw > 0 ? mw + 6 : 0;
       label(c, "Replay", lx, row.y + 46, Weight::Medium, 19, sub, std::max(0.0f, x + tw - lx));
     } else if (!second.empty()) label(c, second, x, row.y + 46, Weight::Medium, 19, sub, tw);
+    if (!it.third.empty()) label(c, it.third, x, row.y + 76, Weight::Medium, 19, sub, tw);
   }
   c.g.popClip();
   if (!hint.empty())
