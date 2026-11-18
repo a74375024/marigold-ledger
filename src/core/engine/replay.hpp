@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "core/util/time.hpp"
@@ -133,6 +134,10 @@ std::vector<Programme> merged(std::vector<Programme> guide, const std::vector<Pr
 // copy whose provider files another channel's guide under it, NBC Sports
 // Bay Area's shows on KNTV, doesn't.)
 bool agrees(const std::vector<Programme>& ref, const std::vector<Programme>& other);
+// A title as agrees() compares it: letters and digits, lower case ("Dubs
+// Talk" and "DUBS TALK!" alike). Build 181: also the suggestion of which
+// channel a wrong feed is.
+std::string titleKey(std::string_view t);
 
 // "−17:05", "−1:02:05": how far behind live (never below zero).
 std::string behindText(time::Seconds behind);

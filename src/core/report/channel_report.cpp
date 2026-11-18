@@ -226,7 +226,8 @@ const std::vector<std::string>& channelReportColumns() {
       "outside_described_next_3h", "provider_guide_described_next_3h", "logo_sources", "logo_status",
       "directory_id", "directory_match", "row_id", "next_titles", "guide_choice", "guide_rejected",
       "row_category", "row_closed", "catchup_days", "adult", "more_categories", "added", "direct_source",
-      "measured_start_ms", "measured_failures", "measured_stalls_per_h", "measured_picture", "measured_plays"};
+      "measured_start_ms", "measured_failures", "measured_stalls_per_h", "measured_picture", "measured_plays",
+      "set_aside", "set_aside_reason", "set_aside_is", "set_aside_since"};
   return kColumns;
 }
 
@@ -379,6 +380,7 @@ std::string channelReportCSV(const ChannelReportInput& in,
     const std::pair<std::string, std::string>* logo = entryId ? find(in.logos, *entryId) : nullptr;
     const std::pair<std::string, std::string>* choice = entryId ? find(in.guideChoices, *entryId) : nullptr;
     const MeasuredCells* measured = find(in.measured, channel.id);
+    const SetAsideCells* aside = find(in.setAside, channel.id);
     const std::string empty;
     std::vector<std::string> row = {
         cell(channel.number.value_or("")),
@@ -452,6 +454,11 @@ std::string channelReportCSV(const ChannelReportInput& in,
         cell(measured ? measured->stallsPerHour : empty),
         cell(measured ? measured->picture : empty),
         cell(measured ? measured->plays : empty),
+        // Build 181: set aside for its channel by the viewer.
+        cell(aside ? aside->setAside : empty),
+        cell(aside ? aside->reason : empty),
+        cell(aside ? aside->is : empty),
+        cell(aside ? aside->since : empty),
     };
     out += str::join(row, ",");
     out += '\n';

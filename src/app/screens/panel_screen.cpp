@@ -1,5 +1,7 @@
 #include "app/screens/panel_screen.hpp"
 
+#include <algorithm>
+
 #include "app/app.hpp"
 
 namespace marigold::app {
@@ -19,7 +21,19 @@ void PanelScreen::rebuild() {
 
 void PanelScreen::shown() { rebuild(); }
 
+void PanelScreen::notice(std::string title, std::string detail, uint32_t forMs) {
+  notice_ = std::move(title);
+  noticeDetail_ = std::move(detail);
+  noticeUntil_ = app_.ms() + forMs;
+}
+
 bool PanelScreen::tick(uint32_t ms) {
+  if (!notice_.empty() && ms >= noticeUntil_) {
+    // The notice's time is up: drawn once more, without it.
+    notice_.clear();
+    noticeDetail_.clear();
+    return true;
+  }
   if (!liveRows || ms - rebuiltAt_ < 1000) return false;
   rebuiltAt_ = ms;
   // Drawn again only when what the rows say changed.
@@ -52,7 +66,22 @@ bool PanelScreen::key(const KeyEvent& e) {
 }
 
 void PanelScreen::draw(ui::Ctx& c) {
+  drawPanel(c);
+  if (!notice_.empty() && app_.ms() < noticeUntil_) ui::noticeCard(c, notice_, noticeDetail_);
+}
+
+void PanelScreen::drawPanel(ui::Ctx& c) {
   float h = gfx::kLayoutHeight;
+  if (side_ == Side::Beside) {
+    // A small card left of the panel it belongs to, its rows' height.
+    float inner = width_ - 56;
+    float ph = std::min(h - 160, panel_.contentHeight(c, inner) + 40);
+    ui::Rect r{gfx::kLayoutWidth - besideOf - 20 - width_, (h - ph) * 0.5f, width_, ph};
+    c.g.fill(r, ui::theme::hex(0x1F2632, 0.98f), 26);
+    c.g.stroke(r, ui::theme::white(0.08f), 26, 1);
+    panel_.draw(c, {r.x + 28, r.y + 22, inner, r.h - 30});
+    return;
+  }
   if (side_ == Side::Center) {
     ui::scrim(c, 0.6f);
     float ph = 760;

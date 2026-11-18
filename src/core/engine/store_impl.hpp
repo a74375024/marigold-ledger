@@ -413,6 +413,11 @@ struct Store::Impl {
   // Entry id -> the version that last played on it: it starts first next
   // time unless one is pinned (or a working copy has a better picture).
   std::map<std::string, std::string> lastFeed;
+  // Build 181: feeds set aside for a channel (set_aside.hpp), oldest first;
+  // and copies named as another channel whose record went this run: back
+  // to the channel they were set aside for (copy -> entry).
+  std::vector<setaside::Record> setAside;
+  std::map<std::string, std::string> movesBack;
   std::map<std::string, std::vector<int>> reliability;  // source tag -> {worked, failed}
   // Starts of event feeds by provider group ("grp:us| nfhs ppv"), counted
   // afresh after a quiet week: a group that keeps failing goes last.

@@ -17,6 +17,7 @@
 #include "app/store/store.hpp"
 #include "app/ui/panel.hpp"
 #include "core/catalog/lineup.hpp"
+#include "core/engine/source_test.hpp"
 #include "core/engine/views.hpp"
 #include "core/sports/my_sports.hpp"
 #include "core/util/memory.hpp"
@@ -904,6 +905,45 @@ void updateRow(App& app, ui::ListPanel& p) {
   p.items.push_back(row);
 }
 
+// Build 181, Settings › Help › Feeds you set aside: every feed set aside
+// for its channel ("This feed is wrong…" in Sources), newest first, each
+// with why, its provider and when; OK uses it again.
+SettingsPage setAsidePage(App& app) {
+  SettingsPage pg = page("Feeds you set aside", [&app](ui::ListPanel& p) {
+    std::vector<setaside::Record> aside = app.store().setAsides();
+    if (aside.empty()) {
+      p.items.push_back(ui::PanelItem::note("None set aside. Hold OK on a feed in Sources to set one aside."));
+      return;
+    }
+    p.items.push_back(ui::PanelItem::note("Each one is skipped on its channel. OK on one to use it again. They're "
+                                          "also in the playback log and the channel report."));
+    time::Seconds now = time::now();
+    for (const setaside::Record& r : aside) {
+      const GuideChannel* g = app.store().channels()->find(r.entryId);
+      std::string channel = g ? g->name : r.entryName;
+      ui::PanelItem it{ui::PanelItem::Kind::Action, channel + " \xc2\xb7 " + setaside::feedName(r.feed)};
+      it.detail = setaside::rowLine(r, app.store().providerName(r.copyId),
+                                    engine::sourcetest::testedDay(r.at, now, app.zone()));
+      it.value = "Use again";
+      it.okLabel = "Use again";
+      it.about = setaside::playable(r.reason)
+                     ? "Still played on " + channel + ", but its listings aren't used there."
+                     : "Not played, replayed or used for listings on " + channel + ".";
+      if (!r.namedName.empty()) it.about += " It's offered on " + r.namedName + " instead.";
+      it.about += "\nOK uses it again on " + channel + ".";
+      std::string entry = r.entryId, copy = r.copyId;
+      std::string line = setaside::feedName(r.feed) + " is back on " + channel;
+      it.select = [&app, entry, copy, line] {
+        app.playback().useAgain(entry, copy);
+        app.toast(line);
+      };
+      p.items.push_back(it);
+    }
+  });
+  pg.crumb = "Set aside";
+  return pg;
+}
+
 void helpRows(App& app, ui::ListPanel& p, SettingsPages& pages) {
   updateRow(app, p);
   ui::PanelItem around = chevron("Getting around", "The remote\xe2\x80\x99s keys, as shown the first time", "",
@@ -925,6 +965,21 @@ void helpRows(App& app, ui::ListPanel& p, SettingsPages& pages) {
   status.about = "When your provider's guide and the free listings were last read, and how much memory Marigold "
                  "uses.";
   p.items.push_back(status);
+  // Build 181: feeds set aside for their channel (Sources › hold OK).
+  std::vector<std::string> aside;
+  for (const setaside::Record& r : app.store().setAsides()) {
+    const GuideChannel* g = app.store().channels()->find(r.entryId);
+    std::string name = g ? g->name : r.entryName;
+    if (std::find(aside.begin(), aside.end(), name) == aside.end()) aside.push_back(name);
+  }
+  ui::PanelItem setAside = chevron("Feeds you set aside", "Skipped on their channel; OK to use one again",
+                                   aside.empty() ? "None"
+                                   : aside.size() > 2 ? aside[0] + ", " + aside[1] + "\xe2\x80\xa6"  // never a count
+                                                      : str::join(aside, ", "),
+                                   [&app, &pages] { pages.open(setAsidePage(app)); });
+  setAside.about = "Feeds you marked as wrong in Sources (hold OK on a feed). Each is skipped on its channel only. "
+                   "They're also in the playback log and the channel report.";
+  p.items.push_back(setAside);
   p.items.push_back(ui::PanelItem::header("ABOUT"));
   ui::PanelItem version{ui::PanelItem::Kind::Action, "Version"};
   version.value = app.build().version + " (build " + app.build().build + ")";

@@ -27,6 +27,7 @@
 #include "core/engine/model.hpp"
 #include "core/engine/quality.hpp"
 #include "core/engine/search.hpp"
+#include "core/engine/set_aside.hpp"
 #include "core/engine/source_test.hpp"
 #include "core/sports/plays.hpp"
 
@@ -565,6 +566,36 @@ class Store {
   void pinFeed(const std::string& entryId, const std::string& channelId);  // "" = automatic
   std::string pinnedFeed(const std::string& entryId) const;
 
+  // Build 181, "This feed is wrong…" (set_aside.hpp; store_aside.cpp): a
+  // copy set aside for one channel, saved with the lists. `r` needs the
+  // entry, the copy, the reason, the channel named (if any) and the feed's
+  // number; the rest (names, the provider's identity of the copy, when) is
+  // filled here. A copy named as another channel becomes a source of it
+  // (catalog::moveCopies). Session::setAside is the app's way in (it logs).
+  setaside::Record setAside(setaside::Record r);
+  // Uses it again (a channel named: it goes back to the channel it was
+  // set aside for). False when it wasn't set aside.
+  bool useAgain(const std::string& entryId, const std::string& copyId);
+  // Every feed set aside, newest first; those of one channel; one.
+  std::vector<setaside::Record> setAsides() const;
+  std::vector<setaside::Record> setAsidesFor(const std::string& entryId) const;
+  std::optional<setaside::Record> setAsideOf(const std::string& entryId, const std::string& copyId) const;
+  // Not played (nor replayed) on that channel: set aside for any reason but
+  // its listings.
+  bool notPlayedOn(const std::string& entryId, const std::string& copyId) const;
+  // Its listings never used for that channel: set aside for any reason.
+  bool listingsSetAside(const std::string& entryId, const std::string& copyId) const;
+  // What a copy's own listing (its provider's guide, else its short guide)
+  // has on at `now` ("" not known).
+  std::string copyOnNow(const std::string& copyId, time::Seconds now) const;
+  // What a channel's guide shows at `now` ("" nothing).
+  std::string guideOnNow(const std::string& entryId, time::Seconds now) const;
+  // "Which channel is it?": channels (other than `entryId`) whose guide
+  // shows at `now` the programme the copy's own listing has on
+  // (replay::titleKey), My Lineup first, at most `limit`.
+  std::vector<std::string> sameShowNow(const std::string& copyId, const std::string& entryId, time::Seconds now,
+                                       size_t limit = 3) const;
+
   // Build 153: "Listings look wrong?" The distinct schedules a row's guide
   // could show (guide/choice.hpp), the one shown first: what each has on
   // now and next. Empty when the row's listings haven't been weighed yet.
@@ -854,6 +885,18 @@ class Store {
   void installRenamed(std::shared_ptr<const std::vector<Channel>> list,
                       std::shared_ptr<const catalog::CatalogResult> cat);
   void saveCatalog();
+  // Build 181: the copy moves the feeds set aside ask for (copy -> the
+  // channel named), and those undone this run (back to the channel they
+  // were set aside for); applied to the catalog in place of the one held
+  // when it lacks one (a shared catalog is copied first, then installed).
+  std::map<std::string, std::string> copyMoves() const;
+  void applyCopyMoves();
+  // A list installed: a feed set aside that the provider renumbered is
+  // found again by its account, name and group; a channel's earlier id
+  // becomes its id now.
+  bool rematchSetAside();
+  // The listings of these channels decided again (a feed set aside).
+  void listingsAgain(const std::vector<std::string>& entryIds);
   void releaseMemoryWhenIdle(uint32_t ms);
   // How old the channel list may get before it's read again.
   time::Seconds channelLifetime() const;

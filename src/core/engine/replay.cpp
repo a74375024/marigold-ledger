@@ -268,9 +268,8 @@ std::vector<Programme> merged(std::vector<Programme> guide, const std::vector<Pr
   return out;
 }
 
-namespace {
 // Letters and digits, lower case: "Dubs Talk" and "DUBS TALK!" alike.
-std::string titleKey(const std::string& t) {
+std::string titleKey(std::string_view t) {
   std::string out;
   for (unsigned char ch : t) {
     if (ch >= 'A' && ch <= 'Z') out += static_cast<char>(ch - 'A' + 'a');
@@ -278,7 +277,6 @@ std::string titleKey(const std::string& t) {
   }
   return out;
 }
-}  // namespace
 
 bool agrees(const std::vector<Programme>& ref, const std::vector<Programme>& other) {
   if (other.empty()) return true;

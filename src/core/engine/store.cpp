@@ -546,11 +546,15 @@ struct RowFlags {
   bool configured = false;
   size_t rawChannels = 0;
   const ArchiveSeen* archiveSeen = nullptr;
+  // Build 181: feeds set aside for a channel (its feeds and replay leave
+  // out those not played there).
+  const std::vector<setaside::Record>* setAside = nullptr;
 };
 
 RowFlags rowFlags(const Store::Impl& m) {
   return RowFlags{&m.lineup.lineupIDs, &m.favorites,        &m.unfavorited,       &m.hiddenGroups,
-                  &m.recents,          m.prefs.configured, m.channels->size(), m.archiveSeen.get()};
+                  &m.recents,          m.prefs.configured, m.channels->size(), m.archiveSeen.get(),
+                  &m.setAside};
 }
 
 // The same, copied (a few hundred ids) for a patch made on a worker.
@@ -558,6 +562,7 @@ struct RowFlagsCopy {
   std::set<std::string> lineupIDs, favorites, unfavorited, hiddenGroups;
   std::vector<std::string> recents;
   std::shared_ptr<const ArchiveSeen> archiveSeen;  // shared: never changed, only replaced
+  std::vector<setaside::Record> setAside;
   RowFlags flags;
   explicit RowFlagsCopy(const Store::Impl& m)
       : lineupIDs(m.lineup.lineupIDs),
@@ -566,8 +571,10 @@ struct RowFlagsCopy {
         hiddenGroups(m.hiddenGroups),
         recents(m.recents),
         archiveSeen(m.archiveSeen),
+        setAside(m.setAside),
         flags{&lineupIDs, &favorites,        &unfavorited,       &hiddenGroups,
-              &recents,   m.prefs.configured, m.channels->size(), archiveSeen.get()} {}
+              &recents,   m.prefs.configured, m.channels->size(), archiveSeen.get(),
+              &setAside} {}
   RowFlagsCopy(const RowFlagsCopy&) = delete;
   RowFlagsCopy& operator=(const RowFlagsCopy&) = delete;
 };
@@ -583,12 +590,28 @@ std::shared_ptr<Channels> patchRows(const ChannelRows& r, const RowFlags& f) {
   out->byId = r.byId;
   out->all = r.all;
   std::map<catalog::LineupCategory, int> blockNext;
+  // Build 181: the copies not played on a channel, by channel.
+  std::unordered_map<std::string, std::vector<std::string>> aside;
+  if (f.setAside)
+    for (const setaside::Record& s : *f.setAside)
+      if (!setaside::playable(s.reason)) aside[s.entryId].push_back(s.copyId);
   for (size_t i = 0; i < out->all.size(); ++i) {
     GuideChannel& g = out->all[i];
     const ChannelRows::Row& row = r.rows[i];
     g.inLineup = f.lineupIDs->count(g.id) > 0;
     g.favorite = favoriteNow(g.id, row.serverFavorite, *f.favorites, *f.unfavorited);
     g.replayDays = row.archive.empty() || !f.archiveSeen ? 0 : rowReplayDays(row.archive, *f.archiveSeen);
+    if (auto a = aside.find(g.id); a != aside.end() && f.archiveSeen) {
+      std::vector<std::pair<std::string, uint16_t>> archive;
+      for (const auto& copy : row.archive)
+        if (std::find(a->second.begin(), a->second.end(), copy.first) == a->second.end()) archive.push_back(copy);
+      g.replayDays = archive.empty() ? 0 : rowReplayDays(archive, *f.archiveSeen);
+      // (A copy named as another channel isn't one of this row's any more.)
+      int still = 0;
+      for (const setaside::Record& s : *f.setAside)
+        if (s.entryId == g.id && !setaside::playable(s.reason) && s.named.empty()) ++still;
+      g.feeds = std::max(0, g.feeds - still);
+    }
     // Locals by their broadcast number; the rest by cable-style blocks.
     if (row.number) {
       g.number = row.number;
@@ -830,6 +853,8 @@ Store::Store(Host host) : host_(std::move(host)), impl_(std::make_unique<Impl>()
       for (const auto& [k, x] : (*v)["guidePicks"].fields())
         if (x.isString() && !x.asString().empty()) m.guidePicks[k] = x.asString();
       for (const auto& [k, x] : (*v)["lastFeed"].fields()) m.lastFeed[k] = x.asString();
+      for (const json::Value& x : (*v)["setAside"].items())
+        if (std::optional<setaside::Record> r = setaside::fromJson(x)) m.setAside.push_back(std::move(*r));
       for (const auto& [k, x] : (*v)["unplayable"].fields()) m.unplayable[k] = x.asInt();
       for (const auto& [k, x] : (*v)["audioOnly"].fields()) m.audioOnly[k] = x.asInt();
       m.quickStartRefused = stringSet((*v)["quickStartRefused"]);
@@ -975,6 +1000,12 @@ std::string Store::listsText() const {
   json::Value last = json::Value::object();
   for (const auto& [k, x] : m.lastFeed) last.set(k, x);
   v.set("lastFeed", last);
+  if (!m.setAside.empty()) {
+    // Build 181: feeds set aside for a channel (set_aside.hpp).
+    json::Value aside = json::Value::array();
+    for (const setaside::Record& r : m.setAside) aside.push(setaside::toJson(r));
+    v.set("setAside", aside);
+  }
   json::Value unplayable = json::Value::object();
   for (const auto& [k, at] : m.unplayable) unplayable.set(k, static_cast<int64_t>(at));
   v.set("unplayable", unplayable);
@@ -1781,7 +1812,7 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
   std::string linksPath = host_.files.path(kM3uStreamsFile);
   host_.pool.post(
       [merged, old, oldCatalog, result, renamedCount, now, stations, wanted, freeOn, lineupRows, lineupCatalog, cut,
-       lastPrint, print, unchanged, progress,
+       lastPrint, print, unchanged, progress, moves = copyMoves(),
        foreground = m.foregroundJobs, parts, total, mergeHere, mergeParts, links, allLinks = m.links, files, pool,
        linksPath] {
         Foreground busy(foreground);
@@ -1837,6 +1868,7 @@ void Store::channelsDownloaded(uint64_t gen, std::shared_ptr<std::vector<Fetched
         *result = {annotated, std::make_shared<CatalogResult>(
                                   catalog::build(*annotated, now, *stations, builtInDirectory(), progress.get(),
                                                  builtInReference()))};
+        catalog::moveCopies(*result->second, moves);  // Build 181: the viewer's copy moves
         // How long a full sort takes on this device (the log, for tuning).
         long ms = static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                         std::chrono::steady_clock::now() - started).count());
@@ -1989,9 +2021,10 @@ void Store::rebuildCatalog() {
   auto result = std::make_shared<std::shared_ptr<CatalogResult>>();
   uint64_t gen = m.generation;
   time::Seconds now = time::now();
-  host_.pool.post([list, stations, result, now] {
+  host_.pool.post([list, stations, result, now, moves = copyMoves()] {
     *result = std::make_shared<CatalogResult>(catalog::build(*list, now, *stations, builtInDirectory(), nullptr,
                                                                    builtInReference()));
+    catalog::moveCopies(**result, moves);  // Build 181: the viewer's copy moves
   },
                    [this, gen, list, result] {
                      if (gen != impl_->generation || list != impl_->channels || impl_->loading) return;
@@ -2006,6 +2039,13 @@ void Store::rebuildCatalog() {
 void Store::installCatalog(std::shared_ptr<const std::vector<Channel>> list, std::shared_ptr<const CatalogResult> cat,
                            bool partial) {
   Impl& m = *impl_;
+  // Build 181: the copy moves feeds set aside ask for, when this list
+  // lacks one (a saved list from before it).
+  if (std::map<std::string, std::string> moves = copyMoves(); cat && catalog::copiesToMove(*cat, moves)) {
+    auto moved = std::make_shared<CatalogResult>(*cat);
+    catalog::moveCopies(*moved, moves);
+    cat = std::move(moved);
+  }
   m.channels = std::move(list);
   m.catalog = std::move(cat);
   m.partial = partial;
@@ -2020,6 +2060,9 @@ void Store::installCatalog(std::shared_ptr<const std::vector<Channel>> list, std
     saveListsLater();
   ++m.catalogRevision;
   rebuildEntries();
+  // Build 181: a feed set aside that the provider renumbered, found again
+  // (and the move it asks for, if this list lacks it).
+  if (!partial && rematchSetAside()) applyCopyMoves();
 }
 
 void Store::installRenamed(std::shared_ptr<const std::vector<Channel>> list,
@@ -2769,6 +2812,8 @@ void Store::applyEntryGuides(const std::vector<std::string>& entryIDs) {
     found.clear();
     bool anyLoading = false, anyLoaded = false, anyFailed = false;
     for (const std::string& member : m.catalog->entries[info->second].members) {
+      // Build 181: a copy whose listings were set aside for this channel.
+      if (!m.setAside.empty() && listingsSetAside(id, member)) continue;
       auto p = m.programs.find(member);
       if (p != m.programs.end() && p->second && !p->second->empty()) {
         lists.push_back(p->second.get());
@@ -3890,6 +3935,11 @@ std::vector<std::string> Store::versionsOf(const std::string& id) const {
   if (healthyDirect()) sports::store::directVersionsFirst(out, keep, server, holds);
   if (leadServer) sports::store::leadServerVersions(out, *leadServer, server, holds);
   lastIfUnplayable(out, pin != m.pinned.end() ? std::optional<std::string>(pin->second) : std::nullopt);
+  // Build 181: a copy set aside for this channel (for anything but its
+  // listings) isn't played on it, pinned or not.
+  if (!m.setAside.empty())
+    out.erase(std::remove_if(out.begin(), out.end(), [&](const std::string& c) { return notPlayedOn(id, c); }),
+              out.end());
   return out;
 }
 
@@ -3908,7 +3958,8 @@ std::vector<Feed> Store::feeds(const std::string& entryId) const {
   std::vector<std::string> members = versionsOf(entryId);
   // A game on now on this channel: its provider feeds back it up.
   for (const std::string& f : eventBackups(entryId))
-    if (std::find(members.begin(), members.end(), f) == members.end()) members.push_back(f);
+    if (std::find(members.begin(), members.end(), f) == members.end() && !notPlayedOn(entryId, f))
+      members.push_back(f);
   return feedsFor(members);
 }
 
@@ -4279,8 +4330,15 @@ std::shared_ptr<const Channels> Store::channelsNow() const {
     g.favorite = favoriteNow(e.id, e.isFavorite, m.favorites, m.unfavorited);
     if (ei) {
       std::vector<std::pair<std::string, uint16_t>> archive;
-      for (const std::string& member : ei->members)
+      int aside = 0;
+      for (const std::string& member : ei->members) {
+        if (!m.setAside.empty() && notPlayedOn(e.id, member)) {
+          ++aside;  // Build 181: set aside for this channel
+          continue;
+        }
         if (uint16_t days = catchupDays(member)) archive.emplace_back(member, days);
+      }
+      g.feeds -= aside;
       g.replayDays = rowReplayDays(archive, *m.archiveSeen);
     }
     // Which logo a row tries and how its cell reads (ChannelLogos.spec).

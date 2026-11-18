@@ -21,6 +21,9 @@ struct PanelItem {
   Kind kind = Kind::Action;
   std::string title;
   std::string detail;  // second line, smaller
+  // Build 181: a third line under it, in grey ("OK to use it again" under
+  // a feed set aside's reason in amber).
+  std::string third;
   std::string value;   // right side text (Chevron, Count)
   bool on = false;     // Toggle and Check state
   bool enabled = true;
@@ -117,6 +120,9 @@ class ListPanel {
   // What the rows say (their words, values and states, not the focus): rows
   // rebuilt with live state are drawn again only when it changed.
   std::string look() const;
+  // Build 181: how tall the title, rows and hint are drawn `width` wide (a
+  // menu's card fits them).
+  float contentHeight(Ctx& c, float width) const;
 
   static constexpr int kHitBase = 1000;
   // Choice k of row i: kHitBase + kChoiceHits + i * 8 + k.

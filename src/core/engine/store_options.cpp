@@ -2,6 +2,7 @@
 // LiveTVOptionsPanel, LineupEditView, LiveTVGuideSourcesView, the program
 // detail card). Search is store_search.cpp. UI thread only.
 #include <algorithm>
+#include <cstdio>
 #include <map>
 #include <set>
 
@@ -414,6 +415,7 @@ void Store::buildChannelReport(std::function<void(std::shared_ptr<std::string>)>
     guide::StationsByNetwork stations;
     std::unordered_map<std::string, std::pair<std::string, std::string>> logos, guideChoices;
     std::unordered_map<std::string, report::MeasuredCells> measured;
+    std::unordered_map<std::string, report::SetAsideCells> setAside;
     std::vector<std::string> privateWords;
     time::Seconds now = 0, windowStart = 0, outsideBuilt = 0;
     time::Zone zone = time::Zone::device();
@@ -480,6 +482,19 @@ void Store::buildChannelReport(std::function<void(std::shared_ptr<std::string>)>
     scores::Cells c = scores::cellsOf(&r, now);
     job->measured[id] = {c.startMs, c.failures, c.stallsPerHour, c.picture, c.plays};
   });
+  // Build 181: the feeds set aside (by copy; one set aside for two channels
+  // has both, " | " between them).
+  for (const setaside::Record& r : m.setAside) {
+    report::SetAsideCells& c = job->setAside[r.copyId];
+    time::Civil day = host_.zone().toLocal(r.at);
+    char date[16];
+    std::snprintf(date, sizeof date, "%04d-%02d-%02d", day.year, day.month, day.day);
+    auto add = [](std::string& cell, const std::string& v) { cell += (cell.empty() ? "" : " | ") + v; };
+    c.setAside = "yes";
+    add(c.reason, setaside::title(r.reason));
+    if (!r.namedName.empty()) add(c.is, r.namedName);
+    add(c.since, date);
+  }
   job->now = now;
   job->windowStart = windowStart();
   job->zone = host_.zone();
@@ -506,6 +521,7 @@ void Store::buildChannelReport(std::function<void(std::shared_ptr<std::string>)>
         in.logos = &job->logos;
         in.guideChoices = &job->guideChoices;
         in.measured = &job->measured;
+        in.setAside = &job->setAside;
         in.now = job->now;
         in.windowStart = job->windowStart;
         in.zone = job->zone;

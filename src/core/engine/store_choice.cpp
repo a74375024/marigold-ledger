@@ -69,6 +69,9 @@ void Store::decideRows(const std::vector<std::string>& entryIDs) {
     r.row = guide::choice::rowOf(id, entry.country);
     for (const std::string& member : entry.members) {
       if (r.members.size() >= kMaxMembers) break;
+      // Build 181: a copy whose listings were set aside for this channel
+      // (any reason) is no candidate.
+      if (!m.setAside.empty() && listingsSetAside(id, member)) continue;
       auto ci = m.indexByID.find(member);
       if (ci == m.indexByID.end() || ci->second >= m.channels->size()) continue;
       const Channel& c = (*m.channels)[ci->second];

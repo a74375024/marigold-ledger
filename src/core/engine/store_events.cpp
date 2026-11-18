@@ -273,6 +273,7 @@ std::shared_ptr<const game_replay::Channels> replayChannelsFor(const std::vector
       if (info == m.entryInfo.end() || info->second >= m.catalog->entries.size()) continue;
       uint16_t days = 0;
       for (const std::string& copy : m.catalog->entries[info->second].members) {
+        if (store.notPlayedOn(src.channelID, copy)) continue;  // Build 181: set aside for it
         uint16_t d = store.catchupDays(copy);
         if (d <= days) continue;
         const scores::Record* r = m.scores.find(copy);
@@ -2105,7 +2106,8 @@ std::vector<Feed> Store::eventFeeds(const std::string& eventId, const std::strin
     // backups through eventBackups).
     std::vector<std::string> members = versionsOf(*plan.entry);
     for (const std::string& c : plan.candidates)
-      if (std::find(members.begin(), members.end(), c) == members.end()) members.push_back(c);
+      if (std::find(members.begin(), members.end(), c) == members.end() && !notPlayedOn(*plan.entry, c))
+        members.push_back(c);
     return feedsFor(members);
   }
   std::vector<std::string> candidates = plan.candidates;
