@@ -463,6 +463,8 @@ struct Store::Impl {
   // Test all sources running.
   std::map<std::string, uint32_t> clockCheckAt;
   std::set<std::string> clockCantTell;
+  // Build 178: by account, the copies a background check read this run.
+  std::map<std::string, std::set<std::string>> clockTried;
   bool clockCheckOut = false;
   uint32_t clockReadySince = 0;
   bool sourceTestRunning = false;

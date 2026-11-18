@@ -2396,3 +2396,14 @@ In a sports game's replay, the breaks (commercials, timeouts, the ends of period
 | Log | Export the playback log | "breaks: N found in NFL play-by-play" once; "skipped a break (2 min 10 s)"; "went back to the break"; no link |
 | LG | On the LG TV, a football replay | No pause in the picture or the UI when the play-by-play comes in |
 | Other platforms | Android / Fire TV, Apple TV, Mac | Same |
+
+## Build 178: 1.0.21, the background clock check reads a replay that works
+
+On the LG with 1.0.20, Dream's clock never got confirmed: its background checks picked an obscure channel whose replay came back empty, and went back to the same one 30 minutes later, while Test all sources had already found which of Dream's replays play (38%). Now a background check reads a copy whose replay Test all sources saw play first, then lineup copies, then the rest; never one whose replay it saw fail; a different copy after each try (round again once all were tried). A provider whose replays all failed (or that keeps none) isn't checked (looked at again in an hour). One success confirms the clock for all the provider's channels.
+
+| Check | How | Pass |
+|---|---|---|
+| Dream's clock | After Test all sources has run a while, leave the app a few minutes | A "clock check (background): UTC+1 from the video (server says UTC)" line on Dream, on a channel whose replay plays (not CANAL+ Sport 360 or another that failed) |
+| A new one each try | If a check fails | The next names another channel |
+| No replays | cf.hrshsauras (no working replays) | No background check lines for it |
+| Dream-only channel | Rewind on a channel only Dream has | The on-screen clock matches the time picked |

@@ -2202,3 +2202,61 @@ TEST_CASE("replay Build 177: what the replay relay passed on, one ad markers lin
         }) == 2);
   r.noLinks();
 }
+
+// -------------------------------- Build 178: which copy a background check reads
+
+TEST_CASE("replay 1.0.21: a background check reads a copy whose replay played, never one tested broken, a new one each try") {
+  namespace scores = marigold::engine::scores;
+  {
+    // Test all sources: 501's archive didn't play, 503's did.
+    Rig r({}, 0);
+    scores::Probe broken;
+    broken.ok = true;
+    broken.archiveOk = false;
+    scores::Probe played;
+    played.ok = true;
+    played.archiveOk = true;
+    r.store->recordProbe(r.channelOf(501), broken);
+    r.store->recordProbe(r.channelOf(503), played);
+    uint32_t ms = 1000;
+    CHECK_FALSE(r.store->clockCheckDue(ms, ""));  // the lineup just seen: not yet
+    ms += Store::kClockCheckFirstMs + 1;
+    std::optional<std::string> first = r.store->clockCheckDue(ms, "");
+    REQUIRE(first);
+    CHECK(*first == r.channelOf(503));
+    // It fails: after the backoff, never the broken one; the one that played again.
+    uint32_t wait = r.store->noteClockCheck(*first, Store::CheckEnd::Failed, ms);
+    CHECK_FALSE(r.store->clockCheckDue(ms + wait - 1, ""));
+    std::optional<std::string> second = r.store->clockCheckDue(ms + wait + 1, "");
+    REQUIRE(second);
+    CHECK(*second == r.channelOf(503));
+  }
+  {
+    // Nothing tested: a different copy after a failure.
+    Rig r({}, 0);
+    uint32_t ms = 1000;
+    r.store->clockCheckDue(ms, "");
+    ms += Store::kClockCheckFirstMs + 1;
+    std::optional<std::string> first = r.store->clockCheckDue(ms, "");
+    REQUIRE(first);
+    uint32_t wait = r.store->noteClockCheck(*first, Store::CheckEnd::Failed, ms);
+    std::optional<std::string> second = r.store->clockCheckDue(ms + wait + 1, "");
+    REQUIRE(second);
+    CHECK(*second != *first);
+    CHECK((*second == r.channelOf(501) || *second == r.channelOf(503)));
+  }
+  {
+    // Every copy with an archive tested broken: not checked (an hour on).
+    Rig r({}, 0);
+    scores::Probe broken;
+    broken.ok = true;
+    broken.archiveOk = false;
+    r.store->recordProbe(r.channelOf(501), broken);
+    r.store->recordProbe(r.channelOf(503), broken);
+    uint32_t ms = 1000;
+    r.store->clockCheckDue(ms, "");
+    ms += Store::kClockCheckFirstMs + 1;
+    CHECK_FALSE(r.store->clockCheckDue(ms, ""));
+    CHECK_FALSE(r.store->clockCheckDue(ms + 59 * 60000, ""));
+  }
+}

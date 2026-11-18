@@ -14,6 +14,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -669,24 +670,41 @@ std::optional<std::string> Store::clockCheckDue(uint32_t ms, const std::string& 
     if (at != m.clockCheckAt.end() && static_cast<int32_t>(ms - at->second) < 0) continue;
     // Its only connection playing: not now.
     if (busy && busy->id == a.id && a.maxConnections.value_or(1) < 2) continue;
-    // Its copies with an archive, those in the lineup first; a different
-    // one after each failure.
-    std::vector<std::string> listed, others;
+    // Build 178: which of its copies. One Test all sources saw replay (its
+    // archive played) first, then those in the lineup, then the rest; never
+    // one whose archive it saw fail (an empty or missing archive tells no
+    // clock), and a different copy after each try this run, round again
+    // once all were tried.
     std::string source = a.sourceId();
-    for (const Channel& c : *m.channels) {
-      if (c.serverId != source || c.archiveDays == 0) continue;
-      bool inLineup = m.catalog && m.catalog->entryOf.count(c.id);
-      std::vector<std::string>& to = inLineup ? listed : others;
-      if (to.size() < 32) to.push_back(c.id);
-      if (listed.size() >= 32) break;
+    std::string pick;
+    int best = 3;
+    bool any = false;
+    std::set<std::string>& tried = m.clockTried[a.id];
+    for (int pass = 0; pass < 2 && pick.empty(); ++pass) {
+      for (const Channel& c : *m.channels) {
+        if (c.serverId != source || c.archiveDays == 0) continue;
+        const scores::Record* rec = m.scores.find(c.id);
+        if (rec && rec->archiveOk == 0) continue;
+        any = true;
+        if (tried.count(c.id)) continue;
+        int rank = rec && rec->archiveOk == 1 ? 0 : (m.catalog && m.catalog->entryOf.count(c.id)) ? 1 : 2;
+        if (rank < best) {
+          best = rank;
+          pick = c.id;
+          if (rank == 0) break;
+        }
+      }
+      // All tried: round again.
+      if (pick.empty() && any) tried.clear();
     }
-    std::vector<std::string>& copies = listed.empty() ? others : listed;
-    if (copies.empty()) {
-      // No replay here: looked at again in an hour.
+    if (pick.empty()) {
+      // No replay here (none kept, or every one tested broken): looked at
+      // again in an hour.
       m.clockCheckAt[a.id] = ms + 60 * 60000;
       continue;
     }
-    return copies[static_cast<size_t>(fails) % copies.size()];
+    tried.insert(pick);
+    return pick;
   }
   return std::nullopt;
 }
