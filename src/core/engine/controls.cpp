@@ -51,10 +51,10 @@ Group groupOf(Button b) {
 
 std::vector<Button> row(const RowIn& in) {
   std::vector<Button> out;
-  // Build 169: replay's buttons as engine::replay::buttons has them (LG's
-  // Pause after Live behind live); Build 170: Start over after Rewind;
-  // Build 177: Skip break after it.
-  for (replay::Button b : replay::buttons(in.replayDays, in.behind, in.lgPause, in.startOver, in.skipBreak)) {
+  // Build 169: replay's buttons as engine::replay::buttons has them (Build
+  // 184: Pause after Live behind live, every remote); Build 170: Start over
+  // after Rewind; Build 177: Skip break after it.
+  for (replay::Button b : replay::buttons(in.replayDays, in.behind, in.startOver, in.skipBreak)) {
     switch (b) {
       case replay::Button::GoLive: out.push_back(Button::Live); break;
       case replay::Button::Pause: out.push_back(Button::Pause); break;

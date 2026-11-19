@@ -32,11 +32,10 @@ breaks::Break brk(time::Seconds from, time::Seconds to, bool halftime = false) {
   return {kKick + from, kKick + to, halftime, false};
 }
 
-controls::RowIn replayRow(bool skip, bool lg = false) {
+controls::RowIn replayRow(bool skip) {
   controls::RowIn in;
   in.replayDays = 1;
   in.behind = true;
-  in.lgPause = lg;
   in.startOver = true;
   in.skipBreak = skip;
   in.back = true;
@@ -136,34 +135,30 @@ TEST_CASE("breaks 177: the notice after a skip, and where going back plays from"
 }
 
 TEST_CASE("breaks 177: the controls row with a break to skip") {
-  // Behind live: Live, Rewind, Start over, Skip break, then the rest.
+  // Behind live: Live, Pause (1.0.27: every remote), Rewind, Start over,
+  // Skip break, then the rest.
   std::vector<B> row = controls::row(replayRow(true));
-  CHECK(row == std::vector<B>{B::Live, B::Rewind, B::StartOver, B::SkipBreak, B::Subtitles, B::Sources, B::Back,
-                              B::Guide, B::Settings});
-  CHECK(controls::groupOf(B::SkipBreak) == controls::Group::Watching);
-  // The row opens on Skip break, not Live (nor Subtitles).
-  CHECK(controls::opening(row, true) == 3);
-  // LG: Pause after Live.
-  row = controls::row(replayRow(true, true));
   CHECK(row == std::vector<B>{B::Live, B::Pause, B::Rewind, B::StartOver, B::SkipBreak, B::Subtitles, B::Sources,
                               B::Back, B::Guide, B::Settings});
+  CHECK(controls::groupOf(B::SkipBreak) == controls::Group::Watching);
+  // The row opens on Skip break, not Live (nor Subtitles).
   CHECK(controls::opening(row, true) == 4);
   // No Start over: Skip break after Rewind.
   controls::RowIn in = replayRow(true);
   in.startOver = false;
   row = controls::row(in);
-  CHECK(row[2] == B::SkipBreak);
+  CHECK(row[3] == B::SkipBreak);
   // Without: as before, Live first.
   row = controls::row(replayRow(false));
-  CHECK(row == std::vector<B>{B::Live, B::Rewind, B::StartOver, B::Subtitles, B::Sources, B::Back, B::Guide,
-                              B::Settings});
+  CHECK(row == std::vector<B>{B::Live, B::Pause, B::Rewind, B::StartOver, B::Subtitles, B::Sources, B::Back,
+                              B::Guide, B::Settings});
   CHECK(controls::opening(row, true) == 0);
   // Never on a channel without replay.
   in = controls::RowIn{};
   in.skipBreak = true;
   row = controls::row(in);
   CHECK(std::find(row.begin(), row.end(), B::SkipBreak) == row.end());
-  CHECK(engine::replay::buttons(0, true, false, true, true).empty());
+  CHECK(engine::replay::buttons(0, true, true, true).empty());
 }
 
 TEST_CASE("breaks 177: near live the row is today's behind-live row") {

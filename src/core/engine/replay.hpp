@@ -149,14 +149,14 @@ std::string behindWords(time::Seconds behind);
 
 // The controls' replay buttons, at the front of the row on a channel
 // whose copies keep an archive (`days` > 0; none otherwise): behind live,
-// Go live (then Pause where `lgPause`: LG's remote), else Pause; then
-// Rewind. Build 169 took Start over out of the row (and off the banner
+// Go live, then (Build 184: on every remote, was LG's only) Pause; live,
+// Pause; then Rewind. Build 169 took Start over out of the row (and off the banner
 // after a tune); Build 170 puts it back after Rewind where `startOver`
 // (engine::controls::startOver: it can work). Never on the banner.
 // Build 177: Skip break last, during a break of a sports game's replay
 // that can be skipped (engine::breaks::moment).
 enum class Button { GoLive, Pause, Rewind, StartOver, SkipBreak };
-std::vector<Button> buttons(uint16_t days, bool behind, bool lgPause, bool startOver = false, bool skipBreak = false);
+std::vector<Button> buttons(uint16_t days, bool behind, bool startOver = false, bool skipBreak = false);
 
 // Build 169: the "−17:05 behind live" tag at the top right. It shows for
 // kShowMs once a replay starts or plays from another moment (a jump),

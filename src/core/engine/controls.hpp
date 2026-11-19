@@ -53,7 +53,6 @@ Group groupOf(Button b);
 struct RowIn {
   uint16_t replayDays = 0;    // the channel's archive (0: no replay buttons)
   bool behind = false;        // a replay plays (or holds) behind live
-  bool lgPause = false;       // LG's remote: Pause stays behind live, after Live
   bool startOver = false;     // Build 170: Start over after Rewind (startOver() gave a start)
   bool skipBreak = false;     // Build 177: a sports replay's break to skip (breaks::moment)
   bool bothVersions = false;  // the channel has East and West

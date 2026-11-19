@@ -2552,3 +2552,16 @@ In a replay (behind live), the controls' first two replay buttons say what they 
 | Jump to | In a replay, Right to the next replay button | "Jump to" with the both-ways icon; OK opens the timeline titled "Jump to · KNTV" with the same icon; Left / Right move earlier / later as before |
 | Live TV | On live TV, OK, Right | Pause, then "Rewind" with the circular arrow; the timeline says "Rewind" |
 | Other platforms | Android / Fire TV, Apple TV, Mac | The same labels and icon |
+
+## Build 184: 1.0.27, Pause in a replay on every device
+
+Behind live, the controls' replay buttons are Go live, **Pause**, Jump to (then Start over, Skip break) on every remote. Before, Pause was in that row on LG only (the other remotes' play/pause key did it, and still does). Pause from the row is the same as the key: the picture holds, dimmed; the paused panel says "Paused at 8:42 PM" with "Play from 8:42", "Go live" and **"Jump to"** (was "Rewind", missed in 1.0.26). Live TV is unchanged: Pause, Rewind.
+
+| Check | How | Pass |
+|---|---|---|
+| The row | In a replay, OK, on Apple TV, Fire TV / Android, Mac and LG | Go live (focused), Pause, Jump to, Start over, then the rest |
+| Pause | Right to Pause, OK | The picture holds, dimmed; "Paused at …" with Play from, Go live, Jump to |
+| Play on | "Play from 8:42" after a few minutes | Carries on from the paused minute; Go live's "… min behind" has grown |
+| Jump to | "Jump to" on the paused panel | Opens the timeline titled "Jump to · KNTV", from the paused minute |
+| Key | The remote's play/pause in a replay | Pauses and plays on, as before |
+| Live TV | OK on live TV | Pause, Rewind, as before |

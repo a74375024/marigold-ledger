@@ -77,30 +77,28 @@ TEST_CASE("replay 1.0.12: a replay's stretch still opening waits for its picture
 
 TEST_CASE("replay 1.0.13: the controls' replay buttons: Start over after Rewind only where it can work") {
   // No archive: no replay buttons at all.
-  CHECK(replay::buttons(0, false, false).empty());
-  CHECK(replay::buttons(0, true, true).empty());
+  CHECK(replay::buttons(0, false).empty());
+  CHECK(replay::buttons(0, true).empty());
   // Live: Pause, Rewind.
-  CHECK(replay::buttons(2, false, false) == std::vector<Button>{Button::Pause, Button::Rewind});
-  CHECK(replay::buttons(1, false, true) == std::vector<Button>{Button::Pause, Button::Rewind});
-  // Behind live: Go live first, Pause after it on LG, then Rewind.
-  CHECK(replay::buttons(2, true, false) == std::vector<Button>{Button::GoLive, Button::Rewind});
-  CHECK(replay::buttons(2, true, true) == std::vector<Button>{Button::GoLive, Button::Pause, Button::Rewind});
+  CHECK(replay::buttons(2, false) == std::vector<Button>{Button::Pause, Button::Rewind});
+  // Behind live: Go live first, Pause after it (1.0.27: every remote, was
+  // LG's only), then Rewind.
+  CHECK(replay::buttons(2, true) == std::vector<Button>{Button::GoLive, Button::Pause, Button::Rewind});
   // Rewind (the timeline) is always there to start a programme over.
-  for (bool behind : {false, true})
-    for (bool lg : {false, true}) {
-      std::vector<Button> b = replay::buttons(3, behind, lg);
+  for (bool behind : {false, true}) {
+      std::vector<Button> b = replay::buttons(3, behind);
       CHECK(std::count(b.begin(), b.end(), Button::Rewind) == 1);
       CHECK(b.size() <= 3);
       // Build 170: not unless asked (engine::controls::startOver said it
       // can work); then right after Rewind, last.
       CHECK(std::count(b.begin(), b.end(), Button::StartOver) == 0);
-      std::vector<Button> with = replay::buttons(3, behind, lg, true);
+      std::vector<Button> with = replay::buttons(3, behind, true);
       REQUIRE(with.size() == b.size() + 1);
       CHECK(with.back() == Button::StartOver);
       CHECK(with[with.size() - 2] == Button::Rewind);
     }
   // No archive: never, asked or not.
-  CHECK(replay::buttons(0, false, false, true).empty());
+  CHECK(replay::buttons(0, false, true).empty());
 }
 
 TEST_CASE("replay 1.0.12: the guide's chip shows the replay window") {

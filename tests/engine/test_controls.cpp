@@ -70,24 +70,18 @@ TEST_CASE("controls 1.0.12: live on a channel with replay: Pause, Rewind, then t
                                         Group::Elsewhere, Group::Elsewhere, Group::Elsewhere, Group::Elsewhere});
   // Subtitles focused when the row opens live.
   CHECK(opening(r, false) == 2);
-  // LG's remote: the same live.
-  in.lgPause = true;
-  CHECK(row(in) == r);
 }
 
-TEST_CASE("controls 1.0.12: behind live (or paused): Live first; Pause after it on LG only") {
+TEST_CASE("controls 1.0.12: behind live (or paused): Live first; Pause after it (1.0.27: every remote)") {
   RowIn in;
   in.replayDays = 1;
   in.behind = true;
   in.back = true;
   in.favorite = true;
   std::vector<Button> r = row(in);
-  CHECK(r == std::vector<Button>{B::Live, B::Rewind, B::Subtitles, B::Sources, B::Back, B::Guide, B::Favorite,
-                                 B::Settings});
+  CHECK(r == std::vector<Button>{B::Live, B::Pause, B::Rewind, B::Subtitles, B::Sources, B::Back, B::Guide,
+                                 B::Favorite, B::Settings});
   CHECK(opening(r, true) == 0);
-  in.lgPause = true;
-  CHECK(row(in) == std::vector<Button>{B::Live, B::Pause, B::Rewind, B::Subtitles, B::Sources, B::Back, B::Guide,
-                                       B::Favorite, B::Settings});
 }
 
 TEST_CASE("controls 1.0.12: East/West and cameras sit with the channel's buttons; a game has no Favorite") {
@@ -103,7 +97,7 @@ TEST_CASE("controls 1.0.12: East/West and cameras sit with the channel's buttons
   game.cameras = true;
   game.back = true;
   std::vector<Button> r = row(game);
-  CHECK(r == std::vector<Button>{B::Live, B::Rewind, B::Subtitles, B::Sources, B::Cameras, B::Back, B::Guide,
+  CHECK(r == std::vector<Button>{B::Live, B::Pause, B::Rewind, B::Subtitles, B::Sources, B::Cameras, B::Back, B::Guide,
                                  B::Settings});
   CHECK(groupOf(B::Swap) == Group::Channel);
   CHECK(groupOf(B::Cameras) == Group::Channel);
@@ -189,7 +183,6 @@ TEST_CASE("controls 1.0.12: the row's layout: round buttons, dividers between gr
   RowIn all;
   all.replayDays = 2;
   all.behind = true;
-  all.lgPause = true;
   all.bothVersions = all.cameras = all.back = all.favorite = true;
   all.startOver = true;
   std::vector<Button> longest = row(all);
@@ -335,12 +328,9 @@ TEST_CASE("controls 1.0.13: Start over sits in the watching group right after Re
   CHECK(opening(r, false) == 3);
   // Two dividers still: Start over is no group of its own.
   CHECK(layout(r, -1, 0, 1728).dividers.size() == 2);
-  // Behind live: Live, Rewind, Start over; LG: Live, Pause, Rewind, Start over.
+  // Behind live: Live, Pause, Rewind, Start over (1.0.27: every remote).
   in.behind = true;
-  CHECK(row(in) == std::vector<Button>{B::Live, B::Rewind, B::StartOver, B::Subtitles, B::Sources, B::Back, B::Guide,
-                                       B::Favorite, B::Settings});
   CHECK(opening(row(in), true) == 0);
-  in.lgPause = true;
   CHECK(row(in) == std::vector<Button>{B::Live, B::Pause, B::Rewind, B::StartOver, B::Subtitles, B::Sources, B::Back,
                                        B::Guide, B::Favorite, B::Settings});
   // Where it can't work, absent (not disabled): the row as Build 169 had it.

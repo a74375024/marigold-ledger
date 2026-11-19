@@ -328,15 +328,12 @@ std::string behindMinutes(time::Seconds behind) {
   return buf;
 }
 
-std::vector<Button> buttons(uint16_t days, bool behind, bool lgPause, bool startOver, bool skipBreak) {
+std::vector<Button> buttons(uint16_t days, bool behind, bool startOver, bool skipBreak) {
   if (!days) return {};
   std::vector<Button> out;
-  if (behind) {
-    out.push_back(Button::GoLive);
-    if (lgPause) out.push_back(Button::Pause);
-  } else {
-    out.push_back(Button::Pause);
-  }
+  // Build 184: Pause behind live on every remote (was LG's only).
+  if (behind) out.push_back(Button::GoLive);
+  out.push_back(Button::Pause);
   out.push_back(Button::Rewind);
   if (startOver) out.push_back(Button::StartOver);
   if (skipBreak) out.push_back(Button::SkipBreak);

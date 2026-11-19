@@ -629,7 +629,6 @@ class PlayerScreen : public Screen {
     engine::controls::RowIn in;
     in.replayDays = p.catchupDays();
     in.behind = p.replay().has_value();
-    in.lgPause = app_.window().remoteKeys() == RemoteKeys::lg();
     in.startOver = startOverAt_.has_value();
     in.skipBreak = breakMoment().kind == engine::breaks::Moment::Kind::Skip;
     in.bothVersions = !otherCoast().empty();
@@ -1448,7 +1447,8 @@ class PlayerScreen : public Screen {
   std::vector<std::string> pausedButtons(ui::Ctx& c) const {
     const auto& r = app_.playback().replay();
     time::Seconds at = r ? r->at() : time::now();
-    return {"\xe2\x96\xb6  Play from " + ui::clock(c, at - at % 60, false), "Go live", "Rewind"};
+    // Build 184: "Jump to", as the controls say in a replay (Build 183).
+    return {"\xe2\x96\xb6  Play from " + ui::clock(c, at - at % 60, false), "Go live", "Jump to"};
   }
   bool pausedKey(const KeyEvent& e) {
     Playback& p = app_.playback();
