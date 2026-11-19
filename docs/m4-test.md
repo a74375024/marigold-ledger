@@ -2565,3 +2565,16 @@ Behind live, the controls' replay buttons are Go live, **Pause**, Jump to (then 
 | Jump to | "Jump to" on the paused panel | Opens the timeline titled "Jump to · KNTV", from the paused minute |
 | Key | The remote's play/pause in a replay | Pauses and plays on, as before |
 | Live TV | OK on live TV | Pause, Rewind, as before |
+
+## Build 185: 1.0.28, a hiccup mid-watch is a small tag, not the banner
+
+While watching (this tune already had a picture), a hiccup no longer brings up the whole banner. A small tag shows at the top right, where the REPLAY and BREAK tags appear (in their place while it lasts): a spinner and the same words the banner had, "Switching to another feed · 1080p", "Reconnecting…" or "Buffering…" (a replay's stall or reopen too). It stays small however long it lasts; OK still opens the controls, Info the banner. When the picture moves again the tag goes, with no banner and no "Back on KNTV". Tuning in to a channel, opening a replay you asked for, and a channel that doesn't play keep the full banner (with Try again and Pick a feed).
+
+| Check | How | Pass |
+|---|---|---|
+| Live hiccup | Watch a channel; unplug the network for ~10 s, plug it back | Top right: spinner and "Reconnecting…" (or "Switching to another feed · …" when it moves to another); no banner; once the picture moves the tag goes, no banner, no "Back on" |
+| Replay stall | In a replay, the same | "Buffering…" in the tag; the replay carries on at the same minute; no banner |
+| Long | Keep it unplugged a minute | The tag stays; OK opens the controls; Info shows the banner with the same words |
+| Fails | Keep it unplugged until it gives up | The full banner with Try again / Pick a feed, as before |
+| Tuning in | Change channel | The banner, "Tuning in", as before |
+| Open a replay | Rewind / Jump to a time | "Opening the replay…" on the banner, as before |

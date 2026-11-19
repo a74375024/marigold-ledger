@@ -315,9 +315,26 @@ class PlayerScreen : public Screen {
       bannerUntil_ = ms;
       changed = true;
     }
+    // Build 185: a hiccup mid-watch shows its small tag, not the banner;
+    // redrawn as it comes and goes.
+    bool hic = hiccup();
+    if (hic != hiccupWas_) {
+      hiccupWas_ = hic;
+      changed = true;
+    }
+    // One seen; forgotten once it's over with the picture on, or a new tune
+    // starts (its first picture brings the banner as always).
+    if (hic) hiccupSeen_ = true;
+    else if (!pendingFlip_.empty() || !p.hadPicture() || (p.ready() && wasReady_)) hiccupSeen_ = false;
     // The picture (first, or back after a reconnect or another feed): the
-    // banner's usual few seconds from now.
-    if (p.ready() && !wasReady_) {
+    // banner's usual few seconds from now. Build 185: not after a hiccup
+    // mid-watch: the picture moving again says it (no "Back on" either).
+    if (p.ready() && !wasReady_ && pictureSeen_ && hiccupSeen_) {
+      hiccupSeen_ = false;
+      p.dismissBackupNotice();
+      changed = true;
+    } else if (p.ready() && !wasReady_) {
+      hiccupSeen_ = false;
       bannerFrom_ = ms;
       bannerUntil_ = std::max(bannerUntil_, ms + kBannerMs);
       // A backup on the first start isn't "back on" anything: the banner
@@ -343,7 +360,8 @@ class PlayerScreen : public Screen {
     wasReady_ = p.ready();
     if (p.ready()) pictureFeed_ = p.feedIndex();
     // A note from the recovery (buffering, reconnecting): the banner shows it.
-    if (p.ready() && !p.note().empty()) {
+    // Build 185: mid-watch, the small tag does.
+    if (p.ready() && !p.note().empty() && !hic) {
       if (!bannerVisible()) bannerFrom_ = ms;
       bannerUntil_ = std::max(bannerUntil_, ms + 1500);
     }
@@ -451,7 +469,11 @@ class PlayerScreen : public Screen {
     }
     if (picture) drawSubtitles(c, bannerVisible() || controls);
     if (pointer_ && picture) drawEdges(c);
-    if (!pending) drawBehindTag(c);
+    if (!pending) {
+      // Build 185: a hiccup's tag in the behind-live tag's place.
+      if (hiccup() && !bannerVisible() && !controls && !c.covered) drawHiccupTag(c);
+      else drawBehindTag(c);
+    }
     if (!digits_.empty()) {
       Rect r{gfx::kLayoutWidth - 80 - 220, 60, 220, 90};
       c.g.fill(r, theme::black(0.75f), 20);
@@ -497,7 +519,41 @@ class PlayerScreen : public Screen {
     const Playback& p = app_.playback();
     return !pendingFlip_.empty() || !p.ready() || p.failed() || p.noPicture();
   }
-  bool bannerVisible() const { return loading() || (app_.ms() >= bannerFrom_ && app_.ms() < bannerUntil_); }
+  bool bannerVisible() const {
+    return (loading() && !hiccup()) || (app_.ms() >= bannerFrom_ && app_.ms() < bannerUntil_);
+  }
+  // Build 185: a hiccup mid-watch: this tune had a picture and it stopped
+  // (live: a reconnect, another feed, buffering; a replay: its "Buffering…"
+  // while it stalls or reopens). Not tuning in, not failed: those keep the
+  // banner, with its buttons when nothing plays. It stays small however
+  // long it lasts (OK still opens the controls).
+  bool hiccup() const {
+    const Playback& p = app_.playback();
+    if (!pendingFlip_.empty() || p.failed() || p.noPicture() || !p.hadPicture()) return false;
+    if (const auto& r = p.replay()) return r->phase != ReplayPhase::Paused && !p.note().empty();
+    return !p.ready() || !p.note().empty();
+  }
+  // What the tag says: the banner's words for it.
+  std::string hiccupText() const {
+    const Playback& p = app_.playback();
+    if (p.ready() || p.replay()) return p.note().empty() ? std::string("Buffering\xe2\x80\xa6") : p.note();
+    std::string q;
+    if (!p.feeds().empty()) q = p.feeds()[std::min(p.feedIndex(), p.feeds().size() - 1)].quality;
+    if (p.feedIndex() != pictureFeed_) return "Switching to another feed" + (q.empty() ? std::string() : " \xc2\xb7 " + q);
+    return "Reconnecting\xe2\x80\xa6";
+  }
+  // Build 185: the tag at the top right, where the behind-live and break
+  // tags show (in their place while it lasts): a spinner and its words.
+  void drawHiccupTag(ui::Ctx& c) {
+    constexpr float kTop = 52, kH = 52;
+    std::string text = hiccupText();
+    float tw = ui::textWidth(c, text, Weight::Bold, 24);
+    float w = 18 + 26 + 12 + tw + 24;
+    Rect box{gfx::kLayoutWidth - 64 - w, kTop, w, kH};
+    c.g.fill(box, theme::black(0.6f), 26);
+    ui::spinner(c, box.x + 18 + 13, box.y + kH * 0.5f, 11);
+    ui::label(c, text, box.x + 18 + 26 + 12, box.y + 11, Weight::Bold, 24, theme::white());
+  }
   // The banner's "Hides in" seconds (1 in its last second).
   int hidesIn(uint32_t ms) const { return countdown::shown(bannerUntil_, ms); }
   // Up/Down: Up is the channel above in the list (lower numbers) unless
@@ -2584,6 +2640,9 @@ class PlayerScreen : public Screen {
   uint32_t pictureAt_ = 0;                        // when this tune's first picture came
   bool noSubtitlesSaid_ = false;
   size_t pictureFeed_ = 0;  // the feed the picture last came from
+  // Build 185: a hiccup mid-watch is on (redraw as it changes), and one
+  // was on since the picture last came (its return shows no banner).
+  bool hiccupWas_ = false, hiccupSeen_ = false;
   Zone zone_ = Zone::None;
   std::vector<Ctl> pills_;
   int pill_ = 0;
