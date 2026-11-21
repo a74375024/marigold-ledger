@@ -2578,3 +2578,19 @@ While watching (this tune already had a picture), a hiccup no longer brings up t
 | Fails | Keep it unplugged until it gives up | The full banner with Try again / Pick a feed, as before |
 | Tuning in | Change channel | The banner, "Tuning in", as before |
 | Open a replay | Rewind / Jump to a time | "Opening the replay…" on the banner, as before |
+
+## Build 186: 1.0.29, Fire TV / Android updates install again
+
+Every Android build until now was signed with a new key: CI cached the Android plugin's debug key at `~/.android/debug.keystore`, which the plugin never wrote there, so nothing was ever cached and each build made its own. Android installs an update only from the same signer, so "Update" in the app (and installing a new APK over an old one) always failed. Now CI makes one key, keeps it (cache `android-signing-key-v2`) and signs every build with it; the repository's release key secrets still win when set. In the app, an update refused for its signer says "Needs a reinstall: uninstall Marigold first." in place of "Couldn't update. Try again later."
+
+A new workflow, "Keep the Android signing key" (`signing-key.yml`), reads that cache every 3 days so GitHub never drops it for going unused (7 days); it never makes or prints the key.
+
+Once: 1.0.28 and earlier each have their own key, so 1.0.29 has to be installed by hand (uninstall, then install from the release link); from 1.0.29 on, the app's Update works.
+
+| Check | How | Pass |
+|---|---|---|
+| Old install | Fire TV on 1.0.28: Settings › Update | "Needs a reinstall: uninstall Marigold first." |
+| Reinstall | Uninstall, install 1.0.29 from the release | Installs and opens |
+| Next update | When 1.0.30 is out: Update in the app | Downloads, the installer asks, it installs over 1.0.29 and opens on 1.0.30 |
+| CI | The android job's log, "Signing key" step | The same SHA256 line in every run after the first |
+| Kept | Actions › "Keep the Android signing key" › Run workflow (after the first CI run) | "The signing key is kept: SHA256: …", the same as CI's |

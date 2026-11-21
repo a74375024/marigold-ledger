@@ -35,6 +35,11 @@ engine::UpdateInstall install(const std::string& path) {
   }
   out.why = android::text(e, why.get());
   out.ok = out.why.empty();
+  // Build 186: Android installs an update only from the same signer; one
+  // from another (builds before 1.0.29 each had their own) can't go over
+  // this install. Say what works instead.
+  if (out.why == "signed with another key")
+    out.message = "Needs a reinstall: uninstall Marigold first.";
   return out;
 }
 

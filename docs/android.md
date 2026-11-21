@@ -138,8 +138,13 @@ echo "sdk.dir=$ANDROID_HOME" > local.properties
 ## Signing
 
 Every build must be signed with the same key to install over the previous
-one. CI signs with a release key when the repository has these secrets
-(Settings › Secrets and variables › Actions):
+one. Without secrets, CI signs with a key it made once and keeps in its
+cache (`android-signing-key-v2`; Build 186). GitHub drops a cache nobody
+reads for 7 days, so `signing-key.yml` reads it every 3 days; only a full
+cache space (10 GB) could still push it out, which means a new key and one
+reinstall. For a key that never changes, CI signs with a release key
+when the repository has these secrets (Settings › Secrets and variables ›
+Actions):
 
 - `MARIGOLD_KEYSTORE_B64`: the keystore file, base64
 - `MARIGOLD_KEYSTORE_PASSWORD`, `MARIGOLD_KEY_ALIAS`, `MARIGOLD_KEY_PASSWORD`

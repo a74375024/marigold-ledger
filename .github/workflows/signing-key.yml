@@ -1,0 +1,33 @@
+name: Keep the Android signing key
+
+# Build 186: without the repository's release-key secrets, every Android
+# build is signed with one key CI made once and keeps in its cache
+# (ci.yml, `android-signing-key-v2`). GitHub drops a cache nobody reads for
+# 7 days, and a new key would mean one more reinstall on every Fire TV. This
+# reads it every 3 days, whether or not anything was pushed, so it stays.
+# It never makes a key (only ci.yml does) and never prints it.
+on:
+  schedule:
+    - cron: "41 7 */3 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  keep:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Read the key's cache
+        id: key
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/marigold-signing/ci.jks
+          key: android-signing-key-v2
+      - name: Say whether it's there
+        run: |
+          if [ "${{ steps.key.outputs.cache-hit }}" = "true" ]; then
+            echo "The signing key is kept: $(keytool -list -v -keystore "$HOME/marigold-signing/ci.jks" -storepass android | grep -m1 'SHA256:')"
+          else
+            echo "::warning::No signing key cached yet: the next CI run on master makes one."
+          fi

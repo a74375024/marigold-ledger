@@ -32,7 +32,9 @@ The download must match that digest. So for an update to reach the apps:
   release is neither a draft nor a prerelease;
 - the file names stay as in the table above;
 - the APK is signed with the same key as the one installed (the release key
-  from `MARIGOLD_KEYSTORE_B64` when set, else CI's cached debug key):
+  from `MARIGOLD_KEYSTORE_B64` when set, else the key CI made once and keeps
+  in its cache, `android-signing-key-v2`; Build 186: before it, each build
+  had a new debug key, so no update installed over another):
   Android installs an update only over the same signer, and the app refuses
   one signed otherwise ("Couldn't update").
 

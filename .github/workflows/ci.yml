@@ -238,27 +238,39 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
           key: gradle-${{ hashFiles('android/**/*.gradle', 'android/gradle/wrapper/gradle-wrapper.properties') }}
-      # Without a release key, builds are signed with one debug key kept here,
-      # so each build installs over the last (a new key would need an uninstall).
+      # Without a release key, every build is signed with one key CI made
+      # once and keeps here, so each build installs over the last (Android
+      # refuses an update from another signer). Build 186: the debug key this
+      # cached before never existed at ~/.android (the Android plugin keeps it
+      # elsewhere), so each build had a new one and no update could install.
       - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
-          path: ~/.android/debug.keystore
-          key: android-debug-key-v1
-      - name: Release key (if the repository has one)
+          path: ~/marigold-signing/ci.jks
+          key: android-signing-key-v2
+      - name: Signing key (the repository's release key, else CI's own)
         env:
           KEYSTORE_B64: ${{ secrets.MARIGOLD_KEYSTORE_B64 }}
         run: |
           if [ -n "$KEYSTORE_B64" ]; then
             echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
             echo "MARIGOLD_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          else
+            mkdir -p "$HOME/marigold-signing"
+            if [ ! -f "$HOME/marigold-signing/ci.jks" ]; then
+              echo "No CI signing key cached: making one (installs from earlier keys need one reinstall)"
+              keytool -genkeypair -keystore "$HOME/marigold-signing/ci.jks" -storepass android -keypass android \
+                -alias marigold -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Marigold" > /dev/null
+            fi
+            keytool -list -v -keystore "$HOME/marigold-signing/ci.jks" -storepass android | grep -m1 "SHA256:"
+            echo "MARIGOLD_KEYSTORE=$HOME/marigold-signing/ci.jks" >> "$GITHUB_ENV"
           fi
       - name: Build the APK
         working-directory: android
         env:
           MARIGOLD_BUILD_NUMBER: ${{ github.run_number }}
-          MARIGOLD_KEYSTORE_PASSWORD: ${{ secrets.MARIGOLD_KEYSTORE_PASSWORD }}
-          MARIGOLD_KEY_ALIAS: ${{ secrets.MARIGOLD_KEY_ALIAS }}
-          MARIGOLD_KEY_PASSWORD: ${{ secrets.MARIGOLD_KEY_PASSWORD }}
+          MARIGOLD_KEYSTORE_PASSWORD: ${{ secrets.MARIGOLD_KEYSTORE_PASSWORD || 'android' }}
+          MARIGOLD_KEY_ALIAS: ${{ secrets.MARIGOLD_KEY_ALIAS || 'marigold' }}
+          MARIGOLD_KEY_PASSWORD: ${{ secrets.MARIGOLD_KEY_PASSWORD || 'android' }}
         run: ./gradlew assembleRelease --console=plain --no-daemon
       - name: Check the JNI calls on both sides
         run: python3 tools/android-jni-check.py android/app/build/intermediates/javac/release/compileReleaseJavaWithJavac/classes
